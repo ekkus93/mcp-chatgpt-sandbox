@@ -54,14 +54,15 @@ These block the tasks that cite them. Decide before starting the task, not durin
       is unavailable
       (steps 1-2 and 7 implemented; steps 3-6 land with S3/S6/S23)
 
-### S3 — State database
-**Spec:** §67, §68, §69
+### S3 — State database ✅
+**Spec:** §67, §68, §69 · **Commit:** 720e4f2
 
-- [ ] SQLite schema for `Repository`, `Workspace`, `Job`, `AuditEvent`
+- [x] SQLite schema for `Repository`, `Workspace`, `Job`, `AuditEvent`
       (`WorkspaceLock` deferred to S31)
-- [ ] Migrations
-- [ ] Container identity never depends solely on SQLite — Docker labels are
-      authoritative for reconstruction (§69)
+- [x] Migrations (`PRAGMA user_version`-tracked, idempotent)
+- [x] Container identity never depends solely on SQLite — Docker labels are
+      authoritative for reconstruction (§69). The reconciler itself is S6/S18;
+      this task only avoids treating `workspace.container_id` as ground truth.
 
 ### S4 — Error model
 **Spec:** §31
