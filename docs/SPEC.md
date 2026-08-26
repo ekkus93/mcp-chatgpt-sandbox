@@ -3082,44 +3082,22 @@ Secrets SHALL NOT live in project configuration committed to Git.
 
 ---
 
-## 54. Implementation Language of the Server (undecided)
+## 54. Implementation Language of the Server: Python
 
 This section concerns the language the MCP server *itself* is written in. It has
 no bearing on which languages the server supports for project development — that
 is unconstrained by design (§5.8, §36–§38), and a Rust, Python, or TypeScript
 project is served identically whatever the daemon is written in.
 
-The decision is deliberately left open until implementation begins. The server
-can be implemented in any language with robust MCP and Docker support.
+**Decided: Python** (D1, resolved 2026-08-26), using the official `mcp` SDK,
+the `docker` SDK for Docker Engine control (§55), and `pydantic` for configuration
+and tool schema validation. Rationale: rapid MCP implementation, a mature Docker
+client, and schema validation that composes directly with §33's exported
+`tools/list` contract.
 
-Practical choices include:
-
-### Python
-
-Advantages:
-
-- rapid MCP implementation;
-- strong subprocess and Docker ecosystem;
-- easy schema validation.
-
-### Rust
-
-Advantages:
-
-- strong type safety;
-- efficient daemon;
-- robust process control;
-- single-binary deployment.
-
-### TypeScript/Node.js
-
-Advantages:
-
-- strong MCP ecosystem;
-- mature Docker libraries;
-- rapid development.
-
-Language choice is not architecturally significant.
+Dependency management via `uv`; packaging via `pyproject.toml`. Deployment is a
+virtual environment or a `uv`-built executable, not a single static binary —
+accepted, since §54 records language choice as not architecturally significant.
 
 ---
 

@@ -15,9 +15,9 @@ A task is done when its subtasks are checked, its acceptance tests pass, and
 
 These block the tasks that cite them. Decide before starting the task, not during.
 
-- [ ] **D1 — Implementation language.** §54 is deliberately open. Blocks S1.
-      Affects nothing architectural; affects every file. Note the repo's
-      `.gitignore` is currently Rust-shaped.
+- [x] **D1 — Implementation language.** **Decided: Python** (§54), using the
+      official `mcp` SDK, `docker` SDK, `pydantic`, `uv` for dependency
+      management. Blocked S1; unblocked 2026-08-26.
 - [ ] **D2 — Read-only GitHub API token.** §19.5. Optional but load-bearing:
       without it `remote_protection` is `unverified` and `require_remote_protection`
       degrades to `warn` (§18.5). Blocks S26 from being fully testable.
@@ -31,9 +31,9 @@ These block the tasks that cite them. Decide before starting the task, not durin
 ## Phase 0 — Scaffolding
 
 ### S1 — Project skeleton and CI
-**Spec:** §54, §71, §72 · **Blocked by:** D1
+**Spec:** §54, §71, §72
 
-- [ ] Resolve D1; scaffold the project in the chosen language
+- [ ] Scaffold the project in Python (`pyproject.toml`, `uv`)
 - [ ] MCP server entrypoint that starts a transport and serves an empty tool list
 - [ ] `serve --config <path>` CLI shape per §73
 - [ ] CI: format, lint, static analysis, unit tests
