@@ -521,6 +521,15 @@ Persistent workspaces are reused across sessions.
 
 Installed packages and toolchains remain available until the workspace is rebuilt or deleted.
 
+**Idle stop.** A persistent container SHALL be *stopped* — not deleted — after it
+has been idle for `workspace.idle_stop_after`, defaulting to 4 hours. Idle means
+no MCP request touched the workspace and no job is running or queued in it. The
+container filesystem is kept, so installed tooling survives; the next
+`workspace_open` starts it again, which takes seconds rather than a rebuild.
+A running job SHALL always hold the container up. `idle_stop_after: never`
+disables the behaviour. The stop SHALL be audited and SHALL release the
+workspace's `ssh-agent` per §19.2.
+
 #### Ephemeral
 
 Ephemeral workspaces are created for a bounded task and deleted afterward.
@@ -2158,6 +2167,9 @@ Potential tools:
 
 Cleanup SHALL NOT delete repository files.
 
+Memory, as distinct from disk, is reclaimed by the idle-stop policy in §8.1: a
+stopped container holds no RAM, and its filesystem remains until pruned here.
+
 ---
 
 ## 28. Network Policy
@@ -2930,6 +2942,9 @@ docker:
   default_image: mcp-dev-ubuntu:24.04
   workspace_path: /workspace
 
+workspace:
+  idle_stop_after: 4h              # §8.1 — stop (not delete) idle persistent containers; "never" to disable
+
 container:
   user: host                       # §5.3 — checkout owner's uid/gid
   sudo: true
@@ -2993,9 +3008,15 @@ Secrets SHALL NOT live in project configuration committed to Git.
 
 ---
 
-## 54. Suggested Implementation Language
+## 54. Implementation Language of the Server (undecided)
 
-The server can be implemented in any language with robust MCP and Docker support.
+This section concerns the language the MCP server *itself* is written in. It has
+no bearing on which languages the server supports for project development — that
+is unconstrained by design (§5.8, §36–§38), and a Rust, Python, or TypeScript
+project is served identically whatever the daemon is written in.
+
+The decision is deliberately left open until implementation begins. The server
+can be implemented in any language with robust MCP and Docker support.
 
 Practical choices include:
 
