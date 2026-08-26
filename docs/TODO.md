@@ -93,21 +93,29 @@ command in its container, with AT-033 and AT-015 passing.
 - [x] Fail closed for unauthorized repositories (`RepositoryNotAllowedError`)
 - [x] AT-022: a symlink under an allowed root pointing elsewhere is not authorized
 
-### S6 — Docker lifecycle
-**Spec:** §8.1, §8.2, §50, §51, §55, §69 · **Satisfies:** FR-003, FR-004, FR-005
+### S6 — Docker lifecycle ✅
+**Spec:** §8.1, §8.2, §50, §51, §55, §69 · **Satisfies:** FR-003, FR-004, FR-005 · **Commit:** 3c25003
 
-- [ ] Docker control via SDK or API (CLI acceptable for MVP, §55)
-- [ ] Lifecycle states and explicit transitions per §8.2
-- [ ] Deterministic, collision-safe container and volume names (§51)
-- [ ] Labels per §50; the daemon manages only its own containers
-- [ ] Reconcile unexpected Docker state on the next workspace operation
-- [ ] Internal `restart` / `rebuild` / `reset` / `delete` semantics (§8.4) —
+- [x] Docker control via SDK or API (CLI acceptable for MVP, §55) — `docker` SDK
+- [x] Lifecycle states and explicit transitions per §8.2
+- [x] Deterministic, collision-safe container and volume names (§51)
+- [x] Labels per §50; the daemon manages only its own containers
+- [x] Reconcile unexpected Docker state on the next workspace operation (§69: missing
+      container → `absent`; unrecorded labeled container → adopted; more than one → fail
+      closed, `ContainerRuntimeFailedError(recoverable=False)`)
+- [x] Internal `restart` / `rebuild` / `reset` / `delete` semantics (§8.4) —
       operator-facing, **not** MCP tools (§34.3)
-- [ ] Persistent mode (FR-004): container and installed tooling reused across
+- [x] Persistent mode (FR-004): container and installed tooling reused across
       sessions until rebuilt or deleted
-- [ ] Ephemeral mode (FR-005): `workspace_open(mode: "ephemeral")` creates a
-      workspace deleted when its task ends — for clean-room validation and
-      reproducing CI (§8.1); stricter resource limits permitted (§26)
+- [x] Ephemeral mode (FR-005): `mode="ephemeral"` creates a workspace with a
+      unique id every call — for clean-room validation and reproducing CI
+      (§8.1); resource-limit tightening deferred to §26/S26+
+
+Also fixed: `workspace.repository_id` is a foreign key into `repository`
+(§67), but nothing else in the system persists a `repository` row —
+`RepositoryRegistry` (S5) is in-memory only. The manager now upserts the
+repository row when creating a workspace, since it is the first thing that
+needs it to exist.
 
 ### S7 — Container identity and default image
 **Spec:** §5.3, §9.1, §41 · **Satisfies:** FR-036 · **Verified by:** AT-014, AT-015, AT-016

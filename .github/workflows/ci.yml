@@ -19,6 +19,12 @@ jobs:
       - name: Install dependencies
         run: uv sync --group dev
 
+      # ubuntu-latest ships Docker pre-installed and running (§71's
+      # "Docker-backed integration tests"); pulling here keeps the cost
+      # visible instead of hiding inside the first test that needs it.
+      - name: Pull test image
+        run: docker pull alpine:3.20
+
       - name: ruff format
         run: uv run ruff format --check .
 
