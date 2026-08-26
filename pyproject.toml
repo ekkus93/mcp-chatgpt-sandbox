@@ -1,0 +1,54 @@
+[project]
+name = "dev-workspace-mcp"
+version = "0.1.0"
+description = "Private MCP server providing Docker-backed development workspaces to ChatGPT and other MCP clients"
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "Phillip Chin", email = "ekkus93@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=1.9.0",
+    "docker>=7.1.0",
+    "pydantic>=2.9.0",
+    "pyyaml>=6.0.2",
+    "click>=8.1.7",
+]
+
+[project.scripts]
+dev-workspace-mcp = "dev_workspace_mcp.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.0,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
+    "types-pyyaml>=6.0.12",
+    "pytest-asyncio>=1.4.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+exclude = ["^tests/"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["src/dev_workspace_mcp"]

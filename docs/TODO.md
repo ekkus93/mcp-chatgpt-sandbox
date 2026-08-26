@@ -30,14 +30,14 @@ These block the tasks that cite them. Decide before starting the task, not durin
 
 ## Phase 0 — Scaffolding
 
-### S1 — Project skeleton and CI
-**Spec:** §54, §71, §72
+### S1 — Project skeleton and CI ✅
+**Spec:** §54, §71, §72 · **Commit:** a33b6dd
 
-- [ ] Scaffold the project in Python (`pyproject.toml`, `uv`)
-- [ ] MCP server entrypoint that starts a transport and serves an empty tool list
-- [ ] `serve --config <path>` CLI shape per §73
-- [ ] CI: format, lint, static analysis, unit tests
-- [ ] `docs/` placeholders per §72 (`SECURITY.md`, `CONFIGURATION.md`, `TOOLS.md`,
+- [x] Scaffold the project in Python (`pyproject.toml`, `uv`)
+- [x] MCP server entrypoint that starts a transport and serves an empty tool list
+- [x] `serve --config <path>` CLI shape per §73
+- [x] CI: format, lint, static analysis, unit tests
+- [x] `docs/` placeholders per §72 (`SECURITY.md`, `CONFIGURATION.md`, `TOOLS.md`,
       `DEVELOPMENT.md`, `THREAT_MODEL.md`)
 
 ### S2 — Configuration load and validation
