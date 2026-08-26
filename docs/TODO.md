@@ -40,18 +40,19 @@ These block the tasks that cite them. Decide before starting the task, not durin
 - [x] `docs/` placeholders per §72 (`SECURITY.md`, `CONFIGURATION.md`, `TOOLS.md`,
       `DEVELOPMENT.md`, `THREAT_MODEL.md`)
 
-### S2 — Configuration load and validation
-**Spec:** §52, §53, §73 · **Satisfies:** FR-002 (partly)
+### S2 — Configuration load and validation ✅
+**Spec:** §52, §53, §73 · **Satisfies:** FR-002 (partly) · **Commit:** 4025604
 
-- [ ] Config model covering every §52 block: `repository_roots`, `repositories`,
+- [x] Config model covering every §52 block: `repository_roots`, `repositories`,
       `docker`, `workspace`, `container`, `ssh`, `github`, `execution`,
       `git_policy`, `security`, `audit`
-- [ ] Validate at startup; refuse to serve on invalid config
-- [ ] Reject a `repositories[].ssh_key` that resolves under the host user's `.ssh`
+- [x] Validate at startup; refuse to serve on invalid config
+- [x] Reject a `repositories[].ssh_key` that resolves under the host user's `.ssh`
       (§19.1) — this is an invariant, not a policy
-- [ ] Secrets loaded from files outside repository roots only (§53)
-- [ ] Startup sequence per §73, in order, with a degraded health state when Docker
+- [x] Secrets loaded from files outside repository roots only (§53)
+- [x] Startup sequence per §73, in order, with a degraded health state when Docker
       is unavailable
+      (steps 1-2 and 7 implemented; steps 3-6 land with S3/S6/S23)
 
 ### S3 — State database
 **Spec:** §67, §68, §69
