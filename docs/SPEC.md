@@ -35,7 +35,7 @@ The system SHALL:
 9. Support long-running commands through asynchronous jobs that can be polled, inspected, and canceled.
 10. Support structured Git operations including status, diff, history, staging, commits, branches, fetch, pull, push, tags, and remote inspection.
 11. Permit authorized synchronization with GitHub.
-12. Protect GitHub credentials from arbitrary project code where practical.
+12. Keep the host user's own credentials out of project containers, and give each container only a dedicated key scoped to its repository — provisioned so that key material cannot be extracted by project code.
 13. Restrict host filesystem exposure to configured repository roots and explicitly configured cache paths.
 14. Prevent project containers from gaining Docker-host control by default.
 15. Expose enough diagnostic state for the client to understand the current repository, branch, container, jobs, Git state, and environment.
@@ -229,7 +229,8 @@ The daemon SHALL mount only:
 - the selected repository;
 - explicitly configured dependency caches;
 - explicitly configured project resources;
-- explicitly approved devices or sockets, if supported later.
+- the workspace's `ssh-agent` socket, under `ssh.mode: agent` (§19.2);
+- explicitly approved devices or other sockets, if supported later.
 
 The server SHALL NOT automatically mount the user's home directory.
 
@@ -1180,8 +1181,8 @@ than papered over:
 
 Structured Git tools therefore cannot enforce anything that `exec` can bypass, and
 §14 guarantees that `exec` can run any command. Policy applied at the structured
-tools (§18.9) is a guardrail that keeps a well-behaved client on the rails; it is
-not a boundary, and this specification SHALL NOT describe it as one.
+tools (§18.9) is a guardrail that keeps a well-behaved client on the rails. It is
+not a boundary.
 
 Real enforcement lives in two places that `exec` cannot route around:
 
@@ -1345,10 +1346,10 @@ The following are reachable from `exec` by design:
 - outbound network use, including transmission of repository contents to an
   attacker-controlled destination.
 
-Structured-tool policy (§18.9) SHALL be applied to structured tools and SHALL NOT be
-claimed to apply to `exec`. Acceptance tests SHALL test the structured path and the
-remote-enforced path separately, and SHALL NOT assert that `exec` is prevented from
-anything in this list.
+Structured-tool policy (§18.9) applies to the structured tools and not to `exec`.
+The acceptance tests in §61 exercise the structured path and the remote-enforced
+path separately, and none of them asserts that `exec` is prevented from anything in
+this list.
 
 ### 18.7 Hooks
 
@@ -1392,6 +1393,7 @@ This configuration applies to the structured Git tools only (§18.6).
 git_policy:
   # remote write — structured tools
   push:                       allow
+  default_branch_commit:      allow                # allow | deny
   default_branch_push:        allow_fast_forward   # allow | allow_fast_forward | require_approval | deny
   force_push:                 deny
   force_with_lease:           deny
@@ -2561,7 +2563,10 @@ The daemon SHALL treat Docker control as a high-privilege capability.
 Even though root is reachable inside project containers through `sudo` (§5.3), the daemon SHOULD consider:
 
 - dropping unnecessary Linux capabilities;
-- `no-new-privileges` where compatible;
+- `no-new-privileges` — **only when `container.sudo` is `false`**. The flag blocks
+  setuid escalation, which is how `sudo` works; with it set, `sudo apt-get` fails.
+  Under the default `sudo: true` the daemon SHALL NOT set it, and SHALL rely on
+  capability dropping and the other controls below instead;
 - seccomp;
 - AppArmor/SELinux;
 - PID limits;
@@ -2620,19 +2625,21 @@ SHALL NOT be granted by policy, approval, or configuration.
 
 The default branch deserves explicit handling.
 
-Possible configuration:
+The relevant keys are the ones in §18.9, not a separate block:
 
 ```yaml
 git_policy:
-  default_branch:
-    direct_commit: allow
-    direct_push: allow_fast_forward
-    force_push: deny
+  default_branch_commit: allow               # allow | deny
+  default_branch_push:   allow_fast_forward  # allow | allow_fast_forward | require_approval | deny
+  force_push:            deny
 ```
 
 Some users prefer branch/PR workflows; others intentionally allow direct development on `master`.
 
 The server SHALL make this configurable rather than imposing one workflow universally.
+These keys govern the structured tools. A developer who wants the default branch
+protected against every path, including `exec`, expresses that as a GitHub ruleset
+and sets `require_remote_protection: deny` (§18.5).
 
 ---
 
@@ -2645,9 +2652,15 @@ On startup, the daemon SHOULD:
 1. load workspace records;
 2. inspect Docker containers carrying the server's labels;
 3. reconcile missing/extra containers;
-4. inspect running jobs if possible;
-5. mark unrecoverable jobs as `lost`;
-6. preserve repository state.
+4. for each running workspace under `ssh.mode: agent`, start a fresh
+   `ssh-agent`, load its key, and re-bind the socket at the path the container
+   already has as `SSH_AUTH_SOCK` — the previous agent died with the daemon, and
+   until this step the container's key is silently unusable;
+5. terminate any orphaned agent processes carrying the daemon's labels whose
+   workspace is not running;
+6. inspect running jobs if possible;
+7. mark unrecoverable jobs as `lost`;
+8. preserve repository state.
 
 ### 44.2 Container Crash
 
@@ -2831,10 +2844,28 @@ repositories:
   - id: chatgpt-ralph-loop-tools
     path: /home/phil/work/chatgpt_ralph_loop_tools
     github: ekkus93/chatgpt_ralph_loop_tools
+    ssh_key: chatgpt-ralph-loop-tools.ed25519   # relative to ssh.keys_dir
 
 docker:
   default_image: mcp-dev-ubuntu:24.04
   workspace_path: /workspace
+
+container:
+  user: host                       # §5.3 — checkout owner's uid/gid
+  sudo: true
+  git_dir_mode: read-write         # §18.2
+
+ssh:                               # §19
+  mode: agent                      # agent | file
+  scope: repository                # one deploy key per repository
+  keys_dir: /etc/dev-workspace-mcp/keys
+  known_hosts: /etc/dev-workspace-mcp/github_known_hosts
+
+github:
+  api_auth: token                  # none | token | app — read-only, §19.5
+  api_token_path: /etc/dev-workspace-mcp/github-readonly.token
+  repositories:
+    - ekkus93/chatgpt_ralph_loop_tools
 
 execution:
   sync_timeout_seconds: 30
@@ -2842,11 +2873,15 @@ execution:
   max_output_bytes: 10485760
   response_tail_lines: 200
 
-git_policy:
+git_policy:                        # structured tools only, §18.9
   force_push: deny
   hard_reset: require_approval
   delete_remote_branch: require_approval
+  default_branch_push: allow_fast_forward
+  pull_strategy: ff_only
   validate_remote: true
+  require_remote_protection: warn  # §18.5 — binds every path, including exec
+  remote_protection_checks: [force_push, deletion]
 
 security:
   allow_docker_socket: false
@@ -3863,8 +3898,9 @@ The server:
 2. verifies Docker connectivity;
 3. opens state database;
 4. reconciles managed containers;
-5. validates repository roots;
-6. starts MCP transport.
+5. reconciles per-workspace `ssh-agent` processes (§44.1);
+6. validates repository roots;
+7. starts MCP transport.
 
 A health check SHOULD report degraded state if Docker is unavailable.
 
