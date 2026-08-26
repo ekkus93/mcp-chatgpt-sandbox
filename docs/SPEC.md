@@ -31,13 +31,13 @@ The system is intended to:
 1. Allow an MCP client to select an authorized local repository.
 2. Create or reuse a Docker development container associated with that repository.
 3. Mount the local repository read/write into the development container.
-4. Allow the client to read, create, modify, patch, rename, and delete files within the repository.
+4. Allow the client to read, create, modify, patch, and delete files within the repository.
 5. Allow the client to run arbitrary shell commands inside the development container.
 6. Allow software, packages, compilers, libraries, linters, SDKs, and other development tools to be installed inside the container.
 7. Support persistent development containers so installed tooling survives across MCP sessions.
 8. Support clean ephemeral containers for reproducibility and CI-like validation.
 9. Support long-running commands through asynchronous jobs that can be polled, inspected, and canceled.
-10. Support structured Git operations including status, diff, history, staging, commits, branches, fetch, pull, push, tags, and remote inspection.
+10. Support structured Git operations for status, diff, history, commits, pull, and push, with every other Git operation available through the shell.
 11. Permit authorized synchronization with GitHub.
 12. Keep the host user's own credentials out of project containers, and give each container only a dedicated key scoped to its repository — provisioned so that key material cannot be extracted by project code.
 13. Restrict host filesystem exposure to configured repository roots and explicitly configured cache paths.
@@ -328,6 +328,20 @@ Responsibilities:
 
 ### 6.3 Filesystem Service
 
+The filesystem service SHALL execute **host-side**, in the daemon process, against
+the host checkout — not inside the container. The daemon already runs as the
+checkout owner (§5.3, §40), so it can read and write every file the container can,
+with the same ownership result.
+
+This is deliberate and has three consequences worth stating:
+
+- file operations do not require a running container, so a client can read and
+  search a repository whose workspace is stopped (§8.1) without paying a container
+  start;
+- they do not pay container-exec overhead per call;
+- path validation (§12) and Git-metadata exclusion (§12.1) are enforced in one
+  place, in the daemon, rather than depending on anything inside the container.
+
 Responsibilities:
 
 - validate workspace-relative paths;
@@ -336,10 +350,9 @@ Responsibilities:
 - write files;
 - patch files;
 - create directories;
-- rename files;
 - delete files;
-- provide metadata;
-- enforce repository boundary restrictions.
+- return size, modification time, and content hash with listings and reads;
+- enforce repository boundary and Git-metadata restrictions.
 
 ### 6.4 Execution Service
 
@@ -357,19 +370,19 @@ Responsibilities:
 
 ### 6.5 Git Service
 
-Responsibilities:
+Responsibilities, bounded by the six structured tools in §17.1:
 
-- status;
-- diff;
-- branch state;
-- staging;
-- commit creation;
-- fetch/pull/push;
-- log/history;
-- tags;
-- remote validation;
-- conflict detection;
-- destructive-operation policy.
+- structured status, including conflict and interrupted-operation detection;
+- bounded diff;
+- bounded log;
+- commit creation with explicit paths and state guards;
+- pull with strategy policy;
+- push with refspec construction and policy;
+- remote identity validation;
+- destructive-operation policy for the parameters those tools accept (§18.9).
+
+Branch, checkout, restore, tag, merge, rebase, reset, and clean are not this
+service's concern; they are `exec` (§34.2).
 
 ### 6.6 SSH Key Provisioning / Remote Validation
 
@@ -574,12 +587,17 @@ Unexpected Docker state SHALL be reconciled on the next workspace operation.
 
 ### 8.4 Workspace Reset/Rebuild
 
-The system SHOULD provide separate semantics:
+These are distinct semantics, and the daemon SHALL implement them internally:
 
-- `workspace_restart`: restart the existing container;
-- `workspace_rebuild`: rebuild the container while preserving the repository;
-- `workspace_reset`: discard environment state and recreate from configuration;
-- `workspace_delete`: remove workspace/container metadata.
+- `restart`: restart the existing container;
+- `rebuild`: rebuild the container while preserving the repository;
+- `reset`: discard environment state and recreate from configuration;
+- `delete`: remove workspace/container metadata.
+
+None is exposed as an MCP tool in the MVP (§34.3). They are reached as operator
+actions — a CLI subcommand on the host — and by the daemon itself, which uses
+`restart` on reconciliation (§44) and `stop` on idle (§8.1). Tools MAY be added
+later when a client workflow needs them.
 
 A reset SHALL NOT delete the host repository.
 
@@ -658,8 +676,8 @@ image: ubuntu:24.04
 workspace: /workspace
 
 setup:
-  - apt-get update
-  - apt-get install -y build-essential curl git pkg-config
+  - sudo apt-get update
+  - sudo apt-get install -y build-essential curl git pkg-config
   - curl https://sh.rustup.rs -sSf | sh -s -- -y
 
 environment:
@@ -682,6 +700,9 @@ validation:
   test:
     - cargo test --all-features
 ```
+
+`setup` steps run as the container user (§5.3), so OS package installation needs
+`sudo`; the default image provides it passwordless (§9.1).
 
 The configuration format SHALL be versioned.
 
@@ -748,8 +769,8 @@ Repository Git metadata lies inside the repository root, so the boundary check a
 does not protect it. It SHALL be protected separately, because a client-controlled
 write into `.git` is the host code-execution path described in §18.3 — the same
 vector the read-only mount closes for the container, reached through a different
-door. A prompt-injected client is in the threat model (§39), so the filesystem tools
-SHALL enforce this regardless of whether they execute host-side or in-container.
+door. A prompt-injected client is in the threat model (§39), and the filesystem
+tools execute host-side in the daemon (§6.3), so this is enforced in one place.
 
 Filesystem tools SHALL reject, with `PATH_GIT_METADATA`, any request whose
 canonicalized path:
@@ -794,7 +815,8 @@ Large files SHOULD be accessed through chunked reads or artifact mechanisms.
 
 ## 13. Filesystem MCP Tools
 
-The exact names are implementation-defined, but the following capability set is required.
+Tool names are fixed by §34.1 and their schemas by §33.1. This section defines
+what each one does. All of them execute host-side in the daemon (§6.3).
 
 ### 13.1 `list_files`
 
@@ -949,7 +971,11 @@ Example use cases:
 
 The synchronous execution path SHOULD have a strict maximum duration.
 
-If the command exceeds the synchronous threshold, the server MAY convert it to a background job and return a job ID.
+If the command exceeds the synchronous threshold, the server MAY convert it to a
+background job. `exec` therefore has two response shapes — a completed result, or a
+job handle identical to `exec_start`'s — and its `outputSchema` SHALL express the
+union explicitly, with a `promoted_to_job: true` discriminator on the second, so
+that a client can tell them apart without guessing.
 
 ---
 
@@ -987,9 +1013,10 @@ A job SHOULD record:
   "started_at": "...",
   "finished_at": null,
   "exit_code": null,
-  "stdout_bytes": 28123,
-  "stderr_bytes": 441,
-  "output_truncated": false
+  "stdout_total_bytes": 28123,
+  "stderr_total_bytes": 441,
+  "output_truncated": false,
+  "logs_pruned": false
 }
 ```
 
@@ -1094,8 +1121,8 @@ The system SHALL intentionally allow the client to install development dependenc
 Examples:
 
 ```bash
-apt-get update
-apt-get install -y clang lld protobuf-compiler cmake
+sudo apt-get update
+sudo apt-get install -y clang lld protobuf-compiler cmake
 rustup toolchain install stable
 rustup component add rustfmt clippy
 cargo install cargo-nextest
@@ -1103,6 +1130,10 @@ uv sync
 npm ci
 go install ...
 ```
+
+OS package installation needs `sudo`; the container's default process identity is
+the checkout owner, not root (§5.3). Language toolchains install into the container
+user's home directory and need nothing.
 
 Installation is performed through normal command execution unless a future structured package-install tool is added.
 
@@ -1280,7 +1311,7 @@ container:
 | Mode | `.git` | Use |
 |---|---|---|
 | `read-write` | bind-mounted `rw` | Default. Full Git workflow inside the container. |
-| `read-only` | bind-mounted `ro` over the parent mount | Hardened fetch-only workspace. Commit and push from `exec` fail; structured tools (§20.1) also run in-container and so also fail — this mode is for validation and CI-like runs, not development. |
+| `read-only` | bind-mounted `ro` over the parent mount | Hardened fetch-only workspace. Commit and push fail from `exec` and from `git_commit`/`git_push`, which run in-container; the read-only tools `git_status`, `git_diff`, and `git_log` still work, because they run host-side (§20.1). For validation and CI-like runs, not development. |
 | `none` | masked with an empty read-only tmpfs | Git is not visible inside the container. Because `.git` is a subpath of the working-tree mount, it cannot be "not mounted"; it SHALL be masked. |
 
 The container user (§5.3) SHALL own `.git` on the host, so no ownership mismatch
@@ -1458,46 +1489,58 @@ cannot be fetched — a structural consequence of key scope, not a policy. Publi
 submodules fetch normally over HTTPS.
 
 The fetch step of structured `git_pull` SHALL pass `--no-recurse-submodules`, and
-structured `git_push` SHALL pass `--recurse-submodules=no`. Structured submodule initialization and
-update SHALL validate each submodule URL under §20.2 and SHALL be governed by
-`git_policy.submodules`.
+structured `git_push` SHALL pass `--recurse-submodules=no`.
+
+There is no structured submodule tool. Submodule initialization and update are
+`exec("git submodule …")` and are Tier 3 (§18.6), bounded by key scope rather than
+by policy: under the default `ssh.scope: repository` a submodule pointing at
+another private repository simply fails to authenticate.
 
 ### 18.9 Structured-Tool Policy Configuration
 
 This configuration applies to the structured Git tools only (§18.6).
 
+Every key below governs a parameter that a structured tool actually accepts. A
+policy key with no tool to enforce it is not a policy; it is a comment that reads
+like one, and this specification does not carry any.
+
 ```yaml
 git_policy:
-  # remote write — structured tools
+  # git_push — remote write
   push:                       allow
-  default_branch_commit:      allow                # allow | deny
   default_branch_push:        allow_fast_forward   # allow | allow_fast_forward | require_approval | deny
-  force_push:                 deny
-  force_with_lease:           deny
-  delete_remote_branch:       require_approval
-  delete_remote_tag:          deny
-  change_remote_url:          deny
+  force_push:                 deny                 # git_push force: true
+  force_with_lease:           deny                 # git_push force_with_lease: true
+  delete_remote_branch:       require_approval     # git_push delete: true, refs/heads/
+  delete_remote_tag:          deny                 # git_push delete: true, refs/tags/
 
-  # local destructive — structured tools
-  hard_reset:                 require_approval
-  clean_untracked:            require_approval
-  rebase:                     require_approval
-  amend_published:            deny
+  # git_commit
+  default_branch_commit:      allow                # allow | deny
+  amend_published:            deny                 # git_commit amend: true on a pushed commit
 
-  # sync strategy
+  # git_pull
   pull_strategy:              ff_only              # ff_only | merge | rebase
-  submodules:                 deny                 # deny | require_approval | allow
 
   # remote-side enforcement (§18.5) — applies to every path, including exec
   require_remote_protection:  warn                 # off | warn | deny
   remote_protection_checks:   [force_push, deletion]
 
-  # validation
+  # validation, applied to every structured remote operation
   validate_remote:            true
   allowed_url_schemes:        [ssh, https]
 ```
 
 `require_approval` MAY be implemented as a hard denial in the first release (§42).
+
+**Operations with no structured tool and therefore no policy key.** Hard reset,
+`clean -fdx`, rebase, remote-URL change, and submodule initialization are performed
+through `exec` (§34.2). They are Tier 3 (§18.6). Earlier drafts of this
+specification carried `hard_reset`, `clean_untracked`, `rebase`,
+`change_remote_url`, and `submodules` keys after the tools that would have enforced
+them had been folded into `exec`; the keys are removed rather than left to imply a
+control that does not exist. A developer who needs these constrained has the same
+answer as for force push from `exec`: a ruleset on the remote (§18.5), which binds
+every path.
 
 The default-branch question SHALL remain configurable rather than imposed, per §43.
 Where a developer wants the default branch genuinely protected against every
@@ -1578,8 +1621,8 @@ Properties:
 - private key material never enters the container filesystem, environment, or
   process arguments — the container can request signatures, not read the key;
 - the key is usable only while the workspace is running; the daemon SHALL remove
-  it from the agent on `workspace_stop` and terminate the agent on
-  `workspace_delete`;
+  it from the agent whenever the workspace stops — including the idle stop in
+  §8.1 — and SHALL terminate the agent when the workspace is deleted;
 - every signature request is observable by the daemon, which yields an audit
   record per authenticated SSH connection, including those initiated from `exec`
   (§20.7);
@@ -1745,25 +1788,37 @@ at a repository the key is not installed on fails at GitHub.
 The daemon SHALL reject any client-supplied `--upload-pack`, `--receive-pack`, or
 `--exec` value on structured operations.
 
-### 20.3 Refspec Validation
+### 20.3 Refspec Construction
 
-Client-supplied refspecs on structured operations SHALL be validated rather than
-passed through.
+Structured push does not accept a refspec. The daemon constructs one from the
+validated `branch`, `ref_type`, `force`, `force_with_lease`, and `delete`
+parameters, so there is no string for a client to smuggle anything through and no
+reliance on `push.default`:
 
-The daemon SHALL reject:
+| Parameters | Refspec | Policy key |
+|---|---|---|
+| default | `refs/heads/<b>:refs/heads/<b>` | `push` |
+| `force: true` | `+refs/heads/<b>:refs/heads/<b>` | `force_push` |
+| `force_with_lease: true` | as default, with `--force-with-lease=<ref>:<sha>` | `force_with_lease` |
+| `delete: true`, `ref_type: branch` | `:refs/heads/<b>` | `delete_remote_branch` |
+| `delete: true`, `ref_type: tag` | `:refs/tags/<b>` | `delete_remote_tag` |
 
-- a leading `+` (forced update) unless force policy permits it;
-- an empty source (branch or tag deletion) unless deletion policy permits it;
-- `--mirror`, `--all`, and `--tags` in combination with force;
-- any refspec whose destination is outside `refs/heads/` or `refs/tags/`.
+The daemon SHALL:
 
-Structured push SHALL use an explicit refspec rather than relying on
-`push.default`:
+- refuse the operation when the governing key denies it, before invoking Git;
+- reject a `branch` value that is not a valid ref name, or that would place the
+  destination outside `refs/heads/` or `refs/tags/`;
+- refuse `force` and `force_with_lease` together;
+- never pass `--mirror`, `--all`, or `--tags`;
+- require `expected_local_head_sha` when `force` is permitted and used, so that a
+  force push still carries a state guard.
+
+The resulting invocation:
 
 ```text
 git -c protocol.ext.allow=never \
     push --atomic --recurse-submodules=no \
-    origin refs/heads/<branch>:refs/heads/<branch>
+    origin <constructed-refspec>
 ```
 
 ### 20.4 Remote Protection Verification
@@ -1815,9 +1870,19 @@ Request:
   "branch": "master",
   "expected_remote_repository": "ekkus93/chatgpt_ralph_loop_tools",
   "expected_local_head_sha": "def456...",
+  "force": false,
+  "force_with_lease": false,
+  "delete": false,
+  "ref_type": "branch",
   "no_verify": false
 }
 ```
+
+`force`, `force_with_lease`, and `delete` are the parameters that §18.9's
+corresponding keys govern; each defaults to `false` and is refused under the
+default policy. `ref_type` is `branch` or `tag` and selects the namespace for
+`delete`. The client never supplies a raw refspec — the daemon constructs it
+(§20.3).
 
 Response:
 
@@ -1839,7 +1904,8 @@ Because the working tree is shared with container processes and with human
 developers, structured mutating operations SHALL evaluate preconditions immediately
 before acting, and SHALL fail closed:
 
-- the workspace advisory lock (§22.1), where the deployment requires one;
+- the workspace advisory lock (§22.1), once locks exist — they are deferred from
+  the MVP (§34.3), and until then this precondition is a no-op;
 - `expected_branch` and `expected_head_sha` guards (§45);
 - interrupted-operation detection — merge, rebase, cherry-pick, bisect in progress
   (§44.4) — which SHALL abort the operation rather than attempt repair;
@@ -2085,13 +2151,17 @@ Example `server_info` response:
 ```json
 {
   "version": "0.1.0",
+  "contract_version": "1.0.0",
   "docker_available": true,
   "docker_version": "...",
   "active_workspaces": 3,
   "running_jobs": 1,
-  "configured_repositories": 12
+  "configured_repositories": 12,
+  "capabilities": { "exec.jobs": true }
 }
 ```
+
+`contract_version` and `capabilities` are required by §33.2 and §33.3.
 
 `workspace_info` SHOULD include:
 
@@ -2103,7 +2173,7 @@ Example `server_info` response:
 - Git branch and SHA;
 - dirty state;
 - active jobs;
-- active advisory lock;
+- active advisory lock, once locks exist (§34.3);
 - important tool versions if inexpensive to discover.
 
 `workspace_info` SHALL additionally report the security-relevant modes in force, so
@@ -2483,8 +2553,8 @@ cargo --version
 If unavailable:
 
 ```bash
-apt-get update
-apt-get install -y curl build-essential pkg-config
+sudo apt-get update
+sudo apt-get install -y curl build-essential pkg-config
 curl https://sh.rustup.rs -sSf | sh -s -- -y
 ```
 
@@ -2561,7 +2631,8 @@ The implementation SHALL consider:
 2. Docker socket abuse;
 3. GitHub credential theft;
 4. symlink path escape;
-5. dangerous Git history rewriting;
+5. Git history rewriting — governed by policy on `git_commit`/`git_push` and by
+   remote rulesets for the `exec` path (§18.5), not prevented outright;
 6. unauthorized repository access;
 7. remote substitution attacks;
 8. secret leakage through logs;
@@ -2588,8 +2659,9 @@ The implementation SHALL consider:
     no client-side control can prevent once the container holds a write key, and
     which SHALL therefore be enforced at the remote (§18.5);
 21. SSH host-key substitution — prevented by pinning (§19.3);
-22. refspec abuse on structured operations — forced updates, ref deletion, and
-    destinations outside `refs/heads/` and `refs/tags/` (§20.3);
+22. forced updates and ref deletion through structured push — governed by policy
+    and by daemon-constructed refspecs (§20.3), and by remote rulesets for the
+    `exec` path (§18.5);
 23. submodule URL substitution through the tracked `.gitmodules` file (§18.8).
 
 ### 39.2 Accepted Risks
@@ -2628,10 +2700,9 @@ These are accepted in exchange for a practical development environment.
 
 ## 40. Host Security Requirements
 
-The daemon touches the human's checkout directly: it performs host-side Git reads
-(§20.1), and — depending on where the filesystem service executes — writes
-working-tree files on the client's behalf. It therefore SHALL run as the uid that
-owns the repository roots. In the single-user
+The daemon touches the human's checkout directly: the filesystem service reads and
+writes working-tree files host-side (§6.3), and host-side Git reads run there too
+(§20.1). It therefore SHALL run as the uid that owns the repository roots. In the single-user
 deployment model (§4) that is the developer's own account. A dedicated daemon
 account is acceptable only when it owns the repository roots — which is a
 different deployment, not a hardening of this one.
@@ -2694,9 +2765,10 @@ Should require explicit policy authorization or user approval.
 
 Examples:
 
-- force push;
-- hard reset;
-- remote branch deletion;
+- force push, force-with-lease, and remote branch or tag deletion through
+  `git_push` — noting that the same operations remain reachable from `exec` and
+  are bounded there by remote rulesets (§18.5), not by this approval;
+- amending a published commit through `git_commit`;
 - host device mounting;
 - Docker socket mounting;
 - privileged container;
@@ -2973,8 +3045,10 @@ execution:                         # §15.6
 
 git_policy:                        # structured tools only, §18.9
   force_push: deny
-  hard_reset: require_approval
+  force_with_lease: deny
   delete_remote_branch: require_approval
+  delete_remote_tag: deny
+  amend_published: deny
   default_branch_push: allow_fast_forward
   pull_strategy: ff_only
   validate_remote: true
@@ -3226,10 +3300,11 @@ Structured Git operations SHALL reject configured remote URLs whose transport is
 capable of invoking a local command (§20.2). SSH host keys for GitHub SHALL be
 pinned (§19.3).
 
-### FR-034 Refspec Validation
+### FR-034 Refspec Construction
 
-Client-supplied refspecs SHALL be validated against policy rather than passed
-through to Git (§20.4).
+Structured push SHALL construct its own refspec from validated parameters rather
+than accepting one from the client, and SHALL refuse the operation when the
+governing policy key denies it (§20.3).
 
 ### FR-035 Mode Disclosure
 
@@ -3319,7 +3394,8 @@ The first usable release SHOULD prioritize practical development value.
 16. Docker socket isolation;
 17. bounded command output;
 18. audit log;
-19. container rebuild/reset.
+19. internal container restart/rebuild/reset/delete, reachable as operator actions
+    rather than as MCP tools (§8.4, §34.3).
 
 Agent-mode key provisioning is in the MVP rather than `file` mode alone, because
 it is what makes the model's two strongest claims true — the key cannot be
@@ -3344,7 +3420,7 @@ client cannot tell whether those protections exist.
 - secrets management integrations;
 - Docker-in-Docker;
 - arbitrary extra host mounts;
-- submodule support (§18.8, denied by default);
+- structured submodule support (§18.8 — `exec` only, bounded by key scope);
 - `ssh.scope: shared`;
 - per-signature approval through the agent (§19.2, §75);
 - interactive approval for `require_approval` policies, which MAY be implemented as
@@ -3373,8 +3449,8 @@ Implement:
 Acceptance:
 
 - client can modify a real local repository and run a command in its container;
-- AT-030 passes — the filesystem tools refuse `.git`;
-- AT-014a passes — files written from the container are owned by the checkout
+- AT-033 passes — the filesystem tools refuse `.git`;
+- AT-015 passes — files written from the container are owned by the checkout
   owner on the host.
 
 ### Phase 2 — Persistent Execution
@@ -3406,7 +3482,7 @@ Implement:
 Acceptance:
 
 - client can safely implement, validate, and commit a change;
-- AT-023 passes — a `core.hooksPath` hook inside the tracked working tree does not
+- AT-025 passes — a `core.hooksPath` hook inside the tracked working tree does not
   execute during a host-side `git_status`.
 
 ### Phase 4 — GitHub Synchronization
@@ -3426,7 +3502,7 @@ Acceptance:
 
 - client can publish a normal fast-forward commit to an authorized repository from
   both the structured tool and `exec("git push")`;
-- AT-011, AT-013, AT-024, AT-025, AT-025a, AT-026, AT-031, AT-032, and AT-033
+- AT-011, AT-013, AT-026, AT-027, AT-028, AT-029, AT-034, AT-035, and AT-036
   pass.
 
 ### Phase 5 — Environment Configuration
@@ -3500,7 +3576,8 @@ Install a tool such as `cargo-nextest`, restart the MCP session, reopen the same
 
 ### AT-005 Workspace Reset
 
-Reset the workspace and verify repository contents remain intact while container-local installed state is removed.
+Reset the workspace through the operator path (§8.4) and verify repository contents
+remain intact while container-local installed state is removed.
 
 ### AT-006 Async Build
 
@@ -3524,7 +3601,8 @@ A normal push against a diverged remote SHALL fail without automatically forcing
 
 ### AT-011 Force Push Policy
 
-A structured `git_push` with force SHALL be denied under the default policy.
+`git_push` with `force: true` SHALL be denied with `POLICY_DENIED` under the
+default policy, before Git is invoked.
 
 Separately, against a repository whose default branch has a ruleset blocking force
 pushes, `exec("git push --force origin master")` SHALL be rejected by the remote.
@@ -3550,111 +3628,114 @@ including during an in-flight `git push`.
 The project container SHALL be capable of installing normal OS packages through
 `sudo apt-get` while its default process identity is the host checkout owner.
 
-### AT-014a File Ownership
+### AT-015 File Ownership
 
 A file written from inside the container SHALL appear in the host checkout owned by
 the checkout owner's uid/gid. The human SHALL be able to overwrite and delete it
 without elevated privileges, and a subsequent `git add` from inside the container
 and a structured `git_pull` across it SHALL both succeed.
 
-### AT-014b Root Mode Refusal
+### AT-016 Root Mode Refusal
 
 With `container.user: root` and no user-namespace remapping active, workspace
 creation SHALL fail with `CONTAINER_CREATE_FAILED` rather than start a container
 that would write root-owned files.
 
-### AT-015 Crash Preservation
+### AT-017 Crash Preservation
 
 Kill the development container while repository changes exist. Restart the workspace and verify repository changes remain.
 
-### AT-016 Concurrent Modification
+### AT-018 Concurrent Modification
 
 Read a file hash, modify the file externally, then submit a guarded write using the old hash. The server SHALL report a conflict.
 
-### AT-017 Dirty Tree Protection
+### AT-019 Dirty Tree Protection
 
 Attempt an operation configured to require a clean tree while unrelated uncommitted changes exist. The operation SHALL fail.
 
-### AT-018 Git Conflict Reporting
+### AT-020 Git Conflict Reporting
 
 Create a merge conflict and verify `git_status` reports conflict state without attempting automatic destructive repair.
 
-### AT-019 Secret Redaction
+### AT-021 Secret Redaction
 
 Run a command containing a configured secret and verify audit output does not expose the secret value.
 
-### AT-020 Repository Discovery Escape
+### AT-022 Repository Discovery Escape
 
 A symlink beneath an allowed repository root pointing elsewhere SHALL not be treated as an authorized repository.
 
-### AT-021 Git Hook Write (read-only mode)
+### AT-023 Git Hook Write (read-only mode)
 
 Under `git_dir_mode: read-only`, writing `.git/hooks/pre-commit` from inside the
 development container SHALL fail. Under the default `read-write` it SHALL succeed,
 and the test SHALL record that this is documented behaviour (§18.3).
 
-### AT-022 Git Config Write (read-only mode)
+### AT-024 Git Config Write (read-only mode)
 
 Under `git_dir_mode: read-only`, setting `core.fsmonitor` in `.git/config` from
 inside the development container SHALL fail.
 
-### AT-023 Hooks Path on Host-Side Reads
+### AT-025 Hooks Path on Host-Side Reads
 
 With `core.hooksPath` pointed at a directory inside the tracked working tree
 containing an executable hook, a host-side `git_status` or `git_diff` SHALL NOT
 execute that hook under the daemon's identity.
 
-### AT-024 Local-Command Transport
+### AT-026 Local-Command Transport
 
 A remote URL of the form `ext::sh -c ...` SHALL be rejected before any authenticated
 operation is attempted.
 
-### AT-025 Key Scope
+### AT-027 Key Scope
 
 Under `ssh.scope: repository`, with `origin` pointed at a second repository on
 which the workspace's deploy key is not installed, both a structured `git_push`
 and `exec("git push")` SHALL fail — the first at validation with
 `GIT_REMOTE_NOT_ALLOWED`, the second at GitHub with an authentication error.
 
-### AT-025a SSH-Form Remote
+### AT-028 SSH-Form Remote
 
 With `origin` configured as `git@github.com:owner/repo.git`, `exec("git push")` and
 a structured `git_push` SHALL both succeed using the workspace key, with no
 interactive prompt.
 
-### AT-026 Refspec Validation
+### AT-029 Refspec Construction
 
-A push refspec with a leading `+` SHALL be rejected under `force_push: deny`.
+`git_push` SHALL construct `refs/heads/<b>:refs/heads/<b>` for an ordinary push and
+`:refs/heads/<b>` for `delete: true`, and SHALL refuse a `branch` value that is not
+a valid ref name. `force: true` together with `force_with_lease: true` SHALL be
+refused as `INVALID_ARGUMENT`.
 
-### AT-027 Submodule URL Substitution
+### AT-030 Submodule URL Substitution
 
 A `.gitmodules` URL pointing at an unauthorized repository SHALL NOT be fetched.
 
-### AT-028 Container Git Workflow
+### AT-031 Container Git Workflow
 
 Under the default `git_dir_mode`, `git add`, `git commit`, `git fetch`, and
 `git push` SHALL all succeed from `exec` inside the container, and the resulting
 commit SHALL be visible in the host checkout with the correct ownership.
 
-### AT-029 Mode Disclosure
+### AT-032 Mode Disclosure
 
 `workspace_info` SHALL report `git_dir_mode`, `ssh_key_mode`, `ssh_key_scope`, and
 `remote_protection` values matching the workspace's actual configuration and the
 remote's actual state.
 
-### AT-030 Filesystem Tool Git Metadata
+### AT-033 Filesystem Tool Git Metadata
 
 `write_file(".git/hooks/pre-commit")`, `patch_file(".git/config")`, and
 `delete_file(".git/config")` SHALL each fail with `PATH_GIT_METADATA`. The
 same SHALL hold for a path containing a `.git` component at any depth, and for the
 gitdir target of a gitfile.
 
-### AT-031 Host Key Pinning
+### AT-034 Host Key Pinning
 
 With a substituted SSH host key for `github.com` presented to the container, every
 SSH connection SHALL fail with a host-key mismatch and SHALL NOT prompt.
 
-### AT-032 Remote Protection Reporting
+### AT-035 Remote Protection Reporting
 
 Against a repository whose default branch has no ruleset, `workspace_open` under
 `require_remote_protection: warn` SHALL succeed with `remote_protection.status:
@@ -3662,12 +3743,13 @@ missing` and a warning; under `deny` it SHALL fail with
 `REMOTE_PROTECTION_MISSING` and SHALL NOT have provisioned a key into the
 container.
 
-### AT-033 Agent Lifecycle
+### AT-036 Agent Lifecycle
 
-After `workspace_stop`, the workspace key SHALL no longer be loaded in any agent,
-and after `workspace_delete` no agent for the workspace SHALL be running.
+After a workspace stops — including the idle stop in §8.1 — the workspace key SHALL
+no longer be loaded in any agent, and after the workspace is deleted no agent for
+it SHALL be running.
 
-### AT-034 SSH Auth Audit
+### AT-037 SSH Auth Audit
 
 Under `ssh.mode: agent`, an `exec("git fetch")` SHALL produce an `ssh_auth` audit
 record for the workspace carrying the key's fingerprint.
@@ -3775,9 +3857,15 @@ Request:
     "src/example.py",
     "tests/test_example.py"
   ],
-  "message": "fix: validate workspace execution state"
+  "message": "fix: validate workspace execution state",
+  "amend": false,
+  "no_verify": false
 }
 ```
+
+`amend` is governed by `git_policy.amend_published` (§18.9): amending a commit
+that is already present on the upstream branch SHALL be refused under the default
+policy, because it rewrites published history.
 
 Response:
 
@@ -4054,15 +4142,15 @@ Container .git write access:        ALLOWED  (git_dir_mode: read-write, §18.2)
 Hooks inside the container:         RUN      (§18.7)
 Hooks on host-side daemon reads:    DISABLED (§18.7)
 GitHub host keys:                   PINNED   (§19.3)
-Submodule init/update:              DENIED   (structured); key scope bounds exec
+Submodule init/update:              exec only; bounded by key scope (§18.8)
 Configured remote schemes not ssh/https: DENIED (structured)
-Force push (structured tools):      DENIED
+Force push (git_push force:):       DENIED
 Force push (exec):                  ENFORCED BY REMOTE RULESET where present (§18.5)
-Force-with-lease (structured):      DENIED
-Remote branch deletion (structured): DENIED
-Remote tag deletion (structured):   DENIED
-Remote URL change (structured):     DENIED
-Hard reset (structured):            DENIED or approval-required
+Force-with-lease (git_push):        DENIED
+Remote branch deletion (git_push):  APPROVAL-REQUIRED
+Remote tag deletion (git_push):     DENIED
+Amend published (git_commit):       DENIED
+Hard reset / clean / rebase:        exec only, no policy key (§18.9)
 Pull strategy:                      FF-ONLY
 Remote protection check:            WARN if missing (require_remote_protection)
 Outbound network:                   ALLOWED
