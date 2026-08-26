@@ -130,10 +130,9 @@ CONTAINER: /workspace
 The repository working tree SHALL be mounted read/write.
 
 Repository Git metadata (`.git`) SHALL be mounted according to the workspace
-`git_dir_mode` (§18.2), which defaults to read-only. A writable working tree with
-read-only Git metadata is the normal configuration: it permits the client to edit
-project files freely while preventing container code from reaching the host through
-Git hooks and configuration (§18.3).
+`git_dir_mode` (§18.2), which defaults to read-write so that the full Git workflow —
+commit and push included — works from inside the container. A read-only mode is
+available for workspaces that run code the developer does not trust (§18.3).
 
 Changes made from MCP SHALL immediately appear in the host checkout.
 
@@ -162,18 +161,19 @@ Optional nested-container or Docker-in-Docker workflows MAY be added later behin
 ### 5.3 Root Is Available Inside Containers; Host Files Are Never Root-Owned
 
 Three identities can touch a repository: the human developer who owns the checkout,
-the daemon that brokers Git against it (§20), and processes inside the development
+the daemon that reads and writes it on the client's behalf (§13, §20.1), and processes inside the development
 container that write to the bind mount. If those identities differ, the system
 breaks in ways that are not security failures but are worse for being silent — a
 container running as root leaves root-owned files in the human's checkout, the
-human's editor cannot save over them, and the broker cannot `git pull` across them.
+human's editor cannot save over them, and the daemon's host-side Git reads and
+filesystem writes trip over them.
 
 The specification therefore fixes one identity for all three:
 
 > Processes inside a development container SHALL run, by default, as the host
 > uid/gid that owns the repository checkout. The daemon SHALL run as that same
 > uid. Every file that appears in the host checkout — written by the human, the
-> container, or the broker — is owned by the same user.
+> container, or the daemon — is owned by the same user.
 
 Root privileges inside the container remain available. The client SHOULD be able to
 perform operations such as:
@@ -251,20 +251,24 @@ Operations such as:
 
 SHALL be capable of running as persistent asynchronous jobs.
 
-### 5.7 GitHub Credentials Never Enter Project Containers
+### 5.7 The Container Holds a Dedicated, Scoped Key — Never the Host's
 
-Credentials for authorized remotes SHALL remain outside all project process execution.
+The development container is a trusted development environment. It holds a
+write-capable SSH key for its repository (§19), so `git push` works from inside the
+container exactly as it would on a workstation.
 
-> No credential capable of writing to an authorized remote SHALL be present inside a
-> development container, in its environment, in its filesystem, in its process
-> arguments, or in any file under a repository root.
+What the architecture guarantees is not that the container lacks credentials, but
+that the credential it has is the right one:
 
-This is the §19.1 invariant. It is a structural property of the architecture rather
-than a policy setting, and SHALL NOT be relaxed by configuration.
+> The key in a container SHALL be dedicated to this system, scoped to the
+> repositories the workspace is authorized for, revocable independently, and never
+> the human user's own. Host credentials — `~/.ssh`, `gh` sessions, credential
+> stores — SHALL NOT be mounted into any container (§19.4).
 
-All authenticated remote operations SHALL therefore be performed by the MCP daemon
-on the host, through the Git broker (§20). No mode in which a token is injected into
-a development container is specified.
+Because the container can push, destructive-operation policy on the structured Git
+tools is a guardrail rather than a boundary (§18.1). Enforcement that binds every
+path, including `exec`, lives in deploy-key scope (§18.4) and in rulesets on the
+remote (§18.5).
 
 ### 5.8 Language Agnostic
 
@@ -349,15 +353,19 @@ Responsibilities:
 - conflict detection;
 - destructive-operation policy.
 
-### 6.6 GitHub Authentication / Remote Broker
+### 6.6 SSH Key Provisioning / Remote Validation
 
 Responsibilities:
 
-- maintain repository-scoped authentication;
-- issue short-lived tokens where possible;
-- validate remote repository identity;
-- perform GitHub operations that should not expose credentials to project code;
-- optionally integrate with GitHub App authentication.
+- provision the workspace's dedicated SSH key into the container — via a
+  per-workspace `ssh-agent` socket by default, or a read-only file (§19.2);
+- pin GitHub host keys and write the container-local SSH client configuration
+  (§19.3);
+- refuse to provision any host-user credential (§19.4);
+- validate remote repository identity for structured operations (§20.2);
+- verify and report remote-side branch protection, using an optional read-only
+  API credential (§18.5, §20.4);
+- audit SSH authentication events under `agent` mode (§20.7).
 
 ### 6.7 Policy Engine
 
@@ -478,8 +486,10 @@ Example fields:
   "mode": "persistent",
   "workspace_path": "/workspace",
   "image": "mcp-dev-ubuntu:24.04",
-  "git_dir_mode": "read-only",
+  "git_dir_mode": "read-write",
   "container_user": "1000:1000",
+  "ssh_key_mode": "agent",
+  "ssh_key_scope": "repository",
   "created_at": "...",
   "last_used_at": "..."
 }
@@ -587,6 +597,7 @@ A practical default Linux image SHOULD include:
 - Python
 - common archive utilities
 - `sudo`, configured passwordless for the container user (§5.3)
+- `openssh-client` (§19.3)
 
 The image SHOULD NOT bake in a specific uid. The container user is created at
 container start to match the checkout owner (§5.3), so the image needs only the
@@ -733,8 +744,13 @@ outside the checkout (§76). The daemon SHALL resolve the gitfile on workspace o
 record the resolved Git directory in the workspace record, and treat it as
 protected for the workspace's lifetime.
 
-`exec` is not covered by this rule; it is covered by `git_dir_mode` (§18.2).
-Together the two close every client-reachable write path to Git metadata.
+`exec` is not covered by this rule. Under the default `git_dir_mode: read-write`
+(§18.2) `exec` can write `.git`, and this exclusion is therefore hygiene rather than
+a security boundary: it stops the structured tools from being used — by accident or
+by a prompt-injected client — to damage metadata that they have no legitimate reason
+to touch, and it keeps every structured write auditable as a working-tree write.
+Under `git_dir_mode: read-only` the two together close every client-reachable write
+path to Git metadata.
 
 ### 12.2 File Size Limits
 
@@ -1052,12 +1068,13 @@ Git SHOULD be available both through command execution and structured MCP operat
 
 Structured operations SHALL be preferred for repository state and mutating Git operations.
 
-Structured Git tools SHALL be executed host-side by the Git broker (§20) against the
-host checkout, not inside the development container. Git usage inside the container
-is read-only and is bounded by `git_dir_mode` (§18.2); it is available for build
-tooling that shells out to Git, and is not the path by which repository state is
-mutated. Clients requiring authoritative repository state SHALL use `git_status`
-rather than `exec`.
+Structured Git tools execute inside the development container, as the container
+user, with the container's SSH key (§20.1). They are a validated, policy-checked,
+audited front-end over the same Git that `exec` reaches; they do not hold a
+credential `exec` lacks, and they are not a boundary (§18.1). Read-only queries MAY
+run host-side for speed. Clients SHOULD prefer the structured tools because their
+responses are bounded and structured, their mutations carry state guards, and their
+use is auditable — not because `exec` is prevented from doing the same things.
 
 ### 17.1 Required Git Operations
 
@@ -1144,99 +1161,86 @@ If HEAD changed, the operation SHALL fail instead of committing against an unexp
 
 ## 18. Git Operation Model and Destructive-Operation Policy
 
-### 18.1 Enforcement Boundary
+### 18.1 The Trusted-Container Model
 
-Structured Git tools cannot by themselves carry destructive-operation policy,
-because §14 grants arbitrary shell access to the same repository. If a development
-container held credentials for an authorized remote, `exec("git push --force")`
-would bypass the policy engine entirely and AT-011 could not hold.
+The development container holds a write-capable SSH key for its repository (§19).
+This is a deliberate design decision, and its consequence is stated plainly rather
+than papered over:
 
-This specification therefore establishes a single enforcement boundary:
+> The container can push. `exec("git push")` works, and so does
+> `exec("git push --force")`. No daemon sits between the container and the remote.
 
-> All authenticated remote Git operations SHALL be performed by the MCP daemon on
-> the host. The development container SHALL NOT hold credentials for any authorized
-> remote, and SHALL NOT hold write access to repository Git metadata.
+Structured Git tools therefore cannot enforce anything that `exec` can bypass, and
+§14 guarantees that `exec` can run any command. Policy applied at the structured
+tools (§18.9) is a guardrail that keeps a well-behaved client on the rails; it is
+not a boundary, and this specification SHALL NOT describe it as one.
 
-Policy is enforced at the only component that can reach the remote. The shell is no
-longer a bypass because the shell has nothing to authenticate with.
+Real enforcement lives in two places that `exec` cannot route around:
 
-Operations divide into three tiers by how they are actually enforced. The
-specification SHALL be explicit about which tier each operation occupies, and SHALL
-NOT describe a tier-3 operation as prevented.
+1. **what the key can reach** — a deploy key is installed on specific repositories,
+   so the container can write only to those (§19.1); and
+2. **what the remote will accept** — GitHub rulesets and branch protection reject
+   force pushes, deletions, and unreviewed default-branch pushes regardless of
+   which client or path issued them (§18.5).
+
+Operations divide into three tiers by how they are actually enforced:
 
 ```text
 Tier 1 — Structurally prevented
   The container lacks the capability. No policy check is required.
-  Enforced by: absent credentials, read-only .git mount.
+  Enforced by: mount boundaries, absent host credentials, deploy-key scope.
 
-Tier 2 — Policy-gated at the broker
-  The daemon can perform it; policy decides whether it does.
-  Enforced by: the policy engine, at the git broker (§20).
+Tier 2 — Remote-enforced
+  The container can attempt it; GitHub refuses it.
+  Enforced by: rulesets / branch protection on the remote. Applies to every
+  client and every path, including exec.
 
-Tier 3 — Advisory only
-  Reachable from exec inside the container. Bounded by the container
-  boundary and by recoverability, not by policy.
-  Enforced by: nothing. Documented, audited after the fact, recoverable.
+Tier 3 — Advisory
+  Reachable from exec by design. The structured tools apply policy; exec
+  does not. Documented, audited where observable, recoverable where possible.
 ```
 
 ### 18.2 Container Git Access
 
 The repository working tree SHALL be bind-mounted read/write as specified in §5.1.
 
-The repository Git directory SHALL be mounted according to a configured
-`git_dir_mode`:
+The repository Git directory SHALL be mounted according to `git_dir_mode`:
 
 ```yaml
 container:
-  git_dir_mode: read-only    # none | read-only | read-write
+  git_dir_mode: read-write    # read-write | read-only | none
 ```
 
-`read-only` SHALL be the default.
+`read-write` SHALL be the default. Committing and pushing from `exec` require it.
 
-| Mode | `.git` mount | Consequence |
+| Mode | `.git` | Use |
 |---|---|---|
-| `none` | not mounted | No Git operations inside the container. Strongest isolation. Breaks build tooling that shells out to Git. |
-| `read-only` | bind-mounted `ro` | Read-only Git operations work. Metadata cannot be modified. Default. |
-| `read-write` | bind-mounted `rw` | Elevated capability (§42). SHALL be refused unless explicitly enabled, and SHALL be reported by `workspace_info` as a weakened security mode. |
+| `read-write` | bind-mounted `rw` | Default. Full Git workflow inside the container. |
+| `read-only` | bind-mounted `ro` over the parent mount | Hardened fetch-only workspace. Commit and push from `exec` fail; structured tools (§20.1) also run in-container and so also fail — this mode is for validation and CI-like runs, not development. |
+| `none` | masked with an empty read-only tmpfs | Git is not visible inside the container. Because `.git` is a subpath of the working-tree mount, it cannot be "not mounted"; it SHALL be masked. |
 
-Under `read-only`, the daemon SHALL configure the container environment so that
-read-only Git usage behaves correctly:
-
-```text
-GIT_OPTIONAL_LOCKS=0        # git status et al. do not attempt to take the index lock
-GIT_TERMINAL_PROMPT=0       # no interactive credential prompting
-```
-
-The daemon SHALL provide a container-local system Git configuration — written into
-the container filesystem, never into the bind mount — marking the workspace path as
-a safe directory, so that container-root operating on host-owned files does not
-fail ownership validation:
+The container user (§5.3) SHALL own `.git` on the host, so no ownership mismatch
+arises. The daemon SHALL nonetheless write a container-local `safe.directory`
+entry for `/workspace`, because `sudo git ...` runs as uid 0 and Git's ownership
+check applies to it:
 
 ```text
-/etc/gitconfig  (container-local)
+/etc/gitconfig  (container-local, never in the bind mount)
   [safe]
       directory = /workspace
 ```
 
-Commands that work under `read-only`: `git log`, `git show`, `git rev-parse`,
-`git describe`, `git cat-file`, `git ls-files`, `git diff` against committed state.
+`GIT_TERMINAL_PROMPT=0` SHALL be set so that a misconfigured remote fails rather
+than hanging on a credential prompt.
 
-Commands that fail under `read-only`: anything creating a ref, an object, an index,
-or a lock — `git commit`, `git add`, `git checkout`, `git merge`, `git reset`,
-`git fetch`, `git push`, `git stash`.
-
-The specification SHALL NOT promise that `git status` is fully functional inside the
-container. Clients requiring repository state SHALL use the structured `git_status`
-tool (§17.2), which is executed host-side by the daemon.
-
-### 18.3 Rationale for Read-Only Git Metadata
+### 18.3 Git Metadata as a Host Code-Execution Path
 
 A writable `.git` directory is a host code-execution path, independent of any
 container escape. Repository Git metadata is interpreted by Git processes running on
 the host, under the human user's identity, whenever a developer, IDE, file watcher,
 or other AI client touches the repository.
 
-Container-writable `.git` would permit:
+Container-writable `.git` permits:
 
 ```text
 .git/hooks/pre-commit          executes on the host on the next human commit
@@ -1248,231 +1252,297 @@ Container-writable `.git` would permit:
 .git/config credential.helper  substitutes a credential source on the host
 ```
 
-This is precisely the adversary named in §39 — a repository whose build scripts or
-dependencies are untrusted — reaching the host without escaping the container. A
-read-only Git directory closes the entire class.
+Under the default `git_dir_mode`, this is an **accepted risk** (§39.2). The
+trusted-container model treats the container as part of the developer's trust
+domain: it operates on the developer's own repositories with a key the developer
+issued for it. Code that can poison `.git` from the container could equally have
+been run by the developer on the host.
 
-Note the pairing that makes this sufficient: `.gitattributes` and `.gitmodules` are
-tracked files and therefore remain container-writable, but they are inert data. The
-executable half of each mechanism — `filter.<name>.clean`, `diff.<name>.textconv`,
-`merge.<name>.driver`, submodule URLs after initialization — lives in `.git/config`.
-Making the configuration unwritable neutralizes the tracked-file half.
+The risk is bounded by three things this specification does require:
+
+- the key in the container is never the human's own key (§19.4), so poisoned
+  metadata cannot obtain a credential the container did not already have;
+- the structured filesystem tools refuse `.git` (§12.1), so a confused or
+  prompt-injected *client* cannot reach it except by deliberately using `exec`;
+- `git_dir_mode: read-only` remains available for workspaces that run code the
+  developer does not trust (§18.2).
 
 ### 18.4 Tier 1 — Structurally Prevented
 
-The following SHALL be unreachable from the development container and SHALL require
-no policy check:
+The following SHALL be unreachable from the development container and SHALL
+require no policy check:
 
-- push, force push, and push with any refspec;
-- deletion of remote branches or tags;
-- authenticated fetch or pull from an authorized remote;
-- creation, deletion, or modification of local refs;
-- commit creation;
-- history rewriting (`rebase`, `commit --amend`, `filter-branch`);
-- modification of `.git/config`, `.git/hooks`, or any Git metadata;
-- installation of a credential helper visible to host Git.
+- access to host paths outside the repository mount and configured caches (§5.4);
+- the Docker socket (§5.2);
+- the host user's own credentials — `~/.ssh`, `gh` configuration, git credential
+  stores (§19.4);
+- writing to any repository the workspace's deploy key is not installed on
+  (§19.1, `ssh.scope: repository`);
+- extraction of private key material, under `ssh.mode: agent` (§19.2) — the
+  container can *use* the key while the agent socket is mounted, but cannot read
+  it.
 
-`workspace_info` SHALL report `git_dir_mode` so that a client can determine whether
-these guarantees hold for the current workspace.
+`workspace_info` SHALL report `ssh_key_mode` and `ssh_key_scope` so that a client
+can determine which of these hold for the current workspace.
 
-The read-only mount governs `exec`. Structured filesystem tools reach the same
-metadata by a different path and are governed by §12.1. Both SHALL hold for Tier 1
-to hold.
+### 18.5 Tier 2 — Remote-Enforced
 
-### 18.5 Tier 2 — Policy-Gated at the Broker
+The following SHALL be enforced by GitHub rulesets or branch protection on the
+remote, because that is the only enforcement point a container holding a
+write-capable key cannot bypass:
 
-The following are performed by the daemon and SHALL be subject to the policy engine:
+- force push to protected branches;
+- branch deletion;
+- tag deletion and non-fast-forward tag updates;
+- direct push to the default branch, where the developer wants a PR workflow;
+- required status checks and reviews.
 
-- push to an authorized remote;
-- push to the repository default branch;
-- force push and `--force-with-lease`;
-- remote branch deletion;
-- remote tag deletion or replacement;
-- non-fast-forward pull strategies (merge, rebase);
-- `git reset --hard`, `git clean -fdx`, and other destructive local operations
-  invoked through structured tools;
-- changing a configured remote URL;
-- submodule initialization or update.
+The daemon SHALL treat remote protection as part of the workspace's security
+posture, not as someone else's problem:
 
-### 18.6 Tier 3 — Advisory Only
+- With a read-only API credential configured (§19.5), the daemon SHALL query the
+  repository's rulesets and branch protection for the default branch on
+  `workspace_open`, and SHALL report the result as `remote_protection` in
+  `workspace_info` and `repository_info` (§20.4).
+- `git_policy.require_remote_protection` governs what happens when protection is
+  absent:
 
-The following remain reachable from `exec` and SHALL be documented as such:
+  ```yaml
+  git_policy:
+    require_remote_protection: warn    # off | warn | deny
+    remote_protection_checks: [force_push, deletion]
+  ```
 
+  - `off`: not checked.
+  - `warn` (default): `workspace_open` succeeds; `remote_protection.status` is
+    `missing` and the response carries a warning.
+  - `deny`: the daemon SHALL NOT provision a write-capable key for a repository
+    whose default branch lacks the listed protections. `workspace_open` fails
+    with `REMOTE_PROTECTION_MISSING`. This is the strongest guarantee available
+    in this model: the container never receives a key that could force-push
+    somewhere a force push would be accepted.
+
+Without an API credential, `remote_protection.status` SHALL be `unverified`, and
+`deny` SHALL be treated as `warn` with the reason reported.
+
+### 18.6 Tier 3 — Advisory
+
+The following are reachable from `exec` by design:
+
+- every operation that §18.9 configures — force push, hard reset, clean, rebase,
+  remote URL change — when issued through `exec` rather than a structured tool;
 - deletion or corruption of working-tree files, including bulk deletion;
-- deletion of untracked and ignored files, including build artifacts and any
-  untracked file not represented in Git;
-- writing arbitrary content into tracked files that a subsequent brokered commit
-  may then record;
+- deletion of untracked and ignored files, which are not recoverable from Git;
+- writing to `.git` under the default `git_dir_mode` (§18.3);
 - outbound network use, including transmission of repository contents to an
   attacker-controlled destination.
 
-The specification SHALL be explicit that brokered Git prevents unauthorized writes
-to authorized remotes. It does not prevent network exfiltration in general, which
-remains an accepted risk under §39.2. Tracked content destroyed from within the
-container is recoverable from the read-only object store; untracked content is not.
+Structured-tool policy (§18.9) SHALL be applied to structured tools and SHALL NOT be
+claimed to apply to `exec`. Acceptance tests SHALL test the structured path and the
+remote-enforced path separately, and SHALL NOT assert that `exec` is prevented from
+anything in this list.
 
-Acceptance tests SHALL reflect these boundaries. AT-011 SHALL assert that a force
-push is denied at the broker *and* that `exec("git push --force")` fails for lack of
-credentials, rather than asserting only the former.
+### 18.7 Hooks
 
-### 18.7 Hook Execution Policy for Brokered Operations
+Repository hooks are a normal part of a development workflow — `pre-commit`
+formatters and linters are a feature, not a threat — and the trusted-container
+model runs them.
 
-The daemon performs Git operations on the host, against a working tree that
-container code has written. Repository-supplied hooks are therefore a host
-code-execution path for the daemon itself.
+Structured Git tools execute inside the container (§20.1), so hooks run there,
+under the container user, with the same reach as any other `exec`. The daemon
+SHALL NOT disable them by default.
 
-Two vectors exist and both SHALL be addressed:
+`git_commit` and `git_push` MAY accept a `no_verify: true` parameter to skip hooks
+for a single operation, matching `--no-verify`.
 
-1. `.git/hooks/*` — not container-writable under §18.2, but may contain hooks
-   installed by the human or by earlier tooling.
-2. `core.hooksPath` — a configuration key that may point at a directory inside the
-   tracked working tree, which *is* container-writable.
-
-The daemon SHALL execute brokered Git operations with hooks disabled by default:
-
-```yaml
-git_policy:
-  broker_hooks: disabled     # disabled | host_only | enabled
-```
-
-- `disabled` (default): the daemon SHALL pass `-c core.hooksPath=<empty-dir>`,
-  where `<empty-dir>` is a daemon-owned empty directory outside all repository
-  roots. `--no-verify` SHALL NOT be relied upon, as it covers only a subset of
-  hooks.
-- `host_only`: hooks SHALL run only if the effective `core.hooksPath` resolves
-  outside the repository working tree. If it resolves inside, the operation SHALL
-  fail with `POLICY_DENIED`.
-- `enabled`: an elevated capability (§42). SHALL be reported as a weakened mode.
-
-The daemon SHALL likewise neutralize configuration keys that invoke external
-commands during its own operations:
-
-```text
--c core.fsmonitor=
--c core.sshCommand=          (unless supplied by the broker itself)
--c credential.helper=        (cleared, then supplied per §19.4)
-```
+Hooks are never executed by the daemon on the host. The daemon runs no Git
+commands against the checkout that could trigger them; the structured `git_status`
+and `git_diff` reads it performs host-side (§20.1) SHALL be invoked with
+`-c core.hooksPath=<empty-dir> -c core.fsmonitor=` so that a read cannot execute
+repository-supplied code under the daemon's identity.
 
 ### 18.8 Submodules
 
 Submodule URLs originate in `.gitmodules`, a tracked and therefore
 container-writable file.
 
-Brokered fetch and push SHALL pass `--no-recurse-submodules` and
-`--recurse-submodules=no` respectively.
+Under `ssh.scope: repository` (default), the workspace key is installed only on
+the primary repository, so submodules pointing at other private repositories
+cannot be fetched — a structural consequence of key scope, not a policy. Public
+submodules fetch normally over HTTPS.
 
-Submodule initialization and update SHALL be a Tier-2 operation. Each submodule URL
-SHALL be validated under §20.3 exactly as a primary remote is, at the time of the
-operation.
+Structured `git_fetch` and `git_push` SHALL pass `--no-recurse-submodules` and
+`--recurse-submodules=no` respectively. Structured submodule initialization and
+update SHALL validate each submodule URL under §20.2 and SHALL be governed by
+`git_policy.submodules`.
 
-### 18.9 Policy Configuration
+### 18.9 Structured-Tool Policy Configuration
+
+This configuration applies to the structured Git tools only (§18.6).
 
 ```yaml
 git_policy:
-  # Tier 2 — remote write
-  push:                     allow
-  default_branch_push:      allow_fast_forward   # allow | allow_fast_forward | require_approval | deny
-  force_push:               deny
-  force_with_lease:         deny
-  delete_remote_branch:     require_approval
-  delete_remote_tag:        deny
-  change_remote_url:        deny
+  # remote write — structured tools
+  push:                       allow
+  default_branch_push:        allow_fast_forward   # allow | allow_fast_forward | require_approval | deny
+  force_push:                 deny
+  force_with_lease:           deny
+  delete_remote_branch:       require_approval
+  delete_remote_tag:          deny
+  change_remote_url:          deny
 
-  # Tier 2 — local destructive
-  hard_reset:               require_approval
-  clean_untracked:          require_approval
-  rebase:                   require_approval
-  amend_published:          deny
+  # local destructive — structured tools
+  hard_reset:                 require_approval
+  clean_untracked:            require_approval
+  rebase:                     require_approval
+  amend_published:            deny
 
-  # Tier 2 — sync strategy
-  pull_strategy:            ff_only              # ff_only | merge | rebase
-  submodules:               deny                 # deny | require_approval | allow
+  # sync strategy
+  pull_strategy:              ff_only              # ff_only | merge | rebase
+  submodules:                 deny                 # deny | require_approval | allow
 
-  # Enforcement environment
-  broker_hooks:             disabled
-  validate_remote:          true
-  allowed_url_schemes:      [https, ssh]   # accepted forms for a *configured* remote;
-                                           # the operation URL is derived, always https (§20.3)
+  # remote-side enforcement (§18.5) — applies to every path, including exec
+  require_remote_protection:  warn                 # off | warn | deny
+  remote_protection_checks:   [force_push, deletion]
+
+  # validation
+  validate_remote:            true
+  allowed_url_schemes:        [ssh, https]
 ```
 
 `require_approval` MAY be implemented as a hard denial in the first release (§42).
 
 The default-branch question SHALL remain configurable rather than imposed, per §43.
+Where a developer wants the default branch genuinely protected against every
+client, the place to express that is a GitHub ruleset, and
+`require_remote_protection: deny` makes the daemon insist on it.
 
 ---
 
 ## 19. Credential Model
 
-GitHub synchronization is required. Credential exposure to project code SHALL be
-eliminated rather than minimized.
+GitHub synchronization is required. The development container SHALL hold a
+write-capable SSH key for its repository, so that the full Git workflow — including
+push — works from `exec` exactly as it would on a developer workstation.
 
-### 19.1 Invariant
+The credential model is therefore not about keeping credentials out of the
+container. It is about ensuring the credential in the container is **dedicated,
+scoped, revocable, and never the human's own**.
 
-> No credential capable of writing to an authorized remote SHALL be present inside
-> a development container, in its environment, in its filesystem, in its process
-> arguments, or in any file under a repository root.
+### 19.1 The Key
 
-This is the mechanism by which FR-025 is satisfied. It is a structural property, not
-a policy setting, and SHALL NOT be relaxed by configuration.
+The key provisioned into a workspace SHALL be:
 
-### 19.2 Preferred: GitHub App
+- **dedicated** — generated for this system, used for nothing else;
+- **scoped** — installed on the repositories this workspace is authorized for, and
+  no others;
+- **revocable** — removable from GitHub without affecting any other access;
+- **never the human's personal key** — the host user's `~/.ssh` is never mounted
+  (§19.4), and the daemon SHALL refuse to provision a key file that resolves to a
+  path under the host user's home `.ssh` directory.
 
-The daemon SHALL support GitHub App installation authentication:
+```yaml
+ssh:
+  scope: repository      # repository | shared
+```
 
-1. App private key and identifiers are stored on the host, outside all repository
-   roots, readable only by the daemon account.
-2. Repository authorization is configured server-side (§7).
-3. Immediately before a remote operation, the daemon mints a short-lived
-   installation token scoped to the target repository.
-4. The token is used for exactly one Git invocation.
-5. The token is discarded. It SHALL NOT be cached beyond its operation, and SHALL
-   NOT be written to disk.
+- `repository` (default): one **deploy key** per repository, with write access
+  enabled on GitHub. GitHub deploy keys are inherently per-repository, so the
+  workspace for repository A structurally cannot write to repository B. This is
+  the Tier-1 scoping guarantee in §18.4.
+- `shared`: one key — typically a machine-user's key — installed on every
+  configured repository. Simpler to manage; loses structural per-repository
+  scoping. `workspace_info` SHALL report `ssh_key_scope: shared` so a client knows
+  the guarantee is absent.
 
-This yields repository-scoped access, short-lived credentials, revocability, and
-per-operation auditability.
+Key files live host-side, outside all repository roots, mode `0600`, owned by the
+daemon uid:
 
-### 19.3 Acceptable Alternative: Daemon-Held Fine-Grained Token
+```yaml
+ssh:
+  keys_dir: /etc/dev-workspace-mcp/keys
+repositories:
+  - id: project-gatsby
+    path: /home/phil/work/project-gatsby
+    github: ekkus93/project-gatsby
+    ssh_key: project-gatsby.ed25519     # relative to keys_dir; omit under scope: shared
+```
 
-An MVP MAY use a fine-grained personal access token in place of a GitHub App,
-provided the token is held by the daemon under §19.1 and §19.4.
+### 19.2 Provisioning
 
-The token SHALL be scoped to the configured repositories and SHALL grant no
-organization-wide or account-wide permissions.
+```yaml
+ssh:
+  mode: agent            # agent | file
+```
 
-This is a weaker credential model than §19.2 — the token is long-lived and its
-compromise is not self-limiting — but it preserves the §19.1 invariant and therefore
-satisfies FR-025.
+#### `agent` (default)
 
-### 19.4 Credential Handling Requirements
+The daemon runs a dedicated `ssh-agent` per workspace, loads the workspace key into
+it, and bind-mounts the agent's socket into the container:
 
-The daemon SHALL supply credentials to Git without exposing them to the process
-table, the filesystem, or repository configuration.
+```text
+HOST:      <daemon runtime dir>/ws_project_gatsby/agent.sock
+CONTAINER: /run/mcp/ssh/agent.sock
+ENV:       SSH_AUTH_SOCK=/run/mcp/ssh/agent.sock
+```
 
-A credential SHALL NOT appear in:
+Properties:
 
-- process arguments, including embedded in a URL passed on the command line;
-- `.git/config`, or any file beneath a repository root;
-- any persistent environment;
-- audit records, error messages, or tool responses;
-- command output returned to the client.
+- private key material never enters the container filesystem, environment, or
+  process arguments — the container can request signatures, not read the key;
+- the key is usable only while the workspace is running; the daemon SHALL remove
+  it from the agent on `workspace_stop` and terminate the agent on
+  `workspace_delete`;
+- every signature request is observable by the daemon, which yields an audit
+  record per authenticated SSH connection, including those initiated from `exec`
+  (§20.7);
+- a later version MAY require daemon-side confirmation per signature, which would
+  provide a coarse approval gate over every authenticated remote operation
+  regardless of path (§75).
 
-The daemon SHOULD supply the credential through one of:
+#### `file`
 
-- an ephemeral `GIT_ASKPASS` helper that reads the secret from an inherited file
-  descriptor or a daemon-private unix socket;
-- a per-invocation credential helper configured through `GIT_CONFIG_COUNT` /
-  `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n`, cleared after the invocation;
-- an `http.extraHeader` authorization value supplied through the same per-invocation
-  configuration mechanism.
+The private key is bind-mounted read-only into the container:
 
-Where a temporary file is unavoidable, it SHALL be created outside all repository
-roots with mode `0600` and removed before the operation returns, including on the
-failure path.
+```text
+HOST:      /etc/dev-workspace-mcp/keys/project-gatsby.ed25519
+CONTAINER: $HOME/.ssh/id_mcp     (mode 0600, owned by the container user)
+```
 
-The secret-redaction layer (§24.1) SHALL be applied to brokered Git stdout and
-stderr before any of it reaches an audit record or a tool response.
+Properties:
 
-### 19.5 Host Credentials
+- simplest possible setup; no agent lifecycle;
+- key material is readable by any process in the container, including repository
+  build scripts — a compromised dependency can copy it;
+- `exec`-path remote operations are not observable by the daemon.
+
+`file` mode is acceptable in the single-user private deployment (§4). `workspace_info`
+SHALL report `ssh_key_mode: file` so a client knows extraction is possible.
+
+### 19.3 SSH Client Configuration
+
+The daemon SHALL write a container-local SSH client configuration for the container
+user — into the container filesystem, never into the bind mount:
+
+```text
+$HOME/.ssh/config
+  Host github.com
+      User git
+      IdentitiesOnly yes
+      IdentityFile ~/.ssh/id_mcp          # file mode only
+      StrictHostKeyChecking yes
+      UserKnownHostsFile ~/.ssh/known_hosts_mcp
+```
+
+`known_hosts_mcp` SHALL contain GitHub's published SSH host keys, pinned. The
+daemon SHALL NOT rely on trust-on-first-use, and SHALL NOT honour a `known_hosts`
+or SSH configuration file from inside the repository.
+
+`git config --system url.<base>.insteadOf` MAY be written container-locally to
+route HTTPS GitHub URLs over SSH, so that a repository whose `origin` is HTTPS still
+authenticates with the workspace key.
+
+### 19.4 Host Credentials
 
 The daemon SHALL NOT mount into any development container:
 
@@ -1484,142 +1554,158 @@ The daemon SHALL NOT mount into any development container:
 ~/.docker/config.json
 ```
 
-The prohibition on host SSH keys is normative, and is stated as SHALL NOT rather
-than SHOULD NOT so that it matches the corresponding DENIED default in §74.
+This is an invariant, not a default: the container receives the key the developer
+issued for it (§19.1) and nothing that belongs to the developer personally.
 
-`gh` MAY be installed inside a container. It SHALL NOT be authenticated there.
-GitHub API operations requiring authentication SHALL be brokered, or delegated to
-Ralph Bridge (§21).
+`gh` MAY be installed inside a container and MAY be authenticated there with a
+dedicated fine-grained token scoped to the configured repositories, under the same
+rules as the SSH key. It SHALL NOT be authenticated with the host user's `gh`
+session. GitHub operations beyond ordinary Git — pull requests, CI inspection,
+merges — are the responsibility of Ralph Bridge (§21).
 
-### 19.6 Credential Scope and Lifetime
+### 19.5 Optional Daemon API Credential
+
+The daemon MAY hold a **read-only** GitHub credential — a fine-grained token or a
+GitHub App installation — for:
+
+- verifying rulesets and branch protection (§18.5, §20.4);
+- populating `repository_info` with default branch and remote metadata;
+- confirming that a configured deploy key is installed on the repository it is
+  meant for.
+
+This credential SHALL NOT have `contents: write` or any permission that could push.
+It lives host-side, outside all repository roots, and SHALL NOT be mounted into or
+otherwise exposed to any container. If it is absent, the features above degrade to
+`unverified` rather than failing.
+
+### 19.6 Configuration
 
 ```yaml
+ssh:
+  mode: agent
+  scope: repository
+  keys_dir: /etc/dev-workspace-mcp/keys
+  known_hosts: /etc/dev-workspace-mcp/github_known_hosts
+
 github:
-  auth: app                  # app | token
-  app:
-    app_id: ...
-    private_key_path: /etc/dev-workspace-mcp/github-app.pem
-    installation_id: ...
-  token_ttl_seconds: 300
+  api_auth: token                 # none | token | app
+  api_token_path: /etc/dev-workspace-mcp/github-readonly.token
   repositories:
     - ekkus93/chatgpt_ralph_loop_tools
     - ekkus93/project-gatsby
 ```
 
-A minted token SHALL be scoped to the single repository targeted by the operation
-where the authentication mechanism permits it.
+### 19.7 What the Key Can and Cannot Do
+
+Stated once, so that no other section overclaims:
+
+| | |
+|---|---|
+| Push to the workspace's repository | **Yes**, from any path including `exec` |
+| Force-push to the workspace's repository | **Yes**, unless a ruleset on the remote refuses it (§18.5) |
+| Push to any other repository | **No**, under `scope: repository` — the key is not installed there |
+| Be extracted by repository code | **No** under `agent` mode; **yes** under `file` mode |
+| Be the developer's personal key | **No**, ever |
+| Survive workspace stop | **No** under `agent` mode; the file persists host-side under `file` mode |
 
 ---
 
-## 20. The Git Broker
+## 20. Git Execution and Remote Validation
 
-### 20.1 Position
+### 20.1 Execution Location
 
-The Git broker is the component that owns the host checkout's Git metadata and is
-the sole holder of remote credentials. Injection of credentials into a development
-container is not an accepted strategy under §19.1, and no such mode is specified.
+Structured Git tools SHALL execute inside the development container, through the
+execution service (§14), as the container user, using the container's SSH key.
+They are a structured, validated, audited front-end over the same Git the client
+could reach through `exec` — not a second execution path with a second credential.
 
-```text
-   MCP client
-       |
-       | git_* tools
-       v
-  +---------------------------+
-  |  MCP daemon               |
-  |    policy engine  (§18.9) |
-  |    git broker             |----> credential source (§19)
-  +------------+--------------+
-               |
-               | git, host-side, hooks disabled
-               v
-      host checkout /home/phil/work/project
-        .git   ------------------------------> container: read-only
-        worktree ----------------------------> container: read-write
-```
+Rationale: once the container holds a write-capable key, a host-side broker with
+its own credential adds a second credential to protect and no enforcement that the
+first path does not already lack. Keeping one execution identity (§5.3) and one
+credential (§19.1) keeps the model honest and the implementation small.
 
-### 20.2 Responsibilities
+Exceptions — read-only queries the daemon MAY perform host-side for speed, without
+starting a container:
 
-The broker SHALL:
+- `git_status`, `git_diff`, `git_log`, `git_show`, `git_branch_list`, `git_remote`.
 
-- execute all Git operations that create or modify refs, objects, or Git
-  configuration;
-- execute all authenticated remote operations;
-- evaluate policy (§18.9) before each operation;
-- validate remote identity (§20.3) immediately before each authenticated operation;
-- enforce working-tree and state preconditions (§20.6);
-- produce structured results and structured errors (§31);
-- emit audit records (§24).
+Host-side reads SHALL be invoked with `-c core.hooksPath=<empty-dir>
+-c core.fsmonitor=` (§18.7) and SHALL NOT take the index lock
+(`GIT_OPTIONAL_LOCKS=0`). Host-side reads run as the daemon uid, which is the
+checkout owner (§40).
 
-The broker SHALL be the only component in the system that holds a remote credential.
+### 20.2 Remote Identity Validation
 
-### 20.3 Remote Identity Validation
-
-The configured remote URL is **input to validation only**. It is never the URL the
-broker operates against.
-
-Before any authenticated operation, the broker SHALL:
+Before any structured operation that contacts a remote, the daemon SHALL:
 
 1. resolve the remote name to its configured URL via `git remote get-url <name>`;
-2. reject the URL unless its scheme appears in `git_policy.allowed_url_schemes`,
-   which governs what forms a *configured* remote may take and nothing else;
+2. reject the URL unless its scheme appears in `git_policy.allowed_url_schemes`;
 3. explicitly reject `ext::`, `file://`, and any transport capable of invoking a
    local command, by both scheme check and `-c protocol.ext.allow=never`;
 4. normalize the URL to `owner/repo` form per §7.3;
 5. compare the normalized value against the repository's configured GitHub identity
    and against `github.repositories`;
-6. fail with `GIT_REMOTE_NOT_ALLOWED` on any mismatch;
-7. **derive** the operation URL from the normalized identity:
+6. fail with `GIT_REMOTE_NOT_ALLOWED` on any mismatch.
 
-   ```text
-   https://github.com/<owner>/<repo>.git
-   ```
+The structured operation then runs against the configured remote, over SSH, with
+the workspace key. Where the client supplies `expected_remote_repository`, a
+mismatch SHALL fail the operation regardless of server-side configuration.
 
-The broker SHALL then invoke Git against the derived URL literal. Neither the remote
-name nor the configured URL reaches the Git invocation.
+This validation catches mistakes and confused clients. It does not bind `exec`. The
+structural backstop for `exec` is key scope (§18.4): a substituted remote pointing
+at a repository the key is not installed on fails at GitHub.
 
-This resolves two problems at once:
+The daemon SHALL reject any client-supplied `--upload-pack`, `--receive-pack`, or
+`--exec` value on structured operations.
 
-- **Transport.** The broker's credential model (§19) issues HTTPS tokens. A
-  configured remote of the form `git@github.com:owner/repo.git` — the most common
-  form — passes identity validation but cannot be authenticated as written. Deriving
-  the operation URL means the configured scheme is irrelevant to the operation; the
-  broker always speaks HTTPS with a token it holds. No SSH credential model is
-  required or specified.
-- **Substitution.** Passing the remote name would leave a window in which the URL
-  could change between validation and use — the working tree is shared with a
-  human, and `.git/config` remains host-writable even though it is
-  container-read-only. A derived URL closes that window completely: there is no
-  configured value left to substitute.
+### 20.3 Refspec Validation
 
-The broker SHALL reject any client-supplied `--upload-pack`, `--receive-pack`, or
-`--exec` value.
+Client-supplied refspecs on structured operations SHALL be validated rather than
+passed through.
 
-Where the client supplies `expected_remote_repository`, a mismatch SHALL fail the
-operation regardless of server-side configuration.
-
-### 20.4 Refspec Validation
-
-Client-supplied refspecs SHALL be validated rather than passed through.
-
-The broker SHALL reject:
+The daemon SHALL reject:
 
 - a leading `+` (forced update) unless force policy permits it;
 - an empty source (branch or tag deletion) unless deletion policy permits it;
 - `--mirror`, `--all`, and `--tags` in combination with force;
 - any refspec whose destination is outside `refs/heads/` or `refs/tags/`.
 
-Push SHALL be invoked with an explicit refspec rather than relying on
+Structured push SHALL use an explicit refspec rather than relying on
 `push.default`:
 
 ```text
 git -c protocol.ext.allow=never \
-    -c core.hooksPath=<empty-dir> \
-    -c core.fsmonitor= \
     push --atomic --recurse-submodules=no \
-    https://github.com/<owner>/<repo>.git refs/heads/<branch>:refs/heads/<branch>
+    origin refs/heads/<branch>:refs/heads/<branch>
 ```
 
-### 20.5 Brokered Operation Contracts
+### 20.4 Remote Protection Verification
+
+With a read-only API credential (§19.5), the daemon SHALL verify on
+`workspace_open`, and MAY re-verify before structured push, that the repository's
+default branch is protected against the operations listed in
+`git_policy.remote_protection_checks`.
+
+The result SHALL be reported in `workspace_info`, `repository_info`, and the
+`git_push` response:
+
+```json
+{
+  "remote_protection": {
+    "status": "verified",          // verified | missing | unverified
+    "default_branch": "master",
+    "force_push_blocked": true,
+    "deletion_blocked": true,
+    "requires_pull_request": false,
+    "checked_at": "..."
+  }
+}
+```
+
+Behaviour when protection is missing is governed by
+`git_policy.require_remote_protection` (§18.5).
+
+### 20.5 Structured Operation Contracts
 
 #### `git_fetch`
 
@@ -1646,7 +1732,8 @@ Request:
   "remote": "origin",
   "branch": "master",
   "expected_remote_repository": "ekkus93/chatgpt_ralph_loop_tools",
-  "expected_local_head_sha": "def456..."
+  "expected_local_head_sha": "def456...",
+  "no_verify": false
 }
 ```
 
@@ -1658,19 +1745,17 @@ Response:
   "branch": "master",
   "pushed_sha": "def456...",
   "fast_forward": true,
-  "credential_mode": "github_app",
-  "token_ttl_seconds": 300
+  "ssh_key_mode": "agent",
+  "ssh_key_scope": "repository",
+  "remote_protection": { "status": "verified", "force_push_blocked": true }
 }
 ```
-
-The response SHALL identify the credential mode so that a client can distinguish
-§19.2 from §19.3 without inspecting server configuration.
 
 ### 20.6 Preconditions
 
 Because the working tree is shared with container processes and with human
-developers, the broker SHALL evaluate preconditions immediately before acting, and
-SHALL fail closed:
+developers, structured mutating operations SHALL evaluate preconditions immediately
+before acting, and SHALL fail closed:
 
 - the workspace advisory lock (§22.1), where the deployment requires one;
 - `expected_branch` and `expected_head_sha` guards (§45);
@@ -1686,7 +1771,7 @@ SHALL leave repository state unmodified.
 
 ### 20.7 Audit
 
-Each brokered operation SHALL emit an audit record containing:
+Each structured Git operation SHALL emit an audit record:
 
 ```json
 {
@@ -1697,22 +1782,36 @@ Each brokered operation SHALL emit an audit record containing:
   "repository_id": "...",
   "operation": "git_push",
   "remote_repository": "ekkus93/chatgpt_ralph_loop_tools",
-  "configured_url_scheme": "ssh",
-  "operation_url": "https://github.com/ekkus93/chatgpt_ralph_loop_tools.git",
   "refspec": "refs/heads/master:refs/heads/master",
   "policy_decision": "allow",
-  "credential_mode": "github_app",
+  "remote_protection_status": "verified",
   "result": "success",
   "resulting_sha": "def456..."
 }
 ```
 
-The record SHALL NOT contain the credential, the credentialed URL, or any
-`Authorization` header value. Redaction SHALL occur before serialization, not as a
-post-processing pass over an already-written record.
+Under `ssh.mode: agent`, the daemon SHALL additionally emit an `ssh_auth` record
+for every signature request the agent serves:
+
+```json
+{
+  "timestamp": "...",
+  "workspace_id": "...",
+  "operation": "ssh_auth",
+  "key_fingerprint": "SHA256:...",
+  "requesting_pid": 4121,
+  "requesting_command": "git push origin master"
+}
+```
+
+This is the only visibility the daemon has into `exec`-path remote operations. It
+records that an authenticated connection was made, not what was pushed; the
+`requesting_command` field is best-effort from `/proc` and MAY be absent. Under
+`ssh.mode: file`, `exec`-path remote operations are not observable by the daemon,
+and the audit log SHALL NOT be described as complete for that mode.
 
 Denials SHALL be audited with the same fidelity as successes, including the policy
-key that produced the denial.
+key that produced the denial. Audit records SHALL NOT contain key material.
 
 ---
 
@@ -1930,8 +2029,8 @@ that a client can determine which guarantees apply without inspecting server
 configuration:
 
 - `git_dir_mode` (§18.2);
-- `credential_mode` (§19);
-- `broker_hooks` (§18.7).
+- `ssh_key_mode` and `ssh_key_scope` (§19);
+- `remote_protection` (§20.4).
 
 These SHALL be reported as SHALL rather than SHOULD, because a client cannot
 otherwise distinguish a hardened workspace from one running under an elevated
@@ -2082,8 +2181,9 @@ GIT_HEAD_CHANGED
 PATH_GIT_METADATA
 GIT_REMOTE_NOT_ALLOWED
 GIT_REFSPEC_NOT_ALLOWED
-GIT_HOOK_POLICY_DENIED
 GIT_AUTH_FAILED
+REMOTE_PROTECTION_MISSING
+SSH_KEY_PROVISION_FAILED
 GIT_NON_FAST_FORWARD
 POLICY_DENIED
 CONTAINER_CREATE_FAILED
@@ -2366,15 +2466,23 @@ The implementation SHALL consider:
 15. Git metadata poisoning as a host code-execution path — hooks, `core.fsmonitor`,
     `core.sshCommand`, aliases, clean/smudge filters, `textconv`, and credential
     helpers written into `.git` are interpreted by host Git processes running under
-    the human user's identity, without requiring any container escape (§18.3);
-16. hook execution during brokered operations, including `core.hooksPath` directed
-    at a container-writable path inside the tracked working tree (§18.7);
+    the human user's identity, without requiring any container escape. Accepted
+    under the default `git_dir_mode`; see §18.3 and §39.2;
+16. hook execution under the daemon's identity during host-side reads (§18.7,
+    §20.1);
 17. local-command Git transports and transport overrides — `ext::`, `file://`,
-    `--upload-pack`, `--receive-pack` (§20.3);
-18. remote URL substitution between validation and use (§20.3);
-19. refspec abuse — forced updates, ref deletion, and destinations outside
-    `refs/heads/` and `refs/tags/` (§20.4);
-20. submodule URL substitution through the tracked `.gitmodules` file (§18.8).
+    `--upload-pack`, `--receive-pack` — on structured operations (§20.2);
+18. private key extraction by repository code — prevented under `ssh.mode: agent`,
+    accepted under `ssh.mode: file` (§19.2);
+19. key scope creep — a key that can write to repositories beyond the workspace's
+    own; prevented under `ssh.scope: repository` (§19.1);
+20. destructive remote operations from `exec` — force push, branch deletion — which
+    no client-side control can prevent once the container holds a write key, and
+    which SHALL therefore be enforced at the remote (§18.5);
+21. SSH host-key substitution — prevented by pinning (§19.3);
+22. refspec abuse on structured operations — forced updates, ref deletion, and
+    destinations outside `refs/heads/` and `refs/tags/` (§20.3);
+23. submodule URL substitution through the tracked `.gitmodules` file (§18.8).
 
 ### 39.2 Accepted Risks
 
@@ -2385,19 +2493,26 @@ In the private single-user deployment model:
 - project code may use outbound network access unless restricted;
 - persistent containers may accumulate mutable state.
 
-Two consequences of the above are accepted explicitly, and SHALL NOT be described
-elsewhere in this specification as prevented:
+The trusted-container model (§18.1) accepts the following explicitly, and they
+SHALL NOT be described elsewhere in this specification as prevented:
 
+- **Remote writes from `exec`.** The container holds a write-capable key. Code
+  running under `exec` — including repository build scripts — can push, and can
+  force-push wherever the remote permits it. The mitigations are key scope (§19.1)
+  and remote-side rulesets (§18.5), not anything the daemon does.
+- **Git metadata poisoning.** Under the default `git_dir_mode: read-write`, code
+  in the container can write hooks and configuration that host Git processes will
+  later execute under the developer's identity (§18.3). The container is treated as
+  part of the developer's trust domain.
 - **Working-tree destruction.** Code running under `exec` may delete or corrupt any
   file in the working tree, including bulk deletion. Tracked content is recoverable
-  from the read-only object store; untracked and ignored content is not.
-- **Network exfiltration.** Brokered Git (§20) prevents unauthorized writes to
-  authorized remotes. It does not prevent project code from transmitting repository
-  contents to an attacker-controlled destination over the container's ordinary
-  outbound network access.
+  from the object store; untracked and ignored content is not.
+- **Network exfiltration.** Nothing prevents project code from transmitting
+  repository contents to an attacker-controlled destination over the container's
+  ordinary outbound network access.
 
-Both are Tier-3 operations under §18.6: bounded by the container boundary and by
-recoverability, not by policy.
+All four are Tier-3 under §18.6: bounded by the container boundary, key scope, the
+remote, and recoverability — not by policy.
 
 These are accepted in exchange for a practical development environment.
 
@@ -2405,9 +2520,10 @@ These are accepted in exchange for a practical development environment.
 
 ## 40. Host Security Requirements
 
-The daemon writes to the human's checkout: the broker (§20) creates objects, refs,
-and index entries in `.git`, and `git pull` modifies working-tree files. It
-therefore SHALL run as the uid that owns the repository roots. In the single-user
+The daemon touches the human's checkout directly: it performs host-side Git reads
+(§20.1), and — depending on where the filesystem service executes — writes
+working-tree files on the client's behalf. It therefore SHALL run as the uid that
+owns the repository roots. In the single-user
 deployment model (§4) that is the developer's own account. A dedicated daemon
 account is acceptable only when it owns the repository roots — which is a
 different deployment, not a hardening of this one.
@@ -2475,16 +2591,14 @@ Examples:
 - privileged container;
 - mounting additional host paths;
 - writing outside authorized repository roots;
-- `git_dir_mode: read-write` — a writable `.git` mount, which reopens the host
-  code-execution path described in §18.3;
-- `broker_hooks: enabled` — permitting repository-supplied hooks to run during
-  brokered operations (§18.7);
+- `ssh.scope: shared` — a key that can write to more than the workspace's own
+  repository (§19.1);
 - submodule initialization or update (§18.8).
 
 An implementation MAY initially hard-deny these instead of implementing interactive approval.
 
-The §19.1 credential invariant is not an elevated capability. It SHALL NOT be
-granted by policy, approval, or configuration.
+Mounting the host user's own credentials (§19.4) is not an elevated capability. It
+SHALL NOT be granted by policy, approval, or configuration.
 
 ---
 
@@ -2911,12 +3025,14 @@ Structured Git mutations SHOULD support expected branch and expected HEAD guards
 
 ### FR-025 Credential Isolation
 
-No credential capable of writing to an authorized remote SHALL be present inside a
-development container, in its environment, in its filesystem, in its process
-arguments, or in any file under a repository root (§19.1).
+The host user's own credentials — `~/.ssh`, `gh` configuration, git credential
+stores — SHALL NOT be mounted into or otherwise exposed to any development
+container (§19.4). The credential a container holds SHALL be a dedicated key
+issued for this system and scoped to the workspace's authorized repositories
+(§19.1).
 
-This requirement is unconditional. It is not qualified by "by default", and SHALL
-NOT be relaxed by policy or configuration.
+The first sentence is unconditional and SHALL NOT be relaxed by policy or
+configuration.
 
 ### FR-026 Docker Socket Isolation
 
@@ -2938,25 +3054,24 @@ The system SHOULD detect stale file or Git assumptions.
 
 The client SHALL be able to query workspace/container/repository state.
 
-### FR-031 Git Metadata Integrity
+### FR-031 Git Metadata Exclusion from Structured Tools
 
-Repository Git metadata SHALL NOT be writable through any client-reachable path:
-not from a development container under the default `git_dir_mode` (§18.2), and not
-through the structured filesystem tools regardless of where they execute (§12.1).
-This includes Git directories reached through a gitfile.
+The structured filesystem tools SHALL NOT write to repository Git metadata,
+regardless of where they execute, including Git directories reached through a
+gitfile (§12.1). Under `git_dir_mode: read-only`, `.git` SHALL additionally be
+unwritable from the container (§18.2).
 
-### FR-032 Hook Execution Control
+### FR-032 Remote Protection Verification
 
-Repository-supplied hooks SHALL NOT execute during brokered Git operations under
-the default `broker_hooks` policy, including hooks reached through a
-`core.hooksPath` that resolves inside the tracked working tree (§18.7).
+With a read-only API credential configured, the daemon SHALL verify and report the
+default branch's protection against force push and deletion on `workspace_open`,
+and SHALL honour `git_policy.require_remote_protection` (§18.5, §20.4).
 
 ### FR-033 Remote Transport Restriction
 
-The Git broker SHALL reject configured remote URLs whose transport is capable of
-invoking a local command, and SHALL invoke Git against an HTTPS URL derived from
-the validated repository identity — never against the configured URL or the remote
-name (§20.3).
+Structured Git operations SHALL reject configured remote URLs whose transport is
+capable of invoking a local command (§20.2). SSH host keys for GitHub SHALL be
+pinned (§19.3).
 
 ### FR-034 Refspec Validation
 
@@ -2965,8 +3080,8 @@ through to Git (§20.4).
 
 ### FR-035 Mode Disclosure
 
-`workspace_info` SHALL report `git_dir_mode`, `credential_mode`, and `broker_hooks`
-(§25).
+`workspace_info` SHALL report `git_dir_mode`, `ssh_key_mode`, `ssh_key_scope`, and
+`remote_protection` (§25).
 
 ### FR-036 File Ownership Identity
 
@@ -2974,6 +3089,12 @@ Files written into the host checkout from a development container SHALL be owned
 by the checkout owner's uid/gid. The daemon SHALL run as that uid. Container uid 0
 SHALL NOT be the default process identity, and SHALL be refused entirely unless
 user-namespace remapping is active (§5.3).
+
+### FR-037 Dedicated Key Provisioning
+
+The daemon SHALL provision a dedicated SSH key into each workspace, via an agent
+socket by default, and SHALL refuse to provision any key that resolves to the host
+user's `.ssh` directory (§19.1, §19.2).
 
 ---
 
@@ -3021,36 +3142,39 @@ The first usable release SHOULD prioritize practical development value.
 
 1. repository allowlist;
 2. one persistent Docker container per active repository;
-3. read/write working-tree bind mount with read-only `.git` (§18.2);
+3. read/write working-tree bind mount, `.git` read-write (§18.2);
 3a. container processes running as the checkout owner's uid, with root via `sudo`
     (§5.3);
 3b. Git metadata excluded from every filesystem tool (§12.1);
 4. `workspace_open`;
-5. `workspace_info`, reporting `git_dir_mode`, `credential_mode`, `broker_hooks`;
+5. `workspace_info`, reporting `git_dir_mode`, `ssh_key_mode`, `ssh_key_scope`,
+   `remote_protection`;
 6. filesystem list/read/write/patch/delete;
 7. synchronous command execution;
 8. asynchronous job start/status/output/cancel;
 9. Git status/diff/log;
 10. stage/commit;
-11. brokered fetch/pull/push (§20);
-12. daemon-held repository-scoped GitHub authentication, with no credential present
-    in any container (§19.1);
-13. remote identity and refspec validation (§20.3, §20.4);
-14. hooks disabled during brokered operations (§18.7);
+11. structured fetch/pull/push, executed in-container (§20);
+12. dedicated per-repository SSH deploy key provisioned via agent socket, GitHub
+    host keys pinned, host credentials never mounted (§19);
+13. remote identity and refspec validation on structured operations (§20.2,
+    §20.3);
+14. remote protection verification with `require_remote_protection: warn`
+    (§18.5, §20.4);
 15. path traversal protection;
 16. Docker socket isolation;
 17. bounded command output;
 18. audit log;
 19. container rebuild/reset.
 
-Brokered Git is in the MVP rather than deferred. It is simpler to implement than
-credential injection — the daemon already runs on the host and already owns the
-checkout — and it is the mechanism by which FR-025 holds. Retrofitting it after a
-release that injects credentials would require rebuilding the credential model, the
-policy enforcement point, and the acceptance tests together.
+Agent-mode key provisioning is in the MVP rather than `file` mode alone, because
+it is what makes the model's two strongest claims true — the key cannot be
+extracted, and `exec`-path remote operations are audited. It is a per-workspace
+`ssh-agent` and a socket mount; the lifecycle is small.
 
-Read-only `.git` is likewise in the MVP because it is a mount flag, not a
-subsystem.
+Remote protection verification is in the MVP because it is the only enforcement of
+force-push and deletion policy that binds `exec`, and because without the report a
+client cannot tell whether those protections exist.
 
 ### Explicitly Defer From MVP
 
@@ -3067,7 +3191,8 @@ subsystem.
 - Docker-in-Docker;
 - arbitrary extra host mounts;
 - submodule support (§18.8, denied by default);
-- `git_dir_mode: read-write` and `broker_hooks: enabled` elevated modes;
+- `ssh.scope: shared`;
+- per-signature approval through the agent (§19.2, §75);
 - interactive approval for `require_approval` policies, which MAY be implemented as
   hard denial in the first release.
 
@@ -3082,10 +3207,10 @@ Implement:
 - MCP server;
 - repository configuration;
 - Docker lifecycle;
-- writable working-tree mount with read-only `.git` (§18.2);
+- writable working-tree mount, `.git` read-write by default (§18.2);
 - container user matching the checkout owner's uid/gid, `sudo` available (§5.3);
 - Git metadata exclusion in the filesystem service (§12.1);
-- container-local Git environment — `GIT_OPTIONAL_LOCKS=0`, `safe.directory`;
+- container-local Git environment — `safe.directory`, `GIT_TERMINAL_PROMPT=0`;
 - `workspace_open`;
 - `workspace_info`, including `git_dir_mode`;
 - filesystem tools;
@@ -3094,8 +3219,7 @@ Implement:
 Acceptance:
 
 - client can modify a real local repository and run a command in its container;
-- AT-021, AT-022, and AT-030 pass — `.git/hooks` and `.git/config` are not
-  writable from inside the container or through the filesystem tools;
+- AT-030 passes — the filesystem tools refuse `.git`;
 - AT-014a passes — files written from the container are owned by the checkout
   owner on the host.
 
@@ -3118,7 +3242,8 @@ Acceptance:
 
 Implement:
 
-- the Git broker as the host-side execution path for all structured Git tools (§20);
+- structured Git tools as an in-container front-end over the execution service
+  (§20.1), with host-side read-only queries;
 - status;
 - diff;
 - history;
@@ -3126,32 +3251,33 @@ Implement:
 - commit;
 - branch operations;
 - state guards;
-- hook neutralization during brokered operations (§18.7).
+- hook neutralization on host-side reads (§18.7).
 
 Acceptance:
 
 - client can safely implement, validate, and commit a change;
 - AT-023 passes — a `core.hooksPath` hook inside the tracked working tree does not
-  execute during a brokered commit.
+  execute during a host-side `git_status`.
 
 ### Phase 4 — GitHub Synchronization
 
 Implement:
 
-- brokered fetch;
-- brokered pull, `ff_only` by default;
-- brokered push;
-- remote identity validation, including transport restriction and validated-URL
-  invocation (§20.3);
-- refspec validation (§20.4);
-- daemon-held scoped authentication and credential handling (§19.4);
-- protected destructive operations (§18.9).
+- per-workspace `ssh-agent` provisioning and socket mount (§19.2);
+- pinned GitHub host keys and container-local SSH configuration (§19.3);
+- structured fetch, pull (`ff_only` by default), and push (§20.5);
+- remote identity validation with transport restriction (§20.2);
+- refspec validation (§20.3);
+- structured-tool destructive-operation policy (§18.9);
+- remote protection verification with an optional read-only API credential
+  (§20.4).
 
 Acceptance:
 
-- client can publish a normal fast-forward commit to an authorized repository while
-  no credential is present in any container;
-- AT-011, AT-013, AT-024, AT-025, and AT-026 pass.
+- client can publish a normal fast-forward commit to an authorized repository from
+  both the structured tool and `exec("git push")`;
+- AT-011, AT-013, AT-024, AT-025, AT-025a, AT-026, AT-031, AT-032, and AT-033
+  pass.
 
 ### Phase 5 — Environment Configuration
 
@@ -3238,23 +3364,26 @@ A normal push against a diverged remote SHALL fail without automatically forcing
 
 ### AT-011 Force Push Policy
 
-A structured force push SHALL be denied at the broker under the default policy.
+A structured `git_push` with force SHALL be denied under the default policy.
 
-Additionally, `exec("git push --force")` inside the development container SHALL fail
-for lack of credentials, demonstrating that the denial does not depend on the client
-choosing the structured path.
+Separately, against a repository whose default branch has a ruleset blocking force
+pushes, `exec("git push --force origin master")` SHALL be rejected by the remote.
+Against a repository with no such ruleset it SHALL succeed, and the test SHALL
+record that this is the expected, documented behaviour (§18.6) — not a failure.
 
 ### AT-012 Docker Socket
 
 Inside the project container, `/var/run/docker.sock` SHALL not be present by default.
 
-### AT-013 Credential Isolation
+### AT-013 Host Credential Isolation
 
-Host SSH keys and GitHub CLI credentials SHALL NOT be mounted into any container.
+The host user's `~/.ssh`, `~/.config/gh`, `~/.git-credentials`, and `~/.netrc`
+SHALL NOT be present inside any container, and no key fingerprint belonging to the
+host user's personal keys SHALL be offered by the container's SSH client.
 
-No credential capable of writing to an authorized remote SHALL be discoverable from
-inside the container by environment inspection, filesystem search under repository
-roots, or process inspection — including during an in-flight brokered operation.
+Under `ssh.mode: agent`, no private key material SHALL be discoverable inside the
+container by filesystem search, environment inspection, or reading `/proc` —
+including during an in-flight `git push`.
 
 ### AT-014 Container Root via sudo
 
@@ -3265,8 +3394,8 @@ The project container SHALL be capable of installing normal OS packages through
 
 A file written from inside the container SHALL appear in the host checkout owned by
 the checkout owner's uid/gid. The human SHALL be able to overwrite and delete it
-without elevated privileges, and a subsequent brokered `git add` and `git_pull`
-across it SHALL succeed.
+without elevated privileges, and a subsequent `git add` from inside the container
+and a structured `git_pull` across it SHALL both succeed.
 
 ### AT-014b Root Mode Refusal
 
@@ -3298,37 +3427,40 @@ Run a command containing a configured secret and verify audit output does not ex
 
 A symlink beneath an allowed repository root pointing elsewhere SHALL not be treated as an authorized repository.
 
-### AT-021 Git Hook Write
+### AT-021 Git Hook Write (read-only mode)
 
-Writing `.git/hooks/pre-commit` from inside the development container SHALL fail
-under the default `git_dir_mode`.
+Under `git_dir_mode: read-only`, writing `.git/hooks/pre-commit` from inside the
+development container SHALL fail. Under the default `read-write` it SHALL succeed,
+and the test SHALL record that this is documented behaviour (§18.3).
 
-### AT-022 Git Config Write
+### AT-022 Git Config Write (read-only mode)
 
-Setting `core.fsmonitor` in `.git/config` from inside the development container
-SHALL fail under the default `git_dir_mode`.
+Under `git_dir_mode: read-only`, setting `core.fsmonitor` in `.git/config` from
+inside the development container SHALL fail.
 
-### AT-023 Hooks Path Escape
+### AT-023 Hooks Path on Host-Side Reads
 
 With `core.hooksPath` pointed at a directory inside the tracked working tree
-containing an executable hook, a brokered commit SHALL NOT execute that hook under
-`broker_hooks: disabled`.
+containing an executable hook, a host-side `git_status` or `git_diff` SHALL NOT
+execute that hook under the daemon's identity.
 
 ### AT-024 Local-Command Transport
 
 A remote URL of the form `ext::sh -c ...` SHALL be rejected before any authenticated
 operation is attempted.
 
-### AT-025 Remote Substitution Race
+### AT-025 Key Scope
 
-Changing `origin` between remote validation and push SHALL NOT affect the push
-destination, which SHALL be the URL derived from the validated identity.
+Under `ssh.scope: repository`, with `origin` pointed at a second repository on
+which the workspace's deploy key is not installed, both a structured `git_push`
+and `exec("git push")` SHALL fail — the first at validation with
+`GIT_REMOTE_NOT_ALLOWED`, the second at GitHub with an authentication error.
 
 ### AT-025a SSH-Form Remote
 
-With `origin` configured as `git@github.com:owner/repo.git`, a brokered push SHALL
-succeed over HTTPS using the daemon-held credential, and SHALL NOT attempt an SSH
-connection.
+With `origin` configured as `git@github.com:owner/repo.git`, `exec("git push")` and
+a structured `git_push` SHALL both succeed using the workspace key, with no
+interactive prompt.
 
 ### AT-026 Refspec Validation
 
@@ -3338,15 +3470,17 @@ A push refspec with a leading `+` SHALL be rejected under `force_push: deny`.
 
 A `.gitmodules` URL pointing at an unauthorized repository SHALL NOT be fetched.
 
-### AT-028 Read-Only Container Git
+### AT-028 Container Git Workflow
 
-Under the default `git_dir_mode`, `git log` and `git rev-parse` SHALL succeed inside
-the container while `git commit` and `git fetch` SHALL fail.
+Under the default `git_dir_mode`, `git add`, `git commit`, `git fetch`, and
+`git push` SHALL all succeed from `exec` inside the container, and the resulting
+commit SHALL be visible in the host checkout with the correct ownership.
 
 ### AT-029 Mode Disclosure
 
-`workspace_info` SHALL report `git_dir_mode`, `credential_mode`, and `broker_hooks`
-values matching the workspace's actual configuration.
+`workspace_info` SHALL report `git_dir_mode`, `ssh_key_mode`, `ssh_key_scope`, and
+`remote_protection` values matching the workspace's actual configuration and the
+remote's actual state.
 
 ### AT-030 Filesystem Tool Git Metadata
 
@@ -3354,6 +3488,29 @@ values matching the workspace's actual configuration.
 `move_file` into or out of `.git` SHALL each fail with `PATH_GIT_METADATA`. The
 same SHALL hold for a path containing a `.git` component at any depth, and for the
 gitdir target of a gitfile.
+
+### AT-031 Host Key Pinning
+
+With a substituted SSH host key for `github.com` presented to the container, every
+SSH connection SHALL fail with a host-key mismatch and SHALL NOT prompt.
+
+### AT-032 Remote Protection Reporting
+
+Against a repository whose default branch has no ruleset, `workspace_open` under
+`require_remote_protection: warn` SHALL succeed with `remote_protection.status:
+missing` and a warning; under `deny` it SHALL fail with
+`REMOTE_PROTECTION_MISSING` and SHALL NOT have provisioned a key into the
+container.
+
+### AT-033 Agent Lifecycle
+
+After `workspace_stop`, the workspace key SHALL no longer be loaded in any agent,
+and after `workspace_delete` no agent for the workspace SHALL be running.
+
+### AT-034 SSH Auth Audit
+
+Under `ssh.mode: agent`, an `exec("git fetch")` SHALL produce an `ssh_auth` audit
+record for the workspace carrying the key's fingerprint.
 
 ---
 
@@ -3376,9 +3533,10 @@ Response:
   "repository_id": "chatgpt-ralph-loop-tools",
   "container_state": "running",
   "workspace_path": "/workspace",
-  "git_dir_mode": "read-only",
-  "credential_mode": "github_app",
-  "broker_hooks": "disabled",
+  "git_dir_mode": "read-write",
+  "ssh_key_mode": "agent",
+  "ssh_key_scope": "repository",
+  "remote_protection": { "status": "verified", "force_push_blocked": true },
   "git": {
     "branch": "master",
     "head_sha": "abc123...",
@@ -3479,9 +3637,10 @@ Response:
 ## 66. Example `git_push` Contract
 
 The `git_push` contract is normative in §20.5 and is not restated here. Push is a
-brokered operation: the request is subject to remote identity validation (§20.3),
-refspec validation (§20.4), and preconditions (§20.6), and the response reports the
-credential mode in force.
+structured operation executed in-container (§20.1): the request is subject to
+remote identity validation (§20.2), refspec validation (§20.3), and preconditions
+(§20.6), and the response reports the key mode, key scope, and remote protection
+status in force.
 
 ---
 
@@ -3699,12 +3858,12 @@ A health check SHOULD report degraded state if Docker is unavailable.
 
 ## 74. Security Defaults
 
-Two of these are invariants rather than defaults, and SHALL NOT be reconfigurable:
+Three of these are invariants rather than defaults, and SHALL NOT be reconfigurable:
 
 ```text
-Credentials in project container:   DENIED   (invariant, §19.1)
-Host SSH directory mount:           DENIED   (invariant, §19.5)
-Host gh config mount:               DENIED   (invariant, §19.5)
+Host user's credentials in container: DENIED  (invariant, §19.4)
+Host SSH directory mount:             DENIED  (invariant, §19.4)
+Host gh config mount:                 DENIED  (invariant, §19.4)
 ```
 
 The remaining default configuration SHOULD choose:
@@ -3713,25 +3872,29 @@ The remaining default configuration SHOULD choose:
 Docker socket in project container: DENIED
 Privileged project container:       DENIED
 Additional host mounts:             DENIED
-Container .git write access:        DENIED   (git_dir_mode: read-only, §18.2)
-Hooks during brokered operations:   DISABLED (broker_hooks: disabled, §18.7)
-Submodule init/update:              DENIED
-Configured remote schemes not https/ssh: DENIED
-Operation transport:                HTTPS, derived from identity (§20.3)
-Force push:                         DENIED
-Force-with-lease push:              DENIED
-Remote branch deletion:             DENIED
-Remote tag deletion:                DENIED
-Remote URL change:                  DENIED
-Hard reset:                         DENIED or approval-required
+Dedicated SSH key in container:     PROVIDED (agent socket, per-repository, §19)
+Container .git write access:        ALLOWED  (git_dir_mode: read-write, §18.2)
+Hooks inside the container:         RUN      (§18.7)
+Hooks on host-side daemon reads:    DISABLED (§18.7)
+GitHub host keys:                   PINNED   (§19.3)
+Submodule init/update:              DENIED   (structured); key scope bounds exec
+Configured remote schemes not ssh/https: DENIED (structured)
+Force push (structured tools):      DENIED
+Force push (exec):                  ENFORCED BY REMOTE RULESET where present (§18.5)
+Force-with-lease (structured):      DENIED
+Remote branch deletion (structured): DENIED
+Remote tag deletion (structured):   DENIED
+Remote URL change (structured):     DENIED
+Hard reset (structured):            DENIED or approval-required
 Pull strategy:                      FF-ONLY
+Remote protection check:            WARN if missing (require_remote_protection)
 Outbound network:                   ALLOWED
 Container process identity:         HOST CHECKOUT OWNER uid/gid (§5.3)
 Container root via sudo:            ALLOWED
 Container uid 0 without userns:     DENIED
 Root-owned files in host checkout:  PREVENTED
 Working-tree write:                 ALLOWED
-Container read-only Git access:     ALLOWED
+Container Git workflow (exec):      ALLOWED, including push
 Normal commit:                      ALLOWED
 Normal authorized push:             ALLOWED
 ```
@@ -3757,6 +3920,8 @@ Potential future capabilities include:
 - remote workspace hosts;
 - multi-user RBAC;
 - per-tool interactive approvals;
+- per-signature approval through the workspace `ssh-agent`, gating every
+  authenticated remote operation regardless of path (§19.2);
 - secrets vault integration;
 - VS Code Dev Container parity;
 - project environment fingerprints;
@@ -3804,10 +3969,10 @@ The initial architecture SHALL follow these decisions:
 12. Structured Git tools are provided in addition to general shell access.
 13. Git mutations use state guards where practical.
 14. Normal authorized Git pushes are supported.
-15. Force pushes and other destructive operations are denied by default.
-16. No credential capable of writing to an authorized remote is present in a project container, under any configuration.
-17. All authenticated remote operations are brokered by the daemon on the host; GitHub authentication uses short-lived repository-scoped credentials, preferably through a GitHub App.
-17a. Repository Git metadata is mounted read-only into project containers, because a writable `.git` is a host code-execution path independent of container escape.
+15. Force pushes and other destructive operations are denied on the structured tools; because `exec` can bypass that, enforcement that binds every path lives in remote rulesets, which the daemon verifies and can require.
+16. The container holds a write-capable SSH key for its repository — a dedicated per-repository deploy key, provisioned through an agent socket so it cannot be extracted, and never the host user's own. The container can push.
+17. Structured Git tools execute inside the container with that key; the daemon holds no Git write credential, and at most a read-only API credential for verification.
+17a. Repository Git metadata is mounted read-write by default, which is an accepted host code-execution risk in the trusted-container model; a read-only mode exists for untrusted code.
 18. The server is language-agnostic.
 19. Dev Container support is desirable but not required for the earliest MVP.
 20. The system complements rather than replaces Ralph Bridge.
@@ -3834,6 +3999,6 @@ The first production-usable release is complete when ChatGPT can reliably perfor
 14. create a commit with state guards;
 15. push the commit to the configured GitHub repository;
 16. reconnect later and reuse the same configured development environment;
-17. perform all of the above without exposing the host Docker socket, arbitrary host filesystem paths, writable repository Git metadata, or any remote-write credential to project code.
+17. perform all of the above without exposing the host Docker socket, arbitrary host filesystem paths, or any of the host user's own credentials to project code — and with the container's dedicated key unable to reach any repository but its own.
 
 At that point the server provides a practical replacement for the major software-development capabilities missing from a restricted generic AI sandbox.
