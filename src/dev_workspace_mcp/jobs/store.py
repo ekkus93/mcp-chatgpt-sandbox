@@ -279,3 +279,11 @@ class JobStore:
         if record.state in TERMINAL_STATES:
             return record
         return self._save(replace(record, state=JobState.LOST, finished_at=_now()))
+
+    def mark_logs_pruned(self, job_id: str) -> JobRecord:
+        """§15.6's retention: the job's log *files* are gone, but the row
+        — final state, exit code, byte counts — stays queryable. Does not
+        touch the files themselves; the caller (`jobs/retention.py`)
+        deletes them first."""
+        record = self._get_or_raise(job_id)
+        return self._save(replace(record, logs_pruned=True))

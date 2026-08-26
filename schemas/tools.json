@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.2.0",
+  "contract_version": "0.2.1",
   "tools": [
     {
       "description": "Delete a repository file or directory (\u00a713.5).",
@@ -286,6 +286,10 @@
             "title": "Job Id",
             "type": "string"
           },
+          "logs_pruned": {
+            "title": "Logs Pruned",
+            "type": "boolean"
+          },
           "stream": {
             "title": "Stream",
             "type": "string"
@@ -304,7 +308,8 @@
           "stream",
           "content",
           "stream_total_bytes",
-          "truncated"
+          "truncated",
+          "logs_pruned"
         ],
         "title": "ExecOutputOutput",
         "type": "object"

@@ -400,6 +400,96 @@ async def test_exec_start_disconnect_reconnect_job_still_queryable(
     assert "built" in output.structured_content["content"]
 
 
+async def test_at_007_multi_megabyte_output_stays_bounded_and_retrievable(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """AT-007: multi-megabyte output stays bounded in responses,
+    retrievable incrementally (§15.5, §15.6, S16)."""
+    config = _configured(
+        minimal_config,
+        default_image_tag,
+        tmp_path / "work" / "example",
+        execution={"max_output_bytes": 4096, "tail_keep_bytes": 512, "response_tail_lines": 5},
+    )
+    server = create_server(config)
+    workspace_id = await _open_workspace(server)
+
+    started = await server.call_tool(
+        "exec_start",
+        # ~3.3 MiB of realistic, line-oriented stdout (a real build log
+        # isn't one giant unbroken chunk) — far past the 4 KiB on-disk cap.
+        {
+            "workspace_id": workspace_id,
+            "shell": "yes '0123456789' | head -n 300000",
+        },
+    )
+    job_id = started.structured_content["job_id"]
+
+    async def finished() -> bool:
+        status = await server.call_tool("exec_status", {"job_id": job_id})
+        return bool(status.structured_content["state"] == "succeeded")
+
+    await _wait_until(finished, timeout=30.0)
+
+    status = await server.call_tool("exec_status", {"job_id": job_id})
+    content = status.structured_content
+    # Bounded in the response: the last few lines, not 3+ MiB of output.
+    assert len(content["stdout_tail"]) < 4096
+    assert content["output_truncated"] is True
+    assert content["stdout_total_bytes"] >= 3_000_000
+
+    # Retrievable incrementally: a byte-range read against the captured
+    # (capped) log gets exactly the slice asked for, not everything.
+    chunk = await server.call_tool(
+        "exec_output", {"job_id": job_id, "byte_start": 0, "byte_end": 100}
+    )
+    assert len(chunk.structured_content["content"]) == 100
+    assert chunk.structured_content["stream_total_bytes"] >= 3_000_000
+
+    # The on-disk log itself stayed bounded — nowhere near the full 3+ MiB.
+    log_path = Path(f"{config.state_db_path.parent}/jobs/{job_id}/stdout.log")
+    assert log_path.exists()
+    assert log_path.stat().st_size < 4096 + 512 + 200  # cap + tail + marker overhead
+
+
+async def test_exec_status_and_output_omission_marker_appears_when_capped(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    config = _configured(
+        minimal_config,
+        default_image_tag,
+        tmp_path / "work" / "example",
+        # tail_keep_bytes generous relative to max_output_bytes so the
+        # default response limit (max_output_bytes + tail_keep_bytes)
+        # comfortably covers the marker itself, not just the cap point.
+        execution={"max_output_bytes": 100, "tail_keep_bytes": 100},
+    )
+    server = create_server(config)
+    workspace_id = await _open_workspace(server)
+
+    started = await server.call_tool(
+        "exec_start",
+        {"workspace_id": workspace_id, "shell": "head -c 10000 /dev/zero | tr '\\0' 'x'"},
+    )
+    job_id = started.structured_content["job_id"]
+
+    async def finished() -> bool:
+        status = await server.call_tool("exec_status", {"job_id": job_id})
+        return bool(status.structured_content["state"] == "succeeded")
+
+    await _wait_until(finished, timeout=15.0)
+
+    output = await server.call_tool("exec_output", {"job_id": job_id})
+    assert "bytes omitted" in output.structured_content["content"]
+    assert output.structured_content["logs_pruned"] is False
+
+
 async def test_exec_start_fails_clearly_when_docker_unreachable(
     minimal_config: ServerConfig,
 ) -> None:

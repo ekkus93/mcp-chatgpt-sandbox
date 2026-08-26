@@ -1,4 +1,4 @@
-"""Background execution of `exec_start` jobs (§15.3, S15).
+"""Background execution of `exec_start` jobs (§15.3, S15/S16).
 
 `JobStore` (S14) is what makes a job's *identity* survive an MCP
 reconnect (§23): any request can look one up by id. It does not, by
@@ -8,12 +8,16 @@ is the piece that does: one instance per server process, holding exactly
 the jobs this process has started since its own last restart in an
 in-memory `LiveJob` per job id.
 
-That buffer is deliberately unbounded and unpersisted — a stand-in for
-§15.6's capped, host-side log files (S16), not a finished implementation
-of them. `output_truncated` therefore stays `False` throughout S15; a job
-this process never started (most commonly one from before a restart,
-already `lost` by S14's `reconcile_jobs`) has no `LiveJob` and its output
-is simply gone, consistent with what "lost" means.
+A `LiveJob` wraps a `StreamCapture` per stream (§15.6, S16) — capped,
+host-side log files, not an unbounded in-memory buffer — so `AsyncJobRunner`
+itself only needs cheap counters (`total_bytes`/`truncated`) for a
+*running* job's live stats; actual content, for both a running and a
+finished job, is read straight from the log files (`execution/log_capture.py`'s
+`read_log_bytes`), which is what makes it survive this process's own
+lifetime once written. A job this process never started (most commonly
+one from before a restart, already `lost` by S14's `reconcile_jobs`) has
+no `LiveJob` — its live stats are unavailable, but its log files, if not
+yet pruned, are still readable directly.
 """
 
 from __future__ import annotations
@@ -21,7 +25,9 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
+from dev_workspace_mcp.execution.log_capture import StreamCapture
 from dev_workspace_mcp.execution.service import ExecutionService
 from dev_workspace_mcp.jobs.store import JobState, JobStore
 
@@ -36,13 +42,14 @@ KILL_GRACE_PERIOD_SECONDS = 2.0
 
 @dataclass
 class LiveJob:
-    """This process's only source of a job's actual output content, and
-    of a *running* job's live progress. See the module docstring for what
-    is and isn't scoped to S15."""
+    """This process's only source of a *running* job's live stats
+    (`StreamCapture.total_bytes`/`.truncated`, cheap counters — not the
+    content itself, which lives in the capture's log file). See the
+    module docstring for what is and isn't scoped to S15/S16."""
 
     exec_id: str
-    stdout: bytearray = field(default_factory=bytearray)
-    stderr: bytearray = field(default_factory=bytearray)
+    stdout_capture: StreamCapture
+    stderr_capture: StreamCapture
     started_monotonic: float = field(default_factory=time.monotonic)
     finished_monotonic: float | None = None
     cancel_requested: bool = False
@@ -76,6 +83,10 @@ class AsyncJobRunner:
         user: str,
         env: dict[str, str] | None,
         timeout_seconds: float | None,
+        stdout_log_path: Path,
+        stderr_log_path: Path,
+        max_output_bytes: int,
+        tail_keep_bytes: int,
     ) -> None:
         """Creates and starts the exec, records the job as `running` with
         a real pid, and launches the background task that drains its
@@ -91,7 +102,15 @@ class AsyncJobRunner:
             user=user,
             env=env,
         )
-        live = LiveJob(exec_id=exec_id)
+        live = LiveJob(
+            exec_id=exec_id,
+            stdout_capture=StreamCapture(
+                stdout_log_path, max_output_bytes=max_output_bytes, tail_keep_bytes=tail_keep_bytes
+            ),
+            stderr_capture=StreamCapture(
+                stderr_log_path, max_output_bytes=max_output_bytes, tail_keep_bytes=tail_keep_bytes
+            ),
+        )
         self._live[job_id] = live
         self._job_store.mark_running(job_id, pid=pid)
         task = asyncio.create_task(self._run(job_id, live, stream, timeout_seconds))
@@ -105,19 +124,13 @@ class AsyncJobRunner:
         stream: object,
         timeout_seconds: float | None,
     ) -> None:
-        def on_stdout(chunk: bytes) -> None:
-            live.stdout.extend(chunk)
-
-        def on_stderr(chunk: bytes) -> None:
-            live.stderr.extend(chunk)
-
         drain = asyncio.ensure_future(
             asyncio.to_thread(
                 self._execution.drain_stream,
                 live.exec_id,
                 stream,  # type: ignore[arg-type]
-                on_stdout=on_stdout,
-                on_stderr=on_stderr,
+                on_stdout=live.stdout_capture.write,
+                on_stderr=live.stderr_capture.write,
             )
         )
 
@@ -138,6 +151,8 @@ class AsyncJobRunner:
             exit_code = None
 
         live.finished_monotonic = time.monotonic()
+        live.stdout_capture.finish()
+        live.stderr_capture.finish()
 
         if live.cancel_requested:
             state = JobState.CANCELED
@@ -152,9 +167,9 @@ class AsyncJobRunner:
             job_id,
             state=state,
             exit_code=exit_code,
-            stdout_total_bytes=len(live.stdout),
-            stderr_total_bytes=len(live.stderr),
-            output_truncated=False,
+            stdout_total_bytes=live.stdout_capture.total_bytes,
+            stderr_total_bytes=live.stderr_capture.total_bytes,
+            output_truncated=live.stdout_capture.truncated or live.stderr_capture.truncated,
         )
 
     async def _terminate(self, exec_id: str) -> None:

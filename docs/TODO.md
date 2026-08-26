@@ -463,18 +463,81 @@ same `ps aux | grep '[s]leep 60'` idiom as S12), a real timeout marking
 id alone, discarding the `exec_start` response, as a reconnecting client
 would).
 
-### S16 — Job log storage
-**Spec:** §15.5, §15.6, §46 · **Verified by:** AT-007
+### S16 — Job log storage ✅
+**Spec:** §15.5, §15.6, §46 · **Verified by:** AT-007 · **Commit:** `bb2ddba`
 
-- [ ] Capture streams to `<state_dir>/jobs/<job_id>/{stdout,stderr}.log` — never in
+- [x] Capture streams to `<state_dir>/jobs/<job_id>/{stdout,stderr}.log` — never in
       the repository, never in the container
-- [ ] `max_output_bytes` as the per-stream per-job on-disk cap
-- [ ] Past the cap: stop appending, keep counting, keep a `tail_keep_bytes` ring
+- [x] `max_output_bytes` as the per-stream per-job on-disk cap
+- [x] Past the cap: stop appending, keep counting, keep a `tail_keep_bytes` ring
       buffer appended at job end, mark the gap `--- <N> bytes omitted ---`
-- [ ] Retention by `job_retention_days` and `job_log_max_total_bytes`; running jobs
+- [x] Retention by `job_retention_days` and `job_log_max_total_bytes`; running jobs
       never pruned; pruned jobs still queryable with `logs_pruned: true`
-- [ ] AT-007: multi-megabyte output stays bounded in responses, retrievable
+- [x] AT-007: multi-megabyte output stays bounded in responses, retrievable
       incrementally
+
+`src/dev_workspace_mcp/execution/log_capture.py`: `StreamCapture`, one per
+job per stream. Every write is flushed immediately — a job's log must be
+"retrievable incrementally" (§15.5) while still running, from a different
+thread than the one appending to it, and an unflushed write would make a
+concurrent reader see less than what was actually produced. Past
+`max_output_bytes`, writes stop landing in the file but keep being
+counted (`total_bytes`) and kept in a `tail_keep_bytes` ring buffer;
+`finish()` (called once, when the job ends) appends the
+`--- <N> bytes omitted ---` marker and the kept tail. A stream that never
+wrote anything never opens a file at all.
+
+This replaces S15's unbounded in-memory `LiveJob.stdout`/`.stderr`
+bytearrays — keeping those around after adding a real cap would have
+defeated §15.6's actual point ("§15.5 bounds what a *response* carries;
+this section bounds what is *kept*"). `LiveJob` now wraps a
+`StreamCapture` per stream instead, and — since disk is the single
+source of truth for content once captured — `exec_status`/`exec_output`
+read tails/ranged output straight from the log file
+(`log_capture.read_log_bytes`) rather than from `AsyncJobRunner`'s
+memory; only cheap counters (`total_bytes`/`truncated`) still come from
+the live capture object while a job is running (JobStore's own byte
+counts are only current once a job finishes). A useful side effect: a
+job's *content* now survives this daemon process's own lifetime (subject
+to retention), not just its identity (§14) — S14's "no `LiveJob` → output
+gone" framing held only until this task gave the log files themselves
+somewhere to survive to.
+
+`src/dev_workspace_mcp/jobs/retention.py`: `prune_job_logs`, pruning
+completed jobs' log files (never a running job's, never the `JobStore`
+row) by two independent triggers — age (`job_retention_days`) and total
+on-disk size (`job_log_max_total_bytes`, oldest-finished-first).
+§15.6 asks for retention "on a schedule and on demand"; nothing else in
+the daemon has a periodic timer (idle-stop, S17, is likely to want one
+too), so `tools/execution.py` calls this opportunistically on every
+`exec_start` as a practical stand-in for the scheduled half — documented
+honestly as that, not a real scheduler.
+
+Found and fixed while testing: `exec_output`'s default response byte
+limit was `execution_config.max_output_bytes` alone — the same value
+already governing the on-disk cap — so a response with no explicit
+`max_bytes` re-truncated right where the omission marker and kept tail
+live, hiding the one part of a capped log that says something was
+capped. Fixed to default to `max_output_bytes + tail_keep_bytes` (the
+whole on-disk capture, itself already bounded), with `max_bytes` still
+able to ask for less. Also fixed: `prune_job_logs` was first wired up via
+`asyncio.to_thread`, which crashed immediately —
+`sqlite3.ProgrammingError: SQLite objects created in a thread can only
+be used in that same thread` — since `job_store` shares the request's
+connection; it now runs inline (cheap: small metadata reads, occasional
+`stat`/`unlink`).
+
+`tests/execution/test_log_capture.py` (18 tests): cap enforcement,
+mid-chunk splicing at the cap boundary, the ring buffer keeping only the
+most recent `tail_keep_bytes`, the marker text, immediate flush for a
+concurrent reader, and `read_log_bytes`'s empty-on-missing/`None`
+behavior. `tests/jobs/test_retention.py`: age-based pruning, size-based
+eviction oldest-first, a running job never eligible, idempotent
+re-pruning, and a `lost` job's logs pruning too. Two new real-Docker
+tests in `tests/workspace/test_async_execution_tools.py`: AT-007 itself
+(a real ~3.3 MiB job, response bounded, a byte-range read retrieves
+exactly what was asked, the on-disk file stays near the cap) and the
+omission marker appearing in a real capped job's `exec_output`.
 
 ### S17 — Idle stop
 **Spec:** §8.1, §27

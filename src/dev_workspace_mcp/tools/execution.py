@@ -1,16 +1,18 @@
 """`exec` — synchronous command execution (§14, §16, S12) — plus
 `exec_start` / `exec_status` / `exec_output` / `exec_cancel` — background
-jobs (§15.3, §63, §64, S15).
+jobs (§15.3, §63, §64, S15/S16).
 
 Real timeout enforcement lives at this async layer, not inside
 `ExecutionService`: `asyncio.wait_for` is what can actually interrupt a
 blocked read; the service module explains why in its own docstring.
 
 The async job tools query `JobStore` for identity and terminal-state
-fields, and `AsyncJobRunner`'s in-memory registry for a live job's actual
-output and up-to-the-moment counts — see `execution/async_runner.py`'s
-module docstring for why output is unavailable for a job this process
-never started (most commonly one `lost` by S14's startup reconciliation).
+fields; a running job's live byte counts come from `AsyncJobRunner`'s
+in-memory `LiveJob` (cheap counters only), while actual output content —
+for both a running and a finished job — is read straight from its
+capped, host-side log files (§15.6, `execution/log_capture.py`'s
+`read_log_bytes`), which is what makes it available even for a job this
+process didn't start (e.g. after a restart, before its logs are pruned).
 """
 
 from __future__ import annotations
@@ -35,7 +37,9 @@ from dev_workspace_mcp.errors import (
     translate_workspace_errors,
 )
 from dev_workspace_mcp.execution.async_runner import AsyncJobRunner
+from dev_workspace_mcp.execution.log_capture import read_log_bytes
 from dev_workspace_mcp.execution.service import ExecutionService, tail_text
+from dev_workspace_mcp.jobs.retention import prune_job_logs
 from dev_workspace_mcp.jobs.store import JobRecord, JobStore
 from dev_workspace_mcp.workspace.container_config import resolve_exec_user
 from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager, WorkspaceState
@@ -109,6 +113,7 @@ class ExecOutputOutput:
     content: str
     stream_total_bytes: int
     truncated: bool
+    logs_pruned: bool
 
 
 @dataclass
@@ -156,27 +161,29 @@ def register(
     def _status_output(record: JobRecord) -> ExecStatusOutput:
         live = runner.live_job(record.id) if runner is not None else None
         if live is not None:
-            stdout_bytes = bytes(live.stdout)
-            stderr_bytes = bytes(live.stderr)
             elapsed = live.elapsed_seconds()
-            stdout_total = len(stdout_bytes)
-            stderr_total = len(stderr_bytes)
+            stdout_total = live.stdout_capture.total_bytes
+            stderr_total = live.stderr_capture.total_bytes
+            truncated = live.stdout_capture.truncated or live.stderr_capture.truncated
         else:
-            stdout_bytes = b""
-            stderr_bytes = b""
             elapsed = _elapsed_seconds(record.started_at, record.finished_at)
             stdout_total = record.stdout_total_bytes
             stderr_total = record.stderr_total_bytes
+            truncated = record.output_truncated
         return ExecStatusOutput(
             job_id=record.id,
             state=record.state.value,
             exit_code=record.exit_code,
             elapsed_seconds=elapsed,
-            stdout_tail=tail_text(stdout_bytes, execution_config.response_tail_lines),
-            stderr_tail=tail_text(stderr_bytes, execution_config.response_tail_lines),
+            stdout_tail=tail_text(
+                read_log_bytes(record.stdout_log_path), execution_config.response_tail_lines
+            ),
+            stderr_tail=tail_text(
+                read_log_bytes(record.stderr_log_path), execution_config.response_tail_lines
+            ),
             stdout_total_bytes=stdout_total,
             stderr_total_bytes=stderr_total,
-            output_truncated=record.output_truncated,
+            output_truncated=truncated,
         )
 
     @server.tool(name="exec", description="Run a command synchronously in a workspace (§14).")
@@ -281,13 +288,15 @@ def register(
 
         job_id = _new_job_id()
         job_dir = state_dir / "jobs" / job_id
+        stdout_log_path = job_dir / "stdout.log"
+        stderr_log_path = job_dir / "stderr.log"
         job_store.create(
             job_id=job_id,
             workspace_id=workspace_id,
             command=_describe_command(argv, shell),
             cwd=cwd,
-            stdout_log_path=str(job_dir / "stdout.log"),
-            stderr_log_path=str(job_dir / "stderr.log"),
+            stdout_log_path=str(stdout_log_path),
+            stderr_log_path=str(stderr_log_path),
         )
         await runner.start_job(
             job_id,
@@ -297,8 +306,28 @@ def register(
             user=user,
             env=env,
             timeout_seconds=timeout,
+            stdout_log_path=stdout_log_path,
+            stderr_log_path=stderr_log_path,
+            max_output_bytes=execution_config.max_output_bytes,
+            tail_keep_bytes=execution_config.tail_keep_bytes,
         )
         started = job_store.get(job_id)
+
+        # §15.6's retention "on a schedule and on demand" — no scheduler
+        # exists elsewhere in the daemon, so this opportunistic call on
+        # every new job is the on-demand half, standing in for a real
+        # schedule (see jobs/retention.py's module docstring). Not run
+        # via `asyncio.to_thread`: `job_store` shares this request's
+        # `sqlite3.Connection`, which is thread-affine (`check_same_thread`
+        # defaults to `True`) — using it from a worker thread raises.
+        # `prune_job_logs` itself is cheap (small metadata reads, the
+        # occasional `stat`/`unlink`), so running it inline is fine.
+        prune_job_logs(
+            job_store,
+            job_retention_days=execution_config.job_retention_days,
+            job_log_max_total_bytes=execution_config.job_log_max_total_bytes,
+        )
+
         return ExecStartOutput(
             job_id=job_id, state=started.state.value, started_at=started.started_at
         )
@@ -337,11 +366,20 @@ def register(
                 "byte_start/byte_end and line_start/line_end are mutually exclusive"
             )
 
-        job_store.get(job_id)  # existence check; raises JobNotFoundError
+        record = job_store.get(job_id)  # existence check; raises JobNotFoundError
         live = runner.live_job(job_id) if runner is not None else None
-        data = (
-            bytes(live.stdout if stream == "stdout" else live.stderr) if live is not None else b""
-        )
+        if live is not None:
+            stream_total_bytes = (
+                live.stdout_capture.total_bytes
+                if stream == "stdout"
+                else live.stderr_capture.total_bytes
+            )
+        else:
+            stream_total_bytes = (
+                record.stdout_total_bytes if stream == "stdout" else record.stderr_total_bytes
+            )
+        log_path = record.stdout_log_path if stream == "stdout" else record.stderr_log_path
+        data = read_log_bytes(log_path)  # bounded on disk (§15.6); may be < stream_total_bytes
 
         if has_line_range:
             lines = data.decode("utf-8", errors="replace").splitlines(keepends=True)
@@ -351,7 +389,12 @@ def register(
         else:
             text = data.decode("utf-8", errors="replace")
 
-        limit = execution_config.max_output_bytes
+        # Default limit: the whole capture (§15.6 already bounded what's on
+        # disk to max_output_bytes + tail_keep_bytes + a small marker), not
+        # max_output_bytes alone — that would re-truncate the response
+        # right where the omission marker and kept tail live, hiding the
+        # one part of a capped log that says something was capped.
+        limit = execution_config.max_output_bytes + execution_config.tail_keep_bytes
         if max_bytes is not None:
             limit = min(max_bytes, limit)
         encoded = text.encode("utf-8")
@@ -363,8 +406,9 @@ def register(
             job_id=job_id,
             stream=stream,
             content=text,
-            stream_total_bytes=len(data),
+            stream_total_bytes=stream_total_bytes,
             truncated=truncated,
+            logs_pruned=record.logs_pruned,
         )
 
     @server.tool(name="exec_cancel", description="Request cancellation of a running job (§15.3).")

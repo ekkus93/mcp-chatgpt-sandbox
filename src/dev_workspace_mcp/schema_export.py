@@ -19,7 +19,9 @@ from mcp.server import MCPServer
 #:
 #: 0.2.0 (S15): minor bump — four new tools (`exec_start`, `exec_status`,
 #: `exec_output`, `exec_cancel`), purely additive.
-CONTRACT_VERSION = "0.2.0"
+#: 0.2.1 (S16): patch bump — `exec_output` gained one new output field,
+#: `logs_pruned` (§15.6's retention flag).
+CONTRACT_VERSION = "0.2.1"
 
 
 async def collect_tool_schemas(server: MCPServer) -> list[dict[str, Any]]:
