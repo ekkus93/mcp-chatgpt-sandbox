@@ -1032,6 +1032,50 @@ Full logs SHOULD be retrievable incrementally.
 
 This prevents multi-megabyte compiler output from consuming MCP context unnecessarily.
 
+### 15.6 Job Log Storage
+
+§15.5 bounds what a *response* carries. This section bounds what is kept.
+
+**Location.** The daemon SHALL capture each job's stdout and stderr from the
+container exec stream and write them to host-side files under its own state
+directory:
+
+```text
+<state_dir>/jobs/<job_id>/stdout.log
+<state_dir>/jobs/<job_id>/stderr.log
+```
+
+Logs SHALL NOT be written inside the repository (they would show up as untracked
+files and in searches) and SHALL NOT be written inside the container (they would
+be lost on rebuild, and a container process could tamper with them). The files are
+owned by the daemon uid and live outside all repository roots.
+
+**Per-job cap.** `execution.max_output_bytes` is the on-disk cap **per stream per
+job**. When a stream reaches it the daemon SHALL:
+
+- stop appending to the file;
+- keep counting, so `stdout_total_bytes` reports the true size;
+- keep the final `execution.tail_keep_bytes` of the stream in a ring buffer and
+  append it to the file when the job ends, so the *end* of a huge build log — where
+  the failure is — is always available;
+- set `output_truncated: true` on the job, and mark the gap in the file with a
+  single line: `--- <N> bytes omitted ---`.
+
+**Retention.** Completed jobs' logs are pruned on a schedule and on demand:
+
+```yaml
+execution:
+  max_output_bytes:      10485760   # 10 MiB per stream per job, on disk
+  tail_keep_bytes:       262144     # 256 KiB ring buffer kept past the cap
+  response_tail_lines:   200        # per response, §15.5
+  job_retention_days:    7          # completed jobs older than this are pruned
+  job_log_max_total_bytes: 2147483648   # 2 GiB across all jobs; oldest completed pruned first
+```
+
+Running jobs SHALL never be pruned. A job whose logs have been pruned SHALL still
+be queryable by `exec_status`, with `logs_pruned: true` and its final exit code
+and byte counts intact.
+
 ---
 
 ## 16. Package and Software Installation
@@ -1243,6 +1287,28 @@ check applies to it:
 
 `GIT_TERMINAL_PROMPT=0` SHALL be set so that a misconfigured remote fails rather
 than hanging on a credential prompt.
+
+**Gitfiles.** In a linked worktree, `.git` is not a directory but a file
+containing `gitdir: /abs/path/to/main/.git/worktrees/<name>`, and that directory
+in turn holds a `commondir` file pointing back to the main repository's `.git`.
+Both live outside the checkout, so a bind mount of the checkout alone leaves Git
+inside the container unable to find its repository.
+
+On `workspace_open` the daemon SHALL detect a gitfile and, when present:
+
+1. resolve `gitdir:` and, through it, `commondir`, to the main repository's `.git`;
+2. verify the resolved path is under an authorized repository root;
+3. bind-mount the main repository's `.git` directory into the container **at the
+   same absolute path it has on the host**, honouring `git_dir_mode`, so that the
+   absolute path in the gitfile and the relative path in `commondir` both resolve
+   unchanged;
+4. record the resolved Git directory in the workspace record and protect it under
+   §12.1.
+
+Mounting at the host path rather than rewriting the gitfile is deliberate: the
+gitfile is shared with the host and rewriting it would break the human's checkout.
+Submodule gitfiles (`gitdir: ../.git/modules/<name>`) are relative and inside the
+checkout, and need no special handling.
 
 ### 18.3 Git Metadata as a Host Code-Execution Path
 
@@ -2881,11 +2947,14 @@ github:
   repositories:
     - ekkus93/chatgpt_ralph_loop_tools
 
-execution:
+execution:                         # §15.6
   sync_timeout_seconds: 30
   default_job_timeout_seconds: 3600
-  max_output_bytes: 10485760
+  max_output_bytes: 10485760       # per stream per job, on disk
+  tail_keep_bytes: 262144
   response_tail_lines: 200
+  job_retention_days: 7
+  job_log_max_total_bytes: 2147483648
 
 git_policy:                        # structured tools only, §18.9
   force_push: deny
@@ -3384,11 +3453,21 @@ Potentially add:
 
 ### AT-001 Repository Boundary
 
-Given an authorized repository, attempts to read `../../etc/passwd` SHALL fail.
+Given an authorized repository, `read_file("../../etc/passwd")` and equivalent
+paths on every filesystem tool SHALL fail with `PATH_OUTSIDE_REPOSITORY`.
+
+This tests the filesystem tools' path validation and the mount boundary. It does
+not, and cannot, constrain `exec`: `exec("cat /etc/passwd")` succeeds inside the
+container and returns the *container's* `/etc/passwd`, which is not the host's.
+What `exec` can see is bounded by §5.4 — only the mounts the daemon made are
+present.
 
 ### AT-002 Symlink Escape
 
-A repository symlink pointing outside the repository SHALL not permit unauthorized reads or writes.
+A repository symlink pointing outside the repository SHALL not permit reads or
+writes through the filesystem tools. Inside the container the same symlink
+dangles, because its target is not mounted; this is the mount boundary doing the
+work, and the test SHALL confirm both.
 
 ### AT-003 File Modification Visibility
 
@@ -3745,8 +3824,12 @@ Job
 - started_at
 - finished_at
 - exit_code
-- stdout_log_path
+- stdout_log_path        (host-side, under <state_dir>/jobs/<id>/, §15.6)
 - stderr_log_path
+- stdout_total_bytes
+- stderr_total_bytes
+- output_truncated
+- logs_pruned
 ```
 
 ### Lock
@@ -4021,6 +4104,11 @@ This can reduce concurrent edit conflicts.
 However, the initial design intentionally favors mounting the user's real repository because immediate interoperability and simplicity are core goals.
 
 Worktree mode SHOULD therefore be optional rather than mandatory.
+
+The mount handling it needs is already specified: a linked worktree's `.git` is a
+gitfile, and §18.2 defines how the main repository's Git directory is mounted so
+that it resolves inside the container. Worktree mode is therefore a matter of
+creating the worktree and pointing the workspace at it, not of new mount logic.
 
 ---
 
