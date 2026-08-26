@@ -2227,28 +2227,66 @@ The server MAY support a caller-provided idempotency key.
 
 ---
 
-## 33. Tool Versioning
+## 33. Tool Contracts and Versioning
 
-MCP tool contracts SHALL be versioned deliberately.
+### 33.1 The Contract Is `tools/list`
 
-Breaking schema changes SHOULD require:
+MCP already defines a machine-readable contract: the `tools/list` response, in
+which every tool carries a JSON Schema `inputSchema`. This specification does not
+duplicate it. The implementation is the source of truth for tool schemas, and the
+spec constrains them by behaviour (§13, §14, §15, §17, §20, §62–§66) rather than
+by restating every field.
 
-- new tool version;
-- server major version;
-- or capability negotiation.
+To make that contract reviewable and stable rather than whatever the code happens
+to emit, the server SHALL:
 
-The server SHOULD expose a capability document.
+1. export its complete `tools/list` response — including an `outputSchema` for
+   every tool that returns structured content — to `schemas/tools.json` in the
+   repository, via a build or CLI command such as
+   `dev-workspace-mcp export-schemas`;
+2. commit that file, so that every change to a tool's contract appears as a diff
+   in review;
+3. fail CI when the exported file differs from the committed one (§71), so that a
+   contract cannot change silently.
 
-Example:
+The examples in §62–§66 are illustrative. `schemas/tools.json` governs.
+
+### 33.2 Versioning
+
+The exported contract SHALL carry a `contract_version` in `server_info`.
+
+A change to `schemas/tools.json` SHALL bump `contract_version`:
+
+- **patch** — a new optional input field, a new output field, a loosened
+  constraint, a description change;
+- **minor** — a new tool;
+- **major** — a removed tool, a removed or renamed field, a tightened constraint,
+  a changed meaning.
+
+Breaking changes SHOULD be avoided by adding a new tool or field alongside the old
+one and deprecating the old for at least one minor version.
+
+### 33.3 Capabilities
+
+`server_info` SHALL include a `capabilities` map so a client can test for
+optional behaviour without parsing schemas:
 
 ```json
 {
-  "filesystem.patch": 1,
-  "exec.jobs": 1,
-  "git.structured_status": 1,
-  "workspace.devcontainer": 1
+  "contract_version": "1.0.0",
+  "capabilities": {
+    "filesystem.patch.unified_diff": true,
+    "filesystem.write.expected_sha256": true,
+    "exec.jobs": true,
+    "git.commit.expected_head_sha": true,
+    "git.push.remote_protection": true,
+    "workspace.devcontainer": false
+  }
 }
 ```
+
+Capability keys SHALL be stable once published; a capability that is removed SHALL
+be reported as `false` rather than omitted, for at least one major version.
 
 ---
 
@@ -3829,7 +3867,9 @@ The MCP server's own CI SHOULD include:
 - unit tests;
 - Docker-backed integration tests;
 - security acceptance tests;
-- MCP schema validation;
+- MCP contract check — `export-schemas` output SHALL match the committed
+  `schemas/tools.json` byte-for-byte, and `contract_version` SHALL have been
+  bumped if it does not (§33);
 - container image build;
 - dependency vulnerability scanning where practical.
 
@@ -3849,11 +3889,17 @@ docs/CONFIGURATION.md
 docs/TOOLS.md
 docs/DEVELOPMENT.md
 docs/THREAT_MODEL.md
+schemas/tools.json
 ```
 
 `README.md` should focus on setup and first use.
 
 `SPEC.md` remains the authoritative behavioral design.
+
+`schemas/tools.json` is the authoritative tool contract (§33.1), generated from
+the implementation and committed. `docs/TOOLS.md` is human-readable commentary on
+it and SHOULD be generated from the same source where practical, so that the two
+cannot disagree.
 
 ---
 
