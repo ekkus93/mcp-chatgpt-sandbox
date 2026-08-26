@@ -8,13 +8,16 @@ empty tool list.
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Literal
 
 from mcp.server import MCPServer
 
 from dev_workspace_mcp import __version__
 from dev_workspace_mcp.config.models import ServerConfig
+from dev_workspace_mcp.db import open_db
 from dev_workspace_mcp.repositories import RepositoryRegistry
+from dev_workspace_mcp.tools import filesystem as filesystem_tools
 from dev_workspace_mcp.tools import repository as repository_tools
 
 Transport = Literal["stdio", "sse", "streamable-http"]
@@ -25,9 +28,11 @@ SERVER_NAME = "dev-workspace-mcp"
 def create_server(config: ServerConfig) -> MCPServer:
     """Build the MCP server for the given validated configuration.
 
-    Pure and side-effect free beyond what building the repository registry
-    requires (resolving configured/discovered paths, §7) — it does not
-    touch Docker or start a transport, so it is safe to call from tests.
+    Opens (creating if needed) the state database at `config.state_db_path`
+    (§68) — a real, expected side effect once tools depend on it (S6
+    onward), not a departure from "safe to call repeatedly": `open_db`'s
+    migrations are idempotent, and each call gets its own connection to the
+    same file. Does not touch Docker or start a transport.
     """
     server = MCPServer(
         name=SERVER_NAME,
@@ -38,14 +43,26 @@ def create_server(config: ServerConfig) -> MCPServer:
         ),
     )
     registry = RepositoryRegistry(config)
-    _register_tools(server, registry)
+    db = open_db(config.state_db_path)
+    _register_tools(server, config, registry, db)
     return server
 
 
-def _register_tools(server: MCPServer, registry: RepositoryRegistry) -> None:
+def _register_tools(
+    server: MCPServer,
+    config: ServerConfig,
+    registry: RepositoryRegistry,
+    db: sqlite3.Connection,
+) -> None:
     """Register the §34.1 tool surface. Grows one module per task from
     S9 (filesystem) onward; `repository_list` is the first (S5)."""
     repository_tools.register(server, registry)
+    filesystem_tools.register(
+        server,
+        db=db,
+        filesystem_config=config.filesystem,
+        repository_roots=config.repository_roots,
+    )
 
 
 def run_server(server: MCPServer, transport: Transport = "stdio") -> None:

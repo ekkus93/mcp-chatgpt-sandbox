@@ -40,6 +40,5 @@ async def test_repository_list_tool_schema_takes_no_arguments(
 ) -> None:
     server = create_server(minimal_config)
     tools = await server.list_tools()
-    (tool,) = tools
-    assert tool.name == "repository_list"
+    (tool,) = [t for t in tools if t.name == "repository_list"]
     assert tool.input_schema["properties"] == {}

@@ -10,7 +10,7 @@ from dev_workspace_mcp.errors import translate_workspace_errors
 from dev_workspace_mcp.repositories import RepositoryRegistry
 
 
-@dataclass(slots=True)
+@dataclass
 class RepositoryListItem:
     id: str
     path: str

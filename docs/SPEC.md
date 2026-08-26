@@ -3001,6 +3001,8 @@ A server configuration file MAY resemble:
 ```yaml
 version: 1
 
+state_db_path: /var/lib/dev-workspace-mcp/state.db   # §68 — required, no default
+
 repository_roots:
   - /home/phil/work
 
@@ -3033,6 +3035,13 @@ github:
   api_token_path: /etc/dev-workspace-mcp/github-readonly.token
   repositories:
     - ekkus93/chatgpt_ralph_loop_tools
+
+filesystem:                        # §12.2 — size limits for the filesystem tools
+  max_read_bytes: 10485760
+  max_write_bytes: 10485760
+  max_patch_bytes: 1048576
+  max_listing_entries: 1000
+  max_search_results: 500
 
 execution:                         # §15.6
   sync_timeout_seconds: 30

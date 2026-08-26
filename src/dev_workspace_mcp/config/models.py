@@ -200,6 +200,22 @@ class ExecutionConfig(BaseModel):
     job_log_max_total_bytes: int = Field(default=2 * 1024 * 1024 * 1024, gt=0)
 
 
+# --- §12.2 filesystem ------------------------------------------------------------
+
+
+class FilesystemConfig(BaseModel):
+    """`filesystem:` block (§12.2) — configurable limits for direct reads,
+    direct writes, patch payloads, and directory/search listings."""
+
+    model_config = {"extra": "forbid"}
+
+    max_read_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
+    max_write_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
+    max_patch_bytes: int = Field(default=1 * 1024 * 1024, gt=0)
+    max_listing_entries: int = Field(default=1000, gt=0)
+    max_search_results: int = Field(default=500, gt=0)
+
+
 # --- §18.9 git_policy ------------------------------------------------------------
 
 
@@ -283,6 +299,10 @@ class ServerConfig(BaseModel):
     model_config = {"extra": "forbid"}
 
     version: Literal[1] = 1
+    state_db_path: Path
+    """§68: the SQLite state database — workspace/job/audit records. No
+    default, matching `audit.path`/`ssh.keys_dir`: where operational state
+    is written is an operator decision, not a convention to assume."""
     repository_roots: list[Path] = Field(default_factory=list)
     repositories: list[RepositoryConfig] = Field(default_factory=list)
     docker: DockerConfig
@@ -290,10 +310,18 @@ class ServerConfig(BaseModel):
     container: ContainerConfig = Field(default_factory=ContainerConfig)
     ssh: SSHConfig
     github: GithubConfig = Field(default_factory=GithubConfig)
+    filesystem: FilesystemConfig = Field(default_factory=FilesystemConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     git_policy: GitPolicyConfig = Field(default_factory=GitPolicyConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     audit: AuditConfig
+
+    @field_validator("state_db_path")
+    @classmethod
+    def _state_db_path_absolute(cls, v: Path) -> Path:
+        if not v.is_absolute():
+            raise ValueError(f"state_db_path must be absolute: {v}")
+        return v
 
     @field_validator("repository_roots")
     @classmethod

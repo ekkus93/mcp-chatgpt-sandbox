@@ -15,6 +15,7 @@ def minimal_config_dict(tmp_path: Path) -> dict[str, Any]:
     §53) have real, isolated paths to reason about."""
     return {
         "version": 1,
+        "state_db_path": str(tmp_path / "state.db"),
         "docker": {"default_image": "mcp-dev-ubuntu:24.04"},
         "ssh": {
             "keys_dir": str(tmp_path / "keys"),

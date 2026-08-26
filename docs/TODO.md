@@ -188,21 +188,34 @@ repository root and resolved straight to the real host file. Fixed by stripping
 a leading `/` before joining; a client-supplied path is always
 repository-relative, never absolute, regardless of what it looks like.
 
-### S10 — Filesystem tools
-**Spec:** §13, §12.2, §46, §47, §48 · **Satisfies:** FR-007, FR-008, FR-009, FR-010 · **Verified by:** AT-003, AT-018
+### S10 — Filesystem tools ✅
+**Spec:** §13, §12.2, §46, §47, §48 · **Satisfies:** FR-007, FR-008, FR-009, FR-010 · **Verified by:** AT-003, AT-018 · **Commit:** f7d4679
 
-- [ ] `list_files` — relative path, type, size, mtime, symlink status, hash
-- [ ] `read_file` — byte/line range, max response size, truncation flag, `sha256`
+- [x] `list_files` — relative path, type, size, mtime, symlink status, hash
+- [x] `read_file` — byte/line range, max response size, truncation flag, `sha256`
       in the response (§13.6, so it can be passed back as `expected_sha256`)
-- [ ] `write_file` — optimistic concurrency via `expected_sha256`
-- [ ] `patch_file` — unified diff at minimum; report applied/changed/old+new
-      hashes/rejected hunks
-- [ ] `delete_file` — recursive deletion explicit
-- [ ] `search_files` — glob, text, regex; ripgrep-backed where available; honour
-      `.gitignore` by default with override (§49)
-- [ ] Size limits per §12.2; binary handling per §47
-- [ ] AT-003: a write appears immediately in the host checkout
-- [ ] AT-018: stale `expected_sha256` → `FILE_CONFLICT`
+- [x] `write_file` — optimistic concurrency via `expected_sha256`
+- [x] `patch_file` — unified diff at minimum; report applied/changed/old+new
+      hashes/rejected hunks (hand-rolled applier, atomic, cross-checked against
+      real `diff -u` output — not shelling out to `patch(1)`)
+- [x] `delete_file` — recursive deletion explicit
+- [x] `search_files` — glob, text, regex; honours `.gitignore` by default with
+      `include_ignored` override (§49). Pure Python, not ripgrep-backed — "SHOULD
+      preferably" is optional-preference language, not a requirement
+- [x] Size limits per §12.2 (new `filesystem:` config block); binary handling
+      per §47 (`is_binary` reported, no accidental UTF-8 misinterpretation)
+- [x] AT-003 / AT-018 exercised at both the service layer and through real MCP
+      tool calls (`server.call_tool`)
+
+New `state_db_path` config field (§68) and `create_server()` now opens the state
+database — the first task needing `workspace_id` to actually resolve to
+something. Found and fixed before it shipped: `@dataclass(slots=True)` used as
+a *bare* tool return type, with an Optional field and no explicit default,
+broke the installed MCP SDK's output-schema generation (it read the slot
+descriptor itself as the field's default and failed to serialize it) — silent
+for a `list[...]`-wrapped return, only surfacing on `patch_file`/`write_file`/
+`read_file`/`delete_file`'s bare-dataclass returns. Fixed by dropping `slots`
+from every tool I/O dataclass, with a comment recording why.
 
 ### S11 — `workspace_open` and `workspace_info`
 **Spec:** §8.3, §25, §34.1, §62 · **Satisfies:** FR-003, FR-030, FR-035 · **Verified by:** AT-032
