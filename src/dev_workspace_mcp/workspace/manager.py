@@ -501,7 +501,7 @@ class DockerWorkspaceManager:
             return self._save(
                 replace(
                     record,
-                    state=_state_from_docker_status(container.status),
+                    state=_state_from_docker_container(container),
                     last_used_at=_now(),
                 )
             )
@@ -512,13 +512,48 @@ class DockerWorkspaceManager:
                 replace(
                     record,
                     container_id=container.id,
-                    state=_state_from_docker_status(container.status),
+                    state=_state_from_docker_container(container),
                     last_used_at=_now(),
                 )
             )
 
         return record
 
+    def reconcile_all(self) -> list[WorkspaceRecord]:
+        """§44.1's daemon-restart sequence, steps 1-3: eagerly reconcile
+        every persisted workspace against real Docker state at startup,
+        rather than waiting for each one's next operation. `reconcile`
+        itself (S6) remains in place as a safety net for whatever
+        changes between this sweep and actual use — this does not
+        replace it, it runs it for everything up front. A workspace
+        that fails to reconcile (§69's duplicate-container case) is
+        skipped rather than aborting the whole sweep; §69 already says
+        that specific failure needs an operator, not this sweep guessing.
+        """
+        ids = [row["id"] for row in self._db.execute("SELECT id FROM workspace").fetchall()]
+        reconciled: list[WorkspaceRecord] = []
+        for workspace_id in ids:
+            try:
+                reconciled.append(self.reconcile(workspace_id))
+            except ContainerRuntimeFailedError:
+                continue
+        return reconciled
 
-def _state_from_docker_status(status: str) -> WorkspaceState:
-    return WorkspaceState.RUNNING if status == "running" else WorkspaceState.STOPPED
+
+def _state_from_docker_container(container: Container) -> WorkspaceState:
+    """§44.2: `dead`, OOM-killed, or a Docker-level runtime error are
+    unambiguous crash signals -> `failed`. A plain nonzero exit code is
+    deliberately NOT used as a crash signal on its own: an intentional
+    `stop()` sends SIGTERM, and a process with no handler for it (e.g.
+    `sleep`, and plenty of real long-running processes) legitimately
+    exits 128+15=143 — a container that was deliberately stopped, not
+    one that crashed. Either way the repository is unaffected — it
+    lives in a bind mount, not the container's own writable layer
+    (§5.1), so this only changes what state is reported, never what
+    happens to the checkout."""
+    if container.status == "running":
+        return WorkspaceState.RUNNING
+    state = container.attrs.get("State", {})
+    if container.status == "dead" or state.get("OOMKilled") or state.get("Error"):
+        return WorkspaceState.FAILED
+    return WorkspaceState.STOPPED

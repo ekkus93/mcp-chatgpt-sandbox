@@ -598,14 +598,60 @@ real `exec`/`read_file` call each bumping `last_used_at`.
 `tests/workspace/test_touch_last_used.py` and `tests/test_audit.py`
 cover the two new small pieces in isolation (no Docker needed).
 
-### S18 — Recovery and reconciliation
-**Spec:** §44, §69 · **Satisfies:** FR-028 · **Verified by:** AT-017
+### S18 — Recovery and reconciliation ✅
+**Spec:** §44, §69 · **Satisfies:** FR-028 · **Verified by:** AT-017 · **Commit:** `4f58aef`
 
-- [ ] Daemon restart sequence per §44.1, all eight steps in order
-- [ ] Container crash → `stopped`/`failed`, repository intact
-- [ ] Docker/SQLite divergence per §69: unknown managed container recovered or
+- [x] Daemon restart sequence per §44.1, all eight steps in order
+- [x] Container crash → `stopped`/`failed`, repository intact
+- [x] Docker/SQLite divergence per §69: unknown managed container recovered or
       quarantined; missing container marked absent; duplicates fail closed
-- [ ] AT-017: kill the container with changes present; changes survive restart
+- [x] AT-017: kill the container with changes present; changes survive restart
+
+§69's divergence handling (missing → `absent`, unrecorded → adopted,
+duplicate → fail closed) and step 8 (repository state preserved — it was
+always a bind mount, never the container's writable layer) already
+existed, from S6/S8. What S18 actually added: `DockerWorkspaceManager
+.reconcile_all()`, sweeping every persisted workspace through the
+existing per-workspace `reconcile()` eagerly at startup (§44.1 steps
+1-3) rather than waiting for each one's next operation — S6's lazy
+version stays in place alongside it as a safety net. Wired into
+`cli.py`'s `serve()` as §73's step 5, skipped when Docker is
+unreachable (Step 6, SSH-agent reconciliation, §44.1 steps 4-5, still
+lands with S23; step 7 is config-load-time, per S2). A workspace that
+fails to reconcile (§69's duplicate-container case) is skipped, not
+fatal to the sweep — the same fail-closed contract `reconcile()` itself
+already had, just not allowed to abort every *other* workspace's chance
+to reconcile too.
+
+Also added the "crash" half of "container crash → `stopped`/`failed`"
+(§44.2), previously just "→ `stopped`" always: `_state_from_docker_container`
+now returns `failed` for `dead`, an OOM kill, or a Docker-level runtime
+error — unambiguous crash signals — and `stopped` otherwise. Deliberately
+does **not** treat a plain nonzero exit code as a crash signal on its
+own: an intentional `stop()` sends SIGTERM, and a process with no
+handler for it (`sleep`, and plenty of real long-running processes)
+legitimately exits 128+15=143 — caught by a test that initially failed
+against a first version of this function that *did* use bare exit code,
+which would have misclassified every ordinary `stop()` as a crash.
+
+`tests/workspace/test_recovery.py`: `_state_from_docker_container`
+against fake container objects for the classification logic itself (an
+OOM kill isn't worth reproducing for real — slow and flaky across
+kernels); `reconcile_all` against real Docker for the sweep itself
+(multiple workspaces, one stopped out of band; a duplicate-container
+workspace skipped without aborting the others; the empty-DB no-op); and
+AT-017 end to end through the real MCP tool layer — write a file via
+`exec`, `container.kill()` (a real SIGKILL, not the `exec`/stop tools),
+reconcile with a fresh `DockerWorkspaceManager` over the same on-disk
+state DB (simulating a daemon restart), confirm the file survived and
+`workspace_open` recovers the workspace to `running` with the file still
+there.
+
+**Phase 2 (S14-S18) complete.** Acceptance: long builds survive
+individual MCP request timeouts — met by S14/S15/S16 together
+(`exec_start`/`exec_status`/`exec_output`/`exec_cancel`, backed by
+`JobStore` and on-disk log capture, all independent of any single
+request's lifetime).
 
 ---
 
