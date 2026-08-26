@@ -48,6 +48,8 @@ def _server_with_no_docker(config: ServerConfig) -> MCPServer:
         docker_config=config.docker,
         container_config=config.container,
         ssh_config=config.ssh,
+        workspace_config=config.workspace,
+        audit_config=config.audit,
         repository_roots=config.repository_roots,
     )
     return server

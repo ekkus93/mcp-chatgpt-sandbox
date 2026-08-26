@@ -42,7 +42,11 @@ from dev_workspace_mcp.execution.service import ExecutionService, tail_text
 from dev_workspace_mcp.jobs.retention import prune_job_logs
 from dev_workspace_mcp.jobs.store import JobRecord, JobStore
 from dev_workspace_mcp.workspace.container_config import resolve_exec_user
-from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager, WorkspaceState
+from dev_workspace_mcp.workspace.manager import (
+    DockerWorkspaceManager,
+    WorkspaceState,
+    touch_last_used,
+)
 
 #: How long to wait after TERM before escalating to KILL on a timed-out command.
 KILL_GRACE_PERIOD_SECONDS = 2.0
@@ -209,6 +213,7 @@ def register(
                 details={"workspace_id": workspace_id, "state": record.state.value},
             )
         assert record.container_id is not None  # implied by state == RUNNING
+        touch_last_used(db, workspace_id)  # §8.1: this is real usage, not idle
 
         cmd = _build_cmd(argv, shell)
         _validate_cwd(cwd, record.workspace_path)
@@ -276,6 +281,7 @@ def register(
                 details={"workspace_id": workspace_id, "state": record.state.value},
             )
         assert record.container_id is not None  # implied by state == RUNNING
+        touch_last_used(db, workspace_id)  # §8.1: this is real usage, not idle
 
         cmd = _build_cmd(argv, shell)
         _validate_cwd(cwd, record.workspace_path)

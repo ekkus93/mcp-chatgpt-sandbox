@@ -539,14 +539,64 @@ tests in `tests/workspace/test_async_execution_tools.py`: AT-007 itself
 exactly what was asked, the on-disk file stays near the cap) and the
 omission marker appearing in a real capped job's `exec_output`.
 
-### S17 — Idle stop
-**Spec:** §8.1, §27
+### S17 — Idle stop ✅
+**Spec:** §8.1, §27 · **Commit:** `7ab8ca3`
 
-- [ ] Stop (never delete) a persistent container after `workspace.idle_stop_after`
+- [x] Stop (never delete) a persistent container after `workspace.idle_stop_after`
       (default 4h) with no request and no running or queued job
-- [ ] A running job always holds the container up; `never` disables
-- [ ] Audit the stop; release the workspace `ssh-agent` (§19.2)
-- [ ] `workspace_open` restarts a stopped workspace
+- [x] A running job always holds the container up; `never` disables
+- [x] Audit the stop; release the workspace `ssh-agent` (§19.2)
+- [x] `workspace_open` restarts a stopped workspace
+
+`DockerWorkspaceManager.sweep_idle_workspaces` stops every persistent,
+running workspace idle for at least `workspace.idle_stop_after_seconds`
+(already parsed by S2's config layer) with no running/queued job in
+`JobStore`. Called opportunistically from `workspace_open` — like S16's
+job-log retention, there is no scheduler elsewhere in the daemon to call
+this "on a schedule" instead. "`workspace_open` restarts a stopped
+workspace" needed no new code: `ensure_workspace` (S6/S11) already
+restarts anything not `running`, whatever stopped it.
+
+Found and fixed a real correctness gap while implementing this:
+`last_used_at` (idleness is measured from it) was only ever bumped by
+lifecycle transitions (start/stop/restart/reconcile) — never by actual
+usage. A client running only `exec`/`exec_start` calls for hours, with
+no lifecycle event in between, would have looked idle and had its
+container stopped mid-session. Added `touch_last_used` (a plain
+`UPDATE`, not a `DockerWorkspaceManager` method — S9's filesystem tools
+never construct a manager and needed to call it too) and wired it into
+`exec`, `exec_start`, and `_resolve_repository_root` (the one join query
+all six filesystem tools already call, so one touch point covers `list_files`
+/ `read_file` / `write_file` / `patch_file` / `delete_file` / `search_files`).
+`exec_status`/`exec_output`/`exec_cancel` (job_id, not workspace_id) and
+`workspace_info` (explicitly side-effect-free) are deliberately not
+touch points — polling a job or reading state isn't "using" the
+workspace's resources the way running a command or touching its files is.
+
+`src/dev_workspace_mcp/audit.py`: `write_audit_event`, a deliberately
+minimal slice of §24 — enough to audit the one event this task needs
+(an append-only JSONL line at `audit.path`, `metadata` passed through
+the existing `redact_secrets` per §24.1), not the full audit surface.
+§67/§68's `audit_event` SQLite table (a queryable index over the same
+records) is not written here; building the dual-write and a query
+surface over it, plus covering §24's full event list and denial
+auditing, is S29's job (already a dedicated later task) — attempting
+that as a side effect of idle stop would be real scope creep beyond
+what this task's own checklist asks for.
+
+`ssh-agent` release (§19.2) is a documented no-op: per-workspace
+`ssh-agent` processes do not exist yet (S23). `sweep_idle_workspaces`
+has nothing to release until then; `stop()` itself is unaffected.
+
+`tests/workspace/test_idle_stop.py` (11 tests, real Docker): stops past
+the threshold, leaves a recently-used workspace alone, `never` disables
+it, a running job blocks the stop and releases it once the job finishes,
+ephemeral workspaces are never swept, the audit event's shape (and that
+disabling audit writes nothing), `workspace_open` restarting an
+idle-stopped workspace end to end, and — the correctness fix above — a
+real `exec`/`read_file` call each bumping `last_used_at`.
+`tests/workspace/test_touch_last_used.py` and `tests/test_audit.py`
+cover the two new small pieces in isolation (no Docker needed).
 
 ### S18 — Recovery and reconciliation
 **Spec:** §44, §69 · **Satisfies:** FR-028 · **Verified by:** AT-017

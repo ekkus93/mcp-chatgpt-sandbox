@@ -5,6 +5,16 @@ through `run_kwargs` — S7 (default image, container user) and S8 (mounts)
 own those decisions. This module owns creation, naming, labeling, state
 tracking, and reconciliation: the mechanism `workspace_open` (S11) sits on
 top of, not a finished workspace by itself.
+
+`sweep_idle_workspaces` (§8.1, S17) is the idle-stop mechanism: never
+delete, only stop, a persistent workspace idle for `idle_stop_after`
+with no running/queued job. Idleness is measured from `last_used_at` —
+which every lifecycle transition already bumps, but so must every
+*non*-lifecycle touch (an `exec` call, a filesystem write) for idleness
+to mean what §8.1 says it means ("no MCP request touched the workspace"),
+not just "no lifecycle event happened". `touch_last_used` is the free
+function those call sites use; it needs no `DockerWorkspaceManager`
+instance, since a filesystem tool (S9) doesn't otherwise have one.
 """
 
 from __future__ import annotations
@@ -21,11 +31,14 @@ from docker.errors import NotFound as DockerNotFound
 from docker.models.containers import Container
 
 import docker
+from dev_workspace_mcp.audit import write_audit_event
+from dev_workspace_mcp.config.models import AuditConfig
 from dev_workspace_mcp.errors import (
     ContainerCreateFailedError,
     ContainerRuntimeFailedError,
     WorkspaceNotFoundError,
 )
+from dev_workspace_mcp.jobs.store import NON_TERMINAL_STATES, JobStore
 from dev_workspace_mcp.repositories import RepositoryRecord
 from dev_workspace_mcp.workspace.naming import (
     LABEL_WORKSPACE_ID,
@@ -70,6 +83,17 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def touch_last_used(db: sqlite3.Connection, workspace_id: str) -> None:
+    """Records that `workspace_id` was just used, for §8.1's idle-stop
+    accounting. A plain `UPDATE`, not a `DockerWorkspaceManager` method —
+    callers that only have a workspace_id and a `db` connection (S9's
+    filesystem tools, which never construct a manager) can call this
+    without one. Silently does nothing if the workspace doesn't exist —
+    callers that need existence checked have already done so."""
+    with db:
+        db.execute("UPDATE workspace SET last_used_at = ? WHERE id = ?", (_now(), workspace_id))
+
+
 class DockerWorkspaceManager:
     def __init__(self, docker_client: docker.DockerClient, db: sqlite3.Connection) -> None:
         self._docker = docker_client
@@ -77,10 +101,8 @@ class DockerWorkspaceManager:
 
     # --- persistence (§3's workspace table) ---------------------------------
 
-    def _load(self, workspace_id: str) -> WorkspaceRecord | None:
-        row = self._db.execute("SELECT * FROM workspace WHERE id = ?", (workspace_id,)).fetchone()
-        if row is None:
-            return None
+    @staticmethod
+    def _record_from_row(row: sqlite3.Row) -> WorkspaceRecord:
         return WorkspaceRecord(
             id=row["id"],
             repository_id=row["repository_id"],
@@ -93,6 +115,10 @@ class DockerWorkspaceManager:
             created_at=row["created_at"],
             last_used_at=row["last_used_at"],
         )
+
+    def _load(self, workspace_id: str) -> WorkspaceRecord | None:
+        row = self._db.execute("SELECT * FROM workspace WHERE id = ?", (workspace_id,)).fetchone()
+        return self._record_from_row(row) if row is not None else None
 
     def _get_or_raise(self, workspace_id: str) -> WorkspaceRecord:
         record = self._load(workspace_id)
@@ -302,6 +328,56 @@ class DockerWorkspaceManager:
                 f"failed to stop container for workspace {workspace_id!r}: {exc}"
             ) from exc
         return self._save(replace(record, state=WorkspaceState.STOPPED, last_used_at=_now()))
+
+    def _list_running_persistent(self) -> list[WorkspaceRecord]:
+        rows = self._db.execute(
+            "SELECT * FROM workspace WHERE state = 'running' AND mode = 'persistent'"
+        ).fetchall()
+        return [self._record_from_row(row) for row in rows]
+
+    def sweep_idle_workspaces(
+        self,
+        *,
+        idle_stop_after_seconds: int | None,
+        job_store: JobStore,
+        audit_config: AuditConfig,
+    ) -> list[str]:
+        """Stops every persistent, running workspace idle for at least
+        `idle_stop_after_seconds` with no running/queued job (§8.1).
+        `None` (`idle_stop_after: never`) disables this entirely. Returns
+        the ids of workspaces it stopped.
+
+        Called opportunistically from `workspace_open` (S17) — like
+        S16's job-log retention, there is no scheduler elsewhere in the
+        daemon to call this "on a schedule" instead; a docstring at the
+        call site says so.
+        """
+        if idle_stop_after_seconds is None:
+            return []
+        now = datetime.now(UTC)
+        stopped: list[str] = []
+        for record in self._list_running_persistent():
+            idle_seconds = (now - datetime.fromisoformat(record.last_used_at)).total_seconds()
+            if idle_seconds < idle_stop_after_seconds:
+                continue
+            active_jobs = [
+                job
+                for job in job_store.list_by_workspace(record.id)
+                if job.state in NON_TERMINAL_STATES
+            ]
+            if active_jobs:
+                continue
+            self.stop(record.id)
+            write_audit_event(
+                audit_config,
+                operation="workspace_stopped_idle",
+                result="success",
+                workspace_id=record.id,
+                repository_id=record.repository_id,
+                metadata={"idle_seconds": idle_seconds},
+            )
+            stopped.append(record.id)
+        return stopped
 
     def restart(self, workspace_id: str) -> WorkspaceRecord:
         """§8.4: restart the existing container."""

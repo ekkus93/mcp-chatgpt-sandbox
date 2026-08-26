@@ -16,7 +16,13 @@ from mcp.server import MCPServer
 
 import docker
 from dev_workspace_mcp import __version__
-from dev_workspace_mcp.config.models import ContainerConfig, DockerConfig, SSHConfig
+from dev_workspace_mcp.config.models import (
+    AuditConfig,
+    ContainerConfig,
+    DockerConfig,
+    SSHConfig,
+    WorkspaceConfig,
+)
 from dev_workspace_mcp.errors import ContainerRuntimeFailedError, translate_workspace_errors
 from dev_workspace_mcp.git_state import read_basic_git_state
 from dev_workspace_mcp.jobs.store import JobState, JobStore
@@ -79,6 +85,8 @@ def register(
     docker_config: DockerConfig,
     container_config: ContainerConfig,
     ssh_config: SSHConfig,
+    workspace_config: WorkspaceConfig,
+    audit_config: AuditConfig,
     repository_roots: list[Path],
 ) -> None:
     """`docker_client` is `None` when Docker was unreachable at startup
@@ -145,6 +153,19 @@ def register(
             workspace_path=DEFAULT_WORKSPACE_PATH,
             run_kwargs=run_kwargs,
         )
+
+        # §8.1's idle-stop (S17): no scheduler exists in the daemon, so —
+        # like S16's job-log retention — this runs opportunistically on a
+        # frequent, natural trigger point rather than on a real timer.
+        # `workspace_id` isn't necessarily among those swept (it was just
+        # ensured running, so its own `last_used_at` is fresh), but any
+        # *other* persistent workspace that has gone idle gets caught here.
+        active_manager.sweep_idle_workspaces(
+            idle_stop_after_seconds=workspace_config.idle_stop_after_seconds,
+            job_store=job_store,
+            audit_config=audit_config,
+        )
+
         return _info(record.id, record.repository_id, record.state.value, record.workspace_path)
 
     @server.tool(name="workspace_info", description="Report current workspace state (§25).")
