@@ -7,11 +7,12 @@ import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 
-import docker
 import pytest
 
+import docker
 from dev_workspace_mcp.db import open_db
 from dev_workspace_mcp.repositories import RepositoryRecord
+from dev_workspace_mcp.workspace.container_config import DEFAULT_IMAGE_BUILD_CONTEXT
 from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
 from dev_workspace_mcp.workspace.naming import LABEL_MANAGED
 
@@ -19,6 +20,31 @@ from dev_workspace_mcp.workspace.naming import LABEL_MANAGED
 #: development). Needs a foreground command or it exits immediately.
 TEST_IMAGE = "alpine:3.20"
 KEEP_ALIVE_RUN_KWARGS = {"command": ["sleep", "3600"]}
+
+#: Distinct from DEFAULT_IMAGE_TAG so a test build never overwrites
+#: whatever an operator has actually deployed under that name.
+DEFAULT_IMAGE_TEST_TAG = "mcp-dev-test-s7:24.04"
+
+
+@pytest.fixture(scope="session")
+def default_image_tag() -> Iterator[str]:
+    """Builds `docker/default/` once per test session (§9.1) — the real
+    Dockerfile, not a stand-in, so a build failure here is a real defect.
+    ~30s cold; free afterward via Docker's layer cache."""
+    try:
+        client = docker.from_env()
+        client.ping()
+    except docker.errors.DockerException:
+        pytest.skip("Docker is not reachable, skipping default-image tests")
+        return
+
+    try:
+        client.images.build(
+            path=str(DEFAULT_IMAGE_BUILD_CONTEXT), tag=DEFAULT_IMAGE_TEST_TAG, rm=True
+        )
+        yield DEFAULT_IMAGE_TEST_TAG
+    finally:
+        client.close()
 
 
 @pytest.fixture

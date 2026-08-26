@@ -117,20 +117,28 @@ Also fixed: `workspace.repository_id` is a foreign key into `repository`
 repository row when creating a workspace, since it is the first thing that
 needs it to exist.
 
-### S7 — Container identity and default image
-**Spec:** §5.3, §9.1, §41 · **Satisfies:** FR-036 · **Verified by:** AT-014, AT-015, AT-016
+### S7 — Container identity and default image ✅
+**Spec:** §5.3, §9.1, §41 · **Satisfies:** FR-036 · **Verified by:** AT-014, AT-015, AT-016 · **Commit:** a51adfa
 
-- [ ] Default image: §9.1 contents, including `sudo` (passwordless) and
-      `openssh-client`; no baked-in uid
-- [ ] Create the container user at start with the checkout owner's uid/gid and a
-      persistent home
-- [ ] `container.user: root` refused unless userns remapping is active — fail with
-      `CONTAINER_CREATE_FAILED` (AT-016)
-- [ ] Hardening flags per §41 — **do not** set `no-new-privileges` while
+- [x] Default image: §9.1 contents, including `sudo` (passwordless) and
+      `openssh-client`; no baked-in uid (`docker/default/Dockerfile`)
+- [x] Create the container user at start with the checkout owner's uid/gid and a
+      persistent home (`docker/default/entrypoint.sh`, via `setpriv` — not `gosu`,
+      already in Ubuntu's `util-linux`, no extra download)
+- [x] `container.user: root` refused unless userns remapping is active — fail with
+      `CONTAINER_CREATE_FAILED` (AT-016), before any container is created
+- [x] Hardening flags per §41 — **do not** set `no-new-privileges` while
       `container.sudo: true`, it breaks `sudo`
-- [ ] AT-014: `sudo apt-get install` works while default identity is the checkout owner
-- [ ] AT-015: files written from the container are owned by the checkout owner on
-      the host and are writable by the human
+- [x] AT-014: `sudo apt-get install` works while default identity is the checkout owner
+      (real install, real network, real non-root identity)
+- [x] AT-015: files written from the container are owned by the checkout owner on
+      the host and are writable by the human — verified with a real bind mount
+
+Tests use one-shot containers (`containers.run(..., remove=True)`) for the
+identity proofs, not `exec_run` on a long-lived one — `docker exec` uses the
+image's configured user by default (root), not whatever PID 1 dropped to via
+`setpriv`; a one-shot container's command *is* PID 1. Which user a later
+`exec` call should run as is S12's problem.
 
 ### S8 — Mounts
 **Spec:** §5.1, §5.4, §18.2 · **Satisfies:** FR-006, FR-026 · **Verified by:** AT-012, AT-023, AT-024
