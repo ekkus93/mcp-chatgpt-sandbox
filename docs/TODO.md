@@ -64,13 +64,16 @@ These block the tasks that cite them. Decide before starting the task, not durin
       authoritative for reconstruction (§69). The reconciler itself is S6/S18;
       this task only avoids treating `workspace.container_id` as ground truth.
 
-### S4 — Error model
-**Spec:** §31
+### S4 — Error model ✅
+**Spec:** §31 · **Commit:** df90018
 
-- [ ] Every code in §31's list as a typed error
-- [ ] Responses carry stable code, concise message, recoverable flag, structured
-      details; never secrets
-- [ ] Map internal errors to MCP errors at the interface layer (§6.1)
+- [x] Every code in §31's list as a typed error (24 `WorkspaceError` subclasses)
+- [x] Responses carry stable code, concise message, recoverable flag, structured
+      details; never secrets (`redact_secrets`, by key name and value shape)
+- [x] Map internal errors to MCP errors at the interface layer (§6.1) —
+      `to_tool_error` / `@translate_workspace_errors`, wrapping the SDK's
+      `ToolError`; anything not a `WorkspaceError` still crashes as the SDK
+      intends, rather than being laundered into a clean result
 
 ---
 
