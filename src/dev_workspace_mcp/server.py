@@ -13,12 +13,14 @@ from typing import Literal
 
 from mcp.server import MCPServer
 
+import docker
 from dev_workspace_mcp import __version__
 from dev_workspace_mcp.config.models import ServerConfig
 from dev_workspace_mcp.db import open_db
 from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.tools import filesystem as filesystem_tools
 from dev_workspace_mcp.tools import repository as repository_tools
+from dev_workspace_mcp.tools import workspace as workspace_tools
 
 Transport = Literal["stdio", "sse", "streamable-http"]
 
@@ -44,8 +46,22 @@ def create_server(config: ServerConfig) -> MCPServer:
     )
     registry = RepositoryRegistry(config)
     db = open_db(config.state_db_path)
-    _register_tools(server, config, registry, db)
+    docker_client = _try_docker_client()
+    _register_tools(server, config, registry, db, docker_client)
     return server
+
+
+def _try_docker_client() -> docker.DockerClient | None:
+    """`docker.from_env()` performs API version negotiation eagerly and
+    raises immediately if the daemon is unreachable — calling it
+    unconditionally would make `create_server` itself fail whenever Docker
+    is down, contradicting §73's "starts degraded" contract. `None` here
+    means Docker-backed tools (`workspace_open`, `workspace_info`) fail
+    clearly when called, not that the server fails to start."""
+    try:
+        return docker.from_env()
+    except docker.errors.DockerException:
+        return None
 
 
 def _register_tools(
@@ -53,6 +69,7 @@ def _register_tools(
     config: ServerConfig,
     registry: RepositoryRegistry,
     db: sqlite3.Connection,
+    docker_client: docker.DockerClient | None,
 ) -> None:
     """Register the §34.1 tool surface. Grows one module per task from
     S9 (filesystem) onward; `repository_list` is the first (S5)."""
@@ -61,6 +78,16 @@ def _register_tools(
         server,
         db=db,
         filesystem_config=config.filesystem,
+        repository_roots=config.repository_roots,
+    )
+    workspace_tools.register(
+        server,
+        db=db,
+        registry=registry,
+        docker_client=docker_client,
+        docker_config=config.docker,
+        container_config=config.container,
+        ssh_config=config.ssh,
         repository_roots=config.repository_roots,
     )
 

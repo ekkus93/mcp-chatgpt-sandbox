@@ -16,11 +16,11 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-import docker
 from docker.errors import DockerException
 from docker.errors import NotFound as DockerNotFound
 from docker.models.containers import Container
 
+import docker
 from dev_workspace_mcp.errors import (
     ContainerCreateFailedError,
     ContainerRuntimeFailedError,
@@ -99,6 +99,12 @@ class DockerWorkspaceManager:
         if record is None:
             raise WorkspaceNotFoundError(f"workspace not found: {workspace_id!r}")
         return record
+
+    def get(self, workspace_id: str) -> WorkspaceRecord:
+        """Side-effect-free lookup — for `workspace_info` (§25), which
+        reports current state and SHALL NOT itself start or reconcile
+        anything. Use `ensure_workspace`/`reconcile` for those."""
+        return self._get_or_raise(workspace_id)
 
     def _insert(self, record: WorkspaceRecord) -> None:
         self._db.execute(

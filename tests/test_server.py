@@ -1,10 +1,10 @@
-"""S1/S5/S10: MCP server entrypoint and tool registration."""
+"""S1/S5/S10/S11: MCP server entrypoint and tool registration."""
 
 from dev_workspace_mcp import __version__
 from dev_workspace_mcp.config.models import ServerConfig
 from dev_workspace_mcp.server import SERVER_NAME, create_server
 
-#: §34.1's tool surface, as much of it as is registered through S10.
+#: §34.1's tool surface, as much of it as is registered through S11.
 REGISTERED_TOOLS = {
     "repository_list",
     "list_files",
@@ -13,6 +13,9 @@ REGISTERED_TOOLS = {
     "patch_file",
     "delete_file",
     "search_files",
+    "workspace_open",
+    "workspace_info",
+    "server_info",
 }
 
 

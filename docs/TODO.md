@@ -217,15 +217,35 @@ for a `list[...]`-wrapped return, only surfacing on `patch_file`/`write_file`/
 `read_file`/`delete_file`'s bare-dataclass returns. Fixed by dropping `slots`
 from every tool I/O dataclass, with a comment recording why.
 
-### S11 — `workspace_open` and `workspace_info`
-**Spec:** §8.3, §25, §34.1, §62 · **Satisfies:** FR-003, FR-030, FR-035 · **Verified by:** AT-032
+### S11 — `workspace_open` and `workspace_info` ✅
+**Spec:** §8.3, §25, §34.1, §62 · **Satisfies:** FR-003, FR-030, FR-035 · **Verified by:** AT-032 · **Commit:** 169d1a7
 
-- [ ] `workspace_open` per §8.3, creating and starting as needed
-- [ ] `workspace_info` returning the same payload (§34.1)
-- [ ] Report `git_dir_mode`, `ssh_key_mode`, `ssh_key_scope`, `remote_protection`
-      (§25 — SHALL, not SHOULD)
-- [ ] `server_info` with `version`, `contract_version`, `capabilities` (§33.3)
-- [ ] AT-032: reported modes match actual configuration
+- [x] `workspace_open` per §8.3, creating and starting as needed — the point
+      where S5 (registry), S6 (lifecycle), S7 (identity), and S8 (mounts)
+      actually come together into a running container
+- [x] `workspace_info` returning the same payload (§34.1)
+- [x] Report `git_dir_mode`, `ssh_key_mode`, `ssh_key_scope`, `remote_protection`
+      (§25 — SHALL, not SHOULD). `remote_protection.status` is honestly
+      `"unverified"` — no API credential/check exists until S28
+- [x] `server_info` with `version`, `contract_version`, `capabilities` (§33.3),
+      plus real (not placeholder) `docker_available`, `active_workspaces`,
+      `configured_repositories`
+- [x] AT-032: reported modes match actual configuration
+
+New `git_state.py`: a minimal host-side Git reader (branch/head_sha/clean/
+upstream) for §62's `git` block — not the structured `git_status` tool (Phase
+3), which `git_state.py`'s plumbing is written so that tool can reuse rather
+than duplicate.
+
+Found and fixed before it shipped: `docker.from_env()` performs API version
+negotiation eagerly and raises immediately if the daemon is unreachable —
+calling it unconditionally inside `create_server` would have made the whole
+server fail to start whenever Docker is down, directly contradicting §73's
+"starts degraded" contract (and the CLI's own docker-unavailable warning,
+which already assumed `create_server` would still succeed). `docker_client` is
+now `Optional` throughout; `workspace_open`/`workspace_info` fail clearly with
+`ContainerRuntimeFailedError` when Docker is unreachable, while `server_info`
+degrades gracefully and reports `docker_available: false` rather than raising.
 
 ### S12 — Synchronous `exec`
 **Spec:** §14, §16 · **Satisfies:** FR-012, FR-013
