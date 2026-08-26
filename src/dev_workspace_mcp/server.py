@@ -2,13 +2,8 @@
 
 `create_server()` builds the `MCPServer` instance and registers every
 structured tool from `docs/SPEC.md` §34.1. Tool registration grows as later
-phases implement each tool; until then the server legitimately serves an
-empty tool list, which is exactly what Phase 1 (S1) requires.
-
-Transport selection follows §56: `stdio` for a local subprocess client,
-`streamable-http` for a remote client such as ChatGPT, which additionally
-requires authentication before it is used outside a private network — that
-hardening lands with the tools it protects, not here.
+phases implement each tool; until S5, the server legitimately served an
+empty tool list.
 """
 
 from __future__ import annotations
@@ -18,19 +13,21 @@ from typing import Literal
 from mcp.server import MCPServer
 
 from dev_workspace_mcp import __version__
+from dev_workspace_mcp.config.models import ServerConfig
+from dev_workspace_mcp.repositories import RepositoryRegistry
+from dev_workspace_mcp.tools import repository as repository_tools
 
 Transport = Literal["stdio", "sse", "streamable-http"]
 
 SERVER_NAME = "dev-workspace-mcp"
 
 
-def create_server() -> MCPServer:
-    """Build the MCP server.
+def create_server(config: ServerConfig) -> MCPServer:
+    """Build the MCP server for the given validated configuration.
 
-    Registers no tools yet (§34.1's tool surface is added incrementally as
-    each is implemented, starting with the filesystem tools in S10). Pure
-    and side-effect free: it does not start a transport or touch Docker, so
-    it is safe to call from tests.
+    Pure and side-effect free beyond what building the repository registry
+    requires (resolving configured/discovered paths, §7) — it does not
+    touch Docker or start a transport, so it is safe to call from tests.
     """
     server = MCPServer(
         name=SERVER_NAME,
@@ -40,12 +37,15 @@ def create_server() -> MCPServer:
             "repositories. See docs/SPEC.md for the full tool contract."
         ),
     )
-    _register_tools(server)
+    registry = RepositoryRegistry(config)
+    _register_tools(server, registry)
     return server
 
 
-def _register_tools(server: MCPServer) -> None:
-    """Register the §34.1 tool surface. Empty until S10 onward."""
+def _register_tools(server: MCPServer, registry: RepositoryRegistry) -> None:
+    """Register the §34.1 tool surface. Grows one module per task from
+    S9 (filesystem) onward; `repository_list` is the first (S5)."""
+    repository_tools.register(server, registry)
 
 
 def run_server(server: MCPServer, transport: Transport = "stdio") -> None:

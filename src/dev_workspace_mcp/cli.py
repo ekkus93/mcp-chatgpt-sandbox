@@ -45,7 +45,7 @@ def serve(config_path: Path, transport: Transport) -> None:
     """Start the MCP server."""
     # §73 step 1: validate configuration. Refuse to serve on invalid config.
     try:
-        load_config(config_path)
+        config = load_config(config_path)
     except ConfigError as exc:
         click.echo(f"error: {exc}", err=True)
         sys.exit(1)
@@ -61,5 +61,5 @@ def serve(config_path: Path, transport: Transport) -> None:
         )
 
     # §73 step 7: start the MCP transport.
-    server = create_server()
+    server = create_server(config)
     run_server(server, transport=transport)

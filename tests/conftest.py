@@ -1,9 +1,11 @@
-"""Shared fixtures for config tests."""
+"""Shared fixtures."""
 
 from pathlib import Path
 from typing import Any
 
 import pytest
+
+from dev_workspace_mcp.config.models import ServerConfig
 
 
 @pytest.fixture
@@ -20,3 +22,9 @@ def minimal_config_dict(tmp_path: Path) -> dict[str, Any]:
         },
         "audit": {"path": str(tmp_path / "audit.jsonl")},
     }
+
+
+@pytest.fixture
+def minimal_config(minimal_config_dict: dict[str, Any]) -> ServerConfig:
+    """`minimal_config_dict`, already validated into a `ServerConfig`."""
+    return ServerConfig.model_validate(minimal_config_dict)

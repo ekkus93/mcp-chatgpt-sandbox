@@ -82,15 +82,16 @@ These block the tasks that cite them. Decide before starting the task, not durin
 Acceptance for the phase: a client can modify a real local repository and run a
 command in its container, with AT-033 and AT-015 passing.
 
-### S5 — Repository registry and authorization
-**Spec:** §7, §7.1, §7.2 · **Satisfies:** FR-001, FR-002 · **Verified by:** AT-022
+### S5 — Repository registry and authorization ✅
+**Spec:** §7, §7.1, §7.2 · **Satisfies:** FR-001, FR-002 · **Verified by:** AT-022 · **Commit:** c4561c3
 
-- [ ] Resolve repository IDs to canonical host paths
-- [ ] Optional discovery beneath `repository_roots`, resolving symlinks and
-      confirming the result stays under an authorized root
-- [ ] `repository_list` tool
-- [ ] Fail closed for unauthorized repositories
-- [ ] AT-022: a symlink under an allowed root pointing elsewhere is not authorized
+- [x] Resolve repository IDs to canonical host paths
+- [x] Optional discovery beneath `repository_roots`, resolving symlinks and
+      confirming the result stays under an authorized root (one level deep;
+      discovered repositories get `github: None` — unknowable without Git state)
+- [x] `repository_list` tool (first real tool; `create_server` now takes `ServerConfig`)
+- [x] Fail closed for unauthorized repositories (`RepositoryNotAllowedError`)
+- [x] AT-022: a symlink under an allowed root pointing elsewhere is not authorized
 
 ### S6 — Docker lifecycle
 **Spec:** §8.1, §8.2, §50, §51, §55, §69 · **Satisfies:** FR-003, FR-004, FR-005
