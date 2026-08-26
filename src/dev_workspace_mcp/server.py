@@ -18,6 +18,7 @@ from dev_workspace_mcp import __version__
 from dev_workspace_mcp.config.models import ServerConfig
 from dev_workspace_mcp.db import open_db
 from dev_workspace_mcp.repositories import RepositoryRegistry
+from dev_workspace_mcp.tools import execution as execution_tools
 from dev_workspace_mcp.tools import filesystem as filesystem_tools
 from dev_workspace_mcp.tools import repository as repository_tools
 from dev_workspace_mcp.tools import workspace as workspace_tools
@@ -89,6 +90,13 @@ def _register_tools(
         container_config=config.container,
         ssh_config=config.ssh,
         repository_roots=config.repository_roots,
+    )
+    execution_tools.register(
+        server,
+        db=db,
+        docker_client=docker_client,
+        container_config=config.container,
+        execution_config=config.execution,
     )
 
 

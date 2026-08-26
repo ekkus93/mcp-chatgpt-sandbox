@@ -79,3 +79,17 @@ def build_workspace_run_kwargs(
         # on — never set it while sudo is enabled.
         "security_opt": [] if container_config.sudo else ["no-new-privileges:true"],
     }
+
+
+def resolve_exec_user(container_config: ContainerConfig, *, checkout_uid: int | None = None) -> str:
+    """The `user=` string for `docker exec` (§14, S12): the same uid
+    convention `build_workspace_run_kwargs` gives the container at start —
+    `entrypoint.sh` already created that `/etc/passwd` entry, which is
+    what lets Docker resolve `$HOME` correctly for an exec'd process even
+    though it does not inherit anything the entrypoint's shell `export`ed.
+    Empty string (Docker's own default, uid 0) under `container.user: root`.
+    """
+    if container_config.user == "root":
+        return ""
+    uid = os.getuid() if checkout_uid is None else checkout_uid
+    return str(uid)

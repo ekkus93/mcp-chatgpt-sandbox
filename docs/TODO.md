@@ -247,16 +247,56 @@ now `Optional` throughout; `workspace_open`/`workspace_info` fail clearly with
 `ContainerRuntimeFailedError` when Docker is unreachable, while `server_info`
 degrades gracefully and reports `docker_available: false` rather than raising.
 
-### S12 — Synchronous `exec`
-**Spec:** §14, §16 · **Satisfies:** FR-012, FR-013
+### S12 — Synchronous `exec` ✅
+**Spec:** §14, §16 · **Satisfies:** FR-012, FR-013 · **Commit:** 7e8d20b
 
-- [ ] argv and shell forms; argv preferred
-- [ ] `cwd` defaults to `/workspace`, constrained to allowed container paths
-- [ ] Env overrides; sensitive values redacted from logs
-- [ ] Strict maximum duration; on overrun promote to a job and return a job handle
-      with `promoted_to_job: true` (§14.4) — the two-shape response must be
-      explicit in `outputSchema`
-- [ ] Bounded output per §15.5
+- [x] argv and shell forms (`bash -c` for shell); argv preferred; exactly one required
+- [x] `cwd` defaults to `/workspace`, constrained to allowed container paths
+      (must equal or be beneath `workspace_path`)
+- [x] Env overrides — passed to `docker exec` directly; never included in error
+      `details` (only key names would be, and no path currently needs to)
+- [ ] Strict maximum duration; on overrun promote to a job — **deferred**: job
+      promotion needs the job store, which does not exist until S14. Overrun
+      currently fails the call with `COMMAND_TIMEOUT` rather than silently
+      hanging or claiming to promote a job that was never created. Revisit when
+      S14/S15 land.
+- [x] Bounded output per §15.5 (`max_output_bytes`, `response_tail_lines`,
+      already in `ExecutionConfig` from S2)
+
+Runs as the same uid `entrypoint.sh` (S7) already created in the container's
+`/etc/passwd` — Docker resolves `$HOME` correctly from that entry for an
+`exec`'d process even though it does not inherit anything the entrypoint's
+shell `export`ed at PID 1 startup (confirmed empirically).
+
+Two real bugs, both caught by a test that checked the actual process was gone,
+not just that the call raised:
+
+- **The timeout was fake.** `asyncio.wait_for` around a blocking read does not
+  stop the read — it stops *waiting* for it. A deadline check inside the
+  blocking loop is equally useless: a command producing no output (`sleep
+  100`) blocks the stream's iterator waiting for the *next* chunk, so a
+  deadline check placed there never runs while blocked. Fixed by splitting
+  `ExecutionService` into `start`/`consume`/`kill`: `consume` has no timeout
+  logic of its own and is run in a thread under `asyncio.wait_for`, which is
+  the one thing that can actually interrupt the wait from the outside; `kill`
+  is then called explicitly to stop the command, not just stop watching it.
+- **The kill target was wrong.** `exec_inspect`'s `Pid` is the process's PID in
+  the *host's* PID namespace, not the container's own — confirmed empirically
+  (that number doesn't exist when looked up from inside the container). A
+  second `docker exec kill <pid>` therefore always failed silently
+  ("No such process") without ever raising, since it runs inside the
+  container's namespace where the number means nothing. Fixed with `os.kill()`
+  directly from the daemon process, which runs on the host (§5.3, §40) and can
+  signal that PID correctly — no second `exec` needed at all.
+
+12 new tests, 11 against the real S7 image: argv/shell forms, exactly-one
+validation, cwd containment, real non-root identity, real sudo, real env
+passthrough, host-visible writes, real output truncation, workspace-not-running,
+degraded mode, and the timeout test that verified the process was actually
+gone (`ps aux | grep '[s]leep 60'` — not `pgrep -f`, which matched its own
+checking command's argv, and not `pgrep -x sleep`, which matched the
+container's own PID 1 `sleep infinity`; both were caught as test bugs while
+getting this one right).
 
 ### S13 — Tool contract export
 **Spec:** §33.1, §33.2, §71
