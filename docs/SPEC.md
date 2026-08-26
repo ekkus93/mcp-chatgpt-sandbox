@@ -70,6 +70,14 @@ The initial system SHALL NOT attempt to:
 
 The primary deployment model is a private server controlled by a single user or trusted small team.
 
+**Trust model.** The repositories this server operates on are the operator's own,
+and the operator trusts them. The development container is part of the developer's
+trust domain — it is a workstation the operator has handed to an AI client, not a
+sandbox for code the operator would hesitate to run directly. Every default in
+this specification follows from that: `.git` is writable, the container holds a
+key that can push, and hooks run. Where a hardened mode exists (`git_dir_mode:
+read-only`, §18.2), it is an option for the uncommon case, not a recommendation.
+
 Typical host:
 
 - Linux workstation or server.
@@ -2430,20 +2438,26 @@ Physical Android device support MAY be implemented later through explicitly conf
 
 ## 39. Security Threat Model
 
-The primary adversarial assumption is:
+Per §4, the repositories are the operator's own and are trusted. The adversarial
+assumption is therefore not "the repository is hostile" but:
 
-> Repository contents and commands derived from repository contents may be untrusted.
+> Things the repository *pulls in* — dependencies, tooling, and the AI client's own
+> behaviour under prompt injection — may be untrusted, and mistakes happen.
 
 Examples:
 
-- malicious `Makefile`;
-- malicious `package.json` install script;
-- compromised dependency;
-- prompt-injected repository documentation;
-- accidental destructive command;
-- build script that attempts credential theft.
+- compromised or typosquatted dependency with an install script;
+- a third-party build tool that misbehaves;
+- prompt-injected content reaching the AI client and steering it toward a
+  destructive command;
+- an accidental destructive command from the client;
+- credential theft attempted by any of the above.
 
-The container boundary protects the host from much of this risk, but only if sensitive host resources are not mounted into the container.
+The container boundary keeps these away from the host's filesystem, Docker daemon,
+and the operator's personal credentials — but only if those are not mounted into
+the container, which is why §19.4 is an invariant. It does not keep them away from
+the repository itself or from the repository's remote, because the container is
+meant to work on both (§18.1, §39.2).
 
 ### 39.1 Threats to Address
 
