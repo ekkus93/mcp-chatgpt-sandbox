@@ -12,6 +12,7 @@ import docker
 from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
 from dev_workspace_mcp.db import open_db
 from dev_workspace_mcp.repositories import RepositoryRegistry
+from dev_workspace_mcp.schema_export import CONTRACT_VERSION
 from dev_workspace_mcp.server import create_server
 from dev_workspace_mcp.tools import workspace as workspace_tools
 
@@ -176,7 +177,9 @@ async def test_server_info_reports_real_state(
     assert info["docker_available"] is True
     assert info["active_workspaces"] >= 1
     assert info["configured_repositories"] == 1
-    assert "exec.jobs" in info["capabilities"]
+    assert info["capabilities"]["exec.jobs"] is True
+    assert info["running_jobs"] == 0
+    assert info["contract_version"] == CONTRACT_VERSION
 
 
 # --- degraded mode (§73) — docker_client is None -----------------------------------

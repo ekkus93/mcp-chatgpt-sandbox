@@ -97,6 +97,7 @@ def _register_tools(
         docker_client=docker_client,
         container_config=config.container,
         execution_config=config.execution,
+        state_dir=config.state_db_path.parent,
     )
 
 

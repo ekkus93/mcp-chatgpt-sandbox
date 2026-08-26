@@ -16,7 +16,10 @@ from mcp.server import MCPServer
 #: the schema content itself, since "what changed" is a judgment call
 #: (a loosened constraint is a patch; a tightened one is a breaking major)
 #: that a diff cannot make on its own.
-CONTRACT_VERSION = "0.1.0"
+#:
+#: 0.2.0 (S15): minor bump — four new tools (`exec_start`, `exec_status`,
+#: `exec_output`, `exec_cancel`), purely additive.
+CONTRACT_VERSION = "0.2.0"
 
 
 async def collect_tool_schemas(server: MCPServer) -> list[dict[str, Any]]:

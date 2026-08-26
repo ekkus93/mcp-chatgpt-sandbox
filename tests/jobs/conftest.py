@@ -18,9 +18,7 @@ WORKSPACE_ID = "ws_test"
 @pytest.fixture
 def db() -> Iterator[sqlite3.Connection]:
     connection = open_db(":memory:")
-    connection.execute(
-        "INSERT INTO repository (id, canonical_path) VALUES ('repo_test', '/repo')"
-    )
+    connection.execute("INSERT INTO repository (id, canonical_path) VALUES ('repo_test', '/repo')")
     connection.execute(
         """
         INSERT INTO workspace

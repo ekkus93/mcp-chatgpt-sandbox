@@ -210,12 +210,21 @@ class JobStore:
         record = self._get_or_raise(job_id)
         return self._save(replace(record, state=JobState.STARTING))
 
-    def mark_running(self, job_id: str, *, pid: int) -> JobRecord:
+    def mark_running(self, job_id: str, *, pid: int | None) -> JobRecord:
+        """`pid` is `None` when the exec hasn't reported one yet (S15's
+        `ExecutionService.pid_of` returns `None` in that case) — still a
+        real transition to `running`, just without a liveness-probe
+        target until a later update fills it in."""
         record = self._get_or_raise(job_id)
         return self._save(replace(record, state=JobState.RUNNING, pid=pid, started_at=_now()))
 
     def update_output_counts(
-        self, job_id: str, *, stdout_total_bytes: int, stderr_total_bytes: int, output_truncated: bool
+        self,
+        job_id: str,
+        *,
+        stdout_total_bytes: int,
+        stderr_total_bytes: int,
+        output_truncated: bool,
     ) -> JobRecord:
         """Called periodically while a job runs (S16), so `exec_status`
         reflects progress on a job nobody has finished yet."""
@@ -244,7 +253,9 @@ class JobStore:
         watched to completion. `lost` is deliberately not accepted here;
         it only ever comes from `mark_lost`, below."""
         if state not in TERMINAL_STATES or state is JobState.LOST:
-            raise ValueError(f"mark_finished: not a watched-to-completion terminal state: {state!r}")
+            raise ValueError(
+                f"mark_finished: not a watched-to-completion terminal state: {state!r}"
+            )
         record = self._get_or_raise(job_id)
         return self._save(
             replace(

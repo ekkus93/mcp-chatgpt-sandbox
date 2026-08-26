@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.1.0",
+  "contract_version": "0.2.0",
   "tools": [
     {
       "description": "Delete a repository file or directory (\u00a713.5).",
@@ -157,6 +157,339 @@
           "stderr_total_bytes"
         ],
         "title": "ExecOutput",
+        "type": "object"
+      }
+    },
+    {
+      "description": "Request cancellation of a running job (\u00a715.3).",
+      "input_schema": {
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id"
+        ],
+        "title": "exec_cancel_toolArguments",
+        "type": "object"
+      },
+      "name": "exec_cancel",
+      "output_schema": {
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "state"
+        ],
+        "title": "ExecCancelOutput",
+        "type": "object"
+      }
+    },
+    {
+      "description": "Retrieve a job's captured output by offset, range, or line window (\u00a715.3).",
+      "input_schema": {
+        "properties": {
+          "byte_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Byte End"
+          },
+          "byte_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Byte Start"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "line_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Line End"
+          },
+          "line_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Line Start"
+          },
+          "max_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Bytes"
+          },
+          "stream": {
+            "default": "stdout",
+            "title": "Stream",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id"
+        ],
+        "title": "exec_output_toolArguments",
+        "type": "object"
+      },
+      "name": "exec_output",
+      "output_schema": {
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "stream": {
+            "title": "Stream",
+            "type": "string"
+          },
+          "stream_total_bytes": {
+            "title": "Stream Total Bytes",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "job_id",
+          "stream",
+          "content",
+          "stream_total_bytes",
+          "truncated"
+        ],
+        "title": "ExecOutputOutput",
+        "type": "object"
+      }
+    },
+    {
+      "description": "Start a command as a background job (\u00a715.3, \u00a763).",
+      "input_schema": {
+        "properties": {
+          "argv": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Argv"
+          },
+          "cwd": {
+            "default": "/workspace",
+            "title": "Cwd",
+            "type": "string"
+          },
+          "env": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Env"
+          },
+          "shell": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Shell"
+          },
+          "timeout_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Timeout Seconds"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id"
+        ],
+        "title": "exec_start_toolArguments",
+        "type": "object"
+      },
+      "name": "exec_start",
+      "output_schema": {
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "state",
+          "started_at"
+        ],
+        "title": "ExecStartOutput",
+        "type": "object"
+      }
+    },
+    {
+      "description": "Report a job's current state and recent output (\u00a715.3, \u00a764).",
+      "input_schema": {
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id"
+        ],
+        "title": "exec_status_toolArguments",
+        "type": "object"
+      },
+      "name": "exec_status",
+      "output_schema": {
+        "properties": {
+          "elapsed_seconds": {
+            "title": "Elapsed Seconds",
+            "type": "number"
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "output_truncated": {
+            "title": "Output Truncated",
+            "type": "boolean"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "stderr_tail": {
+            "title": "Stderr Tail",
+            "type": "string"
+          },
+          "stderr_total_bytes": {
+            "title": "Stderr Total Bytes",
+            "type": "integer"
+          },
+          "stdout_tail": {
+            "title": "Stdout Tail",
+            "type": "string"
+          },
+          "stdout_total_bytes": {
+            "title": "Stdout Total Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "job_id",
+          "state",
+          "exit_code",
+          "elapsed_seconds",
+          "stdout_tail",
+          "stderr_tail",
+          "stdout_total_bytes",
+          "stderr_total_bytes",
+          "output_truncated"
+        ],
+        "title": "ExecStatusOutput",
         "type": "object"
       }
     },

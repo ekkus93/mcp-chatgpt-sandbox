@@ -19,7 +19,9 @@ from dev_workspace_mcp import __version__
 from dev_workspace_mcp.config.models import ContainerConfig, DockerConfig, SSHConfig
 from dev_workspace_mcp.errors import ContainerRuntimeFailedError, translate_workspace_errors
 from dev_workspace_mcp.git_state import read_basic_git_state
+from dev_workspace_mcp.jobs.store import JobState, JobStore
 from dev_workspace_mcp.repositories import RepositoryRegistry
+from dev_workspace_mcp.schema_export import CONTRACT_VERSION
 from dev_workspace_mcp.workspace.container_config import build_workspace_run_kwargs
 from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
 from dev_workspace_mcp.workspace.mounts import build_workspace_mounts
@@ -83,6 +85,7 @@ def register(
     (§73's degraded state) — the tools that need it fail clearly when
     called, rather than the server failing to start at all."""
     manager = DockerWorkspaceManager(docker_client, db) if docker_client is not None else None
+    job_store = JobStore(db)
 
     def _require_docker() -> tuple[DockerWorkspaceManager, docker.DockerClient]:
         if manager is None or docker_client is None:
@@ -172,19 +175,22 @@ def register(
         (active_workspaces,) = db.execute(
             "SELECT COUNT(*) FROM workspace WHERE state = 'running'"
         ).fetchone()
+        running_jobs = len(
+            job_store.list_by_state(JobState.QUEUED, JobState.STARTING, JobState.RUNNING)
+        )
 
         return ServerInfoOutput(
             version=__version__,
-            contract_version="0.1.0",
+            contract_version=CONTRACT_VERSION,
             docker_available=docker_available,
             docker_version=docker_version,
             active_workspaces=active_workspaces,
-            running_jobs=0,  # jobs land in S14
+            running_jobs=running_jobs,
             configured_repositories=len(registry.list_all()),
             capabilities={
                 "filesystem.patch.unified_diff": True,
                 "filesystem.write.expected_sha256": True,
-                "exec.jobs": False,
+                "exec.jobs": True,
                 "git.commit.expected_head_sha": False,
                 "git.push.remote_protection": False,
                 "workspace.devcontainer": False,

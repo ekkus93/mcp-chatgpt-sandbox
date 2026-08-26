@@ -26,6 +26,16 @@ implemented here: it needs the job store, which does not exist until S14.
 Until then, exceeding the timeout fails the call with `CommandTimeoutError`
 rather than silently hanging or claiming to promote a job that was never
 created.
+
+`start_and_open_stream` / `drain_stream` (S15) split what `start` /
+`consume` do into a version the async job runner can use: docker-py's
+`exec_start(stream=True)` issues its HTTP POST — the call that actually
+starts the process server-side — eagerly, before returning; only reading
+the response it returns is lazy (verified against docker-py's own
+source). That means the exec can be started and its real pid obtained
+*before* handing the (already-open) stream off to a background task to
+drain, with no race between "job is running" and "job has a pid" the way
+there would be if starting and draining were one blocking call.
 """
 
 from __future__ import annotations
@@ -33,6 +43,7 @@ from __future__ import annotations
 import contextlib
 import os
 import signal
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import docker
@@ -108,13 +119,68 @@ class ExecutionService:
 
         return ExecResult(
             exit_code=exit_code if exit_code is not None else -1,
-            stdout_tail=_tail(stdout_bytes, response_tail_lines),
-            stderr_tail=_tail(stderr_bytes, response_tail_lines),
+            stdout_tail=tail_text(stdout_bytes, response_tail_lines),
+            stderr_tail=tail_text(stderr_bytes, response_tail_lines),
             stdout_truncated=stdout_total > max_output_bytes,
             stderr_truncated=stderr_total > max_output_bytes,
             stdout_total_bytes=stdout_total,
             stderr_total_bytes=stderr_total,
         )
+
+    def start_and_open_stream(
+        self,
+        container_id: str,
+        cmd: list[str],
+        *,
+        cwd: str,
+        user: str,
+        env: dict[str, str] | None,
+    ) -> tuple[
+        str, docker.types.daemon.CancellableStream[tuple[bytes | None, bytes | None]], int | None
+    ]:
+        """Creates the exec and starts it (§15.3's `exec_start` tool),
+        returning `(exec_id, stream, pid)`. Blocking but fast: returns
+        once the process has actually started, not once it produces
+        output or exits — see the module docstring for why the pid is
+        already reliable at this point. Pass `stream` to `drain_stream`
+        to read it; do not call `exec_start` on this `exec_id` again."""
+        exec_id = self.start(container_id, cmd, cwd=cwd, user=user, env=env)
+        stream = self._docker.api.exec_start(exec_id, stream=True, demux=True)
+        return exec_id, stream, self.pid_of(exec_id)
+
+    def drain_stream(
+        self,
+        exec_id: str,
+        stream: docker.types.daemon.CancellableStream[tuple[bytes | None, bytes | None]],
+        *,
+        on_stdout: Callable[[bytes], None],
+        on_stderr: Callable[[bytes], None],
+    ) -> int:
+        """Blocks reading `stream` (from `start_and_open_stream`) until
+        the command exits, invoking a callback per chunk as it arrives
+        rather than buffering the whole stream itself — the caller
+        decides what buffering/capping/persistence looks like (S15's
+        in-memory buffer, S16's capped on-disk log). Call via
+        `asyncio.to_thread`; has no internal deadline of its own, same as
+        `consume`."""
+        for out_chunk, err_chunk in stream:
+            if out_chunk:
+                on_stdout(out_chunk)
+            if err_chunk:
+                on_stderr(err_chunk)
+        exit_code = self._docker.api.exec_inspect(exec_id).get("ExitCode")
+        return exit_code if exit_code is not None else -1
+
+    def pid_of(self, exec_id: str) -> int | None:
+        """The exec'd process's pid in the *host* PID namespace (see the
+        module docstring), or `None` if the exec is unknown or has not
+        produced one yet."""
+        try:
+            info = self._docker.api.exec_inspect(exec_id)
+        except docker.errors.DockerException:
+            return None
+        pid = info.get("Pid")
+        return pid or None
 
     def kill(self, exec_id: str, *, grace_period_reached: bool = False) -> None:
         """Signals the exec'd process directly via `os.kill`: TERM, or
@@ -133,7 +199,7 @@ class ExecutionService:
             os.kill(pid, sig)
 
 
-def _tail(data: bytes, max_lines: int) -> str:
+def tail_text(data: bytes, max_lines: int) -> str:
     if max_lines <= 0:
         return ""
     text = data.decode("utf-8", errors="replace")

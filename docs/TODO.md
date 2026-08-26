@@ -391,13 +391,77 @@ an end-to-end test: a real `running` job seeded before `serve` runs,
 verifying both the warning text and the row's final `lost` state in the
 database — not mocked, so it covers the CLI's actual wiring.
 
-### S15 — Async execution tools
-**Spec:** §15.3, §63, §64 · **Satisfies:** FR-015, FR-016, FR-017 · **Verified by:** AT-006
+### S15 — Async execution tools ✅
+**Spec:** §15.3, §63, §64 · **Satisfies:** FR-015, FR-016, FR-017 · **Verified by:** AT-006 · **Commit:** `6164edf`
 
-- [ ] `exec_start`, `exec_status`, `exec_output` (offset/range/stream/line window),
+- [x] `exec_start`, `exec_status`, `exec_output` (offset/range/stream/line window),
       `exec_cancel`
-- [ ] Cancellation: graceful termination, then force after a grace period
-- [ ] AT-006: start a long build, disconnect/reconnect, job still queryable
+- [x] Cancellation: graceful termination, then force after a grace period
+- [x] AT-006: start a long build, disconnect/reconnect, job still queryable
+
+`src/dev_workspace_mcp/execution/service.py` gained `start_and_open_stream`
+/ `drain_stream` / `pid_of`, splitting what the synchronous `exec` tool's
+`start`/`consume` do into pieces the async runner needs: docker-py's
+`exec_start(stream=True)` issues its HTTP POST — which is what actually
+starts the process server-side — eagerly, before returning (verified
+against docker-py's own source); only reading the response it returns is
+lazy. So the exec can be started and its real pid obtained *before*
+handing the stream to a background task to drain, with no race between
+"job is running" and "job has a pid". `consume`/`start`/`kill` (S12) are
+unchanged.
+
+`src/dev_workspace_mcp/execution/async_runner.py`: `AsyncJobRunner`, one
+instance per server process. `JobStore` (S14) makes a job's *identity*
+survive an MCP reconnect (§23); `AsyncJobRunner`'s in-memory `LiveJob` per
+job id is this process's only source for a running job's actual output
+and live progress — deliberately unbounded and unpersisted, a stand-in
+for §15.6's capped, host-side log files (S16), not a finished
+implementation of them. `output_truncated` stays `False` throughout S15.
+A job this process never started (most commonly one `lost` by S14's
+startup reconciliation) has no `LiveJob`; its output is simply gone,
+consistent with what "lost" means. A background task is kept in a
+`set[asyncio.Task]` with a done-callback rather than fired via a bare
+`asyncio.create_task(...)` with no reference kept — asyncio's own docs
+warn a task with no other strong reference is eligible for GC at any
+await point, which would silently abandon a running job mid-stream; a
+real correctness bug caught before it shipped, not a lint nit.
+
+`timeout_seconds` (§63) is enforced with `asyncio.wait({drain}, timeout=...)`
+rather than `asyncio.wait_for` (S12's synchronous `exec` uses the latter
+just fine, since it discards the exec afterward) — `wait_for` would
+cancel *awaiting* the drain future on timeout, but the underlying thread
+draining the stream keeps running regardless, and there would be nowhere
+left to `await` its eventual result once the process is killed and the
+stream ends. `asyncio.wait` keeps the future so it can be re-awaited
+after termination.
+
+`tools/execution.py`'s new tools read job identity/terminal fields from
+`JobStore` and live output/progress from `AsyncJobRunner`; `register()`
+gained a required `state_dir: Path` parameter (`state_db_path.parent`) so
+`exec_start` can compute §15.6's deterministic
+`<state_dir>/jobs/<job_id>/{stdout,stderr}.log` paths at creation time,
+even though nothing is written there until S16.
+
+Also fixed while here: `server_info` (S11) had `contract_version`
+hardcoded to a literal `"0.1.0"` separate from `schema_export.py`'s own
+`CONTRACT_VERSION` (now imported, not duplicated), `running_jobs`
+hardcoded to `0` with a `# jobs land in S14` comment (now a real
+`JobStore` query), and `capabilities["exec.jobs"]` hardcoded `False` (now
+`True`). `schemas/tools.json` re-exported (15 tools);
+`CONTRACT_VERSION` bumped `0.1.0` → `0.2.0` per §33.2 (new tools are a
+minor bump). `docs/TOOLS.md`'s placeholder, stale since S13 actually
+landed (it still claimed `schemas/tools.json` "does not exist until S13
+lands"), replaced with a hand-maintained index — §72 asks for this to be
+generated where practical, but no task builds a generator, so this stays
+manual and may drift; `schemas/tools.json` is what governs.
+
+`tests/workspace/test_async_execution_tools.py` (15 tests, real Docker):
+job start/status/success/failure/not-found, output by full/line-range/
+byte-range/stream, cancellation (confirms the process is actually gone,
+same `ps aux | grep '[s]leep 60'` idiom as S12), a real timeout marking
+`timed_out`, the degraded-mode error, and AT-006 itself (query a job by
+id alone, discarding the `exec_start` response, as a reconnecting client
+would).
 
 ### S16 — Job log storage
 **Spec:** §15.5, §15.6, §46 · **Verified by:** AT-007
