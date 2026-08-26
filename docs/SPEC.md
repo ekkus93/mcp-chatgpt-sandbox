@@ -159,22 +159,60 @@ Mounting the Docker socket into a container is effectively equivalent to grantin
 
 Optional nested-container or Docker-in-Docker workflows MAY be added later behind an explicit elevated capability.
 
-### 5.3 Development Containers May Be Privileged Internally
+### 5.3 Root Is Available Inside Containers; Host Files Are Never Root-Owned
 
-The default development container MAY run as root internally.
+Three identities can touch a repository: the human developer who owns the checkout,
+the daemon that brokers Git against it (§20), and processes inside the development
+container that write to the bind mount. If those identities differ, the system
+breaks in ways that are not security failures but are worse for being silent — a
+container running as root leaves root-owned files in the human's checkout, the
+human's editor cannot save over them, and the broker cannot `git pull` across them.
 
-The client SHOULD be able to perform operations such as:
+The specification therefore fixes one identity for all three:
+
+> Processes inside a development container SHALL run, by default, as the host
+> uid/gid that owns the repository checkout. The daemon SHALL run as that same
+> uid. Every file that appears in the host checkout — written by the human, the
+> container, or the broker — is owned by the same user.
+
+Root privileges inside the container remain available. The client SHOULD be able to
+perform operations such as:
 
 ```bash
-apt-get update
-apt-get install -y clang cmake protobuf-compiler
+sudo apt-get update
+sudo apt-get install -y clang cmake protobuf-compiler
 rustup component add clippy
 cargo install cargo-nextest
 npm install
 uv sync
 ```
 
-Container-root privileges are acceptable because the stronger boundary is between the container and the host.
+The first two need root and obtain it through passwordless `sudo` inside the
+container. The rest install into the container user's home directory and need
+nothing. Container-root privileges are acceptable because the stronger boundary is
+between the container and the host; they are simply not the *default identity* of
+processes that write into the bind mount.
+
+Configuration:
+
+```yaml
+container:
+  user: host          # host | root
+  sudo: true
+```
+
+- `host` (default): the container user is created at container start with the
+  checkout owner's uid/gid and a persistent home directory. `sudo` is available
+  when enabled.
+- `root`: processes run as uid 0. This mode SHALL be refused unless Docker
+  user-namespace remapping is active, so that container uid 0 maps to an
+  unprivileged host uid. Without remapping it would reintroduce root-owned host
+  files, and the daemon SHALL fail workspace creation with
+  `CONTAINER_CREATE_FAILED` rather than proceed.
+
+Under `host`, the `safe.directory` entry in §18.2 is unnecessary for the container
+user, but SHALL still be written because `sudo git ...` runs as root and Git's
+ownership check applies to it.
 
 ### 5.4 Explicit Host Mounts Only
 
@@ -441,6 +479,7 @@ Example fields:
   "workspace_path": "/workspace",
   "image": "mcp-dev-ubuntu:24.04",
   "git_dir_mode": "read-only",
+  "container_user": "1000:1000",
   "created_at": "...",
   "last_used_at": "..."
 }
@@ -547,6 +586,11 @@ A practical default Linux image SHOULD include:
 - jq
 - Python
 - common archive utilities
+- `sudo`, configured passwordless for the container user (§5.3)
+
+The image SHOULD NOT bake in a specific uid. The container user is created at
+container start to match the checkout owner (§5.3), so the image needs only the
+machinery to do that — `useradd`, `sudo`, and a writable home-directory parent.
 
 The image SHOULD NOT attempt to contain every language toolchain.
 
@@ -584,9 +628,9 @@ environment:
   RUST_BACKTRACE: "1"
 
 caches:
-  - path: /root/.cargo
+  - path: $HOME/.cargo
     name: cargo
-  - path: /root/.rustup
+  - path: $HOME/.rustup
     name: rustup
 
 github:
@@ -611,18 +655,21 @@ Unknown mandatory fields SHOULD cause a validation error rather than being silen
 
 The server SHOULD support persistent named volumes for dependency caches.
 
-Examples:
+Examples, expressed relative to the container user's home directory (§5.3):
 
 ```text
-/root/.cargo
-/root/.rustup
-/root/.cache/uv
-/root/.cache/pip
-/root/.npm
-/root/.pnpm-store
-/root/go/pkg/mod
-/root/.gradle
+$HOME/.cargo
+$HOME/.rustup
+$HOME/.cache/uv
+$HOME/.cache/pip
+$HOME/.npm
+$HOME/.pnpm-store
+$HOME/go/pkg/mod
+$HOME/.gradle
 ```
+
+Cache volumes SHALL be owned by the container user's uid so that toolchains
+installed without `sudo` can write to them.
 
 Cache behavior SHALL be configurable as:
 
@@ -657,7 +704,39 @@ Path checks SHALL:
 
 Writes through symlinks that escape the repository SHALL be rejected.
 
-### 12.1 File Size Limits
+### 12.1 Git Metadata Exclusion
+
+Repository Git metadata lies inside the repository root, so the boundary check above
+does not protect it. It SHALL be protected separately, because a client-controlled
+write into `.git` is the host code-execution path described in §18.3 — the same
+vector the read-only mount closes for the container, reached through a different
+door. A prompt-injected client is in the threat model (§39), so the filesystem tools
+SHALL enforce this regardless of whether they execute host-side or in-container.
+
+Filesystem tools SHALL reject, with `PATH_GIT_METADATA`, any request whose
+canonicalized path:
+
+1. is `.git` at the repository root, or lies beneath it;
+2. contains a path component named `.git` at any depth — this covers submodule
+   Git directories and nested repositories;
+3. resolves, through a gitfile (`.git` as a file containing `gitdir: <path>`), to
+   the referenced Git directory or anything beneath it, wherever that directory
+   lives.
+
+This applies to every tool that writes, renames, deletes, or patches. Read tools
+MAY expose Git metadata read-only where a client has a legitimate need, but the
+default SHOULD be to exclude it from `list_files` and `search_files` output as
+well, since it is never useful as editable content.
+
+Rule 3 matters for linked worktrees and submodules, whose Git directories live
+outside the checkout (§76). The daemon SHALL resolve the gitfile on workspace open,
+record the resolved Git directory in the workspace record, and treat it as
+protected for the workspace's lifetime.
+
+`exec` is not covered by this rule; it is covered by `git_dir_mode` (§18.2).
+Together the two close every client-reachable write path to Git metadata.
+
+### 12.2 File Size Limits
 
 The server SHOULD define configurable limits for:
 
@@ -1196,6 +1275,10 @@ no policy check:
 `workspace_info` SHALL report `git_dir_mode` so that a client can determine whether
 these guarantees hold for the current workspace.
 
+The read-only mount governs `exec`. Structured filesystem tools reach the same
+metadata by a different path and are governed by §12.1. Both SHALL hold for Tier 1
+to hold.
+
 ### 18.5 Tier 2 — Policy-Gated at the Broker
 
 The following are performed by the daemon and SHALL be subject to the policy engine:
@@ -1308,7 +1391,8 @@ git_policy:
   # Enforcement environment
   broker_hooks:             disabled
   validate_remote:          true
-  allowed_url_schemes:      [https, ssh]
+  allowed_url_schemes:      [https, ssh]   # accepted forms for a *configured* remote;
+                                           # the operation URL is derived, always https (§20.3)
 ```
 
 `require_approval` MAY be implemented as a hard denial in the first release (§42).
@@ -1470,21 +1554,42 @@ The broker SHALL be the only component in the system that holds a remote credent
 
 ### 20.3 Remote Identity Validation
 
+The configured remote URL is **input to validation only**. It is never the URL the
+broker operates against.
+
 Before any authenticated operation, the broker SHALL:
 
-1. resolve the remote name to a URL via `git remote get-url <name>`;
-2. reject the URL unless its scheme appears in `git_policy.allowed_url_schemes`;
+1. resolve the remote name to its configured URL via `git remote get-url <name>`;
+2. reject the URL unless its scheme appears in `git_policy.allowed_url_schemes`,
+   which governs what forms a *configured* remote may take and nothing else;
 3. explicitly reject `ext::`, `file://`, and any transport capable of invoking a
    local command, by both scheme check and `-c protocol.ext.allow=never`;
 4. normalize the URL to `owner/repo` form per §7.3;
 5. compare the normalized value against the repository's configured GitHub identity
    and against `github.repositories`;
-6. fail with `GIT_REMOTE_NOT_ALLOWED` on any mismatch.
+6. fail with `GIT_REMOTE_NOT_ALLOWED` on any mismatch;
+7. **derive** the operation URL from the normalized identity:
 
-The broker SHALL then invoke Git against the **validated URL literal**, not the
-remote name. Passing the remote name would leave a window in which the URL could
-change between validation and use — the working tree is shared with a human, and
-`.git/config` remains host-writable even though it is container-read-only.
+   ```text
+   https://github.com/<owner>/<repo>.git
+   ```
+
+The broker SHALL then invoke Git against the derived URL literal. Neither the remote
+name nor the configured URL reaches the Git invocation.
+
+This resolves two problems at once:
+
+- **Transport.** The broker's credential model (§19) issues HTTPS tokens. A
+  configured remote of the form `git@github.com:owner/repo.git` — the most common
+  form — passes identity validation but cannot be authenticated as written. Deriving
+  the operation URL means the configured scheme is irrelevant to the operation; the
+  broker always speaks HTTPS with a token it holds. No SSH credential model is
+  required or specified.
+- **Substitution.** Passing the remote name would leave a window in which the URL
+  could change between validation and use — the working tree is shared with a
+  human, and `.git/config` remains host-writable even though it is
+  container-read-only. A derived URL closes that window completely: there is no
+  configured value left to substitute.
 
 The broker SHALL reject any client-supplied `--upload-pack`, `--receive-pack`, or
 `--exec` value.
@@ -1511,7 +1616,7 @@ git -c protocol.ext.allow=never \
     -c core.hooksPath=<empty-dir> \
     -c core.fsmonitor= \
     push --atomic --recurse-submodules=no \
-    <validated-url> refs/heads/<branch>:refs/heads/<branch>
+    https://github.com/<owner>/<repo>.git refs/heads/<branch>:refs/heads/<branch>
 ```
 
 ### 20.5 Brokered Operation Contracts
@@ -1592,7 +1697,8 @@ Each brokered operation SHALL emit an audit record containing:
   "repository_id": "...",
   "operation": "git_push",
   "remote_repository": "ekkus93/chatgpt_ralph_loop_tools",
-  "validated_url_scheme": "https",
+  "configured_url_scheme": "ssh",
+  "operation_url": "https://github.com/ekkus93/chatgpt_ralph_loop_tools.git",
   "refspec": "refs/heads/master:refs/heads/master",
   "policy_decision": "allow",
   "credential_mode": "github_app",
@@ -1973,6 +2079,7 @@ COMMAND_TIMEOUT
 GIT_DIRTY
 GIT_CONFLICT
 GIT_HEAD_CHANGED
+PATH_GIT_METADATA
 GIT_REMOTE_NOT_ALLOWED
 GIT_REFSPEC_NOT_ALLOWED
 GIT_HOOK_POLICY_DENIED
@@ -2298,9 +2405,16 @@ These are accepted in exchange for a practical development environment.
 
 ## 40. Host Security Requirements
 
+The daemon writes to the human's checkout: the broker (§20) creates objects, refs,
+and index entries in `.git`, and `git pull` modifies working-tree files. It
+therefore SHALL run as the uid that owns the repository roots. In the single-user
+deployment model (§4) that is the developer's own account. A dedicated daemon
+account is acceptable only when it owns the repository roots — which is a
+different deployment, not a hardening of this one.
+
 The production deployment SHOULD:
 
-- run the MCP daemon under a dedicated host account where practical;
+- run the MCP daemon as the checkout owner, per the above;
 - restrict the daemon's readable repository roots;
 - avoid running the daemon itself as host root unless Docker access requires it;
 - use Docker group or rootless Docker where feasible;
@@ -2314,7 +2428,7 @@ The daemon SHALL treat Docker control as a high-privilege capability.
 
 ## 41. Container Hardening
 
-Even though project containers may run as root internally, the daemon SHOULD consider:
+Even though root is reachable inside project containers through `sudo` (§5.3), the daemon SHOULD consider:
 
 - dropping unnecessary Linux capabilities;
 - `no-new-privileges` where compatible;
@@ -2826,8 +2940,10 @@ The client SHALL be able to query workspace/container/repository state.
 
 ### FR-031 Git Metadata Integrity
 
-Repository Git metadata SHALL NOT be writable from a development container under
-the default `git_dir_mode` (§18.2).
+Repository Git metadata SHALL NOT be writable through any client-reachable path:
+not from a development container under the default `git_dir_mode` (§18.2), and not
+through the structured filesystem tools regardless of where they execute (§12.1).
+This includes Git directories reached through a gitfile.
 
 ### FR-032 Hook Execution Control
 
@@ -2837,9 +2953,10 @@ the default `broker_hooks` policy, including hooks reached through a
 
 ### FR-033 Remote Transport Restriction
 
-The Git broker SHALL reject remote URLs whose transport is capable of invoking a
-local command, and SHALL invoke Git against a validated URL literal rather than a
-remote name (§20.3).
+The Git broker SHALL reject configured remote URLs whose transport is capable of
+invoking a local command, and SHALL invoke Git against an HTTPS URL derived from
+the validated repository identity — never against the configured URL or the remote
+name (§20.3).
 
 ### FR-034 Refspec Validation
 
@@ -2850,6 +2967,13 @@ through to Git (§20.4).
 
 `workspace_info` SHALL report `git_dir_mode`, `credential_mode`, and `broker_hooks`
 (§25).
+
+### FR-036 File Ownership Identity
+
+Files written into the host checkout from a development container SHALL be owned
+by the checkout owner's uid/gid. The daemon SHALL run as that uid. Container uid 0
+SHALL NOT be the default process identity, and SHALL be refused entirely unless
+user-namespace remapping is active (§5.3).
 
 ---
 
@@ -2898,6 +3022,9 @@ The first usable release SHOULD prioritize practical development value.
 1. repository allowlist;
 2. one persistent Docker container per active repository;
 3. read/write working-tree bind mount with read-only `.git` (§18.2);
+3a. container processes running as the checkout owner's uid, with root via `sudo`
+    (§5.3);
+3b. Git metadata excluded from every filesystem tool (§12.1);
 4. `workspace_open`;
 5. `workspace_info`, reporting `git_dir_mode`, `credential_mode`, `broker_hooks`;
 6. filesystem list/read/write/patch/delete;
@@ -2956,6 +3083,8 @@ Implement:
 - repository configuration;
 - Docker lifecycle;
 - writable working-tree mount with read-only `.git` (§18.2);
+- container user matching the checkout owner's uid/gid, `sudo` available (§5.3);
+- Git metadata exclusion in the filesystem service (§12.1);
 - container-local Git environment — `GIT_OPTIONAL_LOCKS=0`, `safe.directory`;
 - `workspace_open`;
 - `workspace_info`, including `git_dir_mode`;
@@ -2965,8 +3094,10 @@ Implement:
 Acceptance:
 
 - client can modify a real local repository and run a command in its container;
-- AT-021 and AT-022 pass — `.git/hooks` and `.git/config` are not writable from
-  inside the container.
+- AT-021, AT-022, and AT-030 pass — `.git/hooks` and `.git/config` are not
+  writable from inside the container or through the filesystem tools;
+- AT-014a passes — files written from the container are owned by the checkout
+  owner on the host.
 
 ### Phase 2 — Persistent Execution
 
@@ -3125,9 +3256,23 @@ No credential capable of writing to an authorized remote SHALL be discoverable f
 inside the container by environment inspection, filesystem search under repository
 roots, or process inspection — including during an in-flight brokered operation.
 
-### AT-014 Container Root
+### AT-014 Container Root via sudo
 
-The project container SHALL be capable of installing normal OS packages when configured for root operation.
+The project container SHALL be capable of installing normal OS packages through
+`sudo apt-get` while its default process identity is the host checkout owner.
+
+### AT-014a File Ownership
+
+A file written from inside the container SHALL appear in the host checkout owned by
+the checkout owner's uid/gid. The human SHALL be able to overwrite and delete it
+without elevated privileges, and a subsequent brokered `git add` and `git_pull`
+across it SHALL succeed.
+
+### AT-014b Root Mode Refusal
+
+With `container.user: root` and no user-namespace remapping active, workspace
+creation SHALL fail with `CONTAINER_CREATE_FAILED` rather than start a container
+that would write root-owned files.
 
 ### AT-015 Crash Preservation
 
@@ -3177,7 +3322,13 @@ operation is attempted.
 ### AT-025 Remote Substitution Race
 
 Changing `origin` between remote validation and push SHALL NOT affect the push
-destination, which SHALL be the validated URL literal.
+destination, which SHALL be the URL derived from the validated identity.
+
+### AT-025a SSH-Form Remote
+
+With `origin` configured as `git@github.com:owner/repo.git`, a brokered push SHALL
+succeed over HTTPS using the daemon-held credential, and SHALL NOT attempt an SSH
+connection.
 
 ### AT-026 Refspec Validation
 
@@ -3196,6 +3347,13 @@ the container while `git commit` and `git fetch` SHALL fail.
 
 `workspace_info` SHALL report `git_dir_mode`, `credential_mode`, and `broker_hooks`
 values matching the workspace's actual configuration.
+
+### AT-030 Filesystem Tool Git Metadata
+
+`write_file(".git/hooks/pre-commit")`, `patch_file(".git/config")`, and
+`move_file` into or out of `.git` SHALL each fail with `PATH_GIT_METADATA`. The
+same SHALL hold for a path containing a `.git` component at any depth, and for the
+gitdir target of a gitfile.
 
 ---
 
@@ -3558,7 +3716,8 @@ Additional host mounts:             DENIED
 Container .git write access:        DENIED   (git_dir_mode: read-only, §18.2)
 Hooks during brokered operations:   DISABLED (broker_hooks: disabled, §18.7)
 Submodule init/update:              DENIED
-Non-https/ssh remote transports:    DENIED
+Configured remote schemes not https/ssh: DENIED
+Operation transport:                HTTPS, derived from identity (§20.3)
 Force push:                         DENIED
 Force-with-lease push:              DENIED
 Remote branch deletion:             DENIED
@@ -3567,7 +3726,10 @@ Remote URL change:                  DENIED
 Hard reset:                         DENIED or approval-required
 Pull strategy:                      FF-ONLY
 Outbound network:                   ALLOWED
-Container root:                     ALLOWED
+Container process identity:         HOST CHECKOUT OWNER uid/gid (§5.3)
+Container root via sudo:            ALLOWED
+Container uid 0 without userns:     DENIED
+Root-owned files in host checkout:  PREVENTED
 Working-tree write:                 ALLOWED
 Container read-only Git access:     ALLOWED
 Normal commit:                      ALLOWED
@@ -3631,7 +3793,7 @@ The initial architecture SHALL follow these decisions:
 1. The system is an MCP-controlled Docker development workspace.
 2. The host repository is mounted read/write and remains the source of truth.
 3. The MCP daemon, not the project container, controls Docker.
-4. Project containers may run as root internally.
+4. Container processes run as the host checkout owner's uid; root is reachable inside the container through `sudo`, and is never the identity that writes to the host.
 5. Project containers may install arbitrary development dependencies.
 6. Outbound network access is normally available.
 7. Persistent workspaces are the default.
