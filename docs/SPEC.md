@@ -4095,10 +4095,11 @@ The server:
 1. validates configuration;
 2. verifies Docker connectivity;
 3. opens state database;
-4. reconciles managed containers;
-5. reconciles per-workspace `ssh-agent` processes (§44.1);
-6. validates repository roots;
-7. starts MCP transport.
+4. reconciles job records left non-terminal by an unclean shutdown (§15.4);
+5. reconciles managed containers;
+6. reconciles per-workspace `ssh-agent` processes (§44.1);
+7. validates repository roots;
+8. starts MCP transport.
 
 A health check SHOULD report degraded state if Docker is unavailable.
 

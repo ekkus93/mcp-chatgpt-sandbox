@@ -52,7 +52,8 @@ These block the tasks that cite them. Decide before starting the task, not durin
 - [x] Secrets loaded from files outside repository roots only (§53)
 - [x] Startup sequence per §73, in order, with a degraded health state when Docker
       is unavailable
-      (steps 1-2 and 7 implemented; steps 3-6 land with S3/S6/S23)
+      (steps 1-2 and 8 implemented; steps 3-4 land with S3/S14, step 5 stays
+      lazy per S6, steps 6-7 land with S23/already folded into step 1)
 
 ### S3 — State database ✅
 **Spec:** §67, §68, §69 · **Commit:** 720e4f2
@@ -336,13 +337,59 @@ committed `schemas/tools.json` and asserts it still matches a fresh export).
 
 Acceptance: long builds survive individual MCP request timeouts.
 
-### S14 — Job store and lifecycle
+### S14 — Job store and lifecycle ✅
 **Spec:** §15.1, §15.2, §15.4, §23, §67 · **Satisfies:** FR-014
 
-- [ ] Job states per §15.1; records per §15.2 using `stdout_total_bytes` /
+- [x] Job states per §15.1; records per §15.2 using `stdout_total_bytes` /
       `stderr_total_bytes` / `output_truncated` / `logs_pruned`
-- [ ] Jobs survive MCP reconnect and outlive the request that created them
-- [ ] On daemon restart, reconcile against container processes; unrecoverable → `lost`
+- [x] Jobs survive MCP reconnect and outlive the request that created them
+- [x] On daemon restart, reconcile against container processes; unrecoverable → `lost`
+
+**Commit:** `f4e347c`
+
+`src/dev_workspace_mcp/jobs/store.py`: `JobStore`, backed by the `job` table
+S3 already created. `JobRecord` mirrors §15.2/§67's fields exactly.
+Lifecycle transitions are named methods (`mark_starting`, `mark_running`,
+`update_output_counts`, `mark_finished`, `mark_lost`) rather than an open
+`update(**fields)`, mirroring `DockerWorkspaceManager`'s state methods
+(S6) — the small, known set of legal transitions is what makes an illegal
+one (e.g. `queued` → `succeeded` with no process ever run) visible as a
+call that simply doesn't exist. Because a job's identity lives in SQLite
+rather than on some request handler, it survives an MCP reconnect and
+outlives the request that created it (§23) for free — any later request,
+or even a later daemon process (after a restart), can look it up by id.
+
+`src/dev_workspace_mcp/jobs/reconcile.py`: `reconcile_jobs`, run once at
+daemon startup (new §73 step 4, inserted before container reconciliation).
+A job left `queued`/`starting` never reached a real process, so it is
+unconditionally `lost`. A job left `running` did reach a real `docker
+exec`, and its `pid` is a *host* PID-namespace value (S12's finding), so
+`os.kill(pid, 0)` is a meaningful liveness probe — but liveness alone
+can't resume `running`: the daemon's output-stream reader died with the
+old process, and there is no stored `exec_id` to re-attach to (§67's
+schema has `pid` only). So `running` is marked `lost` too, on the
+conservative side of §15.4's "SHALL transition to lost"; whether the
+process is still alive is reported alongside (`(job_id, pid_still_alive)`)
+so an operator can clean up an orphan by hand. Resuming a still-running
+job "where feasible" (a SHOULD) needs a way to re-attach to a live exec,
+which is out of S14's scope.
+
+Found and fixed a real gap while implementing this: §73's startup
+sequence never listed a step for job reconciliation at all. Added it as
+step 4, renumbering the later steps (container/ssh-agent reconciliation,
+repo-root validation, transport start) accordingly; `cli.py`'s `serve()`
+now performs steps 3-4 explicitly (open a short-lived connection, run
+`reconcile_jobs`, echo a warning per lost job) before building the server
+and starting the transport.
+
+`tests/jobs/` (`test_store.py`, `test_reconcile.py`, plus a `conftest.py`
+that seeds a real workspace row for the `job` table's foreign key) cover
+every transition, idempotent re-reconciliation of an already-terminal
+job, and the pid-liveness flag (using a real `subprocess.Popen` for the
+"still alive" case, `2**30` for "not alive"). `tests/test_cli.py` gained
+an end-to-end test: a real `running` job seeded before `serve` runs,
+verifying both the warning text and the row's final `lost` state in the
+database — not mocked, so it covers the CLI's actual wiring.
 
 ### S15 — Async execution tools
 **Spec:** §15.3, §63, §64 · **Satisfies:** FR-015, FR-016, FR-017 · **Verified by:** AT-006

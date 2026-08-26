@@ -29,8 +29,10 @@ htmlcov/
 *.db-journal
 *.sqlite
 *.sqlite3
-state/
-jobs/
+# Anchored to the repo root: a top-level runtime state/log directory, not
+# src/dev_workspace_mcp/jobs/ (the job store module) or tests/jobs/.
+/state/
+/jobs/
 
 # Secrets and keys — never committed (§53, §19.1)
 *.pem
