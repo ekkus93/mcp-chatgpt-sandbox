@@ -140,22 +140,29 @@ image's configured user by default (root), not whatever PID 1 dropped to via
 `setpriv`; a one-shot container's command *is* PID 1. Which user a later
 `exec` call should run as is S12's problem.
 
-### S8 — Mounts
-**Spec:** §5.1, §5.4, §18.2 · **Satisfies:** FR-006, FR-026 · **Verified by:** AT-012, AT-023, AT-024
+### S8 — Mounts ✅
+**Spec:** §5.1, §5.4, §18.2 · **Satisfies:** FR-006, FR-026 · **Verified by:** AT-012, AT-023, AT-024 · **Commit:** 3411542
 
-- [ ] Working tree bind-mounted read/write at `/workspace`
-- [ ] `.git` mounted per `git_dir_mode`: `read-write` (default), `read-only`
-      (ro over the parent mount), `none` (masked with an empty read-only tmpfs —
-      a subpath of a bind mount cannot be "not mounted")
-- [ ] Gitfile resolution (§18.2): detect `.git` as a file, resolve `gitdir:` and
+- [x] Working tree bind-mounted read/write at `/workspace`
+- [x] `.git` mounted per `git_dir_mode`: `read-write` (default, no second mount
+      needed for an ordinary in-tree repo), `read-only` (ro bind over the parent
+      mount), `none` (masked with an empty read-only tmpfs — a subpath of a bind
+      mount cannot be "not mounted")
+- [x] Gitfile resolution (§18.2): detect `.git` as a file, resolve `gitdir:` and
       `commondir`, verify the target is under an authorized root, mount the main
       `.git` **at its host absolute path** so both references resolve unchanged
-- [ ] Mount nothing beyond §5.4's list
-- [ ] Container-local `/etc/gitconfig` with `safe.directory /workspace`;
-      `GIT_TERMINAL_PROMPT=0`
-- [ ] AT-012: no `/var/run/docker.sock` in the container
-- [ ] AT-023 / AT-024: under `read-only`, writing `.git/hooks/pre-commit` and
-      setting `core.fsmonitor` both fail
+      (needed even under `read-write` — a gitfile's target lives outside the
+      working-tree mount regardless of mode)
+- [x] Mount nothing beyond §5.4's list (at most two mounts, by construction)
+- [x] Container-local `/etc/gitconfig` with `safe.directory <workspace_path>`;
+      `GIT_TERMINAL_PROMPT=0` — added to `entrypoint.sh` (S7), since it already
+      runs once as root at container start
+- [x] AT-012: no `/var/run/docker.sock` in the container
+- [x] AT-023 / AT-024: under `read-only`, writing `.git/hooks/pre-commit` and
+      setting `core.fsmonitor` both fail — verified against real Git repos
+      (`git init`) and real mounts; the same writes verified to *succeed* under
+      the default `read-write`, since that is documented behaviour (§18.3), not
+      a gap
 
 ### S9 — Filesystem service (host-side)
 **Spec:** §6.3, §12, §12.1, §48, §49 · **Satisfies:** FR-011, FR-031 · **Verified by:** AT-001, AT-002, AT-033

@@ -9,6 +9,11 @@ from dev_workspace_mcp.workspace.manager import (
     WorkspaceRecord,
     WorkspaceState,
 )
+from dev_workspace_mcp.workspace.mounts import (
+    GitDirInfo,
+    build_workspace_mounts,
+    resolve_git_dir,
+)
 from dev_workspace_mcp.workspace.naming import (
     LABEL_MANAGED,
     LABEL_REPOSITORY_ID,
@@ -26,12 +31,15 @@ __all__ = [
     "LABEL_REPOSITORY_ID",
     "LABEL_WORKSPACE_ID",
     "DockerWorkspaceManager",
+    "GitDirInfo",
     "WorkspaceRecord",
     "WorkspaceState",
+    "build_workspace_mounts",
     "build_workspace_run_kwargs",
     "container_labels",
     "container_name",
     "ephemeral_workspace_id",
     "persistent_workspace_id",
+    "resolve_git_dir",
     "userns_remap_active",
 ]

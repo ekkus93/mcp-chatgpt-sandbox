@@ -5,17 +5,33 @@
 # passwordless sudo (§5.3) — this script is what makes that user exist.
 #
 # Env vars, set by the daemon per workspace (never baked into the image):
-#   MCP_UID, MCP_GID  target uid/gid. Unset means container.user: root
-#                     (already refused by the daemon unless userns
-#                     remapping is active, §5.3) — run as uid 0 directly.
-#   MCP_USER          desired username, default "mcpuser".
-#   MCP_SUDO          "true"/"false", default "true" — configure
-#                     passwordless sudo for the created user.
+#   MCP_UID, MCP_GID     target uid/gid. Unset means container.user: root
+#                        (already refused by the daemon unless userns
+#                        remapping is active, §5.3) — run as uid 0 directly.
+#   MCP_USER             desired username, default "mcpuser".
+#   MCP_SUDO             "true"/"false", default "true" — configure
+#                        passwordless sudo for the created user.
+#   MCP_WORKSPACE_PATH   container path of the repository mount, default
+#                        "/workspace" — recorded in git's safe.directory.
 
 set -euo pipefail
 
 MCP_USER="${MCP_USER:-mcpuser}"
 MCP_SUDO="${MCP_SUDO:-true}"
+MCP_WORKSPACE_PATH="${MCP_WORKSPACE_PATH:-/workspace}"
+
+if [ "$(id -u)" = "0" ]; then
+    # §18.2: git run from inside the container SHALL trust the mounted
+    # repository despite it having a different owner than whichever uid
+    # ends up running git, and SHALL NOT prompt for remote credentials.
+    # Container-local: /etc/gitconfig is never inside the bind mount.
+    mkdir -p /etc
+    cat > /etc/gitconfig <<EOF
+[safe]
+	directory = $MCP_WORKSPACE_PATH
+EOF
+fi
+export GIT_TERMINAL_PROMPT=0
 
 if [ "$(id -u)" != "0" ]; then
     # Not root at entrypoint: nothing to create, just run the command.

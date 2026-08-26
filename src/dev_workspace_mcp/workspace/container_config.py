@@ -36,6 +36,7 @@ def build_workspace_run_kwargs(
     *,
     container_config: ContainerConfig,
     docker_client: docker.DockerClient,
+    workspace_path: str = "/workspace",
     checkout_uid: int | None = None,
     checkout_gid: int | None = None,
     extra_env: dict[str, str] | None = None,
@@ -60,7 +61,7 @@ def build_workspace_run_kwargs(
                 "to be active; without it, container uid 0 is host uid 0 (§5.3)",
                 details={"container_user": "root"},
             )
-        environment = dict(extra_env or {})
+        environment = {"MCP_WORKSPACE_PATH": workspace_path, **(extra_env or {})}
     else:
         uid = os.getuid() if checkout_uid is None else checkout_uid
         gid = os.getgid() if checkout_gid is None else checkout_gid
@@ -68,6 +69,7 @@ def build_workspace_run_kwargs(
             "MCP_UID": str(uid),
             "MCP_GID": str(gid),
             "MCP_SUDO": "true" if container_config.sudo else "false",
+            "MCP_WORKSPACE_PATH": workspace_path,
             **(extra_env or {}),
         }
 
