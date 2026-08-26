@@ -164,19 +164,29 @@ image's configured user by default (root), not whatever PID 1 dropped to via
       the default `read-write`, since that is documented behaviour (§18.3), not
       a gap
 
-### S9 — Filesystem service (host-side)
-**Spec:** §6.3, §12, §12.1, §48, §49 · **Satisfies:** FR-011, FR-031 · **Verified by:** AT-001, AT-002, AT-033
+### S9 — Filesystem service (host-side) ✅
+**Spec:** §6.3, §12, §12.1, §48, §49 · **Satisfies:** FR-011, FR-031 · **Verified by:** AT-001, AT-002, AT-033 · **Commit:** 35be9f7
 
-- [ ] Runs **host-side in the daemon** (§6.3) — no container required for file ops
-- [ ] Path validation per §12: normalize, resolve `.`/`..`, canonicalize, confirm
+- [x] Runs **host-side in the daemon** (§6.3) — pure filesystem logic, no container
+      required (`FilesystemSecurity`)
+- [x] Path validation per §12: normalize, resolve `.`/`..`, canonicalize, confirm
       containment, reject symlink escapes
-- [ ] Git-metadata exclusion per §12.1, all three rules: `.git` at root, a `.git`
+- [x] Git-metadata exclusion per §12.1, all three rules: `.git` at root, a `.git`
       component at any depth, and the gitdir target of a gitfile →
-      `PATH_GIT_METADATA`
-- [ ] Exclude `.git` from `list_files` / `search_files` output by default
-- [ ] AT-001: `read_file("../../etc/passwd")` → `PATH_OUTSIDE_REPOSITORY`
-- [ ] AT-002: escaping symlink refused by the tools; dangling in the container
-- [ ] AT-033: `write_file`/`patch_file`/`delete_file` into `.git` → `PATH_GIT_METADATA`
+      `PATH_GIT_METADATA` (rule 3 checked *before* the containment check, since its
+      target is by construction always outside the root — otherwise every rule-3
+      hit would report as a generic escape instead of the more specific error)
+- [ ] Exclude `.git` from `list_files` / `search_files` output by default — S10
+- [x] AT-001 / AT-002 / AT-033 exercised directly against `FilesystemSecurity`;
+      full tool-level exercise (`read_file`/`write_file`/etc.) completes with S10
+
+Found and fixed before it shipped: `PurePosixPath`'s `/` operator *replaces* the
+left operand entirely when the right side is absolute
+(`Path("/root") / PurePosixPath("/etc/passwd") == Path("/etc/passwd")`) — a
+client-supplied `path="/etc/passwd"` would have silently discarded the
+repository root and resolved straight to the real host file. Fixed by stripping
+a leading `/` before joining; a client-supplied path is always
+repository-relative, never absolute, regardless of what it looks like.
 
 ### S10 — Filesystem tools
 **Spec:** §13, §12.2, §46, §47, §48 · **Satisfies:** FR-007, FR-008, FR-009, FR-010 · **Verified by:** AT-003, AT-018
