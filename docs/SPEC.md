@@ -22,7 +22,11 @@ The server is language-agnostic. It does not attempt to encode special knowledge
 
 ## 2. Goals
 
-The system SHALL:
+> **Non-normative.** Goals state intent. Requirements live in §57 and the design
+> sections they cite; where a goal and a requirement differ, the requirement
+> governs.
+
+The system is intended to:
 
 1. Allow an MCP client to select an authorized local repository.
 2. Create or reuse a Docker development container associated with that repository.
@@ -123,6 +127,11 @@ The MCP daemon is the privileged control plane. Development containers are execu
 ---
 
 ## 5. Architectural Principles
+
+> **Rationale, not requirements.** These principles explain why the design is
+> shaped as it is. The requirements they motivate are in §57 and the sections
+> each principle cites; where a principle and a requirement differ, the
+> requirement governs.
 
 ### 5.1 Local Checkout Is the Source of Truth
 
@@ -3908,6 +3917,10 @@ A health check SHOULD report degraded state if Docker is unavailable.
 
 ## 74. Security Defaults
 
+> **Summary.** This table is a one-screen view of defaults whose normative
+> definitions live in §5.3, §18.2, §18.9, §19, and §52. If the table and a cited
+> section disagree, the section is right and the table is stale.
+
 Three of these are invariants rather than defaults, and SHALL NOT be reconfigurable:
 
 ```text
@@ -4003,7 +4016,11 @@ Worktree mode SHOULD therefore be optional rather than mandatory.
 
 ## 77. Decision Summary
 
-The initial architecture SHALL follow these decisions:
+> **Summary.** A reader's digest of the decisions made throughout this document.
+> Each is normative only in the section that makes it; this list carries no
+> requirements of its own.
+
+The initial architecture follows these decisions:
 
 1. The system is an MCP-controlled Docker development workspace.
 2. The host repository is mounted read/write and remains the source of truth.
@@ -4022,10 +4039,10 @@ The initial architecture SHALL follow these decisions:
 15. Force pushes and other destructive operations are denied on the structured tools; because `exec` can bypass that, enforcement that binds every path lives in remote rulesets, which the daemon verifies and can require.
 16. The container holds a write-capable SSH key for its repository — a dedicated per-repository deploy key, provisioned through an agent socket so it cannot be extracted, and never the host user's own. The container can push.
 17. Structured Git tools execute inside the container with that key; the daemon holds no Git write credential, and at most a read-only API credential for verification.
-17a. Repository Git metadata is mounted read-write by default, which is an accepted host code-execution risk in the trusted-container model; a read-only mode exists for untrusted code.
-18. The server is language-agnostic.
-19. Dev Container support is desirable but not required for the earliest MVP.
-20. The system complements rather than replaces Ralph Bridge.
+18. Repository Git metadata is mounted read-write by default, which is an accepted host code-execution risk in the trusted-container model; a read-only mode exists for untrusted code.
+19. The server is language-agnostic.
+20. Dev Container support is desirable but not required for the earliest MVP.
+21. The system complements rather than replaces Ralph Bridge.
 
 ---
 
