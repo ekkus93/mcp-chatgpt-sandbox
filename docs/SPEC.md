@@ -860,15 +860,14 @@ Deletion SHOULD be repository-scoped.
 
 Recursive directory deletion SHOULD be explicit.
 
-### 13.6 `move_file`
+### 13.6 Renames and Metadata
 
-Move or rename a file within the repository.
+There is no `move_file` or `file_stat` tool (§34.2). Renames are
+`exec("git mv a b")`. Metadata and content hash are returned by `list_files` and
+`read_file`; `read_file` SHALL include the file's `sha256` in its response so the
+value can be passed back as `expected_sha256` on a later write.
 
-### 13.7 `file_stat`
-
-Returns metadata and content hash.
-
-### 13.8 `search_files`
+### 13.7 `search_files`
 
 Optional but strongly recommended.
 
@@ -1096,25 +1095,19 @@ use is auditable — not because `exec` is prevented from doing the same things.
 
 ### 17.1 Required Git Operations
 
-The server SHOULD expose:
+The server SHALL expose six structured Git tools (§34.1):
 
-- `git_status`
-- `git_diff`
-- `git_log`
-- `git_show`
-- `git_branch_list`
-- `git_branch_create`
-- `git_checkout`
-- `git_add`
-- `git_restore`
-- `git_commit`
-- `git_fetch`
-- `git_pull`
-- `git_push`
-- `git_remote`
-- `git_tag`
-- `git_merge`
-- `git_rebase` where policy permits
+- `git_status` — structured state, conflict detection, ahead/behind;
+- `git_diff` — bounded, path-filtered, stat mode;
+- `git_log` — bounded history;
+- `git_commit` — explicit paths, HEAD and branch guards, strict mode;
+- `git_pull` — remote validation, `ff_only` by default;
+- `git_push` — remote validation, refspec validation, policy, protection report.
+
+Every other Git operation — branch creation, checkout, restore, fetch, show, tag,
+merge, rebase — is performed through `exec("git …")`. Under the trusted-container
+model (§18.1) a structured wrapper would add no guard, policy, or credential that
+`exec` lacks; §34.2 records the mapping.
 
 ### 17.2 Git Status
 
@@ -1321,7 +1314,7 @@ posture, not as someone else's problem:
 - With a read-only API credential configured (§19.5), the daemon SHALL query the
   repository's rulesets and branch protection for the default branch on
   `workspace_open`, and SHALL report the result as `remote_protection` in
-  `workspace_info` and `repository_info` (§20.4).
+  `workspace_info` (§20.4).
 - `git_policy.require_remote_protection` governs what happens when protection is
   absent:
 
@@ -1389,8 +1382,8 @@ the primary repository, so submodules pointing at other private repositories
 cannot be fetched — a structural consequence of key scope, not a policy. Public
 submodules fetch normally over HTTPS.
 
-Structured `git_fetch` and `git_push` SHALL pass `--no-recurse-submodules` and
-`--recurse-submodules=no` respectively. Structured submodule initialization and
+The fetch step of structured `git_pull` SHALL pass `--no-recurse-submodules`, and
+structured `git_push` SHALL pass `--recurse-submodules=no`. Structured submodule initialization and
 update SHALL validate each submodule URL under §20.2 and SHALL be governed by
 `git_policy.submodules`.
 
@@ -1588,7 +1581,7 @@ The daemon MAY hold a **read-only** GitHub credential — a fine-grained token o
 GitHub App installation — for:
 
 - verifying rulesets and branch protection (§18.5, §20.4);
-- populating `repository_info` with default branch and remote metadata;
+- populating `workspace_info` with default branch and remote metadata;
 - confirming that a configured deploy key is installed on the repository it is
   meant for.
 
@@ -1646,7 +1639,7 @@ credential (§19.1) keeps the model honest and the implementation small.
 Exceptions — read-only queries the daemon MAY perform host-side for speed, without
 starting a container:
 
-- `git_status`, `git_diff`, `git_log`, `git_show`, `git_branch_list`, `git_remote`.
+- `git_status`, `git_diff`, `git_log`.
 
 Host-side reads SHALL be invoked with `-c core.hooksPath=<empty-dir>
 -c core.fsmonitor=` (§18.7) and SHALL NOT take the index lock
@@ -1705,8 +1698,8 @@ With a read-only API credential (§19.5), the daemon SHALL verify on
 default branch is protected against the operations listed in
 `git_policy.remote_protection_checks`.
 
-The result SHALL be reported in `workspace_info`, `repository_info`, and the
-`git_push` response:
+The result SHALL be reported in `workspace_info` (and therefore `workspace_open`)
+and in the `git_push` response:
 
 ```json
 {
@@ -1725,11 +1718,6 @@ Behaviour when protection is missing is governed by
 `git_policy.require_remote_protection` (§18.5).
 
 ### 20.5 Structured Operation Contracts
-
-#### `git_fetch`
-
-Fetches from a validated remote. SHALL pass `--no-recurse-submodules`. Does not
-modify the working tree.
 
 #### `git_pull`
 
@@ -2264,96 +2252,75 @@ Example:
 
 ---
 
-## 34. Recommended MCP Tool Surface
+## 34. MCP Tool Surface
 
-An initial comprehensive API could expose the following tools.
+Every tool definition is sent to the model on every request, before any work
+begins, and tool-selection accuracy falls as the count rises. The surface is
+therefore deliberately small. A structured tool earns its place only by offering
+something `exec` cannot: bounded output, a state guard, a policy check, or an audit
+record. Everything else is `exec`.
 
-### Server
-
-```text
-server_info
-server_capabilities
-```
-
-### Repositories
+### 34.1 MVP Surface — 21 tools
 
 ```text
-repository_list
-repository_info
+Server        server_info
+
+Workspace     repository_list
+              workspace_open
+              workspace_info
+
+Filesystem    list_files
+              read_file
+              write_file
+              patch_file
+              delete_file
+              search_files
+
+Execution     exec
+              exec_start
+              exec_status
+              exec_output
+              exec_cancel
+
+Git           git_status
+              git_diff
+              git_log
+              git_commit
+              git_pull
+              git_push
 ```
 
-### Workspaces
+The MVP SHALL expose exactly this set. `workspace_open` SHALL return the same
+payload as `workspace_info`, so a client needs one call to be productive.
+
+### 34.2 Folded — use `exec` or an existing tool
+
+| Not provided | Use instead | Why |
+|---|---|---|
+| `file_stat` | `list_files` (size, mtime, hash) or `read_file` (hash in response) | metadata is already returned |
+| `move_file` | `exec("git mv a b")` | nothing to guard; Git records the rename |
+| `git_add` | `git_commit` with `paths` | separate staging defeats the HEAD guard; `git_commit` stages what it is told |
+| `git_show`, `git_remote`, `git_branch_list` | `exec` | read-only, output is small |
+| `git_branch_create`, `git_checkout`, `git_restore` | `exec` | no policy, no remote, no guard that `exec` lacks under §18.1 |
+| `git_fetch` | `git_pull` (fetch step) or `exec` | remote validation applies via `git_pull` |
+| `git_tag`, `git_merge`, `git_rebase` | `exec` | rare; policy on them is advisory anyway (§18.6) |
+| `repository_info` | `workspace_info` | one payload carries repository, Git, and protection state |
+| `server_capabilities` | `server_info` (`capabilities` field, §33) | one call |
+
+### 34.3 Deferred — later phases
 
 ```text
-workspace_open
-workspace_info
-workspace_start
-workspace_stop
-workspace_restart
-workspace_rebuild
-workspace_reset
-workspace_delete
-workspace_lock
-workspace_unlock
-workspace_lock_status
+Workspace     workspace_start   workspace_stop   workspace_restart
+              workspace_rebuild workspace_reset  workspace_delete
+              workspace_lock    workspace_unlock workspace_lock_status
+Execution     job_list
+Diagnostics   workspace_disk_usage  workspace_environment
+              workspace_processes   audit_recent
 ```
 
-### Filesystem
-
-```text
-list_files
-read_file
-file_stat
-write_file
-patch_file
-move_file
-delete_file
-search_files
-```
-
-### Execution
-
-```text
-exec
-exec_start
-exec_status
-exec_output
-exec_cancel
-job_list
-```
-
-### Git
-
-```text
-git_status
-git_diff
-git_log
-git_show
-git_remote
-git_branch_list
-git_branch_create
-git_checkout
-git_add
-git_restore
-git_commit
-git_fetch
-git_pull
-git_push
-git_tag
-git_merge
-git_rebase
-```
-
-### Diagnostics
-
-```text
-workspace_disk_usage
-workspace_environment
-workspace_processes
-audit_recent
-```
-
-The MVP does not need every listed tool if equivalent functionality exists through `exec`, but the structured interfaces SHOULD be implemented for operations where correctness or policy matters.
+Until these exist, `workspace_open` performs start and create; rebuild, reset,
+and delete are operator actions on the host. Each SHALL be added only when a
+concrete workflow needs it, and §34.1 SHALL be updated when it is.
 
 ---
 
@@ -3211,8 +3178,9 @@ The first usable release SHOULD prioritize practical development value.
 7. synchronous command execution;
 8. asynchronous job start/status/output/cancel;
 9. Git status/diff/log;
-10. stage/commit;
-11. structured fetch/pull/push, executed in-container (§20);
+10. commit with explicit paths and HEAD guard;
+11. structured pull/push, executed in-container (§20);
+11a. the tool surface limited to the 21 tools in §34.1;
 12. dedicated per-repository SSH deploy key provisioned via agent socket, GitHub
     host keys pinned, host credentials never mounted (§19);
 13. remote identity and refspec validation on structured operations (§20.2,
@@ -3302,12 +3270,8 @@ Implement:
 
 - structured Git tools as an in-container front-end over the execution service
   (§20.1), with host-side read-only queries;
-- status;
-- diff;
-- history;
-- staging;
-- commit;
-- branch operations;
+- `git_status`, `git_diff`, `git_log`;
+- `git_commit` with explicit paths;
 - state guards;
 - hook neutralization on host-side reads (§18.7).
 
@@ -3323,7 +3287,7 @@ Implement:
 
 - per-workspace `ssh-agent` provisioning and socket mount (§19.2);
 - pinned GitHub host keys and container-local SSH configuration (§19.3);
-- structured fetch, pull (`ff_only` by default), and push (§20.5);
+- structured `git_pull` (`ff_only` by default) and `git_push` (§20.5);
 - remote identity validation with transport restriction (§20.2);
 - refspec validation (§20.3);
 - structured-tool destructive-operation policy (§18.9);
@@ -3543,7 +3507,7 @@ remote's actual state.
 ### AT-030 Filesystem Tool Git Metadata
 
 `write_file(".git/hooks/pre-commit")`, `patch_file(".git/config")`, and
-`move_file` into or out of `.git` SHALL each fail with `PATH_GIT_METADATA`. The
+`delete_file(".git/config")` SHALL each fail with `PATH_GIT_METADATA`. The
 same SHALL hold for a path containing a `.git` component at any depth, and for the
 gitdir target of a gitfile.
 
