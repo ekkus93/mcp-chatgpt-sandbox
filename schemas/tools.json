@@ -1,0 +1,1064 @@
+{
+  "contract_version": "0.1.0",
+  "tools": [
+    {
+      "description": "Delete a repository file or directory (\u00a713.5).",
+      "input_schema": {
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "recursive": {
+            "default": false,
+            "title": "Recursive",
+            "type": "boolean"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "path"
+        ],
+        "title": "delete_fileArguments",
+        "type": "object"
+      },
+      "name": "delete_file",
+      "output_schema": {
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "title": "DeleteFileOutput",
+        "type": "object"
+      }
+    },
+    {
+      "description": "Run a command synchronously in a workspace (\u00a714).",
+      "input_schema": {
+        "properties": {
+          "argv": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Argv"
+          },
+          "cwd": {
+            "default": "/workspace",
+            "title": "Cwd",
+            "type": "string"
+          },
+          "env": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Env"
+          },
+          "shell": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Shell"
+          },
+          "timeout_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Timeout Seconds"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id"
+        ],
+        "title": "exec_toolArguments",
+        "type": "object"
+      },
+      "name": "exec",
+      "output_schema": {
+        "properties": {
+          "exit_code": {
+            "title": "Exit Code",
+            "type": "integer"
+          },
+          "stderr_tail": {
+            "title": "Stderr Tail",
+            "type": "string"
+          },
+          "stderr_total_bytes": {
+            "title": "Stderr Total Bytes",
+            "type": "integer"
+          },
+          "stderr_truncated": {
+            "title": "Stderr Truncated",
+            "type": "boolean"
+          },
+          "stdout_tail": {
+            "title": "Stdout Tail",
+            "type": "string"
+          },
+          "stdout_total_bytes": {
+            "title": "Stdout Total Bytes",
+            "type": "integer"
+          },
+          "stdout_truncated": {
+            "title": "Stdout Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "exit_code",
+          "stdout_tail",
+          "stderr_tail",
+          "stdout_truncated",
+          "stderr_truncated",
+          "stdout_total_bytes",
+          "stderr_total_bytes"
+        ],
+        "title": "ExecOutput",
+        "type": "object"
+      }
+    },
+    {
+      "description": "List files and directories (\u00a713.1).",
+      "input_schema": {
+        "properties": {
+          "max_entries": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Entries"
+          },
+          "path": {
+            "default": "",
+            "title": "Path",
+            "type": "string"
+          },
+          "recursive": {
+            "default": false,
+            "title": "Recursive",
+            "type": "boolean"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id"
+        ],
+        "title": "list_filesArguments",
+        "type": "object"
+      },
+      "name": "list_files",
+      "output_schema": {
+        "$defs": {
+          "ListFilesEntry": {
+            "properties": {
+              "is_symlink": {
+                "title": "Is Symlink",
+                "type": "boolean"
+              },
+              "modified_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Modified At"
+              },
+              "path": {
+                "title": "Path",
+                "type": "string"
+              },
+              "size": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Size"
+              },
+              "type": {
+                "title": "Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "type",
+              "size",
+              "modified_at",
+              "is_symlink"
+            ],
+            "title": "ListFilesEntry",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "result": {
+            "items": {
+              "$ref": "#/$defs/ListFilesEntry"
+            },
+            "title": "Result",
+            "type": "array"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "list_filesOutput",
+        "type": "object"
+      }
+    },
+    {
+      "description": "Apply a unified diff to a file (\u00a713.4).",
+      "input_schema": {
+        "properties": {
+          "diff": {
+            "title": "Diff",
+            "type": "string"
+          },
+          "expected_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Sha256"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "path",
+          "diff"
+        ],
+        "title": "patch_fileArguments",
+        "type": "object"
+      },
+      "name": "patch_file",
+      "output_schema": {
+        "$defs": {
+          "RejectedHunkOutput": {
+            "properties": {
+              "old_start": {
+                "title": "Old Start",
+                "type": "integer"
+              },
+              "reason": {
+                "title": "Reason",
+                "type": "string"
+              }
+            },
+            "required": [
+              "old_start",
+              "reason"
+            ],
+            "title": "RejectedHunkOutput",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "applied": {
+            "title": "Applied",
+            "type": "boolean"
+          },
+          "old_sha256": {
+            "title": "Old Sha256",
+            "type": "string"
+          },
+          "rejected_hunks": {
+            "items": {
+              "$ref": "#/$defs/RejectedHunkOutput"
+            },
+            "title": "Rejected Hunks",
+            "type": "array"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          }
+        },
+        "required": [
+          "applied",
+          "old_sha256",
+          "sha256",
+          "rejected_hunks"
+        ],
+        "title": "PatchFileOutput",
+        "type": "object"
+      }
+    },
+    {
+      "description": "Read a repository file (\u00a713.2).",
+      "input_schema": {
+        "properties": {
+          "byte_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Byte End"
+          },
+          "byte_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Byte Start"
+          },
+          "line_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Line End"
+          },
+          "line_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Line Start"
+          },
+          "max_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Bytes"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "path"
+        ],
+        "title": "read_fileArguments",
+        "type": "object"
+      },
+      "name": "read_file",
+      "output_schema": {
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "is_binary": {
+            "title": "Is Binary",
+            "type": "boolean"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "content",
+          "sha256",
+          "size",
+          "truncated",
+          "is_binary"
+        ],
+        "title": "ReadFileOutput",
+        "type": "object"
+      }
+    },
+    {
+      "description": "List repositories available to the MCP client (\u00a77).",
+      "input_schema": {
+        "properties": {},
+        "title": "repository_listArguments",
+        "type": "object"
+      },
+      "name": "repository_list",
+      "output_schema": {
+        "$defs": {
+          "RepositoryListItem": {
+            "properties": {
+              "github": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Github"
+              },
+              "id": {
+                "title": "Id",
+                "type": "string"
+              },
+              "path": {
+                "title": "Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "path",
+              "github"
+            ],
+            "title": "RepositoryListItem",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "result": {
+            "items": {
+              "$ref": "#/$defs/RepositoryListItem"
+            },
+            "title": "Result",
+            "type": "array"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "repository_listOutput",
+        "type": "object"
+      }
+    },
+    {
+      "description": "Search file names and contents (\u00a713.7).",
+      "input_schema": {
+        "properties": {
+          "include_ignored": {
+            "default": false,
+            "title": "Include Ignored",
+            "type": "boolean"
+          },
+          "max_results": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Results"
+          },
+          "mode": {
+            "default": "text",
+            "enum": [
+              "glob",
+              "text",
+              "regex"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "path": {
+            "default": "",
+            "title": "Path",
+            "type": "string"
+          },
+          "pattern": {
+            "title": "Pattern",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "pattern"
+        ],
+        "title": "search_filesArguments",
+        "type": "object"
+      },
+      "name": "search_files",
+      "output_schema": {
+        "$defs": {
+          "SearchMatchOutput": {
+            "properties": {
+              "line_number": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Line Number"
+              },
+              "line_text": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Line Text"
+              },
+              "path": {
+                "title": "Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "line_number",
+              "line_text"
+            ],
+            "title": "SearchMatchOutput",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "result": {
+            "items": {
+              "$ref": "#/$defs/SearchMatchOutput"
+            },
+            "title": "Result",
+            "type": "array"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "search_filesOutput",
+        "type": "object"
+      }
+    },
+    {
+      "description": "Server version, capabilities, and health (\u00a725).",
+      "input_schema": {
+        "properties": {},
+        "title": "server_infoArguments",
+        "type": "object"
+      },
+      "name": "server_info",
+      "output_schema": {
+        "properties": {
+          "active_workspaces": {
+            "title": "Active Workspaces",
+            "type": "integer"
+          },
+          "capabilities": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "title": "Capabilities",
+            "type": "object"
+          },
+          "configured_repositories": {
+            "title": "Configured Repositories",
+            "type": "integer"
+          },
+          "contract_version": {
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "docker_available": {
+            "title": "Docker Available",
+            "type": "boolean"
+          },
+          "docker_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Docker Version"
+          },
+          "running_jobs": {
+            "title": "Running Jobs",
+            "type": "integer"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "contract_version",
+          "docker_available",
+          "docker_version",
+          "active_workspaces",
+          "running_jobs",
+          "configured_repositories",
+          "capabilities"
+        ],
+        "title": "ServerInfoOutput",
+        "type": "object"
+      }
+    },
+    {
+      "description": "Report current workspace state (\u00a725).",
+      "input_schema": {
+        "properties": {
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id"
+        ],
+        "title": "workspace_infoArguments",
+        "type": "object"
+      },
+      "name": "workspace_info",
+      "output_schema": {
+        "$defs": {
+          "GitStateOutput": {
+            "properties": {
+              "branch": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Branch"
+              },
+              "clean": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Clean"
+              },
+              "head_sha": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Head Sha"
+              },
+              "upstream": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Upstream"
+              }
+            },
+            "required": [
+              "branch",
+              "head_sha",
+              "clean",
+              "upstream"
+            ],
+            "title": "GitStateOutput",
+            "type": "object"
+          },
+          "RemoteProtectionOutput": {
+            "properties": {
+              "status": {
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "title": "RemoteProtectionOutput",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "container_state": {
+            "title": "Container State",
+            "type": "string"
+          },
+          "git": {
+            "$ref": "#/$defs/GitStateOutput"
+          },
+          "git_dir_mode": {
+            "title": "Git Dir Mode",
+            "type": "string"
+          },
+          "remote_protection": {
+            "$ref": "#/$defs/RemoteProtectionOutput"
+          },
+          "repository_id": {
+            "title": "Repository Id",
+            "type": "string"
+          },
+          "ssh_key_mode": {
+            "title": "Ssh Key Mode",
+            "type": "string"
+          },
+          "ssh_key_scope": {
+            "title": "Ssh Key Scope",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          },
+          "workspace_path": {
+            "title": "Workspace Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "repository_id",
+          "container_state",
+          "workspace_path",
+          "git_dir_mode",
+          "ssh_key_mode",
+          "ssh_key_scope",
+          "remote_protection",
+          "git"
+        ],
+        "title": "WorkspaceInfoOutput",
+        "type": "object"
+      }
+    },
+    {
+      "description": "Open (creating and starting as needed) a repository's workspace (\u00a78.3).",
+      "input_schema": {
+        "properties": {
+          "mode": {
+            "default": "persistent",
+            "enum": [
+              "persistent",
+              "ephemeral"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "repository_id": {
+            "title": "Repository Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repository_id"
+        ],
+        "title": "workspace_openArguments",
+        "type": "object"
+      },
+      "name": "workspace_open",
+      "output_schema": {
+        "$defs": {
+          "GitStateOutput": {
+            "properties": {
+              "branch": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Branch"
+              },
+              "clean": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Clean"
+              },
+              "head_sha": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Head Sha"
+              },
+              "upstream": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Upstream"
+              }
+            },
+            "required": [
+              "branch",
+              "head_sha",
+              "clean",
+              "upstream"
+            ],
+            "title": "GitStateOutput",
+            "type": "object"
+          },
+          "RemoteProtectionOutput": {
+            "properties": {
+              "status": {
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "title": "RemoteProtectionOutput",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "container_state": {
+            "title": "Container State",
+            "type": "string"
+          },
+          "git": {
+            "$ref": "#/$defs/GitStateOutput"
+          },
+          "git_dir_mode": {
+            "title": "Git Dir Mode",
+            "type": "string"
+          },
+          "remote_protection": {
+            "$ref": "#/$defs/RemoteProtectionOutput"
+          },
+          "repository_id": {
+            "title": "Repository Id",
+            "type": "string"
+          },
+          "ssh_key_mode": {
+            "title": "Ssh Key Mode",
+            "type": "string"
+          },
+          "ssh_key_scope": {
+            "title": "Ssh Key Scope",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          },
+          "workspace_path": {
+            "title": "Workspace Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "repository_id",
+          "container_state",
+          "workspace_path",
+          "git_dir_mode",
+          "ssh_key_mode",
+          "ssh_key_scope",
+          "remote_protection",
+          "git"
+        ],
+        "title": "WorkspaceInfoOutput",
+        "type": "object"
+      }
+    },
+    {
+      "description": "Write complete file contents (\u00a713.3).",
+      "input_schema": {
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "expected_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Sha256"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "path",
+          "content"
+        ],
+        "title": "write_fileArguments",
+        "type": "object"
+      },
+      "name": "write_file",
+      "output_schema": {
+        "properties": {
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sha256",
+          "size"
+        ],
+        "title": "WriteFileOutput",
+        "type": "object"
+      }
+    }
+  ]
+}

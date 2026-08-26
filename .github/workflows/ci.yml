@@ -34,5 +34,32 @@ jobs:
       - name: mypy
         run: uv run mypy src
 
+      # §71's "MCP contract check": export-schemas output SHALL match the
+      # committed schemas/tools.json byte-for-byte. `tests/test_schema_export.py`
+      # already asserts this semantically on every pytest run; this step
+      # additionally re-runs the real CLI and diffs raw bytes, so a
+      # formatting-only drift (key order, whitespace) fails CI too.
+      - name: MCP contract check (§33.1, §71)
+        run: |
+          config_dir="$(mktemp -d)"
+          cat > "$config_dir/config.yml" <<EOF
+          version: 1
+          state_db_path: $config_dir/state.db
+          docker:
+            default_image: mcp-dev-ubuntu:24.04
+          ssh:
+            keys_dir: $config_dir/keys
+            known_hosts: $config_dir/known_hosts
+          audit:
+            path: $config_dir/audit.jsonl
+          EOF
+          uv run dev-workspace-mcp export-schemas \
+            --config "$config_dir/config.yml" \
+            --out "$config_dir/tools.json"
+          diff -u schemas/tools.json "$config_dir/tools.json" || {
+            echo "::error::schemas/tools.json is stale — run 'dev-workspace-mcp export-schemas' and commit the result (bump contract_version per §33.2 if the change is intentional)";
+            exit 1;
+          }
+
       - name: pytest
         run: uv run pytest --cov --cov-report=term-missing

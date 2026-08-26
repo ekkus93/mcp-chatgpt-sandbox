@@ -10,6 +10,7 @@ specifies.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -17,6 +18,7 @@ import click
 
 from dev_workspace_mcp import __version__
 from dev_workspace_mcp.config import ConfigError, docker_available, load_config
+from dev_workspace_mcp.schema_export import export_schemas
 from dev_workspace_mcp.server import Transport, create_server, run_server
 
 
@@ -63,3 +65,36 @@ def serve(config_path: Path, transport: Transport) -> None:
     # §73 step 7: start the MCP transport.
     server = create_server(config)
     run_server(server, transport=transport)
+
+
+@main.command(name="export-schemas")
+@click.option(
+    "--config",
+    "config_path",
+    required=True,
+    type=click.Path(path_type=Path),
+    help="Path to the server configuration file (§52).",
+)
+@click.option(
+    "--out",
+    "out_path",
+    default=Path("schemas/tools.json"),
+    show_default=True,
+    type=click.Path(path_type=Path),
+    help="Where to write the exported tool contract (§33.1).",
+)
+def export_schemas_command(config_path: Path, out_path: Path) -> None:
+    """Export the tool contract to a JSON file.
+
+    Commit the result. CI (§71) fails if a fresh export differs from the
+    committed copy — a tool's contract SHALL NOT change silently.
+    """
+    try:
+        config = load_config(config_path)
+    except ConfigError as exc:
+        click.echo(f"error: {exc}", err=True)
+        sys.exit(1)
+
+    server = create_server(config)
+    asyncio.run(export_schemas(server, out_path))
+    click.echo(f"wrote {out_path}")

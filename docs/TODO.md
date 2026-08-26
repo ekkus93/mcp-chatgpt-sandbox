@@ -298,13 +298,37 @@ checking command's argv, and not `pgrep -x sleep`, which matched the
 container's own PID 1 `sleep infinity`; both were caught as test bugs while
 getting this one right).
 
-### S13 — Tool contract export
+### S13 — Tool contract export ✅
 **Spec:** §33.1, §33.2, §71
 
-- [ ] `export-schemas` emitting the full `tools/list` with `inputSchema` and
+- [x] `export-schemas` emitting the full `tools/list` with `inputSchema` and
       `outputSchema` per tool to `schemas/tools.json`
-- [ ] Commit the file; CI fails when the export differs from the committed copy
-- [ ] `contract_version` bump rules per §33.2 enforced in review
+- [x] Commit the file; CI fails when the export differs from the committed copy
+- [x] `contract_version` bump rules per §33.2 enforced in review
+
+**Commit:** `2c6d785`
+
+`src/dev_workspace_mcp/schema_export.py` collects every registered tool's
+name/description/input_schema/output_schema (sorted by name for a stable
+diff) and renders them as `{"contract_version": ..., "tools": [...]}` —
+deterministic `json.dumps(..., indent=2, sort_keys=True)` plus a trailing
+newline, so re-exporting an unchanged server is byte-for-byte identical to
+what's committed. `dev-workspace-mcp export-schemas --config <path> [--out
+schemas/tools.json]` is the new CLI command; `schemas/tools.json` (all 11
+tools registered through S12) is generated and committed, not hand-written.
+`CONTRACT_VERSION = "0.1.0"` is bumped by hand per §33.2's rules — a
+diff cannot tell a loosened constraint (patch) from a tightened one
+(breaking major), so this stays a reviewed, deliberate edit.
+
+CI gained a dedicated "MCP contract check" step (§71): it builds a throwaway
+config, runs the real `export-schemas` CLI, and `diff`s the raw bytes
+against `schemas/tools.json`, failing the build on any drift — including
+formatting-only drift a semantic JSON comparison would miss.
+`tests/test_schema_export.py` covers the same property at the unit-test
+level (`collect_tool_schemas` covers every registered tool and is sorted;
+`render_schema_document` is deterministic; `export_schemas` writes what it
+returns and creates parent directories; a dedicated test loads the
+committed `schemas/tools.json` and asserts it still matches a fresh export).
 
 ---
 
