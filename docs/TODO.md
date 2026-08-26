@@ -20,11 +20,15 @@ These block the tasks that cite them. Decide before starting the task, not durin
       management. Blocked S1; unblocked 2026-08-26.
 - [ ] **D2 — Read-only GitHub API token.** §19.5. Optional but load-bearing:
       without it `remote_protection` is `unverified` and `require_remote_protection`
-      degrades to `warn` (§18.5). Blocks S26 from being fully testable.
+      degrades to `warn` (§18.5). Blocks S28 (`**Blocked by:** D2` there) from being
+      fully testable.
 - [ ] **D3 — Deploy-key provisioning is manual or automated.** §19.1 requires a
       per-repository deploy key with write access. The MVP may require the operator
       to create and register it by hand; automating it needs an API credential with
-      `administration: write`, which D2's token deliberately lacks. Blocks S21.
+      `administration: write`, which D2's token deliberately lacks. Blocks S23
+      (`**Blocked by:** D3` there). *(Corrected 2026-08-26: this note previously said
+      "Blocks S21"/"Blocks S26" — stale against a since-reordered task numbering;
+      the per-task `**Blocked by:**` annotations on S23/S28 were already correct.)*
 
 ---
 
