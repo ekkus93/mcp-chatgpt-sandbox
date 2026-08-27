@@ -1015,17 +1015,81 @@ AT-034 itself, and `file`-mode's `IdentityFile` line. No new tools or
 output fields were added, so `schemas/tools.json` needed no regeneration
 (confirmed by re-running `export-schemas` and diffing — no drift).
 
-### S25 — Remote identity validation
+### S25 — Remote identity validation ✅
 **Spec:** §20.2, §7.3 · **Satisfies:** FR-023 · **Verified by:** AT-009, AT-026, AT-027, AT-028, AT-030
 
-- [ ] Resolve remote → URL; scheme allowlist; reject `ext::`, `file://`, and any
+- [x] Resolve remote → URL; scheme allowlist; reject `ext::`, `file://`, and any
       local-command transport, with `-c protocol.ext.allow=never`
-- [ ] Normalize to `owner/repo` (§7.3) and compare against configured identity and
+- [x] Normalize to `owner/repo` (§7.3) and compare against configured identity and
       `github.repositories`
-- [ ] Honour `expected_remote_repository` regardless of server config
-- [ ] Reject client-supplied `--upload-pack` / `--receive-pack` / `--exec`
-- [ ] AT-009 unauthorized remote · AT-026 `ext::` rejected · AT-027 key scope stops
+- [x] Honour `expected_remote_repository` regardless of server config
+- [x] Reject client-supplied `--upload-pack` / `--receive-pack` / `--exec`
+- [x] AT-009 unauthorized remote · AT-026 `ext::` rejected · AT-027 key scope stops
       both paths · AT-028 SSH-form `origin` works · AT-030 submodule URL not fetched
+
+**Commit:** `2c48fe4`
+
+New `src/dev_workspace_mcp/git/remote.py` — `validate_remote_identity`,
+the §20.2 mechanism `git_pull`/`git_push` (S26/S27) will call as their
+first precondition, the same way `git_commit` already runs its own
+host-side precondition reads (status, interrupted-operation detection)
+before anything mutates state (§20.6). It has no MCP tool of its own.
+
+`resolve_remote_url` runs `git remote get-url <name>` host-side via the
+existing `run_git_host_side` (S19), with `-c protocol.ext.allow=never`
+added defensively even though `get-url` never itself invokes a transport.
+`classify_url_scheme` recognizes `https://`, `ssh://`, the SCP-like
+`git@github.com:owner/repo.git` form (which Git treats as SSH despite
+having no scheme prefix at all), and calls out `ext::` and `file://`
+explicitly per spec — both are rejected unconditionally, never merely
+gated by `allowed_url_schemes`, since either is a local-code/local-file
+hazard and not just an unauthorized-remote one. `normalize_to_owner_repo`
+implements §7.3's three documented forms with `None` for anything else
+(including a non-GitHub host), which callers treat as a mismatch, not as
+"unrecognized, so allow." `validate_remote_identity` composes all of
+this: resolve → reject disallowed/dangerous scheme → normalize → compare
+against the repository's configured `github` identity and
+`github.repositories` → apply a caller-supplied
+`expected_remote_repository` override on top, per §20.2's "honoured
+regardless of server-side configuration." Rejecting client-supplied
+`--upload-pack`/`--receive-pack`/`--exec` is satisfied by construction:
+this module (and the future `git_pull`/`git_push` signatures it feeds)
+take a remote *name*, never a raw Git flag, so there is no parameter for
+one to travel through.
+
+`tests/git/test_remote.py` (28 tests, real `git init`/`git remote add`,
+no Docker needed since validation never touches a container) exercises
+every documented URL form, `ext://`/`file://`/unknown-scheme rejection,
+an `allowed_url_schemes` narrowed to `["ssh"]` actually stopping an
+HTTPS remote, the `github.repositories` allowlist, and
+`expected_remote_repository` both overriding and being overridden by.
+
+Coverage against the five listed ATs is real but partial by necessity,
+since `git_pull`/`git_push` (S26/S27) and SSH key provisioning (S23,
+blocked by D3) don't exist yet:
+
+- **AT-009** (unauthorized remote) and **AT-027**'s validation half (key
+  scope): identical at this layer — a remote resolving to an owner/repo
+  outside the configured identity/allowlist raises
+  `GitRemoteNotAllowedError` before anything is invoked against it,
+  which is what makes "a structured push SHALL fail" true in the first
+  place. AT-027's second path (`exec("git push")` failing at GitHub
+  specifically due to key scope) needs a real, installed deploy key —
+  deferred to S23.
+- **AT-026** (`ext::` rejected before any authenticated operation): fully
+  verified — `classify_url_scheme`/`validate_remote_identity` reject it
+  before `resolve_remote_url` even returns to a caller that could act on
+  it.
+- **AT-028** (SSH-form remote): the validation half — the SCP-like form
+  normalizes and passes exactly like the other two — is verified;
+  `exec("git push")` and a structured `git_push` actually succeeding
+  over it needs S27 and real GitHub connectivity.
+- **AT-030** (submodule URL substitution): this AT's real guarantee is
+  implemented by S26's already-planned `--no-recurse-submodules` on the
+  fetch step (`git_pull` never asks Git to contact a submodule's own
+  remote at all, so nothing needs validating there) — not by this
+  module. Noted here as a design constraint to carry into S26, not
+  something to re-verify at this layer.
 
 ### S26 — `git_pull`
 **Spec:** §20.5, §18.8 · **Satisfies:** FR-021 · **Verified by:** AT-010
