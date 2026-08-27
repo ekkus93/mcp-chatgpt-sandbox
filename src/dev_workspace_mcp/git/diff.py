@@ -71,7 +71,13 @@ def read_git_diff(
             details={"staged": staged, "base": base},
         )
 
-    cmd = ["diff"]
+    # HR-002(1): a diff-producing read must not invoke a repository's own
+    # `diff.external`/`diff.<name>.textconv` driver. `--no-ext-diff` alone
+    # is not enough — verified empirically that it does not suppress
+    # `textconv` — and `--no-textconv` cannot substitute for
+    # `--no-ext-diff` either, so both are required. Neither errors in any
+    # mode this function has (`--stat`, `--cached`, commit-to-commit).
+    cmd = ["diff", "--no-ext-diff", "--no-textconv"]
     if stat_only:
         cmd.append("--stat")
     if base is not None:

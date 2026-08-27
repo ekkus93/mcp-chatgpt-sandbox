@@ -21,6 +21,7 @@ reports on; it never runs a Git process.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -28,6 +29,120 @@ from enum import StrEnum
 from pathlib import Path
 
 from dev_workspace_mcp.errors import InvalidArgumentError
+
+#: HR-002 (`docs/HARDENING_SPEC.md` §4.1): repository configuration keys
+#: that make Git execute an external command as a side effect of an
+#: otherwise-read-only invocation. `core.hooksPath`/`core.fsmonitor` are
+#: also covered by the unconditional static overrides below — kept in this
+#: list too so the *property* ("no code-executing key reaches Git
+#: unneutralized") holds by construction, not by remembering to keep two
+#: mechanisms in sync. `git status` itself was verified, empirically, to
+#: invoke `filter.<name>.clean` — this is not a diff-only concern.
+#:
+#: This is a security control, not a convenience constant: a future Git
+#: release may add another code-executing key, and this list needs to grow
+#: to match (`HAT-002` covers this file's own current set; it cannot prove
+#: the set is exhaustive against a Git this session hasn't run against).
+_CODE_EXECUTING_CONFIG_KEY_RE = re.compile(
+    r"""^(
+        filter\..*\.(clean|smudge|process)
+        |diff\..*\.(command|textconv)
+        |diff\.external
+        |merge\..*\.driver
+        |core\.pager
+        |core\.editor
+        |core\.sshCommand
+        |core\.hooksPath
+        |core\.fsmonitor
+        |core\.alternateRefsCommand
+        |sequence\.editor
+        |credential\.helper
+        |gpg\..*program
+        |uploadpack\.packObjectsHook
+        |remote\..*\.uploadpack
+        |remote\..*\.receivepack
+    )$""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+#: HR-002(4): removed from the inherited environment for every host-side
+#: Git invocation (the probe config-list call included) — each of these
+#: can substitute for the config-based mechanisms above, or add one of its
+#: own (`GIT_SSH`/`GIT_SSH_COMMAND` in particular: an unrelated read
+#: shouldn't be able to run an arbitrary "ssh" replacement even though no
+#: host-side read ever legitimately touches the network).
+_ENV_VARS_TO_SCRUB = (
+    "GIT_EXTERNAL_DIFF",
+    "GIT_PAGER",
+    "GIT_EDITOR",
+    "GIT_SEQUENCE_EDITOR",
+    "GIT_SSH",
+    "GIT_SSH_COMMAND",
+    "GIT_ASKPASS",
+    "GIT_PROXY_COMMAND",
+    "GIT_TEMPLATE_DIR",
+)
+
+
+def _host_side_git_env() -> dict[str, str]:
+    """HR-002(3)/(4): the real environment (a subprocess needs `PATH` and
+    everything else to find `git` at all — a replacement `env={...}`
+    would drop it) minus the scrubbed variables above, plus
+    `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` pointed at `/dev/null` so a
+    read performed on the client's behalf is never influenced by the
+    *host's* global Git configuration — only the repository's own,
+    already neutralized by `_discover_code_executing_overrides`."""
+    env = {k: v for k, v in os.environ.items() if k not in _ENV_VARS_TO_SCRUB}
+    env["GIT_CONFIG_GLOBAL"] = "/dev/null"
+    env["GIT_CONFIG_SYSTEM"] = "/dev/null"
+    return env
+
+
+def _discover_code_executing_overrides(repo_path: Path) -> list[str]:
+    """HR-002(2): enumerate this repository's own configuration — local
+    and worktree scope, the only scopes a repository's own files can
+    populate — and return `-c <key>=` for every key that could make Git
+    execute a command. Complete with respect to what can actually run: a
+    driver git never invokes unless it is *defined* in configuration
+    somewhere, and driver *names* are attacker-chosen (a static list of
+    `-c filter.<name>.clean=` overrides could never anticipate them), so
+    reading the configured keys back is the only approach that covers an
+    arbitrary driver name.
+
+    This probe never invokes a hook, filter, or external diff/merge
+    driver — `git config --list` only ever reads and prints configuration
+    — but still runs with the same scrubbed environment as every other
+    host-side call, for the same reason only `--local`/`--worktree`
+    (never `--global`/`--system`) are asked for here: what this reads
+    back SHALL depend only on the repository's own configuration.
+
+    Two separate invocations, not one combined `--worktree --local` —
+    verified empirically that Git rejects that combination outright
+    (`error: only one config file at a time`); each scope has to be
+    listed on its own."""
+    env = _host_side_git_env()
+    overrides: list[str] = []
+    for scope_flag in ("--local", "--worktree"):
+        result = subprocess.run(  # noqa: S603
+            ["git", "-C", str(repo_path), "config", "--list", "-z", scope_flag],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        if result.returncode != 0:
+            # not a git repository, or nothing in this scope — no keys to
+            # add from it; the caller's own git invocation is about to
+            # fail the same way for the same reason if it's the former.
+            continue
+        for entry in result.stdout.split("\0"):
+            if not entry:
+                continue
+            key = entry.split("\n", 1)[0]
+            if _CODE_EXECUTING_CONFIG_KEY_RE.match(key):
+                overrides.extend(["-c", f"{key}="])
+    return overrides
+
 
 #: Placed immediately before a client-supplied revision argument in every
 #: host-side read that accepts one (`git_diff`'s `base`/`head`, `git_log`'s
@@ -67,19 +182,34 @@ def run_git_host_side(repo_path: Path, args: list[str]) -> GitCommandResult:
     `git_status` / `git_diff` / `git_log` only; every other structured
     operation runs in-container instead (see module docstring).
 
-    Neutralizes hooks: `-c core.hooksPath=<a fresh, empty directory>`, so
-    a repository-configured hook cannot run under the daemon's identity
-    (§18.7), regardless of what the repository's own config says.
-    Neutralizes `core.fsmonitor` the same way — the one hook-like
-    mechanism a plain read (`status`, `diff`, `log`) can actually
-    trigger; `core.hooksPath` alone would not stop it, since fsmonitor is
-    a separate config key, not a file under the hooks directory.
-    Disables the index lock (`GIT_OPTIONAL_LOCKS=0`) since a read has no
-    business taking it. Uses the real environment plus that one
-    override, not a replacement env — a bare `env={...}` drops `PATH`
-    and everything else a subprocess needs to actually find `git`.
+    §18.7/HR-002's actual property is that a host-side read cannot
+    execute repository-supplied code under the daemon's identity — not
+    just that hooks and fsmonitor specifically are disabled. Four layers
+    enforce it:
+
+    1. `-c core.hooksPath=<a fresh, empty directory>` and
+       `-c core.fsmonitor=`, unconditionally — the two mechanisms §18.7
+       already named, kept as explicit overrides even though (2) below
+       would also catch them, so the property doesn't depend on the
+       discovery probe succeeding.
+    2. `-c <key>=` for every other code-executing key this repository's
+       own `--local`/`--worktree` configuration actually defines
+       (`_discover_code_executing_overrides`) — covers `diff.external`,
+       `diff.<name>.textconv`, `filter.<name>.clean`, and the rest of
+       `_CODE_EXECUTING_CONFIG_KEY_RE`, which a *diff-specific* flag like
+       `--no-ext-diff` cannot: `git status` itself was verified,
+       empirically, to invoke `filter.<name>.clean`.
+    3. `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM=/dev/null` — a read on the
+       client's behalf depends only on the repository's own
+       configuration, never the host's.
+    4. The scrubbed environment `_host_side_git_env` builds.
+
+    Also disables the index lock (`GIT_OPTIONAL_LOCKS=0`) since a read
+    has no business taking it.
     """
     with tempfile.TemporaryDirectory(prefix="mcp-empty-hooks-") as empty_hooks_dir:
+        env = _host_side_git_env()
+        env["GIT_OPTIONAL_LOCKS"] = "0"
         result = subprocess.run(  # noqa: S603
             [
                 "git",
@@ -89,11 +219,12 @@ def run_git_host_side(repo_path: Path, args: list[str]) -> GitCommandResult:
                 f"core.hooksPath={empty_hooks_dir}",
                 "-c",
                 "core.fsmonitor=",
+                *_discover_code_executing_overrides(repo_path),
                 *args,
             ],
             capture_output=True,
             text=True,
-            env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
+            env=env,
         )
     return GitCommandResult(
         returncode=result.returncode, stdout=result.stdout, stderr=result.stderr

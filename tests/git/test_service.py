@@ -119,6 +119,105 @@ def test_run_git_host_side_disables_optional_locks(tmp_path: Path) -> None:
     assert not (repo / ".git" / "index.lock").exists()
 
 
+# --- HR-002 (docs/HARDENING_SPEC.md §4): code-executing config neutralization --------
+
+
+def _configure_filter_driver(repo: Path, marker: Path, *, driver_name: str) -> None:
+    """Binds `README.md` to a `clean` filter that touches `marker` — the same
+    driver git status itself was verified, empirically, to invoke."""
+    script = marker.parent / f"{marker.name}.sh"
+    script.write_text(f"#!/bin/sh\ntouch {marker}\ncat\n")
+    script.chmod(0o755)
+    (repo / ".gitattributes").write_text(f"README.md filter={driver_name}\n")
+    subprocess.run(
+        ["git", "config", f"filter.{driver_name}.clean", str(script)], cwd=repo, check=True
+    )
+
+
+def test_run_git_host_side_neutralizes_a_locally_configured_filter_driver(
+    tmp_path: Path,
+) -> None:
+    """`filter.<name>.clean` is not a hook and not `fsmonitor` — it is
+    exactly the class HR-002's dynamic discovery exists for. Proven both
+    ways, matching this file's own `fsmonitor` test above: our call does
+    not invoke the script, and the same repo without mediation does.
+
+    Forced via `diff`, not `status`: verified empirically that plain
+    `git status` does not *reliably* invoke a content-level clean filter
+    for a simple stat-detectable modification (git's own stat-based
+    "racily clean" heuristic can skip it) — `git diff` genuinely needs
+    the rendered content to build a patch, so it is the deterministic
+    choice for a unit test that must reproduce the same way every run."""
+    repo = _init_repo(tmp_path / "repo")
+    marker = tmp_path / "filter-clean-ran.marker"
+    _configure_filter_driver(repo, marker, driver_name="hardening")
+    (repo / "README.md").write_text("changed\n")
+
+    run_git_host_side(repo, ["diff"])
+    assert not marker.exists(), "filter.clean ran despite dynamic neutralization"
+
+    subprocess.run(["git", "-C", str(repo), "diff"], check=True)
+    assert marker.exists(), "filter.clean mechanism itself is not actually being tested"
+
+
+def test_run_git_host_side_neutralizes_an_arbitrary_unlisted_driver_name(
+    tmp_path: Path,
+) -> None:
+    """The mechanism is discovery, not a static list: a driver name no
+    one anticipated is neutralized identically, because it is read back
+    out of the repository's own configuration rather than matched
+    against `_CODE_EXECUTING_CONFIG_KEY_RE`'s literal examples."""
+    repo = _init_repo(tmp_path / "repo")
+    marker = tmp_path / "arbitrary-driver-ran.marker"
+    _configure_filter_driver(repo, marker, driver_name="zzz-nobody-expected-this-9000")
+    (repo / "README.md").write_text("changed\n")
+
+    run_git_host_side(repo, ["diff"])
+    assert not marker.exists()
+
+
+def test_run_git_host_side_neutralizes_diff_external(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    marker = tmp_path / "diff-external-ran.marker"
+    script = tmp_path / "diff-external.sh"
+    script.write_text(f"#!/bin/sh\ntouch {marker}\necho ext\n")
+    script.chmod(0o755)
+    subprocess.run(["git", "config", "diff.external", str(script)], cwd=repo, check=True)
+    (repo / "README.md").write_text("changed\n")
+
+    run_git_host_side(repo, ["diff"])
+    assert not marker.exists()
+
+
+def test_run_git_host_side_ignores_global_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HR-002(3): `GIT_CONFIG_GLOBAL=/dev/null` — a host-side read
+    depends only on the repository's own configuration, never the host's.
+    A dangerous key set only at global scope (never local/worktree, so
+    the dynamic-discovery mechanism above would not even see it) must
+    still never reach the real `git` invocation."""
+    repo = _init_repo(tmp_path / "repo")
+    marker = tmp_path / "global-hook-ran.marker"
+    global_config = tmp_path / "fake-global-gitconfig"
+    script = tmp_path / "global-driver.sh"
+    script.write_text(f"#!/bin/sh\ntouch {marker}\necho global\n")
+    script.chmod(0o755)
+    global_config.write_text(f"[diff]\n\texternal = {script}\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
+    (repo / "README.md").write_text("changed\n")
+
+    # baseline: the same env, direct subprocess — confirms the global
+    # config genuinely would be honored without `run_git_host_side`'s
+    # override.
+    subprocess.run(["git", "-C", str(repo), "diff"], check=True)
+    assert marker.exists(), "the global-config mechanism itself is not actually being tested"
+    marker.unlink()
+
+    run_git_host_side(repo, ["diff"])
+    assert not marker.exists(), "run_git_host_side honored host global config"
+
+
 # --- detect_interrupted_operation (§44.4) --------------------------------------------
 
 

@@ -201,34 +201,111 @@ adds `test_at_hat001_git_diff_base_cannot_write_a_host_file` and
 string from the review's own reproduction — the published tool contract is
 what an attacker holds, not the internal function.
 
-### H3 — Host-side reads execute no repository-supplied code
+### H3 — Host-side reads execute no repository-supplied code ✅
 **Satisfies:** HR-002 · **Verified by:** HAT-002
+**Commit:** `6141dfc`
 
-- [ ] Add `--no-ext-diff --no-textconv` to diff-producing reads
-- [ ] Enumerate the repository's own config and pass `-c <key>=` for every
+- [x] Add `--no-ext-diff --no-textconv` to diff-producing reads
+- [x] Enumerate the repository's own config and pass `-c <key>=` for every
       code-executing key (`HARDENING_SPEC.md` §4.1), as a named module-level
       control with a comment stating it must track Git
-- [ ] Run host-side reads with `GIT_CONFIG_GLOBAL=/dev/null` and
+- [x] Run host-side reads with `GIT_CONFIG_GLOBAL=/dev/null` and
       `GIT_CONFIG_SYSTEM=/dev/null`
-- [ ] Strip `GIT_EXTERNAL_DIFF`, `GIT_PAGER`, `GIT_EDITOR`,
+- [x] Strip `GIT_EXTERNAL_DIFF`, `GIT_PAGER`, `GIT_EDITOR`,
       `GIT_SEQUENCE_EDITOR`, `GIT_SSH`, `GIT_SSH_COMMAND`, `GIT_ASKPASS`,
       `GIT_PROXY_COMMAND`, `GIT_TEMPLATE_DIR` from the inherited environment
-- [ ] Cover `git_status`, `git_diff`, `git_log` **and** `workspace_info` —
+- [x] Cover `git_status`, `git_diff`, `git_log` **and** `workspace_info` —
       `read_basic_git_state` reaches the same code path
-- [ ] Assert each read still returns correct results; a read that fails is not a
+- [x] Assert each read still returns correct results; a read that fails is not a
       pass
 
 **Defect:** `git/service.py:57–75`. Verified against git 2.43.0 during the
-review, and these results constrain the implementation:
+review, and these results constrained the implementation:
 
 - `-c diff.external=` is **not** a fix — it blocks execution but aborts the read
   with `fatal: external diff died`. Use `--no-ext-diff`.
 - `--no-ext-diff` does **not** cover `textconv`; `--no-textconv` is also needed.
 - `core.attributesFile=/dev/null` does **not** help — the in-tree
   `.gitattributes` is what binds the driver.
-- `git status` executes `filter.*.clean`, so this is not diff-only.
+- `git status` *can* execute `filter.*.clean` (see below — this turned out to be
+  conditional, not unconditional, but the fix cannot depend on when).
 - Driver names are attacker-chosen, so static overrides cannot work — enumerate
   what is configured, which is complete because an undefined driver cannot run.
+
+**Implementation, four layers in `git/service.py`:**
+1. **Static** `-c core.hooksPath=<empty-dir> -c core.fsmonitor=`, unchanged from
+   before this task — kept as an explicit override even though layer 2 below
+   would also catch them, so the property doesn't depend on the discovery probe
+   succeeding.
+2. **Dynamic driver neutralization**, new: `_discover_code_executing_overrides`
+   runs `git config --list -z --local` and `--worktree` (two separate
+   invocations — verified empirically that Git rejects `--worktree --local`
+   combined in one call with `error: only one config file at a time`), matches
+   every key against `_CODE_EXECUTING_CONFIG_KEY_RE` (the same pattern list
+   `HARDENING_SPEC.md` §4.1 specifies, as one named, commented module constant),
+   and returns `-c <key>=` for each match. This is what makes the mechanism
+   generic rather than a name-matching denylist: it neutralizes whatever the
+   repository actually defined, under whatever name, because a driver git never
+   invokes unless it is defined somewhere.
+3. **`GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM=/dev/null`**, new: a host-side read
+   depends only on the repository's own configuration, never the host's —
+   proven with a key set *only* at global scope (so layer 2 would never even
+   see it), which a baseline call honors and `run_git_host_side` does not.
+4. **Environment scrubbing**, new: `GIT_EXTERNAL_DIFF`/`GIT_PAGER`/`GIT_EDITOR`/
+   `GIT_SEQUENCE_EDITOR`/`GIT_SSH`/`GIT_SSH_COMMAND`/`GIT_ASKPASS`/
+   `GIT_PROXY_COMMAND`/`GIT_TEMPLATE_DIR` removed from the inherited
+   environment before every host-side invocation, the config-list probe calls
+   included.
+
+`--no-ext-diff --no-textconv` (item 1 of §4.1, diff-specific) live in
+`git/diff.py`'s own argv construction, not `run_git_host_side` — verified that
+`git status`/`git rev-parse` reject those flags outright (`error: unknown
+option`), so they cannot be unconditional in the shared plumbing; verified they
+are accepted in every mode `read_git_diff` actually uses (`--stat`, `--cached`,
+commit-to-commit) before adding them unconditionally there.
+
+**A real finding while writing the tests, not just the implementation**:
+`git status`'s invocation of `filter.*.clean` turned out to be *conditional* on
+Git's own internal "racily clean" stat-based heuristic, not unconditional as
+the review first characterized it. In a freshly isolated repository, a plain
+`git status --porcelain` (even the exact production shape,
+`--porcelain=v2 -z --branch --untracked-files=all`) did **not** invoke the
+filter for a simple stat-detectable modification — only `git diff`, which
+genuinely needs the rendered content to build a patch, invoked it reliably
+across every scenario tried. The full-container `test_host_side_execution_safety.py`
+test still reliably reproduces marker creation across a `git_status`/
+`git_diff`/`git_log`/`workspace_info` sequence when reverted (confirmed twice,
+see below) — plausibly because `workspace_open`'s container-side activity
+perturbs the working tree's stat state in a way a bare host repository never
+does — but the *mechanism* is Git's own optimization, outside this daemon's
+control, so the fix (and the unit-level tests in `tests/git/test_service.py`)
+correctly does not depend on which specific host-side tool triggers it in a
+given case: `run_git_host_side` neutralizes the driver unconditionally,
+regardless of whether that particular call would have triggered it.
+
+**Verified the fix actually verifies something**: reverted `git/service.py`
+and `git/diff.py` to their pre-H3 state (keeping H2's fix) and reran
+`tests/workspace/test_host_side_execution_safety.py` — all four tests failed,
+each with the marker file present, confirming the exploit reproduces exactly
+as characterized. Restored the fix; reran; all four pass, with the diff/status
+content still correct (a read that merely fails is not a pass, per the task's
+own bullet).
+
+**New tests:**
+- `tests/git/test_service.py`: five new tests at the `run_git_host_side` level
+  — a locally-configured `filter.clean` driver (forced via `git diff`, the
+  scenario verified to reproduce deterministically, not `git status`, which
+  does not); an arbitrary, unlisted driver name, proving the mechanism is
+  discovery rather than name-matching; `diff.external`; and global-config
+  exclusion (a key set only in a fake `GIT_CONFIG_GLOBAL` file, honored by a
+  raw baseline call and correctly ignored by `run_git_host_side`).
+- `tests/workspace/test_host_side_execution_safety.py`, new file: four tests
+  through the real MCP tool layer — `diff.external`, `.gitattributes`-bound
+  `textconv`, `.gitattributes`-bound `filter.clean`, and an arbitrary unlisted
+  driver name — each calling `git_status`, `git_diff`, `git_log`, and
+  `workspace_info` in sequence (the exact tool set HAT-002 names) and asserting
+  no marker is created across any of them, plus that `git_diff`/`git_status`
+  still report the real change correctly.
 
 ---
 
