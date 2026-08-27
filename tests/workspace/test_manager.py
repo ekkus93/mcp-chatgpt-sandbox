@@ -7,14 +7,15 @@ Every test in this file creates real containers; `conftest.py`'s
 
 import sqlite3
 
-import docker
 import pytest
 
+import docker
 from dev_workspace_mcp.errors import (
     ContainerCreateFailedError,
     ContainerRuntimeFailedError,
     WorkspaceNotFoundError,
 )
+from dev_workspace_mcp.jobs.store import JobStore
 from dev_workspace_mcp.repositories import RepositoryRecord
 from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager, WorkspaceState
 from dev_workspace_mcp.workspace.naming import (
@@ -248,3 +249,60 @@ def test_reconcile_fails_closed_on_multiple_labeled_containers(
     with pytest.raises(ContainerRuntimeFailedError) as excinfo:
         manager.reconcile(record.id)
     assert excinfo.value.recoverable is False
+
+
+def test_at_hat015_delete_succeeds_for_a_workspace_that_ran_a_job(
+    manager: DockerWorkspaceManager,
+    docker_client: docker.DockerClient,
+    db: sqlite3.Connection,
+    repository: RepositoryRecord,
+) -> None:
+    """HR-018 (`docs/HARDENING_SPEC.md` §9): `job.workspace_id` has no
+    `ON DELETE CASCADE`, so a workspace that ran even one job used to
+    make `delete()`'s final `DELETE FROM workspace` raise
+    `sqlite3.IntegrityError` — after the container was already removed,
+    wedging the row in `DELETING` forever."""
+    record = manager.ensure_workspace(
+        repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
+    )
+    container_id = record.container_id
+    JobStore(db).create(
+        job_id="job_example",
+        workspace_id=record.id,
+        command="true",
+        cwd="/workspace",
+        stdout_log_path="/dev/null",
+        stderr_log_path="/dev/null",
+    )
+
+    manager.delete(record.id)  # SHALL NOT raise
+
+    assert db.execute("SELECT * FROM workspace WHERE id = ?", (record.id,)).fetchone() is None
+    assert db.execute("SELECT * FROM job WHERE workspace_id = ?", (record.id,)).fetchone() is None
+    with pytest.raises(docker.errors.NotFound):
+        docker_client.containers.get(container_id)  # type: ignore[arg-type]
+
+
+def test_at_hat015_delete_of_a_workspace_with_multiple_jobs_removes_all_of_them(
+    manager: DockerWorkspaceManager,
+    db: sqlite3.Connection,
+    repository: RepositoryRecord,
+) -> None:
+    record = manager.ensure_workspace(
+        repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
+    )
+    store = JobStore(db)
+    for i in range(3):
+        store.create(
+            job_id=f"job_{i}",
+            workspace_id=record.id,
+            command="true",
+            cwd="/workspace",
+            stdout_log_path="/dev/null",
+            stderr_log_path="/dev/null",
+        )
+
+    manager.delete(record.id)
+
+    remaining = db.execute("SELECT COUNT(*) AS n FROM job WHERE workspace_id = ?", (record.id,))
+    assert remaining.fetchone()["n"] == 0

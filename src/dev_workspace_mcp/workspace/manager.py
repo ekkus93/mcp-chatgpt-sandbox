@@ -576,14 +576,28 @@ class DockerWorkspaceManager:
     def delete(self, workspace_id: str) -> None:
         """§8.4: remove workspace/container metadata. SHALL NOT delete the
         host repository — deletion here is Docker resources and the DB
-        row only."""
+        row only.
+
+        HR-018 (`docs/HARDENING_SPEC.md` §9): `job.workspace_id`
+        references `workspace (id)` with no `ON DELETE CASCADE` — a
+        workspace that ran even one job used to make the final
+        `DELETE FROM workspace` raise `sqlite3.IntegrityError`, and only
+        *after* the container had already been removed above, wedging
+        the row in `DELETING` forever (surfaced as a bare traceback, not
+        a `WorkspaceError` `translate_workspace_errors` could shape into
+        a clean response). Dependent `job` rows are now deleted first,
+        and both deletes commit together in one transaction — so a
+        failure at this stage can no longer split "container gone" from
+        "row still present" the way the pre-fix code could.
+        """
         record = self._get_or_raise(workspace_id)
         self._save(replace(record, state=WorkspaceState.DELETING, last_used_at=_now()))
         self._remove_container_if_present(record)
         if self._ssh_agents is not None:
             self._ssh_agents.terminate(workspace_id)  # §19.2: no agent after delete
-        self._db.execute("DELETE FROM workspace WHERE id = ?", (workspace_id,))
-        self._db.commit()
+        with self._db:
+            self._db.execute("DELETE FROM job WHERE workspace_id = ?", (workspace_id,))
+            self._db.execute("DELETE FROM workspace WHERE id = ?", (workspace_id,))
 
     def _remove_container_if_present(self, record: WorkspaceRecord) -> None:
         container = self._find_container(record)

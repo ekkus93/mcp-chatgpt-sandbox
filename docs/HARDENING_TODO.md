@@ -1208,13 +1208,46 @@ name is removed rather than permanently blocking the name; a correctly
 labeled container surviving a lost `workspace` row is adopted rather than
 recreated.
 
-### H16 — Deleting a workspace that ran jobs succeeds
+### H16 — Deleting a workspace that ran jobs succeeds ✅
 **Satisfies:** HR-018 · **Verified by:** HAT-015
+**Commit:** `78b1197`
 
-- [ ] Cascade `job.workspace_id`, or delete dependent rows in order inside one
+- [x] Cascade `job.workspace_id`, or delete dependent rows in order inside one
       transaction
-- [ ] Ensure a failure cannot leave the container removed and the row in
+- [x] Ensure a failure cannot leave the container removed and the row in
       `deleting`
+
+**Implementation.** `job.workspace_id REFERENCES workspace (id)` with no
+`ON DELETE CASCADE`, and `db/connection.py` turns `PRAGMA foreign_keys = ON`
+for every connection — so a workspace that ran even one job hit an
+uncaught `sqlite3.IntegrityError` on `delete()`'s final `DELETE FROM
+workspace`, well after `_remove_container_if_present` had already
+succeeded. Chose the second of HR-018's two offered fixes (delete dependent
+rows in order, inside one transaction) over adding `ON DELETE CASCADE` to
+the schema: it needed no migration (SQLite can't alter an existing FK
+clause in place — changing it means recreating the table, a real but
+separate piece of schema surgery), and it keeps cascade behavior explicit
+in the one place that already owns workspace deletion, rather than
+implicit in the schema for every future table with a `workspace_id` FK.
+`delete()` now deletes `job` rows for the workspace first, then the
+`workspace` row itself, both inside one `with self._db:` block — matching
+the same transactional idiom `touch_last_used` already uses elsewhere in
+this module.
+
+**Verified the new tests catch the regression:** reverted `manager.py` to
+its pre-H16 version and reran both new tests — both failed with the exact
+`sqlite3.IntegrityError: FOREIGN KEY constraint failed` the defect
+describes, confirming the tests genuinely exercise the fixed code path
+rather than passing for an unrelated reason. Restored the fix; both pass
+again; the full `tests/workspace/test_manager.py` file (17 tests) shows no
+regressions. No Docker leftovers (the container is removed successfully in
+both the broken and fixed versions — only the DB-side cleanup differed),
+no schema drift (no tool output shape changed).
+
+**New tests:** `tests/workspace/test_manager.py` — a workspace that ran one
+job deletes cleanly, with the workspace row, the job row, and the container
+all gone afterward; a workspace with three jobs also deletes cleanly, with
+every job row removed.
 
 ### H17 — Migrations are atomic
 **Satisfies:** HR-019 · **Verified by:** HAT-016
