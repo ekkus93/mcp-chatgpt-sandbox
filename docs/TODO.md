@@ -1284,17 +1284,97 @@ logging) is the last unblocked Phase 3 task.
 - [ ] No credential → `unverified`, and `deny` degrades to `warn` with a reason
 - [ ] AT-035: warn succeeds with `missing`; deny fails and provisions no key
 
-### S29 — Audit logging
+### S29 — Audit logging ✅ (partial — see below)
 **Spec:** §24, §20.7 · **Satisfies:** FR-027 · **Verified by:** AT-021, AT-037
 
-- [ ] Append-only structured records for the §24 event list
-- [ ] Structured Git records per §20.7 including `policy_decision`
+- [x] Append-only structured records for the §24 event list (scoped subset — see below)
+- [x] Structured Git records per §20.7 including `policy_decision`
 - [ ] `ssh_auth` record per agent signature request, with fingerprint and
       best-effort `requesting_command` — the only visibility into `exec`-path
-      remote operations
-- [ ] Denials audited with the same fidelity as successes
-- [ ] Secret redaction (§24.1); never key material
-- [ ] AT-021 secret redacted · AT-037 `exec("git fetch")` produces `ssh_auth`
+      remote operations — **blocked, see below**
+- [x] Denials audited with the same fidelity as successes
+- [x] Secret redaction (§24.1); never key material
+- [x] AT-021 secret redacted · AT-037 blocked, see below
+
+**Commit:** `b15106b`
+
+A new `audit_denials(operation, *, audit_config)` decorator in
+`tools/git.py` stacks directly below `@translate_workspace_errors` on
+`git_commit_tool`/`git_pull_tool`/`git_push_tool` — it catches the raw
+`WorkspaceError` (before that other decorator converts it to a
+client-facing `ToolError`) and writes one audit record per failure, with
+`workspace_id` read straight from the tool's own call kwargs. This
+replaced a much larger option that was seriously considered and rejected:
+hand-adding a `write_audit_event` call at every one of the ~25 individual
+raise sites across the three tools. One decorator line per tool gives
+full "denials audited with the same fidelity as successes" coverage
+instead, and the same mechanism will cover any future raise site in
+these functions with zero additional code. `policy_decision` is set to
+`"deny"` specifically when the caught error's code is `POLICY_DENIED`,
+and `"n/a"` for every other kind of denial (a remote-validation
+rejection, a state guard, an interrupted operation) — distinguishing an
+actual `git_policy` key's decision from any other failure, rather than
+overclaiming "policy" for all of them. Every *success* path audit call
+for the three tools also gained an explicit `"policy_decision": "allow"`
+field, matching §20.7's example shape exactly (which already includes
+`policy_decision` even on success).
+
+`tools/workspace.py`'s `workspace_open` gained two audit calls:
+`workspace_opened` on success (§24's own event name, literally), and
+`repository_authorization_failure` when `registry.get(repository_id)`
+raises `RepositoryNotAllowedError` — also named directly from §24's
+event list.
+
+**Deliberately scoped down, and worth being explicit about:** §24's event
+list is a "SHOULD"/"Recommended events" list, not an exhaustive mandate,
+and this task wires the subset that is security-relevant, directly named
+in §24, and reachable through modules that already had `audit_config` in
+scope (`workspace.py`, `git.py`). `file_written`/`file_deleted`
+(filesystem tools), `command_started`/`command_canceled` (execution
+tools), and `container_created`/`rebuilt`/`deleted` remain unwired: the
+first two would need `audit_config` newly threaded through
+`filesystem_tools.register()`/`execution_tools.register()` and
+`server.py`'s wiring (neither receives it today), and the container
+events don't correspond to any distinguishable signal `ensure_workspace`
+currently returns (nor, for rebuilt/deleted, to any tool that exists yet
+— `workspace_rebuild`/`workspace_reset`/`workspace_delete` are §34.3-
+deferred). None of this is required by AT-021 or AT-037, the two ATs
+this task is actually verified against, so it was left as a clearly-
+documented follow-up rather than folded into an already-large task.
+
+**`ssh_auth` (and therefore AT-037) is genuinely blocked, not merely
+deferred by choice.** §20.7 is explicit that `ssh_auth` is emitted "under
+`ssh.mode: agent`... for every signature request the agent serves" — the
+event's entire mechanism is hooking into the per-workspace `ssh-agent`
+process S23 builds (SSH key provisioning, blocked by D3). There is no
+agent to intercept signature requests from yet, so there is nothing to
+build here that would not be pure guesswork about S23's eventual
+interface. This is the one bullet in this task that is not "scoped down"
+but actually blocked, tracked the same way S25/S26/S27 tracked their own
+S23-dependent halves.
+
+`tests/workspace/test_audit_logging.py` (6 tests, real Docker) proves:
+`workspace_opened` on success, `repository_authorization_failure` on an
+unknown `repository_id`, a `git_push` policy denial audited with
+`policy_decision: "deny"`, a `git_pull` remote-validation rejection
+audited with `policy_decision: "n/a"` (proving the two are genuinely
+distinguished, not both bucketed as "policy"), a `git_commit` success
+audited with `policy_decision: "allow"`, and an interrupted-operation
+precondition failure audited as a plain failure — proving `audit_denials`
+catches every `WorkspaceError`, not only `PolicyDeniedError`. AT-021's
+redaction mechanism is not re-tested per call site here: every audit call
+added in this task routes through the same `write_audit_event`, already
+proven exhaustively by `tests/test_audit.py` (S17); there is no natural,
+realistic path for a secret to appear in this task's own audit metadata
+(branch names, shas, remote identities, policy decisions, error codes).
+
+No new tools or output fields, so `schemas/tools.json` needed no
+regeneration (confirmed by re-running `export-schemas` and diffing — no
+drift).
+
+This completes every currently-unblocked Phase 3 task. S23 (blocked by
+D3) and S28 (blocked by D2) — and `ssh_auth`/AT-037 within this task —
+remain blocked pending those credential decisions.
 
 ---
 

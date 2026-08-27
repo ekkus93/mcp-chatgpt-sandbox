@@ -16,6 +16,7 @@ from mcp.server import MCPServer
 
 import docker
 from dev_workspace_mcp import __version__
+from dev_workspace_mcp.audit import write_audit_event
 from dev_workspace_mcp.config.models import (
     AuditConfig,
     ContainerConfig,
@@ -23,7 +24,11 @@ from dev_workspace_mcp.config.models import (
     SSHConfig,
     WorkspaceConfig,
 )
-from dev_workspace_mcp.errors import ContainerRuntimeFailedError, translate_workspace_errors
+from dev_workspace_mcp.errors import (
+    ContainerRuntimeFailedError,
+    RepositoryNotAllowedError,
+    translate_workspace_errors,
+)
 from dev_workspace_mcp.git_state import read_basic_git_state
 from dev_workspace_mcp.jobs.store import JobState, JobStore
 from dev_workspace_mcp.repositories import RepositoryRegistry
@@ -134,7 +139,20 @@ def register(
         repository_id: str, mode: WorkspaceMode = "persistent"
     ) -> WorkspaceInfoOutput:
         active_manager, active_client = _require_docker()
-        repository = registry.get(repository_id)
+        try:
+            repository = registry.get(repository_id)
+        except RepositoryNotAllowedError:
+            # §24's "repository authorization failure" event: audited here
+            # rather than inside `RepositoryRegistry` itself, which has no
+            # `AuditConfig` of its own — every caller of `.get()` that can
+            # reach an actual client request goes through this tool.
+            write_audit_event(
+                audit_config,
+                operation="repository_authorization_failure",
+                result="denied",
+                metadata={"repository_id": repository_id},
+            )
+            raise
         run_kwargs = build_workspace_run_kwargs(
             container_config=container_config,
             docker_client=active_client,
@@ -167,6 +185,15 @@ def register(
             idle_stop_after_seconds=workspace_config.idle_stop_after_seconds,
             job_store=job_store,
             audit_config=audit_config,
+        )
+
+        write_audit_event(
+            audit_config,
+            operation="workspace_opened",
+            result="success",
+            workspace_id=record.id,
+            repository_id=record.repository_id,
+            metadata={"mode": mode, "container_state": record.state.value},
         )
 
         return _info(record.id, record.repository_id, record.state.value, record.workspace_path)

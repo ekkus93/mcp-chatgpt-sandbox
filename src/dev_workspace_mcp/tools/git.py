@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Literal
+from functools import wraps
+from typing import Any, Literal
 
 from mcp.server import MCPServer
 
@@ -36,12 +38,14 @@ from dev_workspace_mcp.config.models import (
 from dev_workspace_mcp.errors import (
     CommandFailedError,
     ContainerRuntimeFailedError,
+    ErrorCode,
     GitConflictError,
     GitDirtyError,
     GitHeadChangedError,
     GitNonFastForwardError,
     InvalidArgumentError,
     PolicyDeniedError,
+    WorkspaceError,
     WorkspaceNotRunningError,
     translate_workspace_errors,
 )
@@ -76,6 +80,45 @@ from dev_workspace_mcp.workspace.manager import (
     WorkspaceState,
     resolve_repository_root,
 )
+
+
+def audit_denials(
+    operation: str, *, audit_config: AuditConfig
+) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
+    """§20.7 / §24: "denials SHALL be audited with the same fidelity as
+    successes." Stacks directly *below* `@translate_workspace_errors` (so
+    it sees the raw `WorkspaceError`, before that decorator converts it
+    into the SDK's `ToolError`) on every structured Git tool — one audit
+    record per failure, instead of one hand-written `write_audit_event`
+    call at each of the many raise sites in `git_commit_tool`/
+    `git_pull_tool`/`git_push_tool`. `workspace_id` is read from the
+    tool's own call kwargs (the MCP framework invokes tool functions with
+    validated arguments as keywords, matching every `git_*_tool`
+    signature here) rather than threaded through separately."""
+
+    def decorator(fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+        @wraps(fn)
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return await fn(*args, **kwargs)
+            except WorkspaceError as exc:
+                write_audit_event(
+                    audit_config,
+                    operation=operation,
+                    result="denied" if exc.code == ErrorCode.POLICY_DENIED else "failure",
+                    workspace_id=kwargs.get("workspace_id"),
+                    metadata={
+                        "policy_decision": (
+                            "deny" if exc.code == ErrorCode.POLICY_DENIED else "n/a"
+                        ),
+                        "error_code": exc.code.value,
+                    },
+                )
+                raise
+
+        return wrapper
+
+    return decorator
 
 
 @dataclass
@@ -237,6 +280,7 @@ def register(
         "and policy checks (§17.4).",
     )
     @translate_workspace_errors
+    @audit_denials("git_commit", audit_config=audit_config)
     async def git_commit_tool(
         workspace_id: str,
         message: str,
@@ -366,6 +410,7 @@ def register(
             workspace_id=workspace_id,
             repository_id=record.repository_id,
             metadata={
+                "policy_decision": "allow",
                 "paths": paths,
                 "amend": amend,
                 "no_verify": no_verify,
@@ -384,6 +429,7 @@ def register(
         "rather than escalating past a non-fast-forward (§20.5).",
     )
     @translate_workspace_errors
+    @audit_denials("git_pull", audit_config=audit_config)
     async def git_pull_tool(
         workspace_id: str,
         remote: str = "origin",
@@ -525,6 +571,7 @@ def register(
             workspace_id=workspace_id,
             repository_id=record.repository_id,
             metadata={
+                "policy_decision": "allow",
                 "remote": remote,
                 "remote_repository": remote_repository,
                 "branch": branch,
@@ -552,6 +599,7 @@ def register(
         "governed by their own git_policy key, refused before Git is invoked.",
     )
     @translate_workspace_errors
+    @audit_denials("git_push", audit_config=audit_config)
     async def git_push_tool(
         workspace_id: str,
         remote: str = "origin",
@@ -766,6 +814,7 @@ def register(
             workspace_id=workspace_id,
             repository_id=record.repository_id,
             metadata={
+                "policy_decision": "allow",
                 "remote": remote,
                 "remote_repository": remote_repository,
                 "branch": target_branch,
