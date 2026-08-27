@@ -1848,12 +1848,41 @@ subcommands, not MCP tools — so `schemas/tools.json` needed no
 regeneration (confirmed by re-running `export-schemas` and diffing — no
 drift).
 
-### S32 — Advisory locks
+### S32 — Advisory locks — **deferred by spec, not attempted**
 **Spec:** §22.1, §22.2, §20.6, §67 · **Satisfies:** FR-029
 
 - [ ] `workspace_lock` / `workspace_unlock` / `workspace_lock_status` with leases
 - [ ] Wire into the §20.6 precondition that is a no-op until this ships
 - [ ] Report the active lock in `workspace_info`
+
+**This task directly conflicts with `docs/SPEC.md` — the source of truth
+this file's own header names — and the conflict resolves in the spec's
+favor, not the checklist above's.** §34.3 ("Deferred — later phases")
+explicitly lists `workspace_lock`, `workspace_unlock`, and
+`workspace_lock_status` among the tools *not* part of the MVP's
+registered surface, with its own explicit rule for when that changes:
+"Each SHALL be added only when a concrete workflow needs it, and §34.1
+SHALL be updated when it is." §20.6 says the same thing again, even more
+directly, about the exact precondition this task's second bullet asks to
+wire up: "the workspace advisory lock (§22.1), once locks exist — they
+are deferred from the MVP (§34.3), and **until then this precondition is
+a no-op**" (emphasis in the spec's own intent, not added here). Building
+these three tools now would mean adding MVP-surface tools the spec
+itself says should wait for a concrete workflow need — one hasn't been
+identified — while also being inconsistent with how this same ralph loop
+already treated the *other* §34.3-deferred tools (`workspace_disk_usage`
+et al., S31) by leaving them unbuilt rather than pretending §34.3 didn't
+apply to them.
+
+No code was written for this task. `src/dev_workspace_mcp/db/schema.py`'s
+own module docstring already anticipated this ("`WorkspaceLock` is
+deferred to S31 with locking itself" — a stale task-number reference
+from before a since-corrected renumbering, the same kind of drift the
+Open Decisions section's D3 note already had to correct once; the
+number is wrong, the deferral itself was and remains correct). This
+entry is intentionally left unchecked, distinct from S30/S31's
+"partial" tasks (which shipped real, tested code alongside a documented
+scope cut) — nothing here was implemented, because the spec says not to.
 
 ### S33 — Security test suite
 **Spec:** §70, §39 · **Verified by:** all ATs
