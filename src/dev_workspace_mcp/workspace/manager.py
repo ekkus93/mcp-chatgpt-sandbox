@@ -19,6 +19,7 @@ instance, since a filesystem tool (S9) doesn't otherwise have one.
 
 from __future__ import annotations
 
+import contextlib
 import secrets
 import sqlite3
 from dataclasses import dataclass, replace
@@ -264,12 +265,24 @@ class DockerWorkspaceManager:
         workspace_path: str = "/workspace",
         run_kwargs: dict[str, Any] | None = None,
     ) -> WorkspaceRecord:
-        """Create a new workspace, or reconcile and (re)start an existing
-        one. The mechanism behind `workspace_open` (§8.3).
+        """Create a new workspace, or reconcile and (re)start — or, if no
+        container exists at all to start, recreate — an existing one.
+        The mechanism behind `workspace_open` (§8.3).
 
         `mode: "ephemeral"` always creates a fresh workspace (FR-005) —
         there is no "the" ephemeral workspace for a repository to reuse.
-        """
+
+        HR-017 (`docs/HARDENING_SPEC.md` §9): `reconcile()` can leave an
+        existing row with no container at all to start — `ABSENT` (its
+        container was removed out of band, e.g. `docker system prune`)
+        or still `FAILED` from a create attempt that never got as far as
+        a container (a transient Docker error, or a name collision with
+        an unlabeled container — see `_run_container`'s own adopt-or-remove
+        step for that case). `start()` cannot handle either: it only ever
+        starts an *existing* container. Recreating the container for the
+        already-existing row (the `reconciled.container_id is None`
+        branch below) is what recovers both, rather than wedging the
+        workspace permanently."""
         if mode == "ephemeral":
             workspace_id = ephemeral_workspace_id(repository.id, suffix=secrets.token_hex(4))
             return self._create(
@@ -296,7 +309,12 @@ class DockerWorkspaceManager:
         reconciled = self.reconcile(workspace_id)
         if reconciled.state == WorkspaceState.RUNNING:
             return reconciled
-        return self.start(workspace_id)
+        if reconciled.container_id is not None:
+            return self.start(workspace_id)
+        # HR-017: no container at all to start — recreate one for the
+        # existing row, the same way `_create` does for a brand-new one,
+        # just without inserting a second row.
+        return self._run_container(reconciled, image=image, run_kwargs=run_kwargs or {})
 
     def _upsert_repository(self, repository: RepositoryRecord) -> None:
         """`workspace.repository_id` is a foreign key into `repository`
@@ -347,12 +365,56 @@ class DockerWorkspaceManager:
         self._insert(record)
         return self._run_container(record, image=image, run_kwargs=run_kwargs)
 
+    def _find_container_by_name(self, name: str) -> Container | None:
+        try:
+            return self._docker.containers.get(name)
+        except DockerNotFound:
+            return None
+
+    def _adopt_or_remove_by_name(self, record: WorkspaceRecord) -> WorkspaceRecord | None:
+        """HR-017 (`docs/HARDENING_SPEC.md` §9): before creating a
+        container at `record`'s deterministic name (§51), check whether
+        one already exists there. `containers.run`'s own 409 on a name
+        collision is otherwise a dead end no retry can get past, since
+        the name is deterministic and will collide again every time —
+        this is what used to permanently wedge a workspace behind an
+        orphaned container.
+
+        A container already labeled for this exact `workspace_id` is
+        adopted (its own earlier `containers.run` plausibly completed,
+        but this process crashed, or the daemon restarted, before the
+        result was persisted) — nothing left to create. Anything else
+        occupying the name can only be a stale container from a
+        *previous* incarnation of this same logical workspace, since the
+        name is deterministic per `workspace_id` — removed to free the
+        name for the create below. Returns the adopted record, or `None`
+        if it's safe to proceed to `containers.run`."""
+        assert record.container_name is not None
+        existing = self._find_container_by_name(record.container_name)
+        if existing is None:
+            return None
+        if existing.labels.get(LABEL_WORKSPACE_ID) == record.id:
+            return self._save(
+                replace(
+                    record,
+                    container_id=existing.id,
+                    state=_state_from_docker_container(existing),
+                    last_used_at=_now(),
+                )
+            )
+        with contextlib.suppress(DockerException):
+            existing.remove(force=True)
+        return None
+
     def _run_container(
         self, record: WorkspaceRecord, *, image: str, run_kwargs: dict[str, Any]
     ) -> WorkspaceRecord:
         """Run a new container for `record` (whose row already exists) and
         persist the result. Shared by `_create` and `_recreate`."""
         assert record.container_name is not None
+        adopted = self._adopt_or_remove_by_name(record)
+        if adopted is not None:
+            return adopted
         try:
             container = self._docker.containers.run(
                 image,

@@ -5,11 +5,15 @@ carrying the §50 "managed" label on teardown, regardless of test
 outcome.
 """
 
+import sqlite3
 from pathlib import Path
+
+import pytest
 
 import docker
 from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
 from dev_workspace_mcp.db import open_db
+from dev_workspace_mcp.errors import ContainerCreateFailedError
 from dev_workspace_mcp.repositories import RepositoryRecord
 from dev_workspace_mcp.server import create_server
 from dev_workspace_mcp.workspace.manager import (
@@ -17,7 +21,12 @@ from dev_workspace_mcp.workspace.manager import (
     WorkspaceState,
     _state_from_docker_container,
 )
-from dev_workspace_mcp.workspace.naming import LABEL_WORKSPACE_ID, container_labels
+from dev_workspace_mcp.workspace.naming import (
+    LABEL_WORKSPACE_ID,
+    container_labels,
+    container_name,
+    persistent_workspace_id,
+)
 from tests.workspace.conftest import KEEP_ALIVE_RUN_KWARGS, TEST_IMAGE
 
 # --- _state_from_docker_container (§44.2): pure classification logic --------------
@@ -134,6 +143,128 @@ def test_reconcile_all_is_a_noop_with_no_workspaces(
     manager: DockerWorkspaceManager,
 ) -> None:
     assert manager.reconcile_all() == []
+
+
+# --- HR-017/HAT-014: a workspace recovers from any Docker state -------------------
+
+
+def test_at_hat014_container_removed_out_of_band_recovers_on_reopen(
+    manager: DockerWorkspaceManager,
+    docker_client: docker.DockerClient,
+    repository: RepositoryRecord,
+) -> None:
+    """§69's `reconcile` correctly notices the container is gone and
+    marks the row `ABSENT` — the regression was `ensure_workspace` then
+    unconditionally calling `start()`, which only ever starts an
+    *existing* container and so failed forever after."""
+    opened = manager.ensure_workspace(
+        repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
+    )
+    original_container_id = opened.container_id
+    docker_client.containers.get(original_container_id).remove(force=True)  # type: ignore[arg-type]
+
+    reopened = manager.ensure_workspace(
+        repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
+    )
+
+    assert reopened.id == opened.id
+    assert reopened.state == WorkspaceState.RUNNING
+    assert reopened.container_id != original_container_id
+    assert docker_client.containers.get(reopened.container_id).status == "running"  # type: ignore[arg-type]
+
+
+def test_at_hat014_a_failed_create_recovers_once_the_cause_is_fixed(
+    manager: DockerWorkspaceManager,
+    docker_client: docker.DockerClient,
+    repository: RepositoryRecord,
+) -> None:
+    """A `containers.run` failure (here: an image that doesn't exist,
+    standing in for any transient Docker error) leaves the row `FAILED`
+    with no container at all — not merely a container that failed to
+    *start*. The regression: `ensure_workspace`'s next call still routed
+    into `start()`, which has no container to start and fails the exact
+    same way forever, even once the underlying cause (a bad image name,
+    a transient daemon hiccup) is gone."""
+    with pytest.raises(ContainerCreateFailedError):
+        manager.ensure_workspace(
+            repository=repository,
+            image="this-image-does-not-exist-anywhere:latest",
+            run_kwargs=KEEP_ALIVE_RUN_KWARGS,
+        )
+    failed = manager.get(persistent_workspace_id(repository.id))
+    assert failed.state == WorkspaceState.FAILED
+    assert failed.container_id is None
+
+    recovered = manager.ensure_workspace(
+        repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
+    )
+
+    assert recovered.state == WorkspaceState.RUNNING
+    assert recovered.container_id is not None
+
+
+def test_at_hat014_an_orphaned_container_at_the_deterministic_name_is_removed(
+    manager: DockerWorkspaceManager,
+    docker_client: docker.DockerClient,
+    repository: RepositoryRecord,
+) -> None:
+    """HR-017's "adopt-or-remove" — the *remove* half: a container
+    already occupying the deterministic name (§51), but carrying no
+    workspace_id label at all, can only be a stale leftover from a
+    previous incarnation of this same logical workspace (the name is
+    deterministic per workspace_id) — not something a fresh
+    `workspace_open` should ever have to give up in front of. Before
+    this fix, `containers.run`'s own 409 on the name collision wedged
+    the workspace permanently, since the same name collides again on
+    every subsequent attempt."""
+    name = container_name(persistent_workspace_id(repository.id))
+    orphan = docker_client.containers.run(
+        TEST_IMAGE, name=name, detach=True, **KEEP_ALIVE_RUN_KWARGS
+    )
+
+    opened = manager.ensure_workspace(
+        repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
+    )
+
+    assert opened.state == WorkspaceState.RUNNING
+    assert opened.container_id != orphan.id
+    with pytest.raises(docker.errors.NotFound):
+        docker_client.containers.get(orphan.id)  # the orphan was removed, not merely ignored
+
+
+def test_at_hat014_a_correctly_labeled_container_at_the_name_is_adopted(
+    manager: DockerWorkspaceManager,
+    db: sqlite3.Connection,
+    docker_client: docker.DockerClient,
+    repository: RepositoryRecord,
+) -> None:
+    """HR-017's "adopt-or-remove" — the *adopt* half. Deliberately
+    deletes the `workspace` row entirely, not merely `container_id`:
+    clearing just the column still leaves a row `reconcile()`'s own
+    *existing*, pre-H15 label-based adoption already covers on its own
+    (`ensure_workspace` calls `reconcile()` whenever a row exists at
+    all) — that path doesn't distinguish this task's fix from its
+    absence. A genuinely missing row (its own earlier `containers.run`
+    plausibly completed, but the row was lost before ever being written —
+    e.g. this process crashed between the call returning and the
+    `INSERT`, or the state DB itself was reset) routes through `_create`
+    instead, which never calls `reconcile()` at all — `_run_container`'s
+    own adopt-or-remove check is the only thing that can save this case,
+    since `containers.run` would otherwise 409 against the still-running,
+    still-correctly-labeled container."""
+    opened = manager.ensure_workspace(
+        repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
+    )
+    real_container_id = opened.container_id
+    with db:
+        db.execute("DELETE FROM workspace WHERE id = ?", (opened.id,))
+
+    reopened = manager.ensure_workspace(
+        repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
+    )
+
+    assert reopened.container_id == real_container_id  # adopted, not recreated
+    assert reopened.state == WorkspaceState.RUNNING
 
 
 # --- AT-017: kill the container with changes present; changes survive restart -----

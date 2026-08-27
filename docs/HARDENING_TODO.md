@@ -1128,16 +1128,85 @@ tests (`tests/workspace/test_execution_tools.py`,
 
 ## Phase 6 — Recoverability
 
-### H15 — A workspace recovers from any Docker state
+### H15 — A workspace recovers from any Docker state ✅
 **Satisfies:** HR-017 · **Verified by:** HAT-014
+**Commit:** `6f75101`
 
-- [ ] Create a container for an existing row whose container is missing
-- [ ] Adopt-or-remove a container found by deterministic name with no matching
+- [x] Create a container for an existing row whose container is missing
+- [x] Adopt-or-remove a container found by deterministic name with no matching
       row, on the create path and not only in `reconcile()`
-- [ ] Cover: removed out of band; failed create; orphaned name collision
+- [x] Cover: removed out of band; failed create; orphaned name collision
 
 **Defect:** `workspace/manager.py:246–261, 509–516`. Currently a transient
 failure wedges the workspace permanently, even after Docker recovers.
+
+**Implementation, two independent fixes to `workspace/manager.py`:**
+
+1. `ensure_workspace`'s existing-row branch unconditionally called `start()`
+   whenever `reconcile()` didn't report `RUNNING` — but `start()` only ever
+   starts an *already-existing* container; it has no way to create one. Any
+   scenario that left the row with no container at all (`reconcile()`
+   marking it `ABSENT` after the container was removed out of band; a
+   `_create` attempt whose `containers.run` itself failed, leaving
+   `container_id` permanently `None`) hit `start()`'s
+   `"has no container to operate on"` error forever after, even once
+   whatever caused the original failure was long gone. Fixed by checking
+   `reconciled.container_id is not None` first — only then is `start()`
+   appropriate; otherwise `_run_container` is called directly against the
+   *existing* row, the same machinery `_create` already uses for a
+   brand-new one, just without a second `INSERT`.
+2. `_run_container` (shared by `_create` and `_recreate`) called
+   `containers.run(name=record.container_name, ...)` with no check for
+   whether that deterministic name (§51) was already taken — `docker system
+   prune` leaving an orphan, a DB reset that lost the row while the
+   container survived, or literally this session's own repeatedly-hit
+   `mcp-dev-ws-<repository_id>-<hash>` collisions from concurrent/interrupted
+   test runs all produce the identical 409, and since the name is
+   deterministic it collides again on every retry — permanently wedged, not
+   merely a bad first attempt. New `_adopt_or_remove_by_name`, called before
+   `containers.run`: a container already carrying this exact workspace_id's
+   label is *adopted* (its own earlier `containers.run` plausibly completed,
+   just never got persisted); anything else at that name can only be a stale
+   container from a *previous* incarnation of this same logical workspace
+   (the name is deterministic per workspace_id — no other workspace could
+   coincidentally collide) and is *removed* to free the name for the create
+   that follows. `reconcile()` already had its own, narrower adoption logic
+   for the case where a row exists but its `container_id` is `None` — this
+   is additional coverage for the path `reconcile()` never runs on at all:
+   `_create`, reached when `ensure_workspace` finds no row whatsoever.
+
+**A test-discipline finding caught by the revert check itself, not a code
+bug:** the first draft's "adopt" test cleared only the row's `container_id`
+column before reopening — that scenario was already covered by
+`reconcile()`'s own *pre-existing* label-based adoption (`ensure_workspace`
+calls `reconcile()` whenever any row exists at all, regardless of this
+task's changes), so the test passed identically against the reverted code
+and proved nothing about this task's fix. Caught by reading the revert
+output rather than trusting "passed." Fixed by deleting the row *entirely*
+instead — that routes through `_create` (no row → no `reconcile()` call at
+all), which is the one path only `_run_container`'s new adoption logic can
+save; confirmed this version genuinely fails against the reverted code.
+
+**Verified the tests catch the regression for the right reason:** reverted
+`workspace/manager.py` to its pre-H15 version and reran all four new tests —
+each failed distinctly (the out-of-band-removal and adopt cases via
+`ContainerRuntimeFailedError`/409-driven `ContainerCreateFailedError`; the
+failed-create and orphan cases via the same underlying 409 that never clears
+on retry). Restored the fix; all four pass again; the full
+`tests/workspace/test_recovery.py` file (15 tests) and the broader
+`tests/workspace/` suite (267 tests) show no regressions. No Docker
+leftovers, no schema drift (this task changes no tool's output shape).
+
+**New tests:** `tests/workspace/test_recovery.py` — four tests against the
+`manager` fixture (real Docker, in-memory state DB) directly, one per HAT-014
+scenario plus the adoption sub-case: a container removed out of band (fully
+`remove()`d, not merely stopped) recovers on the next `ensure_workspace`
+with a new container id; a `containers.run` failure against a nonexistent
+image leaves the row `FAILED` with no container, and recovers once a valid
+image is used; an orphaned, unlabeled container occupying the deterministic
+name is removed rather than permanently blocking the name; a correctly
+labeled container surviving a lost `workspace` row is adopted rather than
+recreated.
 
 ### H16 — Deleting a workspace that ran jobs succeeds
 **Satisfies:** HR-018 · **Verified by:** HAT-015
