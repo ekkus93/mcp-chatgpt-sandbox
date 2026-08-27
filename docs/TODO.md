@@ -777,12 +777,50 @@ confirming the tool works even when Docker itself is unreachable —
 `schemas/tools.json` re-exported (`git_status` is a new tool);
 `CONTRACT_VERSION` bumped `0.2.1` → `0.3.0` per §33.2 (minor).
 
-### S21 — `git_diff` and `git_log`
-**Spec:** §17.3, §46 · **Satisfies:** FR-019
+### S21 — `git_diff` and `git_log` ✅
+**Spec:** §17.3, §46 · **Satisfies:** FR-019 · **Commit:** `bc2c76d`
 
-- [ ] Working-tree, staged, and commit-to-commit diffs; path filter; stat-only
-- [ ] Bounded output with explicit truncation and follow-up retrieval
-- [ ] Bounded log
+- [x] Working-tree, staged, and commit-to-commit diffs; path filter; stat-only
+- [x] Bounded output with explicit truncation and follow-up retrieval
+- [x] Bounded log
+
+`src/dev_workspace_mcp/git/diff.py`'s `read_git_diff` selects its mode
+from which parameters are given, not three code paths: no `base`/`staged`
+→ working-tree (`git diff`); `staged=True` → `--cached`; `base` given
+(`head` defaults to `HEAD`) → commit-to-commit. `staged` and `base`/`head`
+together is rejected as ambiguous. Bounded by `max_bytes` (default 1 MiB
+— no config block exists whose sole purpose would be one field, so this
+stays a module constant, overridable per call) with an `offset` for
+follow-up retrieval — the same byte-range shape `exec_output` already
+uses, verified by a test that reassembles a full diff from two bounded
+calls and confirms it matches an unbounded one exactly.
+
+`src/dev_workspace_mcp/git/log.py`'s `read_git_log` uses `git log
+--pretty=format:` with ASCII field/record separators (`\x1f`/`\x1e`)
+rather than a human-oriented delimiter — a commit subject can contain
+almost anything a human-readable separator (`|`, `,`, tabs) might
+collide with, and confirmed by a test with literal `|`/`,`/`"` in a real
+commit subject. An unborn branch's `git log` failure
+("does not have any commits yet") is treated as an empty log, not an
+error. Bounded by `max_entries` (default 50), with `paths` and `ref`
+filters.
+
+Both are host-side only (§20.1), added to the existing `tools/git.py`
+alongside `git_status` (S20) rather than a new module — same
+`register(server, *, db)` shape, same `resolve_repository_root`, no
+Docker dependency.
+
+`tests/git/test_diff.py` (10 tests) and `tests/git/test_log.py` (7
+tests): every mode, the two rejected-combination cases, path filtering,
+stat-only, the bounded-output/offset reassembly proof, an unborn branch,
+`ref` selecting a specific branch, and the separator-collision proof.
+`tests/workspace/test_git_diff_log_tools.py` (3 tests, real Docker): both
+tools end to end through `workspace_open`, including a write made
+through `write_file` showing up in the working-tree diff and *not* the
+staged one.
+
+`schemas/tools.json` re-exported (two new tools); `CONTRACT_VERSION`
+bumped `0.3.0` → `0.4.0` per §33.2 (minor).
 
 ### S22 — `git_commit`
 **Spec:** §17.4, §20.6, §45, §65, §18.9 · **Satisfies:** FR-020, FR-024 · **Verified by:** AT-008, AT-019

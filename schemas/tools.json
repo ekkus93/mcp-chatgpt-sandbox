@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.3.0",
+  "contract_version": "0.4.0",
   "tools": [
     {
       "description": "Delete a repository file or directory (\u00a713.5).",
@@ -495,6 +495,207 @@
           "output_truncated"
         ],
         "title": "ExecStatusOutput",
+        "type": "object"
+      }
+    },
+    {
+      "description": "Working-tree, staged, or commit-to-commit diff; path-filtered, stat-only mode, bounded output (\u00a717.3).",
+      "input_schema": {
+        "properties": {
+          "base": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Base"
+          },
+          "head": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Head"
+          },
+          "max_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Bytes"
+          },
+          "offset": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "paths": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Paths"
+          },
+          "staged": {
+            "default": false,
+            "title": "Staged",
+            "type": "boolean"
+          },
+          "stat_only": {
+            "default": false,
+            "title": "Stat Only",
+            "type": "boolean"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id"
+        ],
+        "title": "git_diff_toolArguments",
+        "type": "object"
+      },
+      "name": "git_diff",
+      "output_schema": {
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "total_bytes": {
+            "title": "Total Bytes",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "content",
+          "truncated",
+          "total_bytes"
+        ],
+        "title": "GitDiffOutput",
+        "type": "object"
+      }
+    },
+    {
+      "description": "Bounded commit history (\u00a717.3).",
+      "input_schema": {
+        "properties": {
+          "max_entries": {
+            "default": 50,
+            "title": "Max Entries",
+            "type": "integer"
+          },
+          "paths": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Paths"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ref"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id"
+        ],
+        "title": "git_log_toolArguments",
+        "type": "object"
+      },
+      "name": "git_log",
+      "output_schema": {
+        "$defs": {
+          "GitLogEntryOutput": {
+            "properties": {
+              "author": {
+                "title": "Author",
+                "type": "string"
+              },
+              "date": {
+                "title": "Date",
+                "type": "string"
+              },
+              "sha": {
+                "title": "Sha",
+                "type": "string"
+              },
+              "subject": {
+                "title": "Subject",
+                "type": "string"
+              }
+            },
+            "required": [
+              "sha",
+              "author",
+              "date",
+              "subject"
+            ],
+            "title": "GitLogEntryOutput",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "result": {
+            "items": {
+              "$ref": "#/$defs/GitLogEntryOutput"
+            },
+            "title": "Result",
+            "type": "array"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "git_log_toolOutput",
         "type": "object"
       }
     },
