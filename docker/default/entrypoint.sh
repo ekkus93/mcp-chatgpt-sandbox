@@ -18,6 +18,12 @@
 #                        block includes an IdentityFile line (file mode
 #                        only; agent mode authenticates via SSH_AUTH_SOCK,
 #                        no static identity file to point at).
+#   MCP_CACHE_PATHS      colon-separated, $HOME-relative dependency-cache
+#                        paths (§11, S30) — e.g. ".cargo:.rustup". Each is
+#                        a separate Docker named-volume mount, created
+#                        root-owned by default; listed here so this
+#                        script can chown them to the container user,
+#                        the same way it already does for $HOME itself.
 
 set -euo pipefail
 
@@ -25,6 +31,7 @@ MCP_USER="${MCP_USER:-mcpuser}"
 MCP_SUDO="${MCP_SUDO:-true}"
 MCP_WORKSPACE_PATH="${MCP_WORKSPACE_PATH:-/workspace}"
 MCP_SSH_MODE="${MCP_SSH_MODE:-agent}"
+MCP_CACHE_PATHS="${MCP_CACHE_PATHS:-}"
 
 if [ "$(id -u)" = "0" ]; then
     # §18.2: git run from inside the container SHALL trust the mounted
@@ -73,6 +80,19 @@ HOME_DIR="$(getent passwd "$MCP_UID" | cut -d: -f6)"
 # Ensure the user's own home is usable even though the container started
 # as root.
 chown "$MCP_UID:$MCP_GID" "$HOME_DIR" 2>/dev/null || true
+
+# §11: cache volumes SHALL be owned by the container user's uid. A fresh
+# Docker named volume is root-owned regardless of what mounts on top of
+# it; not recursive, matching $HOME's own chown above — this is about
+# making the mount point itself writable, not repairing ownership of
+# whatever a previous container run already left inside it.
+if [ -n "$MCP_CACHE_PATHS" ]; then
+    IFS=':' read -ra CACHE_PATHS <<< "$MCP_CACHE_PATHS"
+    for cache_path in "${CACHE_PATHS[@]}"; do
+        mkdir -p "$HOME_DIR/$cache_path"
+        chown "$MCP_UID:$MCP_GID" "$HOME_DIR/$cache_path"
+    done
+fi
 
 # §19.3: container-local SSH client config — never into the bind mount,
 # so a repository cannot substitute its own. StrictHostKeyChecking yes

@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.7.1",
+  "contract_version": "0.7.2",
   "tools": [
     {
       "description": "Delete a repository file or directory (\u00a713.5).",
@@ -1951,9 +1951,33 @@
           }
         },
         "properties": {
+          "config_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Config Version"
+          },
           "container_state": {
             "title": "Container State",
             "type": "string"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Created At"
           },
           "git": {
             "$ref": "#/$defs/GitStateOutput"
@@ -1961,6 +1985,30 @@
           "git_dir_mode": {
             "title": "Git Dir Mode",
             "type": "string"
+          },
+          "image": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Image"
+          },
+          "image_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Image Digest"
           },
           "remote_protection": {
             "$ref": "#/$defs/RemoteProtectionReportOutput"
@@ -2151,9 +2199,33 @@
           }
         },
         "properties": {
+          "config_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Config Version"
+          },
           "container_state": {
             "title": "Container State",
             "type": "string"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Created At"
           },
           "git": {
             "$ref": "#/$defs/GitStateOutput"
@@ -2161,6 +2233,30 @@
           "git_dir_mode": {
             "title": "Git Dir Mode",
             "type": "string"
+          },
+          "image": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Image"
+          },
+          "image_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Image Digest"
           },
           "remote_protection": {
             "$ref": "#/$defs/RemoteProtectionReportOutput"

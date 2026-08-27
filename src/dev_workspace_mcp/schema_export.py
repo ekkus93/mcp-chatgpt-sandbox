@@ -30,7 +30,10 @@ from mcp.server import MCPServer
 #: `remote_protection` and `git_push`'s new `remote_protection` field
 #: gained the full §20.4 shape (previously just a bare `status` string);
 #: no new tools.
-CONTRACT_VERSION = "0.7.1"
+#: 0.7.2 (S30): patch bump — `workspace_open`/`workspace_info` gained
+#: `image`, `image_digest`, `config_version`, `created_at` (§9.2); no new
+#: tools.
+CONTRACT_VERSION = "0.7.2"
 
 
 async def collect_tool_schemas(server: MCPServer) -> list[dict[str, Any]]:

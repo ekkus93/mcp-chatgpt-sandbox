@@ -1603,16 +1603,153 @@ remain blocked pending those credential decisions.
 
 ## Phase 5 — Environment Configuration
 
-### S30 — Caches, project config, images
+### S30 — Caches, project config, images ✅ (partial — see below)
 **Spec:** §9, §10, §11, §16.2, §30 · **Verified by:** AT-004
 
-- [ ] Named cache volumes under `$HOME`, owned by the container user
-- [ ] `.mcp-workspace.yml` — versioned, unknown mandatory fields are errors;
+- [x] Named cache volumes under `$HOME`, owned by the container user
+- [x] `.mcp-workspace.yml` — versioned, unknown mandatory fields are errors;
       `setup` steps run as the container user and need `sudo` for OS packages
-- [ ] Image precedence per §9; record base image, digest, config version
-- [ ] Dev Container subset per §30; unsupported properties reported, never silently
-      approximated
-- [ ] AT-004: install `cargo-nextest`, reconnect, tool still present
+- [x] Image precedence per §9 (partial — see below); record base image, digest,
+      config version
+- [ ] Dev Container subset per §30 — **not implemented, see below**
+- [x] AT-004: install a real package, reconnect, tool still present (substituted
+      package — see below)
+
+**Commit:** `6bb2c80`
+
+**Scope, stated up front**: §9's image precedence has four levels
+(explicit MCP config → devcontainer.json → project Dockerfile →
+configured default). This task implements the first and the last —
+`.mcp-workspace.yml`'s `image` field, falling back to
+`docker.default_image` — and deliberately does not implement
+`.devcontainer/devcontainer.json` parsing (§30) or per-project
+Dockerfile detection (§9's precedence item 3). §30 itself already
+allows this ("MAY initially support a subset"); a second config format
+on top of `.mcp-workspace.yml` was judged substantial enough to defer
+as its own follow-up rather than fold into an already-large task —
+tracked here as a deliberate cut, not silent approximation of a
+security-sensitive setting (§30's own "SHALL not silently approximate"
+is about behavior, and there is none to approximate: no devcontainer.json
+support means devcontainer.json is simply not read at all yet).
+
+New `src/dev_workspace_mcp/project_config.py` — `load_project_config`,
+a real YAML parser + pydantic model (`extra: "forbid"`, matching every
+other config model in this codebase) for `.mcp-workspace.yml`/`.yaml`,
+covering §10's full documented shape: `version`, `image`, `workspace`
+(parsed and validated, not yet wired to anything — the same
+"accepted, not acted on" status `docker.workspace_path`, a pre-existing
+config field, already has; both need `tools/workspace.py`'s hardcoded
+`DEFAULT_WORKSPACE_PATH` replaced with a real override, separate work
+this task does not do), `setup`, `environment`, `caches`, `github`, and
+`validation` (parsed for forward-compatibility and unknown-field
+rejection; no tool runs these commands yet — there is no `validate`
+tool in §34.1). A malformed file fails `workspace_open` closed
+(`ContainerCreateFailedError` — reusing the closed 24-exception
+taxonomy `errors.py`'s own docstring insists on, rather than inventing
+a 25th code the spec's own §31 list doesn't name), matching "Unknown
+mandatory fields SHOULD cause a validation error."
+
+New `src/dev_workspace_mcp/workspace/caches.py` — named Docker volumes
+for `caches[]` entries, repository-scoped (`mcp-cache-<repository_id>-
+<cache_name>`): every workspace opened for a repository shares its
+caches, but two repositories never share one. §11's own `workspace` /
+`repository` / `shared` scope levels are not implemented as a
+configurable knob — repository-scoped is the only level this task
+builds, a deliberate simplification favoring the safer end of "the
+default SHOULD favor isolation," not the full range §11 describes.
+`caches[].path` (`$HOME/.cargo`, `~/.cargo`, or bare `.cargo` — all
+three documented/common forms) is validated as genuinely home-relative,
+rejecting an absolute path elsewhere or `..` traversal, since it names a
+Docker mount *target* inside the container. Docker creates a fresh named
+volume root-owned regardless of what mounts onto it, so `entrypoint.sh`
+gained `MCP_CACHE_PATHS` (colon-separated, `$HOME`-relative) and chowns
+each one to the container uid — the same non-recursive pattern already
+used for `$HOME` itself, for the same reason (repairing ownership of
+pre-existing content from a *previous* uid is a known, accepted, and
+already-precedented simplification, not new to this task).
+
+`.mcp-workspace.yml`'s `setup` steps run through the same execution
+service `exec`/the structured Git tools already use (§20.1's "not a
+second execution path" rationale, again) — `["bash", "-c", step]`, so
+`sudo` works exactly as it does from `exec` — but **only when
+`workspace_open` genuinely just created the container**, never on a
+reopen of an already-running or stopped-then-restarted persistent
+workspace. Determining "was this a real creation" turned out to need a
+real fix: the first version compared the *returned* record's
+`created_at`/`last_used_at` for equality, reasoning that only `_create`
+sets both to the same timestamp — true at the moment of insertion, but
+`ensure_workspace`'s own success path (`_run_container`) unconditionally
+advances `last_used_at` again once the container actually starts, *even
+for a brand-new workspace* — so the equality check the returned record
+offered was never true by the time `workspace_open` could observe it,
+and this task's own tests caught it immediately (`setup` silently never
+ran, and a deliberately failing step never raised). Fixed the same way
+S23 solved an analogous ordering problem for its ssh-agent socket:
+`persistent_workspace_id(repository.id)` is a pure, deterministic
+function of the repository id, the exact same id `ensure_workspace`
+computes internally for `mode: "persistent"` — so a plain `SELECT 1
+FROM workspace WHERE id = ?` *before* calling `ensure_workspace`
+reliably answers "does this workspace already exist" without needing
+`ensure_workspace`'s own return contract changed (which ~30 existing
+test call sites unpack positionally). `mode: "ephemeral"` is always
+treated as a creation, matching `ensure_workspace`'s own "there is no
+'the' ephemeral workspace to reuse."
+
+Image provenance (§9.2): `workspace.image_digest`/`config_version`
+columns (`db/schema.py` migration; `image` and `created_at` already
+existed), populated via a real `docker_client.images.get(image).id`
+call right after `ensure_workspace` succeeds, reported in both
+`workspace_open` and `workspace_info`'s output (`WorkspaceInfoOutput`
+gained `image`, `image_digest`, `config_version`, `created_at`).
+Also corrected two stale `server_info` capability flags found while
+touching the adjacent dict: `git.commit.expected_head_sha` and
+`git.push.remote_protection` were both still `False` despite S22/S28
+having implemented them — simple, low-risk factual corrections to
+already-completed work, not new scope.
+
+`tests/test_project_config.py` (10 tests) covers `.mcp-workspace.yml`
+parsing in isolation — the full documented example, unknown-field/
+missing-required-field/invalid-YAML/non-mapping rejection, both file
+extensions, precedence between them. `tests/workspace/test_caches.py`
+(14 tests) covers path normalization for every documented form,
+rejection of unsafe paths, repository-scoped volume naming, and mount
+shape — no Docker needed for either file. `tests/workspace/
+test_project_config_integration.py` (11 tests, real Docker, real S7
+image) covers image precedence, environment propagation, setup steps
+running once on real creation and never on a real reopen (the bug
+above, caught here), a real failing step raising `COMMAND_FAILED`,
+cache volumes actually writable and owned by the container uid (checked
+via a real mount-point assertion, not merely a directory under `$HOME`),
+persistence across a real stop/start cycle, two repositories never
+sharing a cache, image provenance end-to-end, and AT-004.
+
+**AT-004 uses a substituted real package**, the same principle S24's
+AT-034 used a generic local `sshd` instead of `github.com`'s: the spec
+names `cargo-nextest`, which needs a Rust toolchain the S7 default image
+correctly does not carry (§9.1: "SHOULD NOT attempt to contain every
+language toolchain"); a small, always-available Debian package (`tree`)
+exercises the identical mechanism — install after creation, stop,
+reopen via a fresh `create_server` call (simulating "restart the MCP
+session"), confirm the tool survives — without needing a slow, flaky
+Rust bootstrap in every CI run.
+
+A real leak was found and fixed in the test suite itself (not product
+code, and not a repeat of S23's ssh-agent leak, a different resource
+this time): named cache volumes have no label of their own — created
+implicitly via a container's mount reference, never through an explicit
+`client.volumes.create(...)` call this daemon makes — so the shared
+`docker_client` conftest fixture, which already force-removes
+label-matched containers on teardown, left cache volumes behind after
+every run. Fixed by filtering `client.volumes.list` on
+`cache_volume_name`'s own stable `mcp-cache-` prefix instead of a label,
+confirmed empirically that Docker's `name` volume filter does substring
+matching (not exact), and verified a full test run leaves zero volumes,
+zero containers, and zero `ssh-agent` processes behind.
+
+`schemas/tools.json` regenerated: `workspace_open`/`workspace_info`
+gained `image`, `image_digest`, `config_version`, `created_at`.
+`CONTRACT_VERSION` bumped `0.7.1` → `0.7.2` (§33.2: patch — existing
+tools' output fields changed/added, no new tool).
 
 ---
 

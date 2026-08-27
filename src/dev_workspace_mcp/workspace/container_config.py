@@ -33,6 +33,14 @@ SSH_KNOWN_HOSTS_CONTAINER_PATH = "/etc/mcp/ssh/known_hosts"
 #: agent's host socket is bind-mounted at, matching `SSH_AUTH_SOCK` below.
 SSH_AGENT_SOCKET_CONTAINER_PATH = "/run/mcp/ssh/agent.sock"
 
+#: `entrypoint.sh`'s own default (`MCP_USER="${MCP_USER:-mcpuser}"`, never
+#: overridden anywhere in this codebase) — `useradd -m` creates its home
+#: at exactly this path. `workspace/caches.py` (§11, S30) needs to compute
+#: a cache mount's container-side target *before* the container (and
+#: therefore its actual home directory) exists, so this is the one place
+#: that convention is written down for Python to rely on too.
+DEFAULT_CONTAINER_HOME = "/home/mcpuser"
+
 
 def userns_remap_active(docker_client: docker.DockerClient) -> bool:
     """§5.3: whether the daemon has user-namespace remapping configured,

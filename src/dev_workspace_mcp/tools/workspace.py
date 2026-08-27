@@ -8,6 +8,7 @@ together into a running container a client can use.
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,17 +22,20 @@ from dev_workspace_mcp.config.models import (
     AuditConfig,
     ContainerConfig,
     DockerConfig,
+    ExecutionConfig,
     GithubConfig,
     GitPolicyConfig,
     SSHConfig,
     WorkspaceConfig,
 )
 from dev_workspace_mcp.errors import (
+    CommandFailedError,
     ContainerRuntimeFailedError,
     RemoteProtectionMissingError,
     RepositoryNotAllowedError,
     translate_workspace_errors,
 )
+from dev_workspace_mcp.execution.service import ExecutionService
 from dev_workspace_mcp.git.commit import detect_default_branch
 from dev_workspace_mcp.git_state import read_basic_git_state
 from dev_workspace_mcp.github_api import (
@@ -43,10 +47,15 @@ from dev_workspace_mcp.github_api import (
     verify_remote_protection,
 )
 from dev_workspace_mcp.jobs.store import JobState, JobStore
+from dev_workspace_mcp.project_config import load_project_config
 from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.schema_export import CONTRACT_VERSION
-from dev_workspace_mcp.workspace.container_config import build_workspace_run_kwargs
-from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
+from dev_workspace_mcp.workspace.caches import build_cache_mounts, resolve_caches
+from dev_workspace_mcp.workspace.container_config import (
+    build_workspace_run_kwargs,
+    resolve_exec_user,
+)
+from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager, WorkspaceRecord
 from dev_workspace_mcp.workspace.mounts import (
     build_known_hosts_mount,
     build_ssh_agent_mount,
@@ -56,6 +65,17 @@ from dev_workspace_mcp.workspace.naming import WorkspaceMode, persistent_workspa
 from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager, resolve_ssh_key_path
 
 DEFAULT_WORKSPACE_PATH = "/workspace"
+
+#: `.mcp-workspace.yml`'s `setup` steps (§10) run once, on genuine
+#: container creation — package installs and toolchain bootstraps
+#: legitimately take longer than an ordinary `exec` call's default
+#: `execution.sync_timeout_seconds` (30s), so this gets its own, more
+#: generous budget rather than a new config knob for a single call site.
+_SETUP_STEP_TIMEOUT_SECONDS = 600.0
+#: Matches `tools/execution.py`'s own `KILL_GRACE_PERIOD_SECONDS` — a
+#: separate constant, not a cross-import, since the two tool modules are
+#: otherwise independent of each other.
+_SETUP_KILL_GRACE_PERIOD_SECONDS = 2.0
 
 
 @dataclass
@@ -77,6 +97,14 @@ class WorkspaceInfoOutput:
     ssh_key_scope: str
     remote_protection: RemoteProtectionReportOutput
     git: GitStateOutput
+    image: str | None = None
+    image_digest: str | None = None
+    """§9.2's reproducibility record: base image reference, its digest,
+    the `.mcp-workspace.yml` `version` that configured it (`None` when no
+    project config was present), and the workspace's own creation time —
+    `None`/absent for a workspace that predates this task's migration."""
+    config_version: int | None = None
+    created_at: str | None = None
 
 
 @dataclass
@@ -99,6 +127,7 @@ def register(
     docker_client: docker.DockerClient | None,
     docker_config: DockerConfig,
     container_config: ContainerConfig,
+    execution_config: ExecutionConfig,
     ssh_config: SSHConfig,
     workspace_config: WorkspaceConfig,
     github_config: GithubConfig,
@@ -116,7 +145,11 @@ def register(
     only `workspace_open` below — can reach it too (§19.2: the key comes
     out of the agent on every stop, including idle stop, regardless of
     which call path triggered it). `None` under `ssh.mode: file`, which
-    has no agent lifecycle at all (§19.2's `file` mode)."""
+    has no agent lifecycle at all (§19.2's `file` mode).
+
+    `execution_service` (S30) runs `.mcp-workspace.yml`'s `setup` steps —
+    the same execution service `exec`/the structured Git tools already
+    use, not a second path (§20.1's own rationale applies here too)."""
     ssh_agent_manager = (
         SSHAgentManager(db, runtime_dir=ssh_agent_runtime_dir)
         if ssh_config.mode == "agent"
@@ -127,6 +160,7 @@ def register(
         if docker_client is not None
         else None
     )
+    execution_service = ExecutionService(docker_client) if docker_client is not None else None
     job_store = JobStore(db)
 
     def _require_docker() -> tuple[DockerWorkspaceManager, docker.DockerClient]:
@@ -150,26 +184,89 @@ def register(
                 (serialize_remote_protection(result), result.default_branch, repository_id),
             )
 
-    def _info(
-        record_id: str, repository_id: str, state: str, workspace_path: str
-    ) -> WorkspaceInfoOutput:
-        repository = registry.get(repository_id)
+    def _load_image_provenance(workspace_id: str) -> tuple[str | None, int | None]:
+        row = db.execute(
+            "SELECT image_digest, config_version FROM workspace WHERE id = ?", (workspace_id,)
+        ).fetchone()
+        if row is None:
+            return None, None
+        return row["image_digest"], row["config_version"]
+
+    async def _run_setup_steps(record: WorkspaceRecord, steps: list[str]) -> None:
+        """§10: run once, only for a container `workspace_open` just
+        created — never on a reused persistent workspace's every reopen.
+        Each step is a shell command, run the same way `exec`'s own
+        `shell` form is (`["bash", "-c", step]`) — `sudo` works exactly
+        as it does from `exec`, since this is the same execution service,
+        the same container user, no second path (§20.1's rationale)."""
+        assert execution_service is not None  # implied by `_require_docker` at the call site
+        assert record.container_id is not None  # implied by state == RUNNING
+        container_id = record.container_id
+        user = resolve_exec_user(container_config)
+        for step in steps:
+            exec_id = await asyncio.to_thread(
+                execution_service.start,
+                container_id,
+                ["bash", "-c", step],
+                cwd=record.workspace_path,
+                user=user,
+                env=None,
+            )
+            try:
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        execution_service.consume,
+                        exec_id,
+                        max_output_bytes=execution_config.max_output_bytes,
+                        response_tail_lines=execution_config.response_tail_lines,
+                    ),
+                    timeout=_SETUP_STEP_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                await asyncio.to_thread(execution_service.kill, exec_id)
+                await asyncio.sleep(_SETUP_KILL_GRACE_PERIOD_SECONDS)
+                await asyncio.to_thread(execution_service.kill, exec_id, grace_period_reached=True)
+                raise CommandFailedError(
+                    f".mcp-workspace.yml setup step exceeded "
+                    f"{_SETUP_STEP_TIMEOUT_SECONDS}s: {step!r}",
+                    details={"workspace_id": record.id, "step": step},
+                ) from None
+            if result.exit_code != 0:
+                raise CommandFailedError(
+                    f".mcp-workspace.yml setup step failed (exit {result.exit_code}): "
+                    f"{step!r}: {result.stderr_tail}",
+                    details={
+                        "workspace_id": record.id,
+                        "step": step,
+                        "exit_code": result.exit_code,
+                    },
+                )
+
+    def _info(record: WorkspaceRecord) -> WorkspaceInfoOutput:
+        repository = registry.get(record.repository_id)
         git_state = read_basic_git_state(repository.canonical_path)
+        image_digest, config_version = _load_image_provenance(record.id)
         return WorkspaceInfoOutput(
-            workspace_id=record_id,
-            repository_id=repository_id,
-            container_state=state,
-            workspace_path=workspace_path,
+            workspace_id=record.id,
+            repository_id=record.repository_id,
+            container_state=record.state.value,
+            workspace_path=record.workspace_path,
             git_dir_mode=container_config.git_dir_mode,
             ssh_key_mode=ssh_config.mode,
             ssh_key_scope=ssh_config.scope,
-            remote_protection=to_report_output(_load_stored_remote_protection(repository_id)),
+            remote_protection=to_report_output(
+                _load_stored_remote_protection(record.repository_id)
+            ),
             git=GitStateOutput(
                 branch=git_state.branch,
                 head_sha=git_state.head_sha,
                 clean=git_state.clean,
                 upstream=git_state.upstream,
             ),
+            image=record.image,
+            image_digest=image_digest,
+            config_version=config_version,
+            created_at=record.created_at,
         )
 
     @server.tool(
@@ -234,11 +331,31 @@ def register(
                 },
             )
 
+        # §9/§10: `.mcp-workspace.yml`, when present, is the highest
+        # `image` precedence level this daemon implements (`docker.
+        # workspace_path`'s own sibling gaps — devcontainer.json,
+        # per-project Dockerfile detection — are a documented, deliberate
+        # scope cut, not silent approximation: see docs/TODO.md).
+        project_config = load_project_config(repository.canonical_path)
+        effective_image = (
+            project_config.image
+            if project_config is not None and project_config.image is not None
+            else docker_config.default_image
+        )
+        resolved_caches = resolve_caches(
+            repository_id=repository.id,
+            project_caches=project_config.caches if project_config is not None else [],
+        )
+        extra_env = dict(project_config.environment) if project_config is not None else {}
+        if resolved_caches:
+            extra_env["MCP_CACHE_PATHS"] = ":".join(c.home_relative_path for c in resolved_caches)
+
         run_kwargs = build_workspace_run_kwargs(
             container_config=container_config,
             docker_client=active_client,
             ssh_config=ssh_config,
             workspace_path=DEFAULT_WORKSPACE_PATH,
+            extra_env=extra_env,
         )
         mounts = build_workspace_mounts(
             host_repository_path=repository.canonical_path,
@@ -247,6 +364,7 @@ def register(
             authorized_roots=repository_roots,
         )
         mounts.append(build_known_hosts_mount(ssh_config.known_hosts))
+        mounts.extend(build_cache_mounts(resolved_caches))
         if ssh_agent_manager is not None and mode == "persistent":
             # §19.2: mounts must be finalized before `ensure_workspace`
             # creates the container, which is only possible here because
@@ -263,9 +381,26 @@ def register(
                 )
                 mounts.append(build_ssh_agent_mount(agent_record.socket_path))
         run_kwargs["mounts"] = mounts
+        # §10: whether `setup` runs below depends on whether this call is
+        # a genuine creation — checked *before* `ensure_workspace` (which
+        # always advances `last_used_at` past `created_at` on its own
+        # success path, even for a brand-new row, so comparing those two
+        # on the *returned* record can never distinguish create from
+        # reuse; a real bug this task's own tests caught before trusting
+        # it). Only meaningful for `mode: "persistent"`, whose workspace
+        # id is deterministic (`persistent_workspace_id`, the same trick
+        # the ssh-agent mount above already relies on) — `"ephemeral"`
+        # has no "the" workspace to reuse at all (`ensure_workspace`'s
+        # own docstring), so every ephemeral open is a creation.
+        was_created = mode == "ephemeral" or (
+            db.execute(
+                "SELECT 1 FROM workspace WHERE id = ?", (persistent_workspace_id(repository.id),)
+            ).fetchone()
+            is None
+        )
         record = active_manager.ensure_workspace(
             repository=repository,
-            image=docker_config.default_image,
+            image=effective_image,
             mode=mode,
             workspace_path=DEFAULT_WORKSPACE_PATH,
             run_kwargs=run_kwargs,
@@ -277,6 +412,21 @@ def register(
         # in-memory, before any container work, for the `deny` policy
         # check that needed it early.
         _store_remote_protection(repository_id, remote_protection)
+
+        # §9.2's reproducibility record. The digest lookup is a real
+        # Docker API call (`images.get`), not a cached value — cheap, and
+        # correct even if the tag was retagged since the container last
+        # started.
+        image_digest = active_client.images.get(effective_image).id
+        config_version = project_config.version if project_config is not None else None
+        with db:
+            db.execute(
+                "UPDATE workspace SET image_digest = ?, config_version = ? WHERE id = ?",
+                (image_digest, config_version, record.id),
+            )
+
+        if was_created and project_config is not None and project_config.setup:
+            await _run_setup_steps(record, project_config.setup)
 
         # §8.1's idle-stop (S17): no scheduler exists in the daemon, so —
         # like S16's job-log retention — this runs opportunistically on a
@@ -300,10 +450,12 @@ def register(
                 "mode": mode,
                 "container_state": record.state.value,
                 "remote_protection_status": remote_protection.status,
+                "image": effective_image,
+                "setup_steps_run": was_created and bool(project_config and project_config.setup),
             },
         )
 
-        return _info(record.id, record.repository_id, record.state.value, record.workspace_path)
+        return _info(record)
 
     @server.tool(name="workspace_info", description="Report current workspace state (§25).")
     @translate_workspace_errors
@@ -315,7 +467,7 @@ def register(
         # rather than report state it cannot currently corroborate.
         active_manager, _ = _require_docker()
         record = active_manager.get(workspace_id)
-        return _info(record.id, record.repository_id, record.state.value, record.workspace_path)
+        return _info(record)
 
     @server.tool(name="server_info", description="Server version, capabilities, and health (§25).")
     @translate_workspace_errors
@@ -349,8 +501,8 @@ def register(
                 "filesystem.patch.unified_diff": True,
                 "filesystem.write.expected_sha256": True,
                 "exec.jobs": True,
-                "git.commit.expected_head_sha": False,
-                "git.push.remote_protection": False,
+                "git.commit.expected_head_sha": True,
+                "git.push.remote_protection": True,
                 "workspace.devcontainer": False,
             },
         )

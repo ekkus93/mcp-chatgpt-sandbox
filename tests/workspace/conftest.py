@@ -61,6 +61,13 @@ def docker_client() -> Iterator[docker.DockerClient]:
     finally:
         for container in client.containers.list(all=True, filters={"label": LABEL_MANAGED}):
             container.remove(force=True)
+        # S30's cache volumes have no label of their own — a plain named
+        # volume created implicitly via a container's mount reference,
+        # not an explicit `client.volumes.create(...)` call this daemon
+        # never makes — so cleanup filters by `cache_volume_name`'s own
+        # stable `mcp-cache-` prefix instead.
+        for volume in client.volumes.list(filters={"name": "mcp-cache-"}):
+            volume.remove(force=True)
         client.close()
 
 

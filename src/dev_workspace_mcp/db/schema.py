@@ -124,6 +124,14 @@ MIGRATIONS: list[list[str]] = [
         # before a push) — this is that cache, one row per repository.
         "ALTER TABLE repository ADD COLUMN remote_protection TEXT",
     ],
+    # --- version 3 -> 4: image provenance (§9.2, S30) ---------------------------
+    [
+        # `image` and `created_at` already exist on `workspace`; only the
+        # digest and the project config's own `version` are new — the
+        # reproducibility record §9.2 asks for.
+        "ALTER TABLE workspace ADD COLUMN image_digest TEXT",
+        "ALTER TABLE workspace ADD COLUMN config_version INTEGER",
+    ],
 ]
 
 
