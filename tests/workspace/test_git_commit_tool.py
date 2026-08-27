@@ -151,6 +151,46 @@ async def test_git_commit_expected_branch_mismatch_fails_closed(
     assert "a.txt" in status.stdout  # still untracked, nothing committed
 
 
+async def test_at_008_a_commit_landed_externally_after_head_was_read_fails_the_guard(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """AT-008, literally: read HEAD via `git_status`, then a *real*
+    external commit — landed the same way an operator or another process
+    could, straight into the host bind mount, entirely outside this MCP
+    session — advances it before the guarded `git_commit` call, which
+    SHALL fail against the now-stale value it read earlier."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    status = await server.call_tool("git_status", {"workspace_id": workspace_id})
+    stale_head_sha = status.structured_content["head_sha"]
+
+    # a real commit, external to the MCP session entirely — straight into
+    # the shared bind mount, the same way a human or another tool could.
+    (repo_path / "external.txt").write_text("landed while we weren't looking\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "external commit"], cwd=repo_path, check=True)
+
+    await server.call_tool(
+        "write_file", {"workspace_id": workspace_id, "path": "a.txt", "content": "a\n"}
+    )
+    with pytest.raises(ToolError, match="GIT_HEAD_CHANGED"):
+        await server.call_tool(
+            "git_commit",
+            {
+                "workspace_id": workspace_id,
+                "message": "guarded commit against stale HEAD",
+                "paths": ["a.txt"],
+                "expected_head_sha": stale_head_sha,
+            },
+        )
+
+
 async def test_git_commit_expected_head_sha_mismatch_fails_closed(
     minimal_config: ServerConfig,
     default_image_tag: str,

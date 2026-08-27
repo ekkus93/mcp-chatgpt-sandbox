@@ -500,6 +500,23 @@ def register(
             )
         branch = status.branch
         previous_head_sha = status.head_sha
+        strategy = git_policy_config.pull_strategy
+
+        # §22.3/§20.6/AT-019: "potentially destructive operations SHOULD
+        # fail when unrelated uncommitted changes exist unless explicitly
+        # authorized." `ff_only` (the default) is deliberately exempt —
+        # a real fast-forward only ever moves the branch tip forward and
+        # preserves non-conflicting uncommitted changes, the same
+        # guarantee `git merge --ff-only` itself already gives; `merge`/
+        # `rebase` genuinely rewrite history the working tree sits on,
+        # which is what makes them the "could overwrite changes"
+        # operations this precondition exists for.
+        if strategy != "ff_only" and not status.clean:
+            raise GitDirtyError(
+                f"pull_strategy: {strategy!r} requires a clean working tree; "
+                "uncommitted changes are present (§22.3)",
+                details={"workspace_id": workspace_id, "strategy": strategy},
+            )
 
         # §20.2: validate the remote before contacting it at all — before
         # the fetch below, not merely before the integration step.
@@ -543,7 +560,6 @@ def register(
                 details={"workspace_id": workspace_id, "remote": remote},
             )
 
-        strategy = git_policy_config.pull_strategy
         integrate_exit, integrate_stderr = await exec_git(
             build_integrate_argv(strategy, remote=remote, branch=branch)
         )

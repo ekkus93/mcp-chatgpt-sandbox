@@ -134,8 +134,12 @@ def test_fast_forward_pull_succeeds_and_updates_head(tmp_path: Path) -> None:
 
 
 def test_diverged_history_fails_ff_only_with_the_non_fast_forward_marker(tmp_path: Path) -> None:
-    """The real, empirically-verified failure mode `git_pull` (S26)
-    relies on to raise `GIT_NON_FAST_FORWARD` rather than escalate."""
+    """AT-010 (git mechanics half): the real, empirically-verified failure
+    mode `git_pull` (S26) relies on to raise `GIT_NON_FAST_FORWARD` rather
+    than escalate. Full structured-tool-level AT-010 coverage (through the
+    `git_pull` MCP tool itself, against a real `github.com` remote) remains
+    blocked pending S23/D3 — see `test_git_pull_tool.py`'s real-network
+    section — same class of gap as AT-027/AT-028's second halves."""
     remote, work = _clone_pair(tmp_path)
 
     # diverge: a local-only commit in `work` *and* a remote-only commit

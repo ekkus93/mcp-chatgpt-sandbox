@@ -1884,18 +1884,134 @@ entry is intentionally left unchecked, distinct from S30/S31's
 "partial" tasks (which shipped real, tested code alongside a documented
 scope cut) — nothing here was implemented, because the spec says not to.
 
-### S33 — Security test suite
+### S33 — Security test suite ✅
 **Spec:** §70, §39 · **Verified by:** all ATs
+**Commit:** `a1bdf8f`
 
-- [ ] Unit: path authorization, remote normalization, policy decisions, refspec
+- [x] Unit: path authorization, remote normalization, policy decisions, refspec
       construction, state transitions, redaction, config validation
-- [ ] Integration on disposable repos and a disposable remote: filesystem
+- [x] Integration on disposable repos and a disposable remote: filesystem
       mutation, package install, job lifecycle, recovery, commit, push, conflicts,
       symlink escape, cache persistence
-- [ ] Security: traversal, symlink escape, malicious remote URL, secret leakage,
+- [x] Security: traversal, symlink escape, malicious remote URL, secret leakage,
       Docker socket, host mounts, policy enforcement
-- [ ] End-to-end MCP harness per §70 running the §78 workflow
-- [ ] Every AT-001..AT-037 mapped to an automated test
+- [x] End-to-end MCP harness per §70 running the §78 workflow
+- [x] Every AT-001..AT-037 mapped to an automated test
+
+This task was an audit of the 650+ tests already built across every prior
+task, not a greenfield build — the work was finding and closing the real
+gaps, not re-proving what was already proven.
+
+**AT coverage audit.** A first `grep -rn "AT-0[0-9][0-9]"` pass
+(case-sensitive, hyphen-only) under-reported: several tests cite their AT
+in a Python function name using the forced lowercase-underscore
+convention (`test_at_011_...`), which that pattern doesn't match. Redone
+case-insensitively over both `AT-XXX` and `AT_XXX`, the real gap list
+narrowed from five numbers to three: **AT-008**, **AT-010**, **AT-019**.
+The self-verifying `tests/test_acceptance_test_coverage.py` added by this
+task encodes that same lesson permanently — its citation regex uses a
+`(?!\d)` lookahead rather than `\b`, because `\b` never matches between a
+digit and the trailing `_` of an identifier like `at_011_...` (both are
+word characters, so there's no boundary there); a first draft using `\b`
+reintroduced the exact false-negative the manual grep had just been
+corrected for, caught immediately by the audit test's own would-be
+false-positive failure (`AT-[11, 13]` reported missing when they weren't).
+
+- **AT-008** (Git State Guard) had real mechanics coverage (`git_commit`'s
+  `expected_head_sha` guard) but no test for the literal scenario: HEAD
+  read, then a commit lands *externally* — straight into the shared bind
+  mount, the same way an operator or another process could, entirely
+  outside the MCP session — before the guarded call. Added
+  `test_at_008_a_commit_landed_externally_after_head_was_read_fails_the_guard`
+  to `test_git_commit_tool.py`: reads HEAD via `git_status`, runs a real
+  `git commit` directly against the host checkout, then asserts the
+  now-stale `expected_head_sha` fails closed with `GIT_HEAD_CHANGED`.
+- **AT-019** (Dirty Tree Protection) exposed a genuine, previously-missing
+  precondition, not just a test gap: §22.3 requires potentially-destructive
+  operations to fail on unrelated uncommitted changes unless authorized,
+  but `git_pull_tool` never checked working-tree cleanliness before a
+  `merge`/`rebase` strategy integration. `ff_only` is deliberately exempt
+  — a real fast-forward only ever moves the branch tip forward and
+  preserves non-conflicting uncommitted changes, the same guarantee
+  `git merge --ff-only` itself gives; `merge`/`rebase` genuinely rewrite
+  the history the working tree sits on, which is what the precondition
+  exists for. Added the check to `git_pull_tool` (raises `GitDirtyError`
+  for `merge`/`rebase` against a dirty tree, reusing S22's existing
+  `GitDirtyError`/`GIT_DIRTY`) plus two new tests in
+  `test_git_pull_tool.py`: one proving a dirty tree blocks a `merge`
+  pull, one proving `ff_only` is unaffected by the same dirty tree (it
+  reaches — and fails at — remote validation instead, proving the dirty
+  check itself never fired).
+- **AT-010** (Non-Fast-Forward Push) already had real git-mechanics
+  coverage (`tests/git/test_pull.py`'s and `tests/git/test_push.py`'s
+  diverged-history tests) but no citation and no structured-tool-level
+  test. Citations were added to both. Full structured-tool-level AT-010
+  coverage (driving non-fast-forward rejection through the actual
+  `git_pull`/`git_push` MCP tools against a real `github.com` remote)
+  remains **blocked pending S23/D3** — the same class of gap already
+  documented for AT-027/AT-028's second halves: `validate_remote_identity`
+  (S25) accepts only `github.com` as a structured-tool remote, and S24's
+  `insteadOf` rewrite forces even an HTTPS-authored `github.com` origin
+  through SSH, which needs a real provisioned key nobody has registered.
+
+**Category audit** (the TODO's own unit/integration/security bullets):
+each category was checked for existing coverage by name — path
+authorization/traversal/symlink escape
+(`filesystem/test_security.py`, `test_repositories.py`,
+`workspace/test_caches.py`), remote normalization
+(`git/test_remote.py`), policy decisions (`config/test_models.py`,
+`git/test_remote.py`, `test_github_api.py`, several `workspace/test_*`
+files), refspec construction (`git/test_push.py`), state transitions
+(`workspace/test_manager.py`, `test_idle_stop.py`, `test_recovery.py`),
+redaction (`test_audit.py`, `test_errors.py`,
+`workspace/test_audit_logging.py`), config validation
+(`config/test_loader.py`, `config/test_models.py`, `test_project_config.py`),
+malicious remote URL (`git/test_service.py`,
+`workspace/test_git_pull_tool.py`, `workspace/test_git_push_tool.py`),
+Docker socket (`workspace/test_mounts_integration.py`'s AT-012), secret
+leakage (`filesystem/test_security.py`, `test_audit.py`). Every category
+already had real, substantive coverage from its originating task — this
+audit found no genuinely uncovered category, only the three AT gaps
+above.
+
+**New: `tests/test_acceptance_test_coverage.py`.** A self-verifying test
+parsing every `### AT-NNN` heading out of `docs/SPEC.md` directly (not a
+hardcoded list, so it can't drift from the spec) and asserting each
+number is cited, case-insensitively, in both `AT-XXX` and `AT_XXX` form,
+by at least one file under `tests/`. Also asserts the spec defines
+exactly 37 ATs, as a sanity check on the parser itself. This makes a
+future spec edit that adds, removes, or renumbers an AT fail loudly here
+instead of silently drifting out of sync with the suite — it does not
+judge whether a citing test's assertions are adequate, only that one
+exists.
+
+**New: `tests/workspace/test_e2e_workflow.py`.** One continuous test
+driving every §78 "definition of done" workflow step reachable without a
+live GitHub credential, through the real MCP tool surface against a real
+Docker daemon: connect → list/select repository → open persistent
+workspace → inspect Git state → inspect/search files → modify a file →
+install a dev tool via `sudo apt-get` → run a linter-equivalent → run a
+real unit test against the edit → start and monitor an async build via
+`exec_start`/`exec_status`/`exec_output` → review the `git_diff` → commit
+with an `expected_head_sha` guard → reconnect with a fresh
+`create_server` (a new MCP session, same state db and repository) and
+confirm the commit is visible. §78 steps 5 and 15 (pull/push against the
+real `github.com` remote) are the two genuinely unreachable steps for the
+same S23/D3 reason as AT-010/AT-027/AT-028; §78 step 17 (no host Docker
+socket/paths/credentials reachable) is asserted per-mechanism elsewhere
+(AT-012/AT-013/AT-016) rather than re-derived here. Two real response-shape
+bugs in my own first draft were caught immediately by running it against
+the real tool layer rather than trusting the schema from memory:
+`exec_output`'s field is `content`, not `stdout_tail`; `git_diff`'s field
+is `content`, not `diff`; `git_commit`'s field is `commit_sha`, not
+`head_sha`.
+
+**Verification performed, not assumed:** full suite (`uv run pytest -q`)
+— 656 passed, 0 leftover Docker containers/volumes/ssh-agent processes
+afterward; `ruff format .` / `ruff check .` / `mypy src` all clean;
+`export-schemas` re-run against a fresh config and diffed byte-for-byte
+against the checked-in `schemas/tools.json` — no drift (expected: S33
+adds no new tools or output fields).
 
 ---
 

@@ -158,6 +158,12 @@ def test_build_push_argv_never_passes_mirror_all_or_tags() -> None:
 
 
 def test_real_diverged_push_is_rejected_with_a_recognized_marker(tmp_path: Path) -> None:
+    """AT-010 (git mechanics half): a real, diverged, non-force push is
+    rejected by git itself with a recognized marker. Full
+    structured-tool-level AT-010 coverage (through the `git_push` MCP tool
+    itself, against a real `github.com` remote) remains blocked pending
+    S23/D3 — see `test_git_push_tool.py`'s real-network section — same
+    class of gap as AT-027/AT-028's second halves."""
     remote, work_a = _clone_pair(tmp_path)
     work_b = tmp_path / "work_b"
     _run(["git", "clone", "-q", str(remote), str(work_b)], tmp_path)

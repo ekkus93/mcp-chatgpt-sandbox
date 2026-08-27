@@ -203,6 +203,62 @@ async def test_git_pull_expected_head_sha_mismatch_fails(
         )
 
 
+async def test_at_019_a_dirty_tree_blocks_pull_under_merge_or_rebase_strategy(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """AT-019: "Attempt an operation configured to require a clean tree
+    while unrelated uncommitted changes exist. The operation SHALL fail"
+    (§22.3). `ff_only` (the default) is deliberately exempt — see
+    `git_pull_tool`'s own comment for why — so this configures `merge`
+    and confirms a real, unrelated uncommitted change (a plain
+    `write_file`, nothing to do with what would be pulled) blocks the
+    pull before anything is fetched."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path, github="owner/example")
+    _set_remote(repo_path, "https://github.com/owner/example.git")
+    config = config.model_copy(
+        update={"git_policy": config.git_policy.model_copy(update={"pull_strategy": "merge"})}
+    )
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    await server.call_tool(
+        "write_file",
+        {"workspace_id": workspace_id, "path": "unrelated.txt", "content": "uncommitted\n"},
+    )
+
+    with pytest.raises(ToolError, match="GIT_DIRTY"):
+        await server.call_tool("git_pull", {"workspace_id": workspace_id})
+
+
+async def test_ff_only_pull_is_exempt_from_the_dirty_tree_check(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """The default `ff_only` strategy is not gated by AT-019's check — a
+    dirty tree still reaches remote validation (and fails there instead,
+    for an unrelated reason), proving the dirty check itself did not
+    fire."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path, github="owner/example")
+    _set_remote(repo_path, "ext::sh -c 'touch /tmp/pwned'")
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    await server.call_tool(
+        "write_file",
+        {"workspace_id": workspace_id, "path": "unrelated.txt", "content": "uncommitted\n"},
+    )
+
+    with pytest.raises(ToolError, match="GIT_REMOTE_NOT_ALLOWED"):
+        await server.call_tool("git_pull", {"workspace_id": workspace_id})
+
+
 # --- a real fetch attempt against the real github.com host -------------------------
 #
 # `git_pull` runs against a *validated* remote — an `https://github.com/...`
