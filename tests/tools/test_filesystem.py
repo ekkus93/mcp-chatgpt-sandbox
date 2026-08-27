@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 
-from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
+from dev_workspace_mcp.config.models import FilesystemConfig, RepositoryConfig, ServerConfig
 from dev_workspace_mcp.db import open_db
 from dev_workspace_mcp.server import create_server
 
@@ -109,6 +109,80 @@ async def test_patch_file_tool(minimal_config: ServerConfig, tmp_path: Path) -> 
             "diff": "@@ -2,1 +2,1 @@\n-two\n+TWO\n",
         },
     )
+    assert result.structured_content["applied"] is True
+    assert (tmp_path / "work" / "example" / "f.txt").read_text() == "one\nTWO\nthree\n"
+
+
+# --- HR-004/HR-005 (docs/HARDENING_SPEC.md §5): patch_file cannot destroy data -------
+
+
+async def test_at_hat004_patch_file_refuses_a_truncated_read_rather_than_destroying_the_file(
+    minimal_config: ServerConfig, tmp_path: Path
+) -> None:
+    """A real regression, reproduced exactly this way during the
+    2026-08-27 review: with `max_read_bytes` below a file's size,
+    `patch_file` used to write the truncated read back over the whole
+    file and report `{'applied': True}`. With a 2000-byte file and a
+    50-byte limit, 1950 bytes were silently destroyed."""
+    config = minimal_config.model_copy(update={"filesystem": FilesystemConfig(max_read_bytes=50)})
+    config, workspace_id = _workspace_with_repo(config, tmp_path / "work" / "example")
+    big_file = tmp_path / "work" / "example" / "big.txt"
+    original_content = "line\n" * 400  # 2000 bytes
+    big_file.write_text(original_content)
+    server = create_server(config)
+
+    with pytest.raises(ToolError, match="INVALID_ARGUMENT"):
+        await server.call_tool(
+            "patch_file",
+            {
+                "workspace_id": workspace_id,
+                "path": "big.txt",
+                "diff": "@@ -1,1 +1,1 @@\n-line\n+LINE\n",
+            },
+        )
+
+    assert big_file.read_text() == original_content
+
+
+async def test_at_hat004_max_patch_bytes_is_enforced(
+    minimal_config: ServerConfig, tmp_path: Path
+) -> None:
+    """`filesystem.max_patch_bytes` was declared and never read — an
+    unbounded diff payload was accepted regardless of the configured
+    limit."""
+    config = minimal_config.model_copy(update={"filesystem": FilesystemConfig(max_patch_bytes=20)})
+    config, workspace_id = _workspace_with_repo(config, tmp_path / "work" / "example")
+    (tmp_path / "work" / "example" / "a.txt").write_text("line\n")
+    server = create_server(config)
+    oversized_diff = "@@ -1,1 +1,1 @@\n-line\n+this replacement line is deliberately too long\n"
+    assert len(oversized_diff.encode("utf-8")) > 20
+
+    with pytest.raises(ToolError, match="INVALID_ARGUMENT"):
+        await server.call_tool(
+            "patch_file",
+            {"workspace_id": workspace_id, "path": "a.txt", "diff": oversized_diff},
+        )
+
+    assert (tmp_path / "work" / "example" / "a.txt").read_text() == "line\n"
+
+
+async def test_patch_file_still_works_normally_below_both_limits(
+    minimal_config: ServerConfig, tmp_path: Path
+) -> None:
+    """Regression guard: the two new checks must not interfere with an
+    ordinary patch that is within both limits."""
+    config = minimal_config.model_copy(
+        update={"filesystem": FilesystemConfig(max_read_bytes=1024, max_patch_bytes=1024)}
+    )
+    config, workspace_id = _workspace_with_repo(config, tmp_path / "work" / "example")
+    (tmp_path / "work" / "example" / "f.txt").write_text("one\ntwo\nthree\n")
+    server = create_server(config)
+
+    result = await server.call_tool(
+        "patch_file",
+        {"workspace_id": workspace_id, "path": "f.txt", "diff": "@@ -2,1 +2,1 @@\n-two\n+TWO\n"},
+    )
+
     assert result.structured_content["applied"] is True
     assert (tmp_path / "work" / "example" / "f.txt").read_text() == "one\nTWO\nthree\n"
 

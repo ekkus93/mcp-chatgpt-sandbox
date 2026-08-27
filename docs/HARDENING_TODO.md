@@ -370,17 +370,57 @@ checks' logic).
   review (`path="", recursive=True`) and asserting the repository, `.git`, and
   an unrelated file all survive.
 
-### H5 — A truncated read never becomes a write
+### H5 — A truncated read never becomes a write ✅
 **Satisfies:** HR-004, HR-005 · **Verified by:** HAT-004
+**Commit:** `ea3dd17`
 
-- [ ] `patch_file` fails with `INVALID_ARGUMENT` when its read was truncated
-- [ ] `patch_file` passes the sha256 it read through as the write's
+- [x] `patch_file` fails with `INVALID_ARGUMENT` when its read was truncated
+- [x] `patch_file` passes the sha256 it read through as the write's
       `expected_sha256`, closing its own read/write window
-- [ ] Enforce `filesystem.max_patch_bytes` on the incoming diff
-- [ ] Audit for other read-bounded/write-whole pairs
+- [x] Enforce `filesystem.max_patch_bytes` on the incoming diff
+- [x] Audit for other read-bounded/write-whole pairs
 
 **Defect:** `tools/filesystem.py:187–219`. Reproduced: 1950 of 2000 bytes
 destroyed, reported as `{'applied': True}` with a fresh valid sha256.
+
+**Implementation.** Three checks added to `patch_file`, in order: (1) the diff
+payload's byte length is checked against `filesystem.max_patch_bytes` before
+the file is even read, so an oversized diff fails cheaply; (2) `current.truncated`
+is checked immediately after the read and refused with `INVALID_ARGUMENT`
+before any patching is attempted; (3) `write_file` is now called with
+`expected_sha256=current.sha256` unconditionally — not only when the *client*
+supplied one — closing the function's own read/write race independent of the
+caller.
+
+That third check is safe specifically because `ReadResult.sha256` is documented,
+and verified by reading `read_file`'s implementation, to always be the hash of
+the *full, untruncated* file content (`full_sha = sha256_of(data)` is computed
+before any range/truncation is applied) — so it remains a correct
+`expected_sha256` for the write even in the ordinary, non-racing case, and the
+truncation refusal above means it's never reached with content that doesn't
+actually correspond to that hash.
+
+**Audited for other read-bounded/write-whole pairs**, per the task's own
+bullet, rather than assuming `patch_file` was the only one: grepped every
+`read_file(...)` call site in `src/`. Two exist — `patch_file` (fixed here) and
+the `read_file` tool itself, which only returns what it read (with `truncated`
+correctly reported to the client) and never writes anything back. No other
+instance of this pattern exists in the codebase.
+
+**Verified the fix actually verifies something**: reverted `tools/filesystem.py`
+to its pre-H5 state and reran the two new `HAT-004` tests — both failed with
+"DID NOT RAISE `ToolError`," confirming they reproduce the exact regression.
+Restored the fix; reran; both pass, and the pre-existing 12 filesystem-tool
+tests plus 82 filesystem-service tests are unaffected — including a new
+regression guard proving an ordinary patch within both limits still applies
+correctly.
+
+**New tests**, all in `tests/tools/test_filesystem.py`, at the real MCP tool
+layer: the literal exploit scenario from the review (2000-byte file, 50-byte
+`max_read_bytes`, patch rejected, file byte-identical afterward);
+`max_patch_bytes` enforcement with an oversized diff; and a regression guard
+that an ordinary patch below both limits still applies and returns the correct
+content.
 
 ---
 
