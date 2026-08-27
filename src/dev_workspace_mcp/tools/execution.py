@@ -18,6 +18,7 @@ process didn't start (e.g. after a restart, before its logs are pruned).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import secrets
 import shlex
 import sqlite3
@@ -28,11 +29,13 @@ from pathlib import Path
 from mcp.server import MCPServer
 
 import docker
-from dev_workspace_mcp.config.models import ContainerConfig, ExecutionConfig
+from dev_workspace_mcp.audit import write_audit_event
+from dev_workspace_mcp.config.models import AuditConfig, ContainerConfig, ExecutionConfig, SSHConfig
 from dev_workspace_mcp.errors import (
     CommandTimeoutError,
     ContainerRuntimeFailedError,
     InvalidArgumentError,
+    RepositoryNotAllowedError,
     WorkspaceNotRunningError,
     translate_workspace_errors,
 )
@@ -45,10 +48,12 @@ from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.workspace.container_config import resolve_exec_user
 from dev_workspace_mcp.workspace.manager import (
     DockerWorkspaceManager,
+    WorkspaceRecord,
     WorkspaceState,
     get_authorized,
     touch_last_used,
 )
+from dev_workspace_mcp.workspace.ssh_agent import resolve_ssh_key_path, ssh_key_fingerprint
 
 #: How long to wait after TERM before escalating to KILL on a timed-out command.
 KILL_GRACE_PERIOD_SECONDS = 2.0
@@ -150,6 +155,72 @@ def _validate_cwd(cwd: str, workspace_path: str) -> None:
         )
 
 
+def _audit_command_started(
+    audit_config: AuditConfig,
+    *,
+    workspace_id: str,
+    repository_id: str,
+    argv: list[str] | None,
+    shell: str | None,
+    cwd: str,
+) -> None:
+    """§24's "command started" event (HR-028/AT-021): without this,
+    nothing about a command's own invocation ever reached the audit log
+    at all — AT-021 ("run a command containing a configured secret and
+    verify audit output does not expose the secret value") had no audit
+    output to inspect in the first place. `metadata` carries exactly the
+    request shape a client gave (`argv`/`shell`/`cwd`), passed through
+    `write_audit_event`'s existing `redact_secrets` (§24.1) — a
+    GitHub-token-shaped value or `scheme://user:pass@host` embedded
+    anywhere in `argv`/`shell` is caught by the same pattern matching
+    `to_tool_error` already applies to a client-facing error message."""
+    write_audit_event(
+        audit_config,
+        operation="exec",
+        result="success",
+        workspace_id=workspace_id,
+        repository_id=repository_id,
+        metadata={"argv": argv, "shell": shell, "cwd": cwd},
+    )
+
+
+def _audit_ssh_auth_if_applicable(
+    audit_config: AuditConfig,
+    ssh_config: SSHConfig,
+    registry: RepositoryRegistry,
+    record: WorkspaceRecord,
+) -> None:
+    """AT-037: under `ssh.mode: agent`, an `exec` against a workspace
+    with a real ssh-agent mount (§19.2: persistent-mode workspaces whose
+    repository resolves a key — the same condition `workspace_open`'s
+    own mount-building code gates on; an ephemeral workspace or one with
+    no key configured never gets an agent socket at all, so there is
+    nothing to audit) produces an `ssh_auth` record carrying the key's
+    fingerprint. Every check below is a silent skip, not an error: this
+    is an audit *side effect* of a command that has already been
+    authorized to run, not a second authorization gate — a repository
+    that stopped resolving, or a key that fails to fingerprint, should
+    never be what makes `exec` itself fail."""
+    if ssh_config.mode != "agent" or record.mode != "persistent":
+        return
+    with contextlib.suppress(RepositoryNotAllowedError):
+        repository = registry.get(record.repository_id)
+        key_path = resolve_ssh_key_path(ssh_config, repository)
+        if key_path is None:
+            return
+        fingerprint = ssh_key_fingerprint(key_path)
+        if fingerprint is None:
+            return
+        write_audit_event(
+            audit_config,
+            operation="ssh_auth",
+            result="success",
+            workspace_id=record.id,
+            repository_id=record.repository_id,
+            metadata={"fingerprint": fingerprint},
+        )
+
+
 def register(
     server: MCPServer,
     *,
@@ -159,6 +230,8 @@ def register(
     container_config: ContainerConfig,
     execution_config: ExecutionConfig,
     state_dir: Path,
+    audit_config: AuditConfig,
+    ssh_config: SSHConfig,
 ) -> None:
     manager = DockerWorkspaceManager(docker_client, db) if docker_client is not None else None
     service = ExecutionService(docker_client) if docker_client is not None else None
@@ -242,6 +315,15 @@ def register(
                 f"failed to start command in workspace {workspace_id!r}: {exc}",
                 details={"workspace_id": workspace_id},
             ) from exc
+        _audit_command_started(
+            audit_config,
+            workspace_id=workspace_id,
+            repository_id=record.repository_id,
+            argv=argv,
+            shell=shell,
+            cwd=cwd,
+        )
+        _audit_ssh_auth_if_applicable(audit_config, ssh_config, registry, record)
 
         try:
             result = await asyncio.wait_for(
@@ -354,6 +436,15 @@ def register(
             tail_keep_bytes=execution_config.tail_keep_bytes,
         )
         started = job_store.get(job_id)
+        _audit_command_started(
+            audit_config,
+            workspace_id=workspace_id,
+            repository_id=record.repository_id,
+            argv=argv,
+            shell=shell,
+            cwd=cwd,
+        )
+        _audit_ssh_auth_if_applicable(audit_config, ssh_config, registry, record)
 
         # §15.6's retention "on a schedule and on demand" — no scheduler
         # exists elsewhere in the daemon, so this opportunistic call on

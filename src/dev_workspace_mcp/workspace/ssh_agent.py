@@ -58,6 +58,30 @@ def agent_socket_path(runtime_dir: Path, workspace_id: str) -> Path:
     return runtime_dir / workspace_id / "agent.sock"
 
 
+def ssh_key_fingerprint(key_path: Path) -> str | None:
+    """The key's fingerprint, `ssh-keygen -lf`'s own `"SHA256:..."` form
+    — for AT-037's `ssh_auth` audit record (`docs/SPEC.md` §37,
+    `tools/execution.py`). Computed fresh per call rather than cached
+    alongside `SSHAgentRecord`: `ssh-keygen -lf` reads only the public
+    key material on disk (never the agent, never any loaded private
+    key), so it is cheap and has nothing privileged to go stale. `None`
+    on failure (a key file that doesn't exist, or isn't in a format
+    `ssh-keygen` recognizes) — best-effort for an audit trail, not a
+    provisioning-path check; a key that fails to fingerprint here would
+    already have failed loudly in `_load_key` before ever reaching this
+    point in practice."""
+    result = subprocess.run(  # noqa: S603
+        ["ssh-keygen", "-lf", str(key_path)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    # "256 SHA256:AbC123... comment (ED25519)" -> "SHA256:AbC123..."
+    fields = result.stdout.strip().split()
+    return fields[1] if len(fields) >= 2 else None
+
+
 def resolve_ssh_key_path(ssh_config: SSHConfig, repository: RepositoryRecord) -> Path | None:
     """§19.1: which key file this repository's workspace should load,
     under `ssh.mode: agent`. `None` when nothing is configured for it —

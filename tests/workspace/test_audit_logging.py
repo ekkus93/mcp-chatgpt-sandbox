@@ -1,6 +1,8 @@
 """S29: audit logging (§24, §20.7) through the real MCP tool layer —
 `workspace_opened`, `repository_authorization_failure`, and structured
-Git denials audited with the same fidelity as successes.
+Git denials audited with the same fidelity as successes. H26
+(`docs/HARDENING_TODO.md`, HR-028) added `exec`'s own "command started"
+event (§24) and AT-037's `ssh_auth` event.
 
 `tests/test_audit.py` (S17) already exhaustively covers `write_audit_event`
 itself, including AT-021's secret-redaction mechanism — every audit call
@@ -8,14 +10,20 @@ added here routes through that same function, so redaction is exercised
 by construction rather than re-tested per call site. There is no natural,
 realistic path for a secret to appear in this module's own audit
 metadata (branch names, shas, remote identities, policy decisions), so no
-contrived redaction scenario is added here.
+contrived redaction scenario is added here — except `exec`'s own event
+below, whose `argv`/`shell` metadata is exactly a client-supplied command
+line, the one place in this file redaction is a real, reachable concern
+(AT-021), not a theoretical one.
 
-`ssh_auth` (AT-037) needs the per-workspace `ssh-agent` S23 builds (agent
-mode, blocked by D3) to intercept and log signature requests — there is
-no agent to hook into yet, so it is not implemented, consistent with how
-S25/S26/S27 deferred their own S23-dependent halves."""
+`ssh_auth` (AT-037) needed the per-workspace `ssh-agent` S23 builds
+(agent mode) to have something to fingerprint — S23 has since landed
+(`workspace/ssh_agent.py`), and H26 wires `tools/execution.py`'s `exec`/
+`exec_start` into it via `ssh_key_fingerprint`."""
 
+import contextlib
 import json
+import os
+import signal
 import subprocess
 from pathlib import Path
 
@@ -24,7 +32,9 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 import docker
 from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
+from dev_workspace_mcp.db import open_db
 from dev_workspace_mcp.server import create_server
+from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager
 
 
 def _configured(
@@ -52,6 +62,183 @@ async def _open(server, repository_id: str = "example") -> str:
 
 def _set_remote(repo_path: Path, url: str) -> None:
     subprocess.run(["git", "remote", "add", "origin", url], cwd=repo_path, check=True)
+
+
+# --- H26 (`docs/HARDENING_TODO.md`, HR-028): exec's "command started" and
+# AT-037's ssh_auth events -------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_spawned_agents(minimal_config: ServerConfig):
+    """Same lifecycle concern `test_ssh_agent_provisioning.py` already
+    documents: `ssh.mode: agent` (the default) spawns a real, host-side
+    `ssh-agent` process per workspace opened below — not a Docker
+    resource, so nothing else tears it down."""
+    yield
+    db = open_db(minimal_config.state_db_path)
+    try:
+        manager = SSHAgentManager(
+            db, runtime_dir=minimal_config.state_db_path.parent / "ssh-agents"
+        )
+        for record in manager.list_all():
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(record.pid, signal.SIGTERM)
+    finally:
+        db.close()
+
+
+def _real_keypair(tmp_path: Path, name: str = "example.ed25519") -> Path:
+    key_path = tmp_path / name
+    subprocess.run(["ssh-keygen", "-t", "ed25519", "-f", str(key_path), "-N", "", "-q"], check=True)
+    return key_path
+
+
+def _configured_with_key(
+    minimal_config: ServerConfig, default_image_tag: str, repo_path: Path, key_path: Path
+) -> ServerConfig:
+    """Like `_configured`, but the repository also resolves a real ssh
+    key under the default `ssh.mode: agent` — the precondition
+    `_audit_ssh_auth_if_applicable` (`tools/execution.py`) checks."""
+    config = _configured(minimal_config, default_image_tag, repo_path, github="owner/example")
+    return config.model_copy(
+        update={
+            "ssh": config.ssh.model_copy(update={"keys_dir": key_path.parent}),
+            "repositories": [
+                RepositoryConfig(
+                    id="example",
+                    path=repo_path,
+                    github="owner/example",
+                    ssh_key=key_path.name,
+                )
+            ],
+        }
+    )
+
+
+async def test_exec_produces_a_command_started_audit_event(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path, github="owner/example")
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    await server.call_tool("exec", {"workspace_id": workspace_id, "argv": ["true"]})
+
+    events = _read_events(config.audit.path)
+    execs = [e for e in events if e["operation"] == "exec"]
+    assert len(execs) == 1
+    assert execs[0]["result"] == "success"
+    assert execs[0]["workspace_id"] == workspace_id
+    assert execs[0]["repository_id"] == "example"
+    assert execs[0]["metadata"]["argv"] == ["true"]
+
+
+async def test_at_hat021_exec_command_started_event_redacts_a_secret_in_argv(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """AT-021: a command containing a configured secret SHALL NOT expose
+    the secret value in audit output — reachable at all now that `exec`
+    actually produces an audit event. A GitHub-PAT-shaped value in
+    `argv` is exactly the same pattern `redact_secrets`
+    (`errors.py::_SECRET_VALUE_PATTERNS`) already catches in a
+    client-facing error message; this confirms the same protection
+    applies to the audit record `write_audit_event` writes."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path, github="owner/example")
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    secret = "ghp_" + "a" * 36
+    await server.call_tool("exec", {"workspace_id": workspace_id, "argv": ["echo", secret]})
+
+    events = _read_events(config.audit.path)
+    execs = [e for e in events if e["operation"] == "exec"]
+    assert len(execs) == 1
+    raw = json.dumps(execs[0])
+    assert secret not in raw
+    assert "[REDACTED]" in raw
+
+
+async def test_at_037_exec_produces_an_ssh_auth_audit_event_with_a_fingerprint(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """AT-037: under `ssh.mode: agent` (the default), `exec` on a
+    workspace whose repository resolves a real key produces an
+    `ssh_auth` record carrying the key's fingerprint."""
+    key_path = _real_keypair(tmp_path)
+    repo_path = tmp_path / "work" / "example"
+    config = _configured_with_key(minimal_config, default_image_tag, repo_path, key_path)
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    await server.call_tool("exec", {"workspace_id": workspace_id, "argv": ["true"]})
+
+    events = _read_events(config.audit.path)
+    auths = [e for e in events if e["operation"] == "ssh_auth"]
+    assert len(auths) == 1
+    assert auths[0]["result"] == "success"
+    assert auths[0]["workspace_id"] == workspace_id
+    assert auths[0]["repository_id"] == "example"
+    assert auths[0]["metadata"]["fingerprint"].startswith("SHA256:")
+
+
+async def test_exec_start_also_produces_command_started_and_ssh_auth_events(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """The background job path (`exec_start`) is a real command
+    invocation too — the same §24/AT-037 events, not only the
+    synchronous `exec` tool."""
+    key_path = _real_keypair(tmp_path)
+    repo_path = tmp_path / "work" / "example"
+    config = _configured_with_key(minimal_config, default_image_tag, repo_path, key_path)
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    await server.call_tool("exec_start", {"workspace_id": workspace_id, "argv": ["sleep", "0.1"]})
+
+    events = _read_events(config.audit.path)
+    execs = [e for e in events if e["operation"] == "exec"]
+    auths = [e for e in events if e["operation"] == "ssh_auth"]
+    assert len(execs) == 1
+    assert execs[0]["metadata"]["argv"] == ["sleep", "0.1"]
+    assert len(auths) == 1
+    assert auths[0]["metadata"]["fingerprint"].startswith("SHA256:")
+
+
+async def test_no_ssh_auth_event_when_the_repository_has_no_configured_key(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """`ssh.mode: agent` alone is not enough — a repository with no
+    `ssh_key` configured (`_configured`'s default) resolves no key
+    (`resolve_ssh_key_path` returns `None`), so `exec` still produces
+    its "command started" event but SHALL NOT fabricate an `ssh_auth`
+    one with nothing to fingerprint."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path, github="owner/example")
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    await server.call_tool("exec", {"workspace_id": workspace_id, "argv": ["true"]})
+
+    events = _read_events(config.audit.path)
+    assert [e for e in events if e["operation"] == "exec"]
+    assert not [e for e in events if e["operation"] == "ssh_auth"]
 
 
 def _read_events(path: Path) -> list[dict]:

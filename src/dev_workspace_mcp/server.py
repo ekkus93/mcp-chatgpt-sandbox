@@ -115,6 +115,8 @@ def _register_tools(
         container_config=config.container,
         execution_config=config.execution,
         state_dir=config.state_db_path.parent,
+        audit_config=config.audit,
+        ssh_config=config.ssh,
     )
     git_tools.register(
         server,

@@ -1969,10 +1969,28 @@ redaction (`test_audit.py`, `test_errors.py`,
 malicious remote URL (`git/test_service.py`,
 `workspace/test_git_pull_tool.py`, `workspace/test_git_push_tool.py`),
 Docker socket (`workspace/test_mounts_integration.py`'s AT-012), secret
-leakage (`filesystem/test_security.py`, `test_audit.py`). Every category
-already had real, substantive coverage from its originating task — this
-audit found no genuinely uncovered category, only the three AT gaps
-above.
+leakage (`test_audit.py`, `test_errors.py`,
+`workspace/test_audit_logging.py`). Every category already had real,
+substantive coverage from its originating task — this audit found no
+genuinely uncovered category, only the three AT gaps above.
+
+**Correction (H26, `docs/HARDENING_TODO.md` HR-028):** the "secret
+leakage" citation above originally read `filesystem/test_security.py`,
+`test_audit.py` — the former was wrong. `filesystem/test_security.py`'s
+only file named anything secret-shaped is `test_at_002_escaping_symlink_is_rejected`'s
+`outside / "secret.txt"`: a symlink-escape test (AT-002) whose protected
+file happens to be *named* `secret.txt` as flavor text, asserting
+nothing about redaction, secret patterns, or leakage of a secret
+*value* — the citation rested on a filename coincidence, not on any
+actual secret-leakage coverage. The real coverage this category always
+had is `test_errors.py`'s `redact_secrets`/`_redact` unit tests (key-name
+and value-pattern redaction, URL userinfo stripping, `to_tool_error`
+redacting `message` as well as `details`) and `test_audit.py`'s audit-log
+redaction test — both already correctly cited under "redaction" two
+sentences above this one, and now also
+`workspace/test_audit_logging.py`'s AT-021 test (added by H26): a
+GitHub-token-shaped value in `exec`'s `argv` does not appear in the
+written audit record.
 
 **New: `tests/test_acceptance_test_coverage.py`.** A self-verifying test
 parsing every `### AT-NNN` heading out of `docs/SPEC.md` directly (not a

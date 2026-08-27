@@ -266,6 +266,8 @@ async def test_exec_fails_clearly_when_docker_unreachable(minimal_config: Server
         container_config=minimal_config.container,
         execution_config=minimal_config.execution,
         state_dir=minimal_config.state_db_path.parent,
+        audit_config=minimal_config.audit,
+        ssh_config=minimal_config.ssh,
     )
     with pytest.raises(ToolError, match="Docker is not reachable"):
         await server.call_tool("exec", {"workspace_id": "ws_example", "argv": ["true"]})

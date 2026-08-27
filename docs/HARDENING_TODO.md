@@ -2013,16 +2013,127 @@ schema drift (no tool code touched). Full-suite collection
 errors; `ruff check`, `ruff format --check`, and `mypy src` clean across
 the whole tree.
 
-### H26 — Coverage claims rest on assertions
+### H26 — Coverage claims rest on assertions ✅
 **Satisfies:** HR-028
+**Commit:** `2288f34`
 
-- [ ] Implement AT-037's `ssh_auth` audit event, or record AT-037 as explicitly
+- [x] Implement AT-037's `ssh_auth` audit event, or record AT-037 as explicitly
       uncovered — `grep -rn ssh_auth src/` currently returns nothing
-- [ ] Make AT-021's scenario reachable by adding §24's `exec` audit event, or
+- [x] Make AT-021's scenario reachable by adding §24's `exec` audit event, or
       amend the AT
-- [ ] Re-audit every AT whose only citation is a docstring
-- [ ] Correct S33's category audit, which cites `filesystem/test_security.py`
+- [x] Re-audit every AT whose only citation is a docstring
+- [x] Correct S33's category audit, which cites `filesystem/test_security.py`
       for "secret leakage" on the strength of a file *named* `secret.txt`
+
+**Implemented both audit events — real fixes, not amendments.** Neither
+gap needed a spec amendment: `exec`'s "command started" event (§24's own
+recommended-events list) and AT-037's `ssh_auth` event both had
+everything they needed already in place (`write_audit_event`/
+`redact_secrets`, S23's real `ssh-agent` module) — wiring them in was a
+natural extension, not a new mechanism.
+
+**`exec`'s "command started" event, closing AT-021.** New
+`_audit_command_started` (`tools/execution.py`), called from both `exec`
+and `exec_start` right after the command actually starts (not on a start
+*failure* — §24 lists "command started," not "command start failed," and
+one that never started has nothing to audit as started). `metadata`
+carries `argv`/`shell`/`cwd` exactly as the client supplied them, through
+`write_audit_event`'s existing `redact_secrets` (§24.1) — before this,
+`exec` produced no audit record at all, so AT-021 ("run a command
+containing a configured secret and verify audit output does not expose
+the secret value") had no audit output to inspect in the first place.
+
+**AT-037's `ssh_auth` event, with a real fingerprint.** New
+`ssh_key_fingerprint` (`workspace/ssh_agent.py`, `ssh-keygen -lf`,
+computed fresh per call — it only reads public key material, never the
+agent or any loaded private key, so there's nothing to cache or go
+stale) and `_audit_command_started`'s sibling
+`_audit_ssh_auth_if_applicable` (`tools/execution.py`). Every check is a
+silent skip, not a second authorization gate: `ssh.mode != "agent"`,
+`record.mode != "persistent"` (an ephemeral workspace never gets an
+agent mount in the first place — the same condition
+`workspace_open`'s own mount-building code already gates on), no key
+resolves for this repository, or the key fails to fingerprint. This is
+an audit *side effect* of a command already authorized to run — none of
+these should make `exec` itself fail.
+
+**Re-audited every AT whose only citation is a docstring.** Computed the
+real citation set with the audit's own regex (not a shell `grep -b`,
+which undercounts identifier-embedded citations the same way the
+pre-H25 manual grep did — verified this by hand against
+`test_at_011_...`, which a naive `\b`-bounded pattern misses entirely).
+Four ATs have exactly one citation each: AT-006, AT-011, AT-025, AT-029.
+AT-011's sole citation is its own test function's name
+(`test_at_011_force_true_is_denied_before_git_runs_under_default_policy`)
+— the strongest possible kind, not a bare docstring. AT-025 and AT-029
+both have real, on-point assertions behind their docstring (AT-025
+proves suppression *and* that the suppressed mechanism genuinely fires
+without the override — "proof both ways," not just "nothing happened").
+AT-006 also has real, meaningful assertions (job stays queryable,
+eventually completes, output correct) — its one known weakness (the
+"disconnect" is simulated by `del started` on an in-process server, not
+a real network disconnect) is a *realism* gap already tracked
+separately under H28's own checklist, not a citation-vacuity problem;
+re-flagging it here would double-count the same defect under two tasks.
+No AT in this audit turned out to rest on a citation with nothing real
+behind it.
+
+**Corrected `docs/TODO.md`'s S33 category audit.** Its "secret leakage"
+citation read `filesystem/test_security.py`, `test_audit.py` — the
+former was wrong: that file's only secret-shaped name is
+`test_at_002_escaping_symlink_is_rejected`'s `outside / "secret.txt"`, a
+symlink-escape test (AT-002) whose protected file is merely *named*
+`secret.txt`, asserting nothing about redaction or a leaked secret
+*value*. Replaced with the citations "redaction" (two lines above the
+same list) already correctly used: `test_audit.py`, `test_errors.py`,
+and now `workspace/test_audit_logging.py`'s new AT-021 test — added a
+correction paragraph explaining the fix rather than silently rewriting
+history.
+
+**Verified the tests catch the regression:** reverted `tools/execution.py`,
+`workspace/ssh_agent.py`, and `server.py` to their pre-H26 versions and
+reran the new tests. All 5 new `test_audit_logging.py` tests failed
+exactly as predicted (no `exec`/`ssh_auth` events written at all). The
+two pre-existing "Docker unreachable" tests
+(`test_execution_tools.py`, `test_async_execution_tools.py`) — updated
+for `register()`'s two new required parameters — failed with
+`TypeError: register() got an unexpected keyword argument 'audit_config'`
+against the reverted signature, confirming those updates are load-bearing,
+not decorative. Restored the fix; all 45 tests across the three touched
+files pass again. No Docker leftovers, no leaked `ssh-agent` processes,
+after either the revert run or the restore run.
+
+**A real, unrelated regression found by this task's own broader-suite
+run, fixed separately (commit `85c5c35`, pushed ahead of this one):**
+`test_project_config_integration.py::test_cache_volume_is_mounted_writable_and_owned_by_the_container_user`
+still asserted the literal pre-H23 volume name
+(`"mcp-cache-example-cargo"`), which H23's hash-suffixed naming (HR-009)
+made stale — H23's own broader-suite runs were interrupted before ever
+reaching this file, so its scoped-evidence fallback never exercised it.
+H26's own broader run reached further and caught it. Fixed to compare
+against `cache_volume_name(...)`'s real output; not bundled into this
+commit, since it is a fix for H23's own change, not H26's.
+
+No schema drift (no tool output shape changed — the two new audit
+events are a side channel, not a tool response field).
+
+**Full relevant suite** (`tests/workspace/`, `test_errors.py`,
+`test_acceptance_test_coverage.py`, `test_audit.py`): 355 passed clean
+in one uninterrupted background run (the recurring interruption pattern
+seen since H19 did not recur this time), after the cache-volume fix
+above. `ruff check`, `ruff format --check`, and `mypy src` clean across
+the whole tree.
+
+**New tests:** `tests/workspace/test_audit_logging.py` —
+`test_exec_produces_a_command_started_audit_event`;
+`test_at_hat021_exec_command_started_event_redacts_a_secret_in_argv`
+(a GitHub-PAT-shaped value in `argv` does not appear in the written
+audit record); `test_at_037_exec_produces_an_ssh_auth_audit_event_with_a_fingerprint`
+(real `ssh-keygen`-generated key, real `ssh.mode: agent`);
+`test_exec_start_also_produces_command_started_and_ssh_auth_events`
+(the background-job path gets the same events, not only synchronous
+`exec`); `test_no_ssh_auth_event_when_the_repository_has_no_configured_key`
+(no key resolves → no fabricated event).
 
 ### H27 — A degraded CI run fails
 **Satisfies:** HR-029 · **Verified by:** HAT-022
