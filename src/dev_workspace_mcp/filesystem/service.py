@@ -199,7 +199,22 @@ class FilesystemService:
     # --- delete_file ------------------------------------------------------------
 
     def delete_file(self, relative_path: str, *, recursive: bool = False) -> None:
+        # HR-003 (`docs/HARDENING_SPEC.md` §5): the repository root is
+        # never a valid delete target. `_reject_in_tree_git_metadata`
+        # protects `.git` by path *component*, which the root itself
+        # bypasses — its own relative path has zero components, so
+        # ".git" is never among them — and `shutil.rmtree` on the root
+        # takes the working tree and `.git` together, with nothing left
+        # locally recoverable. Checked regardless of `recursive`: a
+        # non-recursive delete of a directory already raises below, but
+        # the root check has to come first so that failure reads as "the
+        # root can't be deleted," not a generic "pass recursive" prompt.
         path = self._security.resolve(relative_path)
+        if path == self._security.root:
+            raise InvalidArgumentError(
+                "the repository root cannot be deleted (§12.1/HR-003)",
+                details={"path": relative_path},
+            )
         if not path.exists() and not path.is_symlink():
             raise InvalidArgumentError(
                 f"does not exist: {relative_path!r}", details={"path": relative_path}
@@ -208,6 +223,17 @@ class FilesystemService:
             if not recursive:
                 raise InvalidArgumentError(
                     f"{relative_path!r} is a directory; recursive deletion must be explicit",
+                    details={"path": relative_path},
+                )
+            # HR-003: refuse to sweep a nested `.git` (a submodule or
+            # vendored checkout) into a recursive delete of its parent.
+            # `_reject_in_tree_git_metadata` already blocks *targeting*
+            # such a path directly; this closes the gap where the target
+            # is the containing directory instead.
+            if any(path.rglob(".git")):
+                raise PathGitMetadataError(
+                    f"{relative_path!r} contains a nested repository's Git "
+                    "metadata; refusing to delete it (§12.1/HR-003)",
                     details={"path": relative_path},
                 )
             shutil.rmtree(path)

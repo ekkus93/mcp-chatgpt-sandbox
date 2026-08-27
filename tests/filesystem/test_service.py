@@ -275,3 +275,108 @@ def test_delete_file_git_metadata_raises(tmp_path: Path) -> None:
 
     with pytest.raises(PathGitMetadataError):
         svc.delete_file(".git", recursive=True)
+
+
+# --- HR-003 (docs/HARDENING_SPEC.md §5): the repository root cannot be deleted --------
+
+
+@pytest.mark.parametrize("relative_path", ["", ".", "./", "src/..", "src/../."])
+def test_at_hat003_the_repository_root_cannot_be_deleted(
+    tmp_path: Path, relative_path: str
+) -> None:
+    """A real regression: `delete_file(path="", recursive=True)` used to
+    resolve straight to the repository root — whose own relative path
+    has zero components, so the `.git`-path-component guard never
+    fired — and `shutil.rmtree` took the working tree and `.git`
+    together, reported as `{'deleted': True}`. Every variant here
+    resolves to the same root."""
+    root = _repo(tmp_path)
+    svc = _service(root)
+
+    with pytest.raises(InvalidArgumentError):
+        svc.delete_file(relative_path, recursive=True)
+
+    assert root.exists()
+    assert (root / ".git").exists()
+    assert (root / "src" / "lib.rs").exists()
+
+
+def test_at_hat003_a_deep_traversal_that_lands_back_on_the_root_cannot_be_deleted(
+    tmp_path: Path,
+) -> None:
+    """A path that starts two levels down and walks back up to the root
+    via `..` — not just the trivial `""`/`.`/`./`/`src/..` forms already
+    parametrized above — resolves to the same root and is refused the
+    same way."""
+    root = _repo(tmp_path)
+    (root / "src" / "nested").mkdir(exist_ok=True)
+    svc = _service(root)
+
+    with pytest.raises(InvalidArgumentError):
+        svc.delete_file("src/nested/../..", recursive=True)
+
+    assert root.exists()
+
+
+def test_at_hat003_non_recursive_root_delete_is_also_rejected_as_the_root(
+    tmp_path: Path,
+) -> None:
+    """The root check fires before the recursive/non-recursive branch —
+    the error is specifically "the root cannot be deleted," not a
+    generic "pass recursive=True" prompt that would then let a retry
+    through."""
+    root = _repo(tmp_path)
+    svc = _service(root)
+
+    with pytest.raises(InvalidArgumentError, match="root"):
+        svc.delete_file("", recursive=False)
+
+    assert root.exists()
+
+
+def test_at_hat003_a_nested_git_directory_blocks_the_recursive_delete_of_its_parent(
+    tmp_path: Path,
+) -> None:
+    """A submodule or vendored checkout inside a directory being
+    recursively deleted: `_reject_in_tree_git_metadata` already blocks
+    *targeting* the nested `.git` directly, but not sweeping it up as
+    part of deleting its containing directory."""
+    root = _repo(tmp_path)
+    (root / "vendored").mkdir()
+    (root / "vendored" / ".git").mkdir()
+    (root / "vendored" / "file.txt").write_text("hi\n")
+    svc = _service(root)
+    from dev_workspace_mcp.errors import PathGitMetadataError
+
+    with pytest.raises(PathGitMetadataError):
+        svc.delete_file("vendored", recursive=True)
+
+    assert (root / "vendored" / ".git").exists()
+    assert (root / "vendored" / "file.txt").exists()
+
+
+def test_at_hat003_a_nested_gitfile_also_blocks_the_recursive_delete(tmp_path: Path) -> None:
+    """A linked worktree or submodule may have `.git` as a *file*
+    (a gitfile pointing elsewhere), not a directory — the scan for a
+    nested `.git` has to catch that shape too, not just a directory."""
+    root = _repo(tmp_path)
+    (root / "linked-worktree").mkdir()
+    (root / "linked-worktree" / ".git").write_text("gitdir: /somewhere/else\n")
+    svc = _service(root)
+    from dev_workspace_mcp.errors import PathGitMetadataError
+
+    with pytest.raises(PathGitMetadataError):
+        svc.delete_file("linked-worktree", recursive=True)
+
+
+def test_delete_file_recursive_without_nested_git_is_unaffected(tmp_path: Path) -> None:
+    """The nested-`.git` scan must not become a blanket regression: an
+    ordinary directory with no `.git` anywhere inside it still deletes
+    normally."""
+    root = _repo(tmp_path)
+    (root / "plain").mkdir()
+    (root / "plain" / "x.txt").write_text("x\n")
+    svc = _service(root)
+
+    svc.delete_file("plain", recursive=True)
+    assert not (root / "plain").exists()

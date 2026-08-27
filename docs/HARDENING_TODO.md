@@ -311,18 +311,64 @@ own bullet).
 
 ## Phase 2 — Data destruction
 
-### H4 — The repository root is not a deletable target
+### H4 — The repository root is not a deletable target ✅
 **Satisfies:** HR-003 · **Verified by:** HAT-003
+**Commit:** `5c0c64c`
 
-- [ ] Refuse a `delete_file` path resolving to the repository root, regardless
+- [x] Refuse a `delete_file` path resolving to the repository root, regardless
       of `recursive`
-- [ ] Refuse recursive descent into any directory containing a `.git` entry
+- [x] Refuse recursive descent into any directory containing a `.git` entry
       (nested repo, submodule, vendored checkout)
-- [ ] Cover `""`, `"."`, `"./"`, an absolute path to the root, and a traversal
+- [x] Cover `""`, `"."`, `"./"`, an absolute path to the root, and a traversal
       that lands on it
 
 **Defect:** `filesystem/service.py:201–215`. Reproduced: working tree and `.git`
 both removed, tool returned `{'deleted': True}`. Nothing locally recoverable.
+
+**Implementation.** Two independent checks added to `FilesystemService.delete_file`,
+ahead of the existing existence/recursive checks: (1) `path == self._security.root`
+is refused with `INVALID_ARGUMENT`, regardless of `recursive` — this is the check
+`_reject_in_tree_git_metadata` structurally cannot make, since the root's own
+relative path has zero components, so `".git"` is never among them; (2) before
+`shutil.rmtree`, `any(path.rglob(".git"))` refuses to sweep a nested repository's
+Git metadata into a recursive delete of its *containing* directory — the existing
+guard already blocks *targeting* a nested `.git` directly, but not this. Both
+checks fire regardless of whether the `.git` in question is a directory (an
+ordinary repo) or a file (a gitfile — a linked worktree or submodule), since
+`rglob(".git")` matches by name, not by type.
+
+**"An absolute path to the root" from the task text turned out not to be a real
+case, caught before it shipped as a wrong test.** §12 already reinterprets a
+leading `/` as repository-relative rather than truly absolute
+(`_resolve_candidate`'s `lstrip("/")`), so `delete_file(path=str(root))` does
+**not** resolve back to the root — it resolves to `root / str(root).lstrip("/")`,
+a deeply nested (and generally nonexistent) path. Verified this directly before
+trusting it: `sec.resolve(str(root))` returned
+`.../work/example/tmp/.../work/example`, not the root. Replaced that variant
+with one that does genuinely reproduce "a traversal that lands on the root" —
+`src/nested/../..` from two levels down — verified separately to resolve to
+`sec.root` exactly, before writing the test around it.
+
+**Verified the fix actually verifies something**: reverted `filesystem/service.py`
+to its pre-H4 state and reran the new `HAT-003`-tagged tests — all 9 in
+`tests/filesystem/test_service.py` failed (the root-deletion variants with "DID
+NOT RAISE", the nested-`.git` cases the same way), confirming they catch the
+exact regression. Restored the fix; reran; all pass, and the pre-existing 82
+filesystem tests are unaffected (an ordinary directory with no nested `.git`
+still deletes normally — checked explicitly, not merely assumed from the new
+checks' logic).
+
+**New tests:**
+- `tests/filesystem/test_service.py`: a parametrized root-deletion test over
+  `""`, `.`, `./`, `src/..`, `src/../.`; a separate deep-traversal variant;
+  a non-recursive-root case (proving the root check fires before the
+  recursive/non-recursive branch, not as a side effect of it); a nested-`.git`
+  directory case and a nested-gitfile case; and a explicit "ordinary directory
+  still deletes fine" regression guard.
+- `tests/tools/test_filesystem.py`: `test_at_hat003_delete_file_cannot_erase_the_repository_root`,
+  calling the real `delete_file` MCP tool with the literal exploit call from the
+  review (`path="", recursive=True`) and asserting the repository, `.git`, and
+  an unrelated file all survive.
 
 ### H5 — A truncated read never becomes a write
 **Satisfies:** HR-004, HR-005 · **Verified by:** HAT-004

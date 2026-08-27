@@ -123,6 +123,28 @@ async def test_delete_file_tool(minimal_config: ServerConfig, tmp_path: Path) ->
     assert not (tmp_path / "work" / "example" / "f.txt").exists()
 
 
+async def test_at_hat003_delete_file_cannot_erase_the_repository_root(
+    minimal_config: ServerConfig, tmp_path: Path
+) -> None:
+    """A real regression, reproduced exactly this way during the
+    2026-08-27 review: `delete_file(path="", recursive=True)` called
+    through the published MCP tool contract removed the working tree and
+    `.git` together and returned `{'deleted': True}`."""
+    repo_path = tmp_path / "work" / "example"
+    config, workspace_id = _workspace_with_repo(minimal_config, repo_path)
+    (repo_path / "f.txt").write_text("keep me\n")
+    server = create_server(config)
+
+    with pytest.raises(ToolError, match="INVALID_ARGUMENT"):
+        await server.call_tool(
+            "delete_file", {"workspace_id": workspace_id, "path": "", "recursive": True}
+        )
+
+    assert repo_path.exists()
+    assert (repo_path / ".git").exists()
+    assert (repo_path / "f.txt").exists()
+
+
 async def test_search_files_tool(minimal_config: ServerConfig, tmp_path: Path) -> None:
     config, workspace_id = _workspace_with_repo(minimal_config, tmp_path / "work" / "example")
     (tmp_path / "work" / "example" / "f.txt").write_text("needle in a haystack\n")
