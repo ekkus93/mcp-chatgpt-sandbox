@@ -1,18 +1,18 @@
 """`git_status` (§17.2, S20), `git_diff` / `git_log` (§17.3, §46, S21) —
 §34.1's host-side structured Git reads — plus `git_commit` (§17.4, §20.6,
-§45, §18.9, S22) and `git_pull` (§20.5, §18.8, S26), the structured
-*mutating* tools.
+§45, §18.9, S22), `git_pull` (§20.5, §18.8, S26), and `git_push` (§20.3,
+§20.5, §18.9, §20.6, S27), the structured *mutating* tools.
 
 The reads are host-side (§20.1): each needs the repository root and
 nothing else — no Docker, no container, no execution service.
-`git_commit`/`git_pull` run in-container instead, through the same
-execution service `exec` uses (§20.1's "not a second execution path with
-a second credential") — so `register()` needs `docker_client` and
-friends too, unlike the read-only tools it sits alongside. `git_pull`
-additionally needs `registry` and `github_config`: §20.2 remote-identity
-validation compares the resolved remote against the repository's
-configured GitHub identity and the `github.repositories` allowlist,
-neither of which a workspace_id alone carries.
+`git_commit`/`git_pull`/`git_push` run in-container instead, through the
+same execution service `exec` uses (§20.1's "not a second execution path
+with a second credential") — so `register()` needs `docker_client` and
+friends too, unlike the read-only tools it sits alongside. `git_pull`/
+`git_push` additionally need `registry` and `github_config`: §20.2
+remote-identity validation compares the resolved remote against the
+repository's configured GitHub identity and the `github.repositories`
+allowlist, neither of which a workspace_id alone carries.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 from dataclasses import dataclass, field
+from typing import Literal
 
 from mcp.server import MCPServer
 
@@ -57,6 +58,13 @@ from dev_workspace_mcp.git.pull import (
     build_fetch_argv,
     build_integrate_argv,
     is_non_fast_forward_failure,
+)
+from dev_workspace_mcp.git.push import (
+    build_force_with_lease_arg,
+    build_push_argv,
+    build_refspec,
+    is_push_non_fast_forward_failure,
+    validate_branch_name,
 )
 from dev_workspace_mcp.git.remote import validate_remote_identity
 from dev_workspace_mcp.git.service import detect_interrupted_operation, run_git_host_side
@@ -118,6 +126,17 @@ class GitPullOutput:
     head_sha: str | None
     fast_forward: bool
     updated: bool
+
+
+@dataclass
+class GitPushOutput:
+    remote: str
+    remote_repository: str
+    branch: str
+    ref_type: str
+    pushed_sha: str | None
+    deleted: bool
+    fast_forward: bool
 
 
 def register(
@@ -524,4 +543,246 @@ def register(
             head_sha=new_status.head_sha,
             fast_forward=fast_forward,
             updated=new_status.head_sha != previous_head_sha,
+        )
+
+    @server.tool(
+        name="git_push",
+        description="Push to a validated remote with a daemon-constructed refspec — "
+        "never a client-supplied one (§20.3). force/force_with_lease/delete are each "
+        "governed by their own git_policy key, refused before Git is invoked.",
+    )
+    @translate_workspace_errors
+    async def git_push_tool(
+        workspace_id: str,
+        remote: str = "origin",
+        branch: str | None = None,
+        expected_remote_repository: str | None = None,
+        expected_local_head_sha: str | None = None,
+        force: bool = False,
+        force_with_lease: bool = False,
+        delete: bool = False,
+        ref_type: Literal["branch", "tag"] = "branch",
+        no_verify: bool = False,
+    ) -> GitPushOutput:
+        if manager is None or execution_service is None or docker_client is None:
+            raise ContainerRuntimeFailedError(
+                "Docker is not reachable; the server is running in a degraded "
+                "state (§73) and cannot push"
+            )
+        if force and force_with_lease:
+            raise InvalidArgumentError(
+                "force and force_with_lease are mutually exclusive (§20.3, AT-029)",
+                details={"force": force, "force_with_lease": force_with_lease},
+            )
+        if delete and expected_local_head_sha is not None:
+            raise InvalidArgumentError(
+                "expected_local_head_sha guards the commit being pushed; it does "
+                "not apply to delete: true, which pushes nothing",
+                details={"delete": delete},
+            )
+
+        record = manager.get(workspace_id)
+        if record.state != WorkspaceState.RUNNING:
+            raise WorkspaceNotRunningError(
+                f"workspace {workspace_id!r} is not running (state: {record.state.value})",
+                details={"workspace_id": workspace_id, "state": record.state.value},
+            )
+        assert record.container_id is not None  # implied by state == RUNNING
+        container_id = record.container_id  # narrowed value, captured for the closure below
+
+        repo_path = resolve_repository_root(db, workspace_id)
+
+        interrupted = detect_interrupted_operation(repo_path)
+        if interrupted is not None:
+            raise GitConflictError(
+                f"a {interrupted.value} is in progress; resolve or abort it before pushing (§44.4)",
+                details={"workspace_id": workspace_id, "interrupted_operation": interrupted.value},
+            )
+
+        status = read_git_status(repo_path)
+        target_branch = branch if branch is not None else status.branch
+        if target_branch is None:
+            raise InvalidArgumentError(
+                "git_push requires an explicit 'branch' when HEAD is detached",
+                details={"workspace_id": workspace_id},
+            )
+        validate_branch_name(target_branch)
+
+        if delete:
+            local_head_sha = None
+        elif target_branch == status.branch:
+            local_head_sha = status.head_sha
+        else:
+            rev = run_git_host_side(
+                repo_path, ["rev-parse", "--verify", "-q", f"refs/heads/{target_branch}"]
+            )
+            if not rev.ok:
+                raise InvalidArgumentError(
+                    f"local branch {target_branch!r} does not exist",
+                    details={"branch": target_branch},
+                )
+            local_head_sha = rev.stdout.strip()
+
+        # §18.9 policy, evaluated entirely before Git is invoked or the
+        # remote is even validated (AT-011) — `require_approval` is a
+        # hard denial in this release (§42: no interactive-approval
+        # mechanism exists yet).
+        def _denied(policy: str) -> bool:
+            return policy != "allow"
+
+        if _denied(git_policy_config.push):
+            raise PolicyDeniedError(
+                "git_policy.push denies git_push entirely (§18.9)",
+                details={"policy": "push", "value": git_policy_config.push},
+            )
+
+        default_branch = detect_default_branch(repo_path)
+        is_default_branch = default_branch is not None and target_branch == default_branch
+        if is_default_branch:
+            default_branch_push = git_policy_config.default_branch_push
+            if default_branch_push == "deny" or default_branch_push == "require_approval":
+                raise PolicyDeniedError(
+                    f"default_branch_push policy denies pushing to {default_branch!r} (§18.9)",
+                    details={"branch": default_branch, "policy": "default_branch_push"},
+                )
+            if default_branch_push == "allow_fast_forward" and (force or force_with_lease):
+                raise PolicyDeniedError(
+                    f"default_branch_push: allow_fast_forward permits only a "
+                    f"non-force push to {default_branch!r} (§18.9)",
+                    details={"branch": default_branch, "policy": "default_branch_push"},
+                )
+
+        if force and _denied(git_policy_config.force_push):
+            raise PolicyDeniedError(
+                "force_push policy denies force: true (§18.9)",
+                details={"policy": "force_push", "value": git_policy_config.force_push},
+            )
+        if force_with_lease and _denied(git_policy_config.force_with_lease):
+            raise PolicyDeniedError(
+                "force_with_lease policy denies force_with_lease: true (§18.9)",
+                details={"policy": "force_with_lease", "value": git_policy_config.force_with_lease},
+            )
+        if delete:
+            delete_policy = (
+                git_policy_config.delete_remote_branch
+                if ref_type == "branch"
+                else git_policy_config.delete_remote_tag
+            )
+            policy_name = "delete_remote_branch" if ref_type == "branch" else "delete_remote_tag"
+            if _denied(delete_policy):
+                raise PolicyDeniedError(
+                    f"{policy_name} policy denies delete: true (§18.9)",
+                    details={"policy": policy_name, "value": delete_policy},
+                )
+
+        # §20.3: a force push still carries a state guard — required once
+        # policy has actually permitted it, not merely requested.
+        if (force or force_with_lease) and expected_local_head_sha is None:
+            raise InvalidArgumentError(
+                "expected_local_head_sha is required when force or "
+                "force_with_lease is used (§20.3)",
+                details={"force": force, "force_with_lease": force_with_lease},
+            )
+        if (
+            expected_local_head_sha is not None
+            and not delete
+            and expected_local_head_sha != local_head_sha
+        ):
+            raise GitHeadChangedError(
+                f"expected local HEAD {expected_local_head_sha!r} for "
+                f"{target_branch!r}, found {local_head_sha!r} (§45)",
+                details={
+                    "expected_local_head_sha": expected_local_head_sha,
+                    "actual_local_head_sha": local_head_sha,
+                },
+            )
+
+        # §20.2: validate the remote before contacting it at all.
+        repository_record = registry.get(record.repository_id)
+        remote_repository = validate_remote_identity(
+            repo_path,
+            remote=remote,
+            allowed_url_schemes=git_policy_config.allowed_url_schemes,
+            configured_github=repository_record.github or "",
+            allowlisted_repositories=github_config.repositories,
+            expected_remote_repository=expected_remote_repository,
+        )
+
+        refspec = build_refspec(
+            target_branch,
+            ref_type=ref_type,
+            force=force,
+            delete=delete,
+        )
+        force_with_lease_arg = (
+            build_force_with_lease_arg(repo_path, remote=remote, branch=target_branch)
+            if force_with_lease
+            else None
+        )
+        argv = build_push_argv(remote, refspec, force_with_lease_arg=force_with_lease_arg)
+        if no_verify:
+            argv.insert(argv.index("push") + 1, "--no-verify")
+
+        user = resolve_exec_user(container_config)
+        exec_id = await asyncio.to_thread(
+            execution_service.start,
+            container_id,
+            argv,
+            cwd=record.workspace_path,
+            user=user,
+            env=None,
+        )
+        result = await asyncio.to_thread(
+            execution_service.consume,
+            exec_id,
+            max_output_bytes=execution_config.max_output_bytes,
+            response_tail_lines=execution_config.response_tail_lines,
+        )
+        if result.exit_code != 0:
+            if not delete and not force and is_push_non_fast_forward_failure(result.stderr_tail):
+                raise GitNonFastForwardError(
+                    f"push rejected: {target_branch!r} has diverged from "
+                    f"{remote}/{target_branch}: {result.stderr_tail} (§20.5)",
+                    details={
+                        "workspace_id": workspace_id,
+                        "remote": remote,
+                        "branch": target_branch,
+                    },
+                )
+            raise CommandFailedError(
+                f"git push failed: {result.stderr_tail}",
+                details={
+                    "workspace_id": workspace_id,
+                    "remote": remote,
+                    "branch": target_branch,
+                    "delete": delete,
+                },
+            )
+
+        write_audit_event(
+            audit_config,
+            operation="git_push",
+            result="success",
+            workspace_id=workspace_id,
+            repository_id=record.repository_id,
+            metadata={
+                "remote": remote,
+                "remote_repository": remote_repository,
+                "branch": target_branch,
+                "ref_type": ref_type,
+                "pushed_sha": local_head_sha,
+                "deleted": delete,
+                "force": force,
+                "force_with_lease": force_with_lease,
+            },
+        )
+
+        return GitPushOutput(
+            remote=remote,
+            remote_repository=remote_repository,
+            branch=target_branch,
+            ref_type=ref_type,
+            pushed_sha=local_head_sha,
+            deleted=delete,
+            fast_forward=not force and not force_with_lease and not delete,
         )

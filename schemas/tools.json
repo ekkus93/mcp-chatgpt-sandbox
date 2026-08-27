@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.6.0",
+  "contract_version": "0.7.0",
   "tools": [
     {
       "description": "Delete a repository file or directory (\u00a713.5).",
@@ -918,6 +918,143 @@
           "updated"
         ],
         "title": "GitPullOutput",
+        "type": "object"
+      }
+    },
+    {
+      "description": "Push to a validated remote with a daemon-constructed refspec \u2014 never a client-supplied one (\u00a720.3). force/force_with_lease/delete are each governed by their own git_policy key, refused before Git is invoked.",
+      "input_schema": {
+        "properties": {
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Branch"
+          },
+          "delete": {
+            "default": false,
+            "title": "Delete",
+            "type": "boolean"
+          },
+          "expected_local_head_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Local Head Sha"
+          },
+          "expected_remote_repository": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Remote Repository"
+          },
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          },
+          "force_with_lease": {
+            "default": false,
+            "title": "Force With Lease",
+            "type": "boolean"
+          },
+          "no_verify": {
+            "default": false,
+            "title": "No Verify",
+            "type": "boolean"
+          },
+          "ref_type": {
+            "default": "branch",
+            "enum": [
+              "branch",
+              "tag"
+            ],
+            "title": "Ref Type",
+            "type": "string"
+          },
+          "remote": {
+            "default": "origin",
+            "title": "Remote",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id"
+        ],
+        "title": "git_push_toolArguments",
+        "type": "object"
+      },
+      "name": "git_push",
+      "output_schema": {
+        "properties": {
+          "branch": {
+            "title": "Branch",
+            "type": "string"
+          },
+          "deleted": {
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "fast_forward": {
+            "title": "Fast Forward",
+            "type": "boolean"
+          },
+          "pushed_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pushed Sha"
+          },
+          "ref_type": {
+            "title": "Ref Type",
+            "type": "string"
+          },
+          "remote": {
+            "title": "Remote",
+            "type": "string"
+          },
+          "remote_repository": {
+            "title": "Remote Repository",
+            "type": "string"
+          }
+        },
+        "required": [
+          "remote",
+          "remote_repository",
+          "branch",
+          "ref_type",
+          "pushed_sha",
+          "deleted",
+          "fast_forward"
+        ],
+        "title": "GitPushOutput",
         "type": "object"
       }
     },

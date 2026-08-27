@@ -1170,22 +1170,107 @@ remains deferred to S23.
 `schemas/tools.json` gained `git_pull`'s schema; `CONTRACT_VERSION`
 bumped `0.5.0` → `0.6.0` (§33.2: new tool, minor).
 
-### S27 — `git_push` and refspec construction
+### S27 — `git_push` and refspec construction ✅
 **Spec:** §20.3, §20.5, §18.9, §20.6 · **Satisfies:** FR-022, FR-034 · **Verified by:** AT-011, AT-029, AT-031
 
-- [ ] Parameters `force`, `force_with_lease`, `delete`, `ref_type`, `no_verify`,
+- [x] Parameters `force`, `force_with_lease`, `delete`, `ref_type`, `no_verify`,
       all defaulting false/branch
-- [ ] Daemon **constructs** the refspec from validated parameters per §20.3's
+- [x] Daemon **constructs** the refspec from validated parameters per §20.3's
       table — no client-supplied refspec
-- [ ] Refuse on the governing policy key **before** invoking Git
-- [ ] Reject invalid ref names, destinations outside `refs/heads/`/`refs/tags/`,
+- [x] Refuse on the governing policy key **before** invoking Git
+- [x] Reject invalid ref names, destinations outside `refs/heads/`/`refs/tags/`,
       and `force` + `force_with_lease` together (`INVALID_ARGUMENT`)
-- [ ] Require `expected_local_head_sha` when force is permitted and used
-- [ ] `--atomic --recurse-submodules=no`
-- [ ] AT-011: `force: true` → `POLICY_DENIED` before Git runs
-- [ ] AT-029: refspec construction correct; conflicting flags refused
-- [ ] AT-031: `git add`/`commit`/`fetch`/`push` all work from `exec`, with correct
+- [x] Require `expected_local_head_sha` when force is permitted and used
+- [x] `--atomic --recurse-submodules=no`
+- [x] AT-011: `force: true` → `POLICY_DENIED` before Git runs
+- [x] AT-029: refspec construction correct; conflicting flags refused
+- [x] AT-031: `git add`/`commit`/`fetch`/`push` all work from `exec`, with correct
       host ownership
+
+**Commit:** `888e729`
+
+New `src/dev_workspace_mcp/git/push.py` (pure refspec/argv construction,
+mirroring `git/pull.py`'s split) plus a `git_push` tool in `tools/git.py`.
+`build_refspec` implements §20.3's table literally — one line per row;
+`force_with_lease` deliberately shares the *default* (unforced) refspec
+shape, since its safety comes entirely from a separate CLI flag, not a
+`+` prefix. `build_force_with_lease_arg` constructs
+`--force-with-lease=<ref>:<sha>` from the locally-known remote-tracking
+ref when one exists, falling back to bare `--force-with-lease` (Git's own
+reflog-based safety check) when it doesn't — this daemon never invents an
+"expected remote state" it doesn't actually have. `validate_branch_name`
+delegates to real `git check-ref-format --branch` rather than a
+hand-rolled regex — verified empirically to reject `..`, a leading `-`
+(which `git push` would otherwise read as a flag), embedded spaces, and
+empty input — plus one extra check of its own: a `branch` value that is
+already `refs/`-qualified is rejected outright, since the daemon always
+supplies the `refs/heads/`/`refs/tags/` prefix itself and a
+self-qualified input would otherwise silently double up.
+
+`git_push_tool`'s ordering, all before Git is ever invoked (AT-011):
+input sanity (`force`+`force_with_lease` together, `delete` combined with
+a meaningless `expected_local_head_sha`) → workspace/precondition checks
+(interrupted operation, same as `git_commit`/`git_pull`) → branch-name
+validation → §18.9 policy, evaluated in full — `push` (governs the whole
+tool), `default_branch_push` (deny/require_approval block any push to
+the default branch; `allow_fast_forward`, the actual default, additionally
+blocks a *forced* push there specifically, even when `force_push` alone
+would otherwise permit it — verified as its own, independent restriction,
+not merely `force_push`'s), `force_push`/`force_with_lease`
+(independently gate their respective flags), `delete_remote_branch`/
+`delete_remote_tag` (gate `delete: true`, keyed by `ref_type`) — then,
+only once policy has actually permitted the operation, the §20.3
+requirement that `expected_local_head_sha` be supplied for a force push
+(and, when supplied at all, checked as a `GIT_HEAD_CHANGED` guard against
+the branch's actual local tip) → S25's `validate_remote_identity`,
+still before any network touch → the in-container `git push --atomic
+--recurse-submodules=no -c protocol.ext.allow=never`. Every
+`RemoteWritePolicy` value of `require_approval` is treated as a hard
+denial (§42: no interactive-approval mechanism exists in this release).
+A plain (non-force, non-delete) push rejected by the remote for being
+behind is classified as `GIT_NON_FAST_FORWARD` — verified against Git's
+real rejection wording (`(fetch first)`, captured from an actual diverged
+push between two clones of a bare repository) — rather than left as an
+undifferentiated `COMMAND_FAILED`, matching AT-010's underlying "fails
+without automatically forcing" guarantee for push specifically, not only
+for `git_pull`'s own integration step (S26).
+
+`tests/git/test_push.py` (25 tests) proves the refspec table, branch-name
+validation, force-with-lease argument construction (both with and without
+a known remote-tracking ref), the exact `git push` invocation shape, and
+non-fast-forward detection — all against real local Git repositories, no
+Docker needed, mirroring `git/pull.py`'s own test split.
+
+`tests/workspace/test_git_push_tool.py` (16 tests, real Docker) covers
+every policy key `git_push` consults (including the `default_branch_push:
+allow_fast_forward`-blocks-force case against a real seeded default
+branch, and `delete_remote_branch`'s default hard denial), the input
+validations, AT-026/AT-009/`expected_remote_repository` remote-validation
+gating (mirroring `test_git_pull_tool.py`), and — like S26's own real-
+network test — a real connection attempt to the real `github.com` host:
+with GitHub's real, freshly `ssh-keyscan`-obtained host key pinned, the
+push passes host verification and fails specifically at the
+authentication stage, cleanly, for lack of a key (S23, blocked by D3).
+
+AT-031 is deliberately *not* exercised through the structured tool at all
+— §20.2 is explicit that remote validation "does not bind `exec`" — so
+it uses a real bare repository created *inside the container's own
+filesystem* (`/tmp/remote.git`, outside the `/workspace` bind mount) via
+`exec` itself, then a real `git add`/`commit`/`fetch`/`push` cycle, also
+via `exec`, fully offline. This surfaced one real constraint worth
+recording: `exec`'s own `cwd` parameter is restricted to `/workspace` or
+beneath it (§14.2), so inspecting the bare remote's own log afterward
+needed `git -C /tmp/remote.git log ...` rather than `exec`'s `cwd` — not
+a bug, just a reminder that `cwd` and a plain `-C` argument answer
+different questions. The resulting commit's ownership is checked from
+the host side (`stat`), matching AT-031's "correct host ownership"
+literally.
+
+`schemas/tools.json` gained `git_push`'s schema; `CONTRACT_VERSION`
+bumped `0.6.0` → `0.7.0` (§33.2: new tool, minor).
+
+S23 (blocked by D3) and S28 (blocked by D2) remain blocked; S29 (Audit
+logging) is the last unblocked Phase 3 task.
 
 ### S28 — Remote protection verification
 **Spec:** §18.5, §20.4 · **Satisfies:** FR-032 · **Verified by:** AT-035 · **Blocked by:** D2

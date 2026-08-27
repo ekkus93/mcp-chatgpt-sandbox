@@ -26,6 +26,7 @@ REGISTERED_TOOLS = {
     "git_log",
     "git_commit",
     "git_pull",
+    "git_push",
 }
 
 

@@ -25,7 +25,8 @@ from mcp.server import MCPServer
 #: 0.4.0 (S21): minor bump — two new tools, `git_diff` and `git_log`.
 #: 0.5.0 (S22): minor bump — one new tool, `git_commit`.
 #: 0.6.0 (S26): minor bump — one new tool, `git_pull`.
-CONTRACT_VERSION = "0.6.0"
+#: 0.7.0 (S27): minor bump — one new tool, `git_push`.
+CONTRACT_VERSION = "0.7.0"
 
 
 async def collect_tool_schemas(server: MCPServer) -> list[dict[str, Any]]:
