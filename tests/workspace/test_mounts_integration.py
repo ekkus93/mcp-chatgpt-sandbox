@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 import docker
-from dev_workspace_mcp.config.models import ContainerConfig
+from dev_workspace_mcp.config.models import ContainerConfig, SSHConfig
 from dev_workspace_mcp.workspace.container_config import build_workspace_run_kwargs
 from dev_workspace_mcp.workspace.mounts import GitDirMode, build_workspace_mounts
 
@@ -26,9 +26,11 @@ def _run(
     *,
     repo: Path,
     git_dir_mode: GitDirMode,
+    ssh_config: SSHConfig,
 ) -> bytes:
     config = ContainerConfig(user="host", sudo=True, git_dir_mode=git_dir_mode)
     run_kwargs = build_workspace_run_kwargs(
+        ssh_config=ssh_config,
         container_config=config,
         docker_client=docker_client,
         checkout_uid=os.getuid(),
@@ -53,7 +55,10 @@ def _run(
 
 
 def test_at_012_no_docker_socket_in_the_container(
-    docker_client: docker.DockerClient, default_image_tag: str, tmp_path: Path
+    docker_client: docker.DockerClient,
+    default_image_tag: str,
+    tmp_path: Path,
+    ssh_config: SSHConfig,
 ) -> None:
     repo = _real_git_repo(tmp_path / "example")
     with pytest.raises(docker.errors.ContainerError):
@@ -62,12 +67,16 @@ def test_at_012_no_docker_socket_in_the_container(
             default_image_tag,
             ["sh", "-c", "[ -e /var/run/docker.sock ]"],
             repo=repo,
+            ssh_config=ssh_config,
             git_dir_mode="read-write",
         )
 
 
 def test_git_environment_is_configured_by_the_entrypoint(
-    docker_client: docker.DockerClient, default_image_tag: str, tmp_path: Path
+    docker_client: docker.DockerClient,
+    default_image_tag: str,
+    tmp_path: Path,
+    ssh_config: SSHConfig,
 ) -> None:
     """§18.2: safe.directory is set container-locally, and
     GIT_TERMINAL_PROMPT=0 so a misconfigured remote fails rather than
@@ -82,6 +91,7 @@ def test_git_environment_is_configured_by_the_entrypoint(
         default_image_tag,
         ["sh", "-c", check],
         repo=repo,
+        ssh_config=ssh_config,
         git_dir_mode="read-write",
     )
     text = output.decode()
@@ -90,7 +100,10 @@ def test_git_environment_is_configured_by_the_entrypoint(
 
 
 def test_at_023_hook_write_fails_under_read_only(
-    docker_client: docker.DockerClient, default_image_tag: str, tmp_path: Path
+    docker_client: docker.DockerClient,
+    default_image_tag: str,
+    tmp_path: Path,
+    ssh_config: SSHConfig,
 ) -> None:
     repo = _real_git_repo(tmp_path / "example")
     with pytest.raises(docker.errors.ContainerError):
@@ -99,12 +112,16 @@ def test_at_023_hook_write_fails_under_read_only(
             default_image_tag,
             ["sh", "-c", "echo '#!/bin/sh' > /workspace/.git/hooks/pre-commit"],
             repo=repo,
+            ssh_config=ssh_config,
             git_dir_mode="read-only",
         )
 
 
 def test_hook_write_succeeds_under_the_default_read_write_mode(
-    docker_client: docker.DockerClient, default_image_tag: str, tmp_path: Path
+    docker_client: docker.DockerClient,
+    default_image_tag: str,
+    tmp_path: Path,
+    ssh_config: SSHConfig,
 ) -> None:
     """Documented behaviour (§18.3), not a security gap: the default mode
     is read-write."""
@@ -114,13 +131,17 @@ def test_hook_write_succeeds_under_the_default_read_write_mode(
         default_image_tag,
         ["sh", "-c", "echo '#!/bin/sh' > /workspace/.git/hooks/pre-commit"],
         repo=repo,
+        ssh_config=ssh_config,
         git_dir_mode="read-write",
     )
     assert (repo / ".git" / "hooks" / "pre-commit").exists()
 
 
 def test_at_024_config_write_fails_under_read_only(
-    docker_client: docker.DockerClient, default_image_tag: str, tmp_path: Path
+    docker_client: docker.DockerClient,
+    default_image_tag: str,
+    tmp_path: Path,
+    ssh_config: SSHConfig,
 ) -> None:
     repo = _real_git_repo(tmp_path / "example")
     with pytest.raises(docker.errors.ContainerError):
@@ -129,12 +150,16 @@ def test_at_024_config_write_fails_under_read_only(
             default_image_tag,
             ["git", "-C", "/workspace", "config", "core.fsmonitor", "true"],
             repo=repo,
+            ssh_config=ssh_config,
             git_dir_mode="read-only",
         )
 
 
 def test_config_write_succeeds_under_the_default_read_write_mode(
-    docker_client: docker.DockerClient, default_image_tag: str, tmp_path: Path
+    docker_client: docker.DockerClient,
+    default_image_tag: str,
+    tmp_path: Path,
+    ssh_config: SSHConfig,
 ) -> None:
     repo = _real_git_repo(tmp_path / "example")
     _run(
@@ -142,6 +167,7 @@ def test_config_write_succeeds_under_the_default_read_write_mode(
         default_image_tag,
         ["git", "-C", "/workspace", "config", "core.fsmonitor", "true"],
         repo=repo,
+        ssh_config=ssh_config,
         git_dir_mode="read-write",
     )
     result = subprocess.run(
@@ -154,7 +180,10 @@ def test_config_write_succeeds_under_the_default_read_write_mode(
 
 
 def test_none_mode_leaves_no_working_git_repository(
-    docker_client: docker.DockerClient, default_image_tag: str, tmp_path: Path
+    docker_client: docker.DockerClient,
+    default_image_tag: str,
+    tmp_path: Path,
+    ssh_config: SSHConfig,
 ) -> None:
     """§18.2: `.git` is masked with an empty read-only tmpfs — Git inside
     the container sees no repository at all."""
@@ -165,6 +194,7 @@ def test_none_mode_leaves_no_working_git_repository(
             default_image_tag,
             ["git", "-C", "/workspace", "status"],
             repo=repo,
+            ssh_config=ssh_config,
             git_dir_mode="none",
         )
     # The host repository is untouched — masking is a container-side view,

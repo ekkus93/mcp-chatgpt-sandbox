@@ -1,10 +1,13 @@
-"""Constructs the Docker mounts for a workspace container (§5.1, §5.4, §18.2).
+"""Constructs the Docker mounts for a workspace container (§5.1, §5.4, §18.2, §19.3).
 
-Two mounts at most: the working tree (always, read/write), and — only when
-the repository's actual Git directory needs its own entry — a second mount
-governed by `git_dir_mode`. §5.4 is satisfied by construction: this module
-adds nothing beyond those two, and nothing else in the system adds mounts
-yet (caches land in S30, the SSH-agent socket in S23).
+`build_workspace_mounts` builds the working tree (always, read/write) plus
+— only when the repository's actual Git directory needs its own entry —
+a second mount governed by `git_dir_mode`. §5.4 is satisfied by
+construction: that function adds nothing beyond those two.
+`build_known_hosts_mount` (S24) is a separate, standalone mount a caller
+appends once per workspace — the pinned known_hosts file (§19.3), whose
+path never varies with the repository the way the git-dir mount does.
+Caches land in S30, the SSH-agent socket in S23.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ from typing import Literal
 from docker.types import Mount
 
 from dev_workspace_mcp.errors import PathOutsideRepositoryError
+from dev_workspace_mcp.workspace.container_config import SSH_KNOWN_HOSTS_CONTAINER_PATH
 
 GitDirMode = Literal["read-write", "read-only", "none"]
 
@@ -159,3 +163,19 @@ def build_workspace_mounts(
         )
 
     return mounts
+
+
+def build_known_hosts_mount(known_hosts_path: Path) -> Mount:
+    """§19.3: the pinned GitHub host-key file, mounted read-only at a
+    fixed container path (`container_config.SSH_KNOWN_HOSTS_CONTAINER_PATH`)
+    outside the working tree — never into the bind mount, so a
+    compromised or careless repository cannot substitute its own host
+    keys. Not part of `build_workspace_mounts` itself: unlike the git-dir
+    mount, this one path never varies with the repository, so it stays a
+    standalone function a caller appends once."""
+    return Mount(
+        target=SSH_KNOWN_HOSTS_CONTAINER_PATH,
+        source=str(known_hosts_path.resolve()),
+        type="bind",
+        read_only=True,
+    )

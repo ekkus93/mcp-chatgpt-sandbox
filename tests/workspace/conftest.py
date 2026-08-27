@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 import docker
+from dev_workspace_mcp.config.models import SSHConfig
 from dev_workspace_mcp.db import open_db
 from dev_workspace_mcp.repositories import RepositoryRecord
 from dev_workspace_mcp.workspace.container_config import DEFAULT_IMAGE_BUILD_CONTEXT
@@ -76,3 +77,11 @@ def manager(docker_client: docker.DockerClient, db: sqlite3.Connection) -> Docke
 @pytest.fixture
 def repository(tmp_path: Path) -> RepositoryRecord:
     return RepositoryRecord(id="example", canonical_path=tmp_path, github="owner/example")
+
+
+@pytest.fixture
+def ssh_config(tmp_path: Path) -> SSHConfig:
+    """A minimal, valid `SSHConfig` for tests that only need
+    `build_workspace_run_kwargs`'s identity/env construction (S7/S8), not
+    SSH itself — `ssh_config` became a required parameter in S24."""
+    return SSHConfig(keys_dir=tmp_path / "keys", known_hosts=tmp_path / "known_hosts")

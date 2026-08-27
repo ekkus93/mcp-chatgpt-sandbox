@@ -178,3 +178,44 @@ def test_docker_available_never_raises() -> None:
     than propagate — a missing daemon degrades the health report, it does
     not crash startup (§73)."""
     assert isinstance(docker_available(), bool)
+
+
+# --- known_hosts must exist before the first bind mount (§19.3, S24) --------------
+
+
+def test_load_config_creates_a_missing_known_hosts_file(
+    tmp_path: Path, minimal_config_dict: dict[str, Any]
+) -> None:
+    config_path = _write_config(tmp_path, minimal_config_dict)
+    known_hosts = Path(minimal_config_dict["ssh"]["known_hosts"])
+    assert not known_hosts.exists()
+
+    config = load_config(config_path, home=tmp_path / "home")
+
+    assert config.ssh.known_hosts.exists()
+    assert config.ssh.known_hosts.is_file()
+    assert config.ssh.known_hosts.read_text() == ""
+
+
+def test_load_config_leaves_an_existing_known_hosts_file_untouched(
+    tmp_path: Path, minimal_config_dict: dict[str, Any]
+) -> None:
+    known_hosts = Path(minimal_config_dict["ssh"]["known_hosts"])
+    known_hosts.parent.mkdir(parents=True, exist_ok=True)
+    known_hosts.write_text("github.com ssh-ed25519 AAAA...\n")
+    config_path = _write_config(tmp_path, minimal_config_dict)
+
+    config = load_config(config_path, home=tmp_path / "home")
+
+    assert config.ssh.known_hosts.read_text() == "github.com ssh-ed25519 AAAA...\n"
+
+
+def test_load_config_creates_missing_known_hosts_parent_directories(
+    tmp_path: Path, minimal_config_dict: dict[str, Any]
+) -> None:
+    minimal_config_dict["ssh"]["known_hosts"] = str(tmp_path / "deep" / "nested" / "known_hosts")
+    config_path = _write_config(tmp_path, minimal_config_dict)
+
+    config = load_config(config_path, home=tmp_path / "home")
+
+    assert config.ssh.known_hosts.exists()

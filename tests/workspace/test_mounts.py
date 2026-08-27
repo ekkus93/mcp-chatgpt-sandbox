@@ -7,7 +7,12 @@ from pathlib import Path
 import pytest
 
 from dev_workspace_mcp.errors import PathOutsideRepositoryError
-from dev_workspace_mcp.workspace.mounts import build_workspace_mounts, resolve_git_dir
+from dev_workspace_mcp.workspace.container_config import SSH_KNOWN_HOSTS_CONTAINER_PATH
+from dev_workspace_mcp.workspace.mounts import (
+    build_known_hosts_mount,
+    build_workspace_mounts,
+    resolve_git_dir,
+)
 
 
 def _init_ordinary_repo(path: Path) -> None:
@@ -190,3 +195,24 @@ def test_mounts_never_exceed_working_tree_plus_one_git_mount(tmp_path: Path) -> 
             authorized_roots=[tmp_path / "work"],
         )
         assert len(mounts) <= 2
+
+
+# --- build_known_hosts_mount (§19.3, S24) ------------------------------------------
+
+
+def test_build_known_hosts_mount_is_read_only_at_the_fixed_path(tmp_path: Path) -> None:
+    known_hosts = tmp_path / "known_hosts"
+    known_hosts.write_text("github.com ssh-ed25519 AAAA...\n")
+
+    mount = build_known_hosts_mount(known_hosts)
+
+    assert mount["Target"] == SSH_KNOWN_HOSTS_CONTAINER_PATH
+    assert mount["Source"] == str(known_hosts.resolve())
+    assert mount["Type"] == "bind"
+    assert mount["ReadOnly"] is True
+
+
+def test_build_known_hosts_mount_container_path_is_outside_the_workspace() -> None:
+    """§19.3: never inside the bind mount."""
+    mount = build_known_hosts_mount(Path("/somewhere/known_hosts"))
+    assert not mount["Target"].startswith("/workspace")

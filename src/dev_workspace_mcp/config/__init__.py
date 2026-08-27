@@ -1,4 +1,9 @@
-from dev_workspace_mcp.config.loader import ConfigError, docker_available, load_config
+from dev_workspace_mcp.config.loader import (
+    ConfigError,
+    docker_available,
+    ensure_known_hosts_file_exists,
+    load_config,
+)
 from dev_workspace_mcp.config.models import (
     AuditConfig,
     ContainerConfig,
@@ -29,5 +34,6 @@ __all__ = [
     "ServerConfig",
     "WorkspaceConfig",
     "docker_available",
+    "ensure_known_hosts_file_exists",
     "load_config",
 ]

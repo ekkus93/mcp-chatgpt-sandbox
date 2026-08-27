@@ -30,7 +30,7 @@ from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.schema_export import CONTRACT_VERSION
 from dev_workspace_mcp.workspace.container_config import build_workspace_run_kwargs
 from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
-from dev_workspace_mcp.workspace.mounts import build_workspace_mounts
+from dev_workspace_mcp.workspace.mounts import build_known_hosts_mount, build_workspace_mounts
 from dev_workspace_mcp.workspace.naming import WorkspaceMode
 
 DEFAULT_WORKSPACE_PATH = "/workspace"
@@ -138,14 +138,17 @@ def register(
         run_kwargs = build_workspace_run_kwargs(
             container_config=container_config,
             docker_client=active_client,
+            ssh_config=ssh_config,
             workspace_path=DEFAULT_WORKSPACE_PATH,
         )
-        run_kwargs["mounts"] = build_workspace_mounts(
+        mounts = build_workspace_mounts(
             host_repository_path=repository.canonical_path,
             workspace_path=DEFAULT_WORKSPACE_PATH,
             git_dir_mode=container_config.git_dir_mode,
             authorized_roots=repository_roots,
         )
+        mounts.append(build_known_hosts_mount(ssh_config.known_hosts))
+        run_kwargs["mounts"] = mounts
         record = active_manager.ensure_workspace(
             repository=repository,
             image=docker_config.default_image,

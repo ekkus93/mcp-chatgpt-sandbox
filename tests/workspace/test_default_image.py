@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 import docker
-from dev_workspace_mcp.config.models import ContainerConfig
+from dev_workspace_mcp.config.models import ContainerConfig, SSHConfig
 from dev_workspace_mcp.errors import ContainerCreateFailedError
 from dev_workspace_mcp.repositories import RepositoryRecord
 from dev_workspace_mcp.workspace.container_config import build_workspace_run_kwargs
@@ -32,11 +32,15 @@ def _run_oneshot(
 
 
 def test_entrypoint_drops_to_the_checkout_uid_and_grants_sudo(
-    docker_client: docker.DockerClient, default_image_tag: str
+    docker_client: docker.DockerClient, default_image_tag: str, ssh_config: SSHConfig
 ) -> None:
     config = ContainerConfig(user="host", sudo=True)
     run_kwargs = build_workspace_run_kwargs(
-        container_config=config, docker_client=docker_client, checkout_uid=1234, checkout_gid=1234
+        ssh_config=ssh_config,
+        container_config=config,
+        docker_client=docker_client,
+        checkout_uid=1234,
+        checkout_gid=1234,
     )
     output = _run_oneshot(
         docker_client,
@@ -51,14 +55,18 @@ def test_entrypoint_drops_to_the_checkout_uid_and_grants_sudo(
 
 
 def test_at_014_sudo_apt_get_install_works_as_non_root(
-    docker_client: docker.DockerClient, default_image_tag: str
+    docker_client: docker.DockerClient, default_image_tag: str, ssh_config: SSHConfig
 ) -> None:
     """AT-014: the project container is capable of installing normal OS
     packages through `sudo apt-get` while its default identity is the
     checkout owner, not root."""
     config = ContainerConfig(user="host", sudo=True)
     run_kwargs = build_workspace_run_kwargs(
-        container_config=config, docker_client=docker_client, checkout_uid=1234, checkout_gid=1234
+        ssh_config=ssh_config,
+        container_config=config,
+        docker_client=docker_client,
+        checkout_uid=1234,
+        checkout_gid=1234,
     )
     install_and_verify = (
         "whoami && sudo apt-get update -qq "
@@ -76,7 +84,10 @@ def test_at_014_sudo_apt_get_install_works_as_non_root(
 
 
 def test_at_015_file_written_from_container_is_owned_by_checkout_uid_on_host(
-    docker_client: docker.DockerClient, default_image_tag: str, tmp_path: Path
+    docker_client: docker.DockerClient,
+    default_image_tag: str,
+    tmp_path: Path,
+    ssh_config: SSHConfig,
 ) -> None:
     """AT-015: a file written from the container appears in the host
     checkout owned by the checkout owner's uid/gid, and the human can
@@ -86,6 +97,7 @@ def test_at_015_file_written_from_container_is_owned_by_checkout_uid_on_host(
     checkout_uid, checkout_gid = os.getuid(), os.getgid()
     config = ContainerConfig(user="host", sudo=True)
     run_kwargs = build_workspace_run_kwargs(
+        ssh_config=ssh_config,
         container_config=config,
         docker_client=docker_client,
         checkout_uid=checkout_uid,
@@ -116,6 +128,7 @@ def test_at_016_root_mode_without_userns_remap_creates_no_container(
     docker_client: docker.DockerClient,
     repository: RepositoryRecord,
     default_image_tag: str,
+    ssh_config: SSHConfig,
 ) -> None:
     """AT-016: with `container.user: root` and no user-namespace remapping
     active, workspace creation SHALL fail with `CONTAINER_CREATE_FAILED`
@@ -124,7 +137,7 @@ def test_at_016_root_mode_without_userns_remap_creates_no_container(
 
     with pytest.raises(ContainerCreateFailedError):
         run_kwargs = build_workspace_run_kwargs(
-            container_config=config, docker_client=docker_client
+            ssh_config=ssh_config, container_config=config, docker_client=docker_client
         )
         manager.ensure_workspace(
             repository=repository, image=default_image_tag, run_kwargs=run_kwargs
@@ -142,6 +155,7 @@ def test_ensure_workspace_with_default_image_is_a_long_running_non_root_containe
     docker_client: docker.DockerClient,
     repository: RepositoryRecord,
     default_image_tag: str,
+    ssh_config: SSHConfig,
 ) -> None:
     """The manager-level integration: a persistent workspace built from the
     real default image, left running on its default CMD (`sleep
@@ -153,6 +167,7 @@ def test_ensure_workspace_with_default_image_is_a_long_running_non_root_containe
 
     config = ContainerConfig(user="host", sudo=True)
     run_kwargs = build_workspace_run_kwargs(
+        ssh_config=ssh_config,
         container_config=config,
         docker_client=docker_client,
         checkout_uid=os.getuid(),

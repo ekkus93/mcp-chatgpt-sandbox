@@ -15,6 +15,7 @@ from mcp.server import MCPServer
 
 import docker
 from dev_workspace_mcp import __version__
+from dev_workspace_mcp.config.loader import ensure_known_hosts_file_exists
 from dev_workspace_mcp.config.models import ServerConfig
 from dev_workspace_mcp.db import open_db
 from dev_workspace_mcp.repositories import RepositoryRegistry
@@ -36,7 +37,12 @@ def create_server(config: ServerConfig) -> MCPServer:
     (§68) — a real, expected side effect once tools depend on it (S6
     onward), not a departure from "safe to call repeatedly": `open_db`'s
     migrations are idempotent, and each call gets its own connection to the
-    same file. Does not touch Docker or start a transport.
+    same file. Also ensures `config.ssh.known_hosts` exists on disk (§19.3) —
+    a filesystem precondition `workspace_open`'s mandatory known_hosts bind
+    mount depends on, needed here rather than only in `load_config` because
+    not every caller builds `config` by way of `load_config` (tests, for
+    instance, construct `ServerConfig` directly). Does not touch Docker or
+    start a transport.
     """
     server = MCPServer(
         name=SERVER_NAME,
@@ -47,6 +53,7 @@ def create_server(config: ServerConfig) -> MCPServer:
         ),
     )
     registry = RepositoryRegistry(config)
+    ensure_known_hosts_file_exists(config)
     db = open_db(config.state_db_path)
     docker_client = _try_docker_client()
     _register_tools(server, config, registry, db, docker_client)

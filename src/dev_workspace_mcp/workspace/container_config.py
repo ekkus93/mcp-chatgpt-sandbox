@@ -14,13 +14,20 @@ from pathlib import Path
 from typing import Any
 
 import docker
-from dev_workspace_mcp.config.models import ContainerConfig
+from dev_workspace_mcp.config.models import ContainerConfig, SSHConfig
 from dev_workspace_mcp.errors import ContainerCreateFailedError
 
 DEFAULT_IMAGE_TAG = "mcp-dev-ubuntu:24.04"
 
 #: `src/dev_workspace_mcp/workspace/container_config.py` -> repo root -> `docker/default`.
 DEFAULT_IMAGE_BUILD_CONTEXT = Path(__file__).resolve().parents[3] / "docker" / "default"
+
+#: §19.3: where the pinned GitHub host-key file is mounted inside every
+#: workspace container — fixed, outside the working tree, never inside
+#: the bind mount. `entrypoint.sh` points `UserKnownHostsFile` at this
+#: same literal path; there is no shared-constant mechanism between
+#: Python and a shell script, so keep the two in sync by hand.
+SSH_KNOWN_HOSTS_CONTAINER_PATH = "/etc/mcp/ssh/known_hosts"
 
 
 def userns_remap_active(docker_client: docker.DockerClient) -> bool:
@@ -36,6 +43,7 @@ def build_workspace_run_kwargs(
     *,
     container_config: ContainerConfig,
     docker_client: docker.DockerClient,
+    ssh_config: SSHConfig,
     workspace_path: str = "/workspace",
     checkout_uid: int | None = None,
     checkout_gid: int | None = None,
@@ -53,6 +61,14 @@ def build_workspace_run_kwargs(
     Raises `ContainerCreateFailedError` for `container.user: root` without
     active user-namespace remapping (§5.3, AT-016) — before any container
     is created, not after.
+
+    `MCP_SSH_MODE` (§19.3, S24) tells `entrypoint.sh` whether to write an
+    `IdentityFile` line into the container-local SSH config — only
+    meaningful under `container.user: root`'s *non*-root sibling branch,
+    since entrypoint.sh's user-creation step (where the SSH config gets
+    written) never runs at all for `container.user: root` (no `MCP_UID`/
+    `MCP_GID` to create a user from). Root-mode SSH configuration is out
+    of this task's scope.
     """
     if container_config.user == "root":
         if not userns_remap_active(docker_client):
@@ -70,6 +86,7 @@ def build_workspace_run_kwargs(
             "MCP_GID": str(gid),
             "MCP_SUDO": "true" if container_config.sudo else "false",
             "MCP_WORKSPACE_PATH": workspace_path,
+            "MCP_SSH_MODE": ssh_config.mode,
             **(extra_env or {}),
         }
 

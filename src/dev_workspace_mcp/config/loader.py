@@ -9,11 +9,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import docker
 import yaml
 from docker.errors import DockerException
 from pydantic import ValidationError
 
+import docker
 from dev_workspace_mcp.config.models import ServerConfig, WorkspaceConfig
 
 
@@ -34,6 +34,7 @@ def load_config(path: Path, *, home: Path | None = None) -> ServerConfig:
     config = _parse(raw)
     _check_ssh_key_not_under_host_ssh(config, home=home or Path.home())
     _check_secrets_outside_repository_roots(config)
+    ensure_known_hosts_file_exists(config)
     return config
 
 
@@ -115,6 +116,22 @@ def _check_secrets_outside_repository_roots(config: ServerConfig) -> None:
     _reject_if_under_a_repository(config.ssh.keys_dir, what="ssh.keys_dir")
     if config.github.api_token_path is not None:
         _reject_if_under_a_repository(config.github.api_token_path, what="github.api_token_path")
+
+
+def ensure_known_hosts_file_exists(config: ServerConfig) -> None:
+    """§19.3: `ssh.known_hosts` gets bind-mounted read-only into every
+    workspace container. Docker turns a bind mount of a *missing* host
+    file into an empty *directory* at the target path instead — silently
+    breaking `UserKnownHostsFile` — so a real file needs to exist before
+    the first mount, not be created lazily per workspace. An empty file is
+    the correct starting point regardless, not merely a convenient one:
+    `StrictHostKeyChecking yes` against an empty known_hosts trusts
+    nothing at all, which is the safe side of "SHALL NOT rely on
+    trust-on-first-use" until an operator pins GitHub's real host keys
+    into it."""
+    if not config.ssh.known_hosts.exists():
+        config.ssh.known_hosts.parent.mkdir(parents=True, exist_ok=True)
+        config.ssh.known_hosts.touch(mode=0o644)
 
 
 def docker_available() -> bool:

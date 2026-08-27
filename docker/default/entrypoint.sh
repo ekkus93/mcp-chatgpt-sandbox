@@ -13,12 +13,18 @@
 #                        passwordless sudo for the created user.
 #   MCP_WORKSPACE_PATH   container path of the repository mount, default
 #                        "/workspace" — recorded in git's safe.directory.
+#   MCP_SSH_MODE         "agent"/"file" (§19), default "agent" — whether
+#                        the container-local SSH config's Host github.com
+#                        block includes an IdentityFile line (file mode
+#                        only; agent mode authenticates via SSH_AUTH_SOCK,
+#                        no static identity file to point at).
 
 set -euo pipefail
 
 MCP_USER="${MCP_USER:-mcpuser}"
 MCP_SUDO="${MCP_SUDO:-true}"
 MCP_WORKSPACE_PATH="${MCP_WORKSPACE_PATH:-/workspace}"
+MCP_SSH_MODE="${MCP_SSH_MODE:-agent}"
 
 if [ "$(id -u)" = "0" ]; then
     # §18.2: git run from inside the container SHALL trust the mounted
@@ -30,6 +36,9 @@ if [ "$(id -u)" = "0" ]; then
 [safe]
 	directory = $MCP_WORKSPACE_PATH
 EOF
+    # §19.3: an HTTPS-configured origin still authenticates with the
+    # workspace's SSH key rather than prompting for a password/token.
+    git config --system url."git@github.com:".insteadOf "https://github.com/"
 fi
 export GIT_TERMINAL_PROMPT=0
 
@@ -64,6 +73,28 @@ HOME_DIR="$(getent passwd "$MCP_UID" | cut -d: -f6)"
 # Ensure the user's own home is usable even though the container started
 # as root.
 chown "$MCP_UID:$MCP_GID" "$HOME_DIR" 2>/dev/null || true
+
+# §19.3: container-local SSH client config — never into the bind mount,
+# so a repository cannot substitute its own. StrictHostKeyChecking yes
+# plus a pinned UserKnownHostsFile (mounted read-only at a fixed path by
+# the daemon, never generated here) means no trust-on-first-use: an
+# unrecognized or substituted host key fails the connection outright
+# rather than prompting (there is nothing to prompt on a non-interactive
+# exec anyway) or silently trusting it.
+mkdir -p "$HOME_DIR/.ssh"
+{
+    echo "Host github.com"
+    echo "    User git"
+    echo "    IdentitiesOnly yes"
+    if [ "$MCP_SSH_MODE" = "file" ]; then
+        echo "    IdentityFile ~/.ssh/id_mcp"
+    fi
+    echo "    StrictHostKeyChecking yes"
+    echo "    UserKnownHostsFile /etc/mcp/ssh/known_hosts"
+} > "$HOME_DIR/.ssh/config"
+chmod 700 "$HOME_DIR/.ssh"
+chmod 600 "$HOME_DIR/.ssh/config"
+chown -R "$MCP_UID:$MCP_GID" "$HOME_DIR/.ssh"
 
 # HOME/USER/LOGNAME are set explicitly for the target user; everything
 # else the daemon put in the environment (§14.3's overrides included)

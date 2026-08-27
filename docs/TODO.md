@@ -924,15 +924,96 @@ structured tool and `exec("git push")`, with no credential extractable.
       mode, including during an in-flight push
 - [ ] AT-036: key unloaded after stop; no agent after delete
 
-### S24 — SSH client configuration and host-key pinning
+### S24 — SSH client configuration and host-key pinning ✅
 **Spec:** §19.3 · **Satisfies:** FR-033 · **Verified by:** AT-034
 
-- [ ] Container-local `$HOME/.ssh/config` — `IdentitiesOnly`, `StrictHostKeyChecking yes`,
+- [x] Container-local `$HOME/.ssh/config` — `IdentitiesOnly`, `StrictHostKeyChecking yes`,
       pinned `UserKnownHostsFile`
-- [ ] Pinned GitHub host keys; no trust-on-first-use; never honour a `known_hosts`
+- [x] Pinned GitHub host keys; no trust-on-first-use; never honour a `known_hosts`
       or SSH config from inside the repository
-- [ ] Optional `url.<base>.insteadOf` so an HTTPS `origin` still uses the key
-- [ ] AT-034: substituted host key → mismatch failure, no prompt
+- [x] Optional `url.<base>.insteadOf` so an HTTPS `origin` still uses the key
+- [x] AT-034: substituted host key → mismatch failure, no prompt
+
+**Commit:** `e127fc1`
+
+`docker/default/entrypoint.sh` now writes `$HOME_DIR/.ssh/config` (mode
+`700`/`600`, owned by the checkout identity) with `Host github.com`,
+`User git`, `IdentitiesOnly yes`, `StrictHostKeyChecking yes`, and
+`UserKnownHostsFile /etc/mcp/ssh/known_hosts` — `IdentityFile ~/.ssh/id_mcp`
+is added only under `ssh.mode: file` (agent mode has nothing static to
+point at). A new `MCP_SSH_MODE` env var (from `ContainerConfig`'s
+`ssh_config.mode`, threaded through `build_workspace_run_kwargs`) selects
+that branch. The root-only block also gains
+`git config --system url."git@github.com:".insteadOf "https://github.com/"`
+so an `origin` authored as an HTTPS URL still pushes/pulls over the pinned
+SSH identity (verified by asking git itself: `git ls-remote --get-url
+origin` after `git remote add origin https://github.com/...`). The pinned
+host-key file itself (`ssh.known_hosts`) is mounted read-only at a fixed
+path outside the working tree
+(`workspace/container_config.SSH_KNOWN_HOSTS_CONTAINER_PATH` =
+`/etc/mcp/ssh/known_hosts`, via the new `workspace/mounts.py:
+build_known_hosts_mount`) — never inside `/workspace`, so nothing a
+container process reads from the checked-out repository (its own
+`.ssh/config` or a `known_hosts` committed to the repo) can substitute for
+it.
+
+Three real bugs found and fixed while building this:
+
+1. **Design flaw — known_hosts auto-creation was reachable only through
+   `load_config`.** Docker turns a bind mount of a *missing* host file into
+   an empty *directory* at the target path instead of failing loudly, so
+   `ssh.known_hosts` has to exist on disk before the first mount. The
+   creation logic (`ensure_known_hosts_file_exists`) lived only inside
+   `load_config()`, but `create_server()` — the thing that actually depends
+   on the file existing — can be (and throughout the test suite, is) called
+   with a `ServerConfig` built directly via `ServerConfig.model_validate`,
+   bypassing `load_config()` entirely. This surfaced as 53 failing tests
+   across `test_async_execution_tools.py`, `test_execution_tools.py`,
+   `test_git_commit_tool.py`, `test_git_diff_log_tools.py`,
+   `test_git_status_tool.py`, `test_idle_stop.py`, `test_recovery.py`, and
+   `test_workspace_tools.py`, all with the same
+   `"bind source path does not exist"` root cause the moment
+   `workspace_open`'s new known_hosts mount was added. Fixed by making
+   `ensure_known_hosts_file_exists` public and calling it from
+   `create_server()` itself (alongside `open_db`, which already creates its
+   own parent directories lazily for the same reason) — `create_server` is
+   now self-sufficient regardless of how its `config` argument was built.
+2. A `test_https_origin_routed_over_ssh_via_insteadof` helper created only
+   an empty `.git` *directory* (`(repo_path / ".git").mkdir()`) instead of a
+   real repository, so `git remote add`/`git ls-remote` had nothing valid
+   to operate on. Fixed by running a real `git init -q -b main` first.
+3. `test_at_034_substituted_host_key_fails_closed_no_prompt` originally
+   chained `ssh-keyscan` onto the same `exec` call as the multi-thousand-line
+   `apt-get install openssh-server` output. `stdout_tail` is response-bounded
+   (§15.5), and the test's own parsing took the *whole* captured blob and
+   split on the first space — which, once the real keyscan line was pushed
+   out of the tail, silently grabbed a fragment of an apt-get log line
+   instead, producing a malformed known_hosts entry and a misleading
+   "No ED25519 host key is known" failure rather than the intended
+   "REMOTE HOST IDENTIFICATION HAS CHANGED" mismatch. Fixed by giving
+   `ssh-keyscan` its own separate `exec` call, so its `stdout_tail` is
+   cleanly just the keyscan line.
+
+AT-034 itself is verified generically rather than against the real GitHub
+host key: a real `openssh-server`/`sshd` is installed and started on a
+nonstandard port inside the workspace container, `ssh-keyscan` captures its
+actual host-key line, and a freshly generated, deliberately wrong key is
+substituted into a second `known_hosts` file. With `BatchMode=yes`
+throughout (proving no interactive "trust this key?" prompt is possible on
+a non-interactive `exec`, and that a real client fails outright on a
+mismatch rather than hanging): the *correct* pinned key reaches the auth
+stage (`Permission denied`, no host-verification warning at all) — a sanity
+check that the harness and the real keyscan line both actually work —
+while the *substituted* key fails specifically with
+`REMOTE HOST IDENTIFICATION HAS CHANGED` and never reaches the auth stage
+(`Permission denied` absent). `tests/workspace/test_ssh_client_config.py`
+(8 tests, all against a real Docker daemon and the real S7 default image)
+covers the written config's exact contents, its permissions and ownership,
+the known_hosts mount's read-only enforcement and pinned content, that the
+mount never appears anywhere under `/workspace`, the `insteadOf` rewrite,
+AT-034 itself, and `file`-mode's `IdentityFile` line. No new tools or
+output fields were added, so `schemas/tools.json` needed no regeneration
+(confirmed by re-running `export-schemas` and diffing — no drift).
 
 ### S25 — Remote identity validation
 **Spec:** §20.2, §7.3 · **Satisfies:** FR-023 · **Verified by:** AT-009, AT-026, AT-027, AT-028, AT-030
