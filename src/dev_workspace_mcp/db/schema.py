@@ -143,10 +143,31 @@ def current_version(connection: sqlite3.Connection) -> int:
 def apply_migrations(connection: sqlite3.Connection) -> None:
     """Bring `connection`'s schema up to `len(MIGRATIONS)`, applying only
     the migrations it is missing. Idempotent: calling this on an
-    already-current database is a no-op."""
+    already-current database is a no-op.
+
+    HR-019 (`docs/HARDENING_SPEC.md` §9): `with connection:` looks like it
+    wraps each migration in a transaction, but Python's `sqlite3` module
+    only issues an *implicit* `BEGIN` ahead of the first DML statement
+    (`INSERT`/`UPDATE`/`DELETE`/`REPLACE`) under the default legacy
+    transaction control — DDL (`CREATE TABLE`, `ALTER TABLE`) and `PRAGMA
+    user_version` never trigger it, so each statement below used to commit
+    on its own as soon as it ran. Reproduced: a migration whose second
+    statement fails leaves the first statement's table created but
+    `user_version` unchanged, so the next start re-applies the same
+    migration and fails again on "table already exists" — permanently,
+    not just once. An explicit `BEGIN`/`COMMIT` SQLite itself treats as a
+    single atomic unit even across DDL fixes this: every statement in a
+    migration, including the `user_version` bump, commits together or not
+    at all."""
     version = current_version(connection)
     for index in range(version, len(MIGRATIONS)):
-        with connection:
+        connection.execute("BEGIN")
+        try:
             for statement in MIGRATIONS[index]:
                 connection.execute(statement)
             connection.execute(f"PRAGMA user_version = {index + 1}")
+        except BaseException:
+            connection.rollback()
+            raise
+        else:
+            connection.commit()

@@ -1249,15 +1249,78 @@ job deletes cleanly, with the workspace row, the job row, and the container
 all gone afterward; a workspace with three jobs also deletes cleanly, with
 every job row removed.
 
-### H17 — Migrations are atomic
+### H17 — Migrations are atomic ✅
 **Satisfies:** HR-019 · **Verified by:** HAT-016
+**Commit:** `134dbe0`
 
-- [ ] Wrap migrations in explicit `BEGIN`/`COMMIT` (`with connection:` does not
+- [x] Wrap migrations in explicit `BEGIN`/`COMMIT` (`with connection:` does not
       wrap DDL)
-- [ ] Add a migration test against a populated database at an older
+- [x] Add a migration test against a populated database at an older
       `user_version`, not only an empty one
-- [ ] Configure `busy_timeout` and consider WAL; two processes open the same
+- [x] Configure `busy_timeout` and consider WAL; two processes open the same
       file today with neither
+
+**Defect:** reproduced — a partially-applied migration persisted its first
+statement while `user_version` stayed at `0`, so the next start re-ran it, hit
+"table already exists", and the daemon could never start again.
+
+**Implementation, `db/schema.py`.** Confirmed the exact mechanism empirically
+before touching anything: Python's `sqlite3` module issues an implicit
+`BEGIN` only ahead of the first DML statement under the default legacy
+transaction-control mode — `with connection:` genuinely does nothing for a
+migration whose body is entirely `CREATE TABLE`/`ALTER TABLE`/`PRAGMA
+user_version`, so every statement committed the instant it ran, individually.
+A two-statement reproduction (`CREATE TABLE foo`, then the same statement
+again) confirmed the exact failure mode: `foo` existed afterward but
+`user_version` stayed unchanged. `apply_migrations` now issues an explicit
+`BEGIN` before each migration and `commit()`/`rollback()` around it
+(`except BaseException`, not just `Exception`, since a genuinely partial
+migration is exactly the state a `KeyboardInterrupt` mid-migration would also
+leave) — SQLite treats DDL as fully transactional under an explicit
+transaction, confirmed with the same two-statement reproduction: after the
+fix, neither `foo` nor the version bump survives the failure.
+
+**`db/connection.py`.** `PRAGMA busy_timeout` and `PRAGMA journal_mode = WAL`
+are now set on every connection `open_db` returns. A genuine finding while
+writing the test for this, not assumed: Python's own `sqlite3.connect()`
+already defaults its `timeout` parameter to 5 seconds, which — verified
+empirically — already sets `PRAGMA busy_timeout` to `5000` with *no* code
+change at all. The explicit pragma this task adds doesn't change behavior by
+itself; it makes that behavior a documented, intentional choice rather than
+an incidental side effect of an unrelated default a future change could
+silently remove. `journal_mode = WAL` is the part that's genuinely new: the
+pre-fix default (`delete`, a rollback journal) blocks readers behind an
+active writer in a way WAL does not, and is what the corresponding test
+actually catches a regression in. `:memory:` databases (every test in this
+suite) silently keep `journal_mode = memory` instead — confirmed empirically
+rather than assumed, since a `:memory:` database has nowhere to put the
+`-wal`/`-shm` sidecar files WAL needs.
+
+**Verified the tests catch the regression for the right reason, and was
+honest where they don't:** reverted `schema.py`/`connection.py` to their
+pre-H17 versions and reran all four new tests. The atomicity test
+(monkeypatched `MIGRATIONS` with a guaranteed-to-fail entry) and the
+`journal_mode` half of the pragma-configuration test both failed as
+expected. The `busy_timeout` assertion and the concurrent-write-vs-write
+test both *passed* against the reverted code too — not a test bug, but the
+direct consequence of the finding above (Python's own default already
+provides `busy_timeout = 5000`); both tests' docstrings say so explicitly
+rather than silently claiming they prove something they don't. Restored the
+fix; all four pass again; the full `tests/db/test_schema.py` file (14 tests)
+and the full suite (740 baseline + 4 new) show no regressions, no Docker
+leftovers, no schema drift.
+
+**New tests:** `tests/db/test_schema.py` — a substitute migration with a
+guaranteed-to-fail second statement proves neither the first statement's
+table nor the version bump survives, and that a subsequent
+`apply_migrations` call recovers cleanly; a database manually brought to
+schema version 1 with real rows, then migrated forward, proves existing data
+and the tables/columns added by later migrations all survive together
+(HR-019's own explicitly-requested "populated database at an older
+`user_version`" case); `busy_timeout`/`journal_mode` are the expected
+values on a fresh connection; two real connections to the same file, one
+holding a write lock while the other attempts a write, prove the second
+genuinely waits and then succeeds rather than failing immediately.
 
 ### H18 — A failed termination is not reported as success
 **Satisfies:** HR-020, HR-021 · **Verified by:** HAT-017
