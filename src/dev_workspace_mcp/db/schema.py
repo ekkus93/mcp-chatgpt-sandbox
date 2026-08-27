@@ -97,6 +97,24 @@ MIGRATIONS: list[list[str]] = [
         "CREATE INDEX idx_audit_event_timestamp ON audit_event (timestamp)",
         "CREATE INDEX idx_audit_event_workspace_id ON audit_event (workspace_id)",
     ],
+    # --- version 1 -> 2: per-workspace ssh-agent tracking (§19.2, §44.1, S23) ---
+    [
+        # Deliberately no `REFERENCES workspace (id)`: `workspace_open`
+        # (§19.2) must start the real agent process — and persist a
+        # record of it, so a crash between the two doesn't leak an
+        # untracked process — *before* `ensure_workspace` creates the
+        # `workspace` row a brand-new persistent workspace's mounts
+        # depend on. A `workspace_id` here can therefore transiently
+        # exist with no matching `workspace` row yet.
+        """
+        CREATE TABLE ssh_agent (
+            workspace_id  TEXT PRIMARY KEY,
+            pid           INTEGER NOT NULL,
+            socket_path   TEXT NOT NULL,
+            created_at    TEXT NOT NULL
+        )
+        """,
+    ],
 ]
 
 

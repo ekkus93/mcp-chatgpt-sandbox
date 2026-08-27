@@ -6,8 +6,10 @@ transport) as of S1. Steps 3-4 (state database, job reconciliation) land
 with S3/S14; step 5 (eager container reconciliation, §44.1) with S18 —
 `DockerWorkspaceManager.reconcile`'s per-workspace lazy version has
 existed since S6 and remains in place alongside it. Step 6 (SSH-agent
-reconciliation) lands with S23. Step 7 (validate repository roots) is
-enforced at config-load time (step 1) rather than as a separate pass.
+reconciliation, §44.1 steps 4-5) lands with S23, after step 5, since it
+needs step 5's up-to-date `running` state to know what to (re)start versus
+tear down. Step 7 (validate repository roots) is enforced at config-load
+time (step 1) rather than as a separate pass.
 """
 
 from __future__ import annotations
@@ -24,9 +26,11 @@ from dev_workspace_mcp.config import ConfigError, docker_available, load_config
 from dev_workspace_mcp.db import open_db
 from dev_workspace_mcp.jobs.reconcile import reconcile_jobs
 from dev_workspace_mcp.jobs.store import JobStore
+from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.schema_export import export_schemas
 from dev_workspace_mcp.server import Transport, create_server, run_server
 from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
+from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager, running_workspace_key_paths
 
 
 @click.group()
@@ -105,12 +109,27 @@ def serve(config_path: Path, transport: Transport) -> None:
                 DockerWorkspaceManager(reconcile_docker_client, reconcile_db).reconcile_all()
             finally:
                 reconcile_docker_client.close()
+
+        # §73 step 6, §44.1 steps 4-5: under `ssh.mode: agent`, the
+        # previous agent died with the daemon (S23's own module docstring)
+        # — start a fresh one for every workspace step 5 above just
+        # confirmed is `running`, and tear down anything still tracked for
+        # a workspace that is not. Runs after container reconciliation,
+        # not before: it needs "is this workspace actually running"
+        # answered by the up-to-date DB state that step just produced —
+        # and is skipped under the same condition that step already is,
+        # for the same reason: without Docker, "running" isn't trustworthy.
+        if config.ssh.mode == "agent" and reconcile_docker_client is not None:
+            SSHAgentManager(
+                reconcile_db, runtime_dir=config.state_db_path.parent / "ssh-agents"
+            ).reconcile(
+                running_workspace_key_paths(reconcile_db, RepositoryRegistry(config), config.ssh)
+            )
     finally:
         reconcile_db.close()
 
-    # Step 6 (SSH-agent reconciliation) lands with S23. Step 7 (validate
-    # repository roots) is enforced at config-load time (step 1) rather
-    # than as a separate pass.
+    # Step 7 (validate repository roots) is enforced at config-load time
+    # (step 1) rather than as a separate pass.
 
     # §73 step 8: start the MCP transport.
     server = create_server(config)

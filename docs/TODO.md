@@ -916,20 +916,140 @@ bumped `0.4.0` → `0.5.0` per §33.2 (minor).
 Acceptance: a fast-forward commit reaches an authorized repository from both the
 structured tool and `exec("git push")`, with no credential extractable.
 
-### S23 — SSH key provisioning (agent mode)
-**Spec:** §19.1, §19.2, §19.4 · **Satisfies:** FR-025, FR-037 · **Verified by:** AT-013, AT-036 · **Blocked by:** D3
+### S23 — SSH key provisioning (agent mode) ✅
+**Spec:** §19.1, §19.2, §19.4 · **Satisfies:** FR-025, FR-037 · **Verified by:** AT-013, AT-036
 
-- [ ] Per-workspace `ssh-agent`; load the workspace key; bind-mount the socket at
+- [x] Per-workspace `ssh-agent`; load the workspace key; bind-mount the socket at
       `/run/mcp/ssh/agent.sock`; set `SSH_AUTH_SOCK`
-- [ ] Key material never enters the container filesystem, env, or argv
-- [ ] Remove the key from the agent whenever the workspace stops (including idle
+- [x] Key material never enters the container filesystem, env, or argv
+- [x] Remove the key from the agent whenever the workspace stops (including idle
       stop); terminate the agent on delete
-- [ ] `file` mode as the documented weaker alternative, reported via `ssh_key_mode`
-- [ ] Agent reconciliation on daemon restart (§44.1 step 4) — without it a running
+- [x] `file` mode as the documented weaker alternative, reported via `ssh_key_mode`
+      (already true since S11 — `workspace_info`'s `ssh_key_mode=ssh_config.mode`
+      predates this task)
+- [x] Agent reconciliation on daemon restart (§44.1 step 4) — without it a running
       container's key is silently unusable
-- [ ] AT-013: no host credentials present; no key material discoverable under agent
+- [x] AT-013: no host credentials present; no key material discoverable under agent
       mode, including during an in-flight push
-- [ ] AT-036: key unloaded after stop; no agent after delete
+- [x] AT-036: key unloaded after stop; no agent after delete
+
+**Commit:** `272fc89`
+
+D3 was decided manual (see Open Decisions above): the operator generates
+the deploy-key pair and registers its public half on GitHub by hand,
+then configures `repositories[].ssh_key`; this task builds only the
+per-workspace `ssh-agent` that loads and serves an already-provisioned
+key. No `administration: write` credential is needed or used anywhere
+here.
+
+New `src/dev_workspace_mcp/workspace/ssh_agent.py` — `SSHAgentManager`,
+backed by a new `ssh_agent` table (`db/schema.py` migration, deliberately
+**not** foreign-keyed to `workspace`: `workspace_open` has to start the
+real agent process, and persist a record of it so a crash between the
+two doesn't leak an untracked process, *before* `ensure_workspace`
+creates the `workspace` row a brand-new persistent workspace's own
+mounts depend on — a real ordering constraint a first version of this
+migration got wrong, caught by `IntegrityError: FOREIGN KEY constraint
+failed` the first time the Docker-level tests actually ran). Each
+`ssh-agent -D -a <socket>` runs in the foreground rather than the
+default fork-and-detach mode specifically so its `Popen.pid` is the
+*real*, directly-signalable agent process — verified empirically (a real
+`ssh-add`/`ssh-add -l` round-trip against the bound socket, immediately
+after spawn) before trusting it. `ensure()` is idempotent: a live agent
+already tracked for the workspace is reused rather than restarted
+(`ssh-add` on an already-loaded key succeeds cleanly rather than
+erroring — also verified empirically — which is what lets `ensure()`
+unconditionally re-`ssh-add` on every call rather than first checking
+whether the key is already loaded, correctly covering both "already
+running with the key" and "already running, key unloaded by a previous
+`stop`" in one code path).
+
+**A real, non-obvious bug this task found and fixed**: `_terminate_pid`
+originally sent `SIGTERM` and nothing else. `terminate()`'s own test
+(kill, then assert the pid is dead) failed intermittently — `os.kill(pid,
+0)` kept reporting the process alive well after the signal.
+`/proc/<pid>/stat` showed state `Z`: a zombie, real and unreaped, because
+nothing had ever called `waitpid` on it. Fixed by having `_terminate_pid`
+call `os.waitpid(pid, 0)` after the signal, tolerating `ChildProcessError`
+for the one case where that call is expected to fail — a pid recovered
+from the `ssh_agent` table after a daemon *restart* is not this process's
+own child (its actual parent died with the previous daemon), so
+`waitpid` can't reap it; the signal still reaches and terminates it
+either way, reaping is just someone else's job in that case. Verified
+against a real zombie, reproduced deliberately, before trusting the fix.
+
+`workspace_open` (`tools/workspace.py`) provisions the agent for
+**persistent** workspaces only: `persistent_workspace_id(repository.id)`
+is a pure, deterministic function of the repository id — the same one
+`ensure_workspace` computes internally — so the agent (and its socket
+path, needed for the container's mount list) can be readied *before*
+`ensure_workspace` creates the container. `mode: "ephemeral"` workspace
+ids include a random suffix only `ensure_workspace` generates internally,
+after mounts must already exist, so ephemeral-mode agent provisioning is
+a **known, deliberately scoped-out gap**: an ephemeral workspace under
+`ssh.mode: agent` gets no agent socket at all right now. This is judged
+an acceptable, narrow gap — §8.1's own examples for ephemeral workspaces
+(clean-room validation, reproducing CI, verifying installation
+instructions) lean read-only/validation-oriented, where SSH push
+capability matters less than for the persistent dev-workspace flow this
+MVP centers on — but it is a real, documented limitation, not an
+oversight.
+
+`DockerWorkspaceManager.stop`/`.delete` (`workspace/manager.py`) gained
+an optional `ssh_agent_manager` — `stop` (including idle-stop's own call
+path) calls `unload_key` (§8.1/§19.2: the key comes out, the agent
+process itself keeps running — cheaper than a full teardown/restart
+cycle every idle cycle, and correctly handled by `ensure()`'s
+unconditional re-`ssh-add` on the next open); `delete` calls `terminate`.
+`cli.py`'s startup sequence gained step 6 (§44.1 steps 4-5), running
+*after* step 5's container reconciliation (it needs that step's
+up-to-date `running` state) and skipped under the same "Docker
+unreachable" condition step 5 already is: `SSHAgentManager.reconcile`
+unconditionally tears down every previously-tracked agent first — §44.1
+step 4's own premise is that the previous agent died with the daemon, so
+nothing is assumed reusable — then starts a fresh one only for workspaces
+`running_workspace_key_paths` (new) confirms are still `running`, which
+also covers step 5 (an agent for a workspace that is no longer running
+is torn down and never restarted).
+
+Three test files: `tests/workspace/test_ssh_agent.py` (15 tests, real
+`ssh-agent`/`ssh-add`/`ssh-keygen` processes, no Docker — `ensure`,
+`unload_key`, `terminate`, `reconcile`'s both halves, key-path
+resolution for both `scope: repository` and `scope: shared`, the
+zombie-reaping fix); `tests/workspace/test_ssh_agent_provisioning.py` (4
+tests, real Docker + the real S7 image, real `ssh-keygen` — the socket
+mount and `SSH_AUTH_SOCK` actually work end-to-end through `exec`,
+`file` mode correctly gets neither, AT-013 (a real private key's own
+distinctive payload fragment is not found anywhere in the container
+filesystem via `grep`/`find`, bounded with `--exclude-dir`/`-xdev` after
+an unrestricted `/` walk timed out), and AT-036 end-to-end through
+`stop`/`delete`); `tests/test_cli.py` gained one test proving step 6's
+*orphan-termination* half through the real `serve` command's actual
+wiring, not the pieces in isolation — the fresh-start half is not
+separately re-proven at the CLI level, since it is already covered
+thoroughly by `test_ssh_agent.py`'s own `reconcile` tests and setting up
+a real, still-`running`-after-reconciliation Docker container purely to
+re-exercise already-tested composition was judged not worth the added
+test complexity.
+
+AT-013's "including during an in-flight push" is satisfied structurally
+rather than by a timing-dependent test: the key file is never mounted,
+copied, or otherwise written into the container at any point — only a
+Unix socket is, and the agent process (not the key) serves signature
+requests over it — so there is no time window, mid-push or otherwise,
+during which the key could appear; the at-rest filesystem/name search
+already performed covers every point in time, not just one.
+
+A real leak was also found and fixed in the test suite itself (not
+product code): the Docker-container teardown fixture force-removes
+containers but was never going to touch a host-side `ssh-agent`
+process, so the provisioning tests' first run left five real orphaned
+agents running. Fixed with a dedicated autouse cleanup fixture reading
+the same state db the test used.
+
+`schemas/tools.json` needed no regeneration — no new tools or output
+fields (confirmed by re-running `export-schemas` and diffing — no
+drift).
 
 ### S24 — SSH client configuration and host-key pinning ✅
 **Spec:** §19.3 · **Satisfies:** FR-033 · **Verified by:** AT-034

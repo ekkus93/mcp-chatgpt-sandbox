@@ -4,10 +4,11 @@
 — only when the repository's actual Git directory needs its own entry —
 a second mount governed by `git_dir_mode`. §5.4 is satisfied by
 construction: that function adds nothing beyond those two.
-`build_known_hosts_mount` (S24) is a separate, standalone mount a caller
-appends once per workspace — the pinned known_hosts file (§19.3), whose
-path never varies with the repository the way the git-dir mount does.
-Caches land in S30, the SSH-agent socket in S23.
+`build_known_hosts_mount` (S24) and `build_ssh_agent_mount` (S23) are
+each a separate, standalone mount a caller appends once per workspace —
+the pinned known_hosts file (§19.3) and the per-workspace agent socket
+(§19.2), neither of whose path varies with the repository the way the
+git-dir mount does. Caches land in S30.
 """
 
 from __future__ import annotations
@@ -19,7 +20,10 @@ from typing import Literal
 from docker.types import Mount
 
 from dev_workspace_mcp.errors import PathOutsideRepositoryError
-from dev_workspace_mcp.workspace.container_config import SSH_KNOWN_HOSTS_CONTAINER_PATH
+from dev_workspace_mcp.workspace.container_config import (
+    SSH_AGENT_SOCKET_CONTAINER_PATH,
+    SSH_KNOWN_HOSTS_CONTAINER_PATH,
+)
 
 GitDirMode = Literal["read-write", "read-only", "none"]
 
@@ -178,4 +182,20 @@ def build_known_hosts_mount(known_hosts_path: Path) -> Mount:
         source=str(known_hosts_path.resolve()),
         type="bind",
         read_only=True,
+    )
+
+
+def build_ssh_agent_mount(socket_path: Path) -> Mount:
+    """§19.2 `ssh.mode: agent`: the workspace's `ssh-agent` socket
+    (`workspace.ssh_agent.SSHAgentManager`), bind-mounted at the fixed
+    container path (`container_config.SSH_AGENT_SOCKET_CONTAINER_PATH`)
+    that `SSH_AUTH_SOCK` also points at. Not read-only: a Unix domain
+    socket has to be genuinely connect()-able from inside the container,
+    not merely readable — private key material itself never crosses this
+    mount at all, only signature *requests* do (§19.2's whole point)."""
+    return Mount(
+        target=SSH_AGENT_SOCKET_CONTAINER_PATH,
+        source=str(socket_path.resolve()),
+        type="bind",
+        read_only=False,
     )

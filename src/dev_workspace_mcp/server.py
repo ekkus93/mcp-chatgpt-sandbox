@@ -100,6 +100,7 @@ def _register_tools(
         workspace_config=config.workspace,
         audit_config=config.audit,
         repository_roots=config.repository_roots,
+        ssh_agent_runtime_dir=config.state_db_path.parent / "ssh-agents",
     )
     execution_tools.register(
         server,

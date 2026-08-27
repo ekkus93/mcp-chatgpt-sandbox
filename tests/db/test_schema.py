@@ -16,9 +16,15 @@ def _table_names(connection: sqlite3.Connection) -> set[str]:
     return {row["name"] for row in rows}
 
 
-def test_open_db_creates_all_four_tables() -> None:
+def test_open_db_creates_all_five_tables() -> None:
     connection = open_db(":memory:")
-    assert _table_names(connection) == {"repository", "workspace", "job", "audit_event"}
+    assert _table_names(connection) == {
+        "repository",
+        "workspace",
+        "job",
+        "audit_event",
+        "ssh_agent",
+    }
 
 
 def test_open_db_reaches_current_schema_version() -> None:

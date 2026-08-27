@@ -51,6 +51,7 @@ def _server_with_no_docker(config: ServerConfig) -> MCPServer:
         workspace_config=config.workspace,
         audit_config=config.audit,
         repository_roots=config.repository_roots,
+        ssh_agent_runtime_dir=config.state_db_path.parent / "ssh-agents",
     )
     return server
 

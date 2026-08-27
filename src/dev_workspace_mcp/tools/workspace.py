@@ -35,8 +35,13 @@ from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.schema_export import CONTRACT_VERSION
 from dev_workspace_mcp.workspace.container_config import build_workspace_run_kwargs
 from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
-from dev_workspace_mcp.workspace.mounts import build_known_hosts_mount, build_workspace_mounts
-from dev_workspace_mcp.workspace.naming import WorkspaceMode
+from dev_workspace_mcp.workspace.mounts import (
+    build_known_hosts_mount,
+    build_ssh_agent_mount,
+    build_workspace_mounts,
+)
+from dev_workspace_mcp.workspace.naming import WorkspaceMode, persistent_workspace_id
+from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager, resolve_ssh_key_path
 
 DEFAULT_WORKSPACE_PATH = "/workspace"
 
@@ -93,11 +98,28 @@ def register(
     workspace_config: WorkspaceConfig,
     audit_config: AuditConfig,
     repository_roots: list[Path],
+    ssh_agent_runtime_dir: Path,
 ) -> None:
     """`docker_client` is `None` when Docker was unreachable at startup
     (§73's degraded state) — the tools that need it fail clearly when
-    called, rather than the server failing to start at all."""
-    manager = DockerWorkspaceManager(docker_client, db) if docker_client is not None else None
+    called, rather than the server failing to start at all.
+
+    `ssh_agent_manager` is built here (not only when a container is
+    actually created) so `DockerWorkspaceManager.stop`/`.delete` — not
+    only `workspace_open` below — can reach it too (§19.2: the key comes
+    out of the agent on every stop, including idle stop, regardless of
+    which call path triggered it). `None` under `ssh.mode: file`, which
+    has no agent lifecycle at all (§19.2's `file` mode)."""
+    ssh_agent_manager = (
+        SSHAgentManager(db, runtime_dir=ssh_agent_runtime_dir)
+        if ssh_config.mode == "agent"
+        else None
+    )
+    manager = (
+        DockerWorkspaceManager(docker_client, db, ssh_agent_manager=ssh_agent_manager)
+        if docker_client is not None
+        else None
+    )
     job_store = JobStore(db)
 
     def _require_docker() -> tuple[DockerWorkspaceManager, docker.DockerClient]:
@@ -166,6 +188,21 @@ def register(
             authorized_roots=repository_roots,
         )
         mounts.append(build_known_hosts_mount(ssh_config.known_hosts))
+        if ssh_agent_manager is not None and mode == "persistent":
+            # §19.2: mounts must be finalized before `ensure_workspace`
+            # creates the container, which is only possible here because
+            # `persistent_workspace_id` is a pure, deterministic function
+            # of `repository.id` — the exact same id `ensure_workspace`
+            # computes internally for `mode: "persistent"`. Ephemeral
+            # workspaces get a random-suffixed id only `ensure_workspace`
+            # itself generates, after mounts must already exist; ephemeral
+            # agent provisioning is a known, documented gap (docs/TODO.md).
+            key_path = resolve_ssh_key_path(ssh_config, repository)
+            if key_path is not None:
+                agent_record = ssh_agent_manager.ensure(
+                    persistent_workspace_id(repository.id), key_path
+                )
+                mounts.append(build_ssh_agent_mount(agent_record.socket_path))
         run_kwargs["mounts"] = mounts
         record = active_manager.ensure_workspace(
             repository=repository,

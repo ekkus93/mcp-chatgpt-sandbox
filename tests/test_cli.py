@@ -1,6 +1,10 @@
 """S1/S2: `serve --config <path>` CLI shape, now backed by real config
 validation (§73 step 1) and a Docker reachability check (§73 step 2)."""
 
+import contextlib
+import os
+import signal
+import subprocess
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -11,6 +15,7 @@ from click.testing import CliRunner
 from dev_workspace_mcp.cli import main
 from dev_workspace_mcp.db import open_db
 from dev_workspace_mcp.jobs.store import JobStore
+from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager
 
 
 def _write_config(path: Path, data: dict[str, Any]) -> Path:
@@ -118,6 +123,66 @@ def test_serve_reconciles_non_terminal_jobs_and_warns(
     db = open_db(minimal_config_dict["state_db_path"])
     row = db.execute("SELECT state FROM job WHERE id = 'job_orphan'").fetchone()
     assert row["state"] == "lost"
+
+
+def test_serve_terminates_an_orphaned_ssh_agent_for_a_no_longer_running_workspace(
+    tmp_path: Path, minimal_config_dict: dict[str, Any]
+) -> None:
+    """§73 step 6, §44.1 step 5: a real `ssh-agent` tracked for a
+    workspace that is not `running` gets torn down at startup — through
+    the real `serve` command's actual wiring (`running_workspace_key_paths`
+    + `SSHAgentManager.reconcile`), not the pieces tested in isolation.
+    `minimal_config_dict`'s `ssh.mode` defaults to `agent` (unset), so
+    this exercises the same code path every other CLI test in this file
+    already runs through without noticing.
+    """
+    config_path = _write_config(tmp_path, minimal_config_dict)
+
+    db = open_db(minimal_config_dict["state_db_path"])
+    db.execute("INSERT INTO repository (id, canonical_path) VALUES ('repo_test', '/repo')")
+    db.execute(
+        """
+        INSERT INTO workspace
+            (id, repository_id, mode, workspace_path, state, created_at, last_used_at)
+        VALUES ('ws_test', 'repo_test', 'persistent', '/workspace', 'stopped',
+                '2026-01-01', '2026-01-01')
+        """
+    )
+    db.commit()
+
+    key_path = tmp_path / "orphan.ed25519"
+    subprocess.run(["ssh-keygen", "-t", "ed25519", "-f", str(key_path), "-N", "", "-q"], check=True)
+    ssh_agent_manager = SSHAgentManager(
+        db, runtime_dir=Path(minimal_config_dict["state_db_path"]).parent / "ssh-agents"
+    )
+    stale = ssh_agent_manager.ensure("ws_test", key_path)
+    db.close()
+
+    try:
+        with (
+            patch("dev_workspace_mcp.cli.docker_available", return_value=True),
+            patch("dev_workspace_mcp.cli.run_server") as mock_run,
+        ):
+            result = CliRunner().invoke(main, ["serve", "--config", str(config_path)])
+
+        assert result.exit_code == 0, result.output
+        mock_run.assert_called_once()
+
+        db = open_db(minimal_config_dict["state_db_path"])
+        after = SSHAgentManager(
+            db, runtime_dir=Path(minimal_config_dict["state_db_path"]).parent / "ssh-agents"
+        ).get("ws_test")
+        assert after is None  # torn down: the workspace was not "running"
+
+        try:
+            os.kill(stale.pid, 0)
+            alive = True
+        except ProcessLookupError:
+            alive = False
+        assert not alive
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(stale.pid, signal.SIGTERM)
 
 
 def test_version_flag() -> None:

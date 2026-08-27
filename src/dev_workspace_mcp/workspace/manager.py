@@ -49,6 +49,7 @@ from dev_workspace_mcp.workspace.naming import (
     ephemeral_workspace_id,
     persistent_workspace_id,
 )
+from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager
 
 
 class WorkspaceState(StrEnum):
@@ -123,9 +124,21 @@ def resolve_repository_root(db: sqlite3.Connection, workspace_id: str) -> Path:
 
 
 class DockerWorkspaceManager:
-    def __init__(self, docker_client: docker.DockerClient, db: sqlite3.Connection) -> None:
+    def __init__(
+        self,
+        docker_client: docker.DockerClient,
+        db: sqlite3.Connection,
+        *,
+        ssh_agent_manager: SSHAgentManager | None = None,
+    ) -> None:
         self._docker = docker_client
         self._db = db
+        # Optional: only `tools/workspace.py` (where `ssh.mode: agent`
+        # lifecycle actually matters) constructs this with one — every
+        # other caller (execution/git tools, `reconcile_all` at startup)
+        # has no reason to touch ssh-agents at all, so `stop`/`delete`
+        # below no-op the agent-cleanup step when this is `None`.
+        self._ssh_agents = ssh_agent_manager
 
     # --- persistence (§3's workspace table) ---------------------------------
 
@@ -355,6 +368,12 @@ class DockerWorkspaceManager:
             raise ContainerRuntimeFailedError(
                 f"failed to stop container for workspace {workspace_id!r}: {exc}"
             ) from exc
+        # §8.1/§19.2: the key comes out of the agent whenever the
+        # workspace stops, including this idle stop's own caller — the
+        # agent process itself is left running (`unload_key`'s own
+        # docstring explains why).
+        if self._ssh_agents is not None:
+            self._ssh_agents.unload_key(workspace_id)
         return self._save(replace(record, state=WorkspaceState.STOPPED, last_used_at=_now()))
 
     def _list_running_persistent(self) -> list[WorkspaceRecord]:
@@ -461,6 +480,8 @@ class DockerWorkspaceManager:
         record = self._get_or_raise(workspace_id)
         self._save(replace(record, state=WorkspaceState.DELETING, last_used_at=_now()))
         self._remove_container_if_present(record)
+        if self._ssh_agents is not None:
+            self._ssh_agents.terminate(workspace_id)  # §19.2: no agent after delete
         self._db.execute("DELETE FROM workspace WHERE id = ?", (workspace_id,))
         self._db.commit()
 

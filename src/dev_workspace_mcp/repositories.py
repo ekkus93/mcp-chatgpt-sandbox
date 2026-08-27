@@ -73,6 +73,10 @@ class RepositoryRecord:
     """`None` for a discovered repository: its GitHub identity is not
     knowable without reading Git state (Phase 3), and GitHub sync is keyed
     off explicit repository configuration (§19) regardless."""
+    ssh_key: str | None = None
+    """Filename relative to `ssh.keys_dir` (§19.1, S23). `None` for a
+    discovered repository (same reasoning as `github`) or one configured
+    under `ssh.scope: shared`, where `ssh.shared_key` is used instead."""
 
 
 class RepositoryRegistry:
@@ -94,7 +98,12 @@ class RepositoryRegistry:
 
     @staticmethod
     def _from_config(repo: RepositoryConfig) -> RepositoryRecord:
-        return RepositoryRecord(id=repo.id, canonical_path=repo.path.resolve(), github=repo.github)
+        return RepositoryRecord(
+            id=repo.id,
+            canonical_path=repo.path.resolve(),
+            github=repo.github,
+            ssh_key=repo.ssh_key,
+        )
 
     def get(self, repository_id: str) -> RepositoryRecord:
         """Resolve `repository_id`, or fail closed (FR-002)."""

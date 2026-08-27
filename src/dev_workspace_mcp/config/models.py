@@ -145,6 +145,11 @@ class SSHConfig(BaseModel):
     scope: Literal["repository", "shared"] = "repository"
     keys_dir: Path
     known_hosts: Path
+    shared_key: str | None = None
+    """Filename relative to `keys_dir`, used only under `scope: shared`
+    (§19.1) — one key installed on every configured repository. Ignored
+    under `scope: repository`, where each `repositories[].ssh_key` names
+    its own key instead."""
 
     @field_validator("keys_dir", "known_hosts")
     @classmethod

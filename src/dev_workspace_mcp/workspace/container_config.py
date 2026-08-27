@@ -29,6 +29,10 @@ DEFAULT_IMAGE_BUILD_CONTEXT = Path(__file__).resolve().parents[3] / "docker" / "
 #: Python and a shell script, so keep the two in sync by hand.
 SSH_KNOWN_HOSTS_CONTAINER_PATH = "/etc/mcp/ssh/known_hosts"
 
+#: §19.2 `ssh.mode: agent`: the fixed container-side path the per-workspace
+#: agent's host socket is bind-mounted at, matching `SSH_AUTH_SOCK` below.
+SSH_AGENT_SOCKET_CONTAINER_PATH = "/run/mcp/ssh/agent.sock"
+
 
 def userns_remap_active(docker_client: docker.DockerClient) -> bool:
     """§5.3: whether the daemon has user-namespace remapping configured,
@@ -87,6 +91,11 @@ def build_workspace_run_kwargs(
             "MCP_SUDO": "true" if container_config.sudo else "false",
             "MCP_WORKSPACE_PATH": workspace_path,
             "MCP_SSH_MODE": ssh_config.mode,
+            **(
+                {"SSH_AUTH_SOCK": SSH_AGENT_SOCKET_CONTAINER_PATH}
+                if ssh_config.mode == "agent"
+                else {}
+            ),
             **(extra_env or {}),
         }
 
