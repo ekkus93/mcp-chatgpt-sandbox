@@ -33,7 +33,7 @@ from mcp.server import MCPServer
 #: 0.7.2 (S30): patch bump — `workspace_open`/`workspace_info` gained
 #: `image`, `image_digest`, `config_version`, `created_at` (§9.2); no new
 #: tools.
-CONTRACT_VERSION = "0.7.2"
+CONTRACT_VERSION = "0.7.3"
 
 
 async def collect_tool_schemas(server: MCPServer) -> list[dict[str, Any]]:

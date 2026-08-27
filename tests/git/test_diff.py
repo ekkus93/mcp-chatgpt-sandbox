@@ -193,3 +193,101 @@ def test_offset_retrieves_the_remainder(tmp_path: Path) -> None:
     second_chunk = read_git_diff(repo, max_bytes=10**9, offset=100)
     assert first_chunk.content + second_chunk.content == full.content
     assert second_chunk.truncated is False
+
+
+# --- H24 (`docs/HARDENING_TODO.md`, HR-022): next_offset + character-safe
+# pagination + offset/max_bytes validation -----------------------------------
+
+
+def test_negative_offset_is_rejected(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "a.txt").write_text("v1\n")
+    _commit_all(repo, "v1")
+    with pytest.raises(InvalidArgumentError):
+        read_git_diff(repo, offset=-1)
+
+
+def test_negative_max_bytes_is_rejected(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "a.txt").write_text("v1\n")
+    _commit_all(repo, "v1")
+    with pytest.raises(InvalidArgumentError):
+        read_git_diff(repo, max_bytes=-1)
+
+
+def test_next_offset_matches_the_actual_bytes_consumed(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "a.txt").write_text("x\n" * 1000)
+    _commit_all(repo, "initial")
+    (repo / "a.txt").write_text("y\n" * 1000)
+
+    chunk = read_git_diff(repo, max_bytes=100)
+    assert chunk.next_offset == len(chunk.content.encode("utf-8"))
+    assert chunk.truncated is True
+
+    final = read_git_diff(repo, max_bytes=10**9, offset=chunk.next_offset)
+    assert final.truncated is False
+    assert final.next_offset == final.total_bytes
+
+
+def test_at_hr022_pagination_never_splits_a_multibyte_character(tmp_path: Path) -> None:
+    """A real regression: byte-offset windowing used to slice straight
+    through a multi-byte UTF-8 character, so `errors="replace"` turned
+    the *whole* character into U+FFFD in whichever window it landed —
+    and, since the split point was computed purely from `max_bytes`
+    (never returned to the caller), the following window started
+    mid-character too and corrupted it a second time. Paginating with a
+    tight `max_bytes` (still >= 4, the widest a single UTF-8 character
+    can be, so this can never degrade to the zero-progress edge case)
+    over genuinely multi-byte content must reassemble byte-for-byte
+    identical to an unpaginated read, with no replacement character
+    anywhere."""
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "a.txt").write_text("original\n")
+    _commit_all(repo, "initial")
+    (repo / "a.txt").write_text("日本語のテスト文字列です — café — naïve\n" * 5)
+
+    full = read_git_diff(repo, max_bytes=10**9)
+    assert "�" not in full.content  # sanity: an unpaginated read is already clean
+
+    reassembled = ""
+    offset = 0
+    for _ in range(full.total_bytes + 10):  # generous bound against a stuck loop
+        chunk = read_git_diff(repo, max_bytes=4, offset=offset)
+        reassembled += chunk.content
+        if not chunk.truncated:
+            break
+        assert chunk.next_offset > offset, "pagination must always make forward progress"
+        offset = chunk.next_offset
+    else:
+        pytest.fail("pagination did not terminate")
+
+    assert reassembled == full.content
+    assert "�" not in reassembled
+
+
+def test_pagination_terminates_even_when_max_bytes_is_smaller_than_one_character(
+    tmp_path: Path,
+) -> None:
+    """The degenerate case `_trim_incomplete_trailing_char`'s "keep the
+    untrimmed window" fallback exists for: `max_bytes=1` can never hold
+    even the smallest multi-byte character, so trimming would otherwise
+    zero out the window and make no progress, forever. Progress (and
+    eventual termination) is guaranteed even though the content itself
+    may be lossy at some cut points."""
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "a.txt").write_text("original\n")
+    _commit_all(repo, "initial")
+    (repo / "a.txt").write_text("日本語のテスト\n")
+
+    full = read_git_diff(repo, max_bytes=10**9)
+
+    offset = 0
+    for _ in range(full.total_bytes + 10):
+        chunk = read_git_diff(repo, max_bytes=1, offset=offset)
+        if not chunk.truncated:
+            break
+        assert chunk.next_offset > offset, "pagination must always make forward progress"
+        offset = chunk.next_offset
+    else:
+        pytest.fail("pagination did not terminate")

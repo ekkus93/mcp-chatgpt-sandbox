@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 
 from dev_workspace_mcp.git.service import InterruptedOperation
-from dev_workspace_mcp.git.status import read_git_status
+from dev_workspace_mcp.git.status import head_sha_matches, read_git_status
 
 
 def _init_repo(path: Path) -> Path:
@@ -201,3 +201,40 @@ def test_at_hat019_a_non_utf8_filename_is_listed_untracked_and_json_safe(
     assert "bad-" in status.untracked[0]
     assert status.untracked[0].encode("utf-8")  # SHALL NOT raise UnicodeEncodeError
     assert status.clean is False
+
+
+# --- H24 (`docs/HARDENING_TODO.md`, HR-022): head_sha_matches accepts an
+# abbreviated expected_head_sha ------------------------------------------------
+
+
+def test_head_sha_matches_a_full_sha() -> None:
+    sha = "a" * 40
+    assert head_sha_matches(sha, sha) is True
+
+
+def test_head_sha_matches_an_abbreviated_prefix() -> None:
+    """A real regression: `git_commit`/`git_pull`'s `expected_head_sha`
+    was compared with `!=` against the always-full `head_sha` — a
+    caller-supplied abbreviated SHA (the ordinary way one is copied from
+    `git log --oneline`, a PR description, etc.) could never match,
+    even when it correctly identified the current HEAD."""
+    full = "abc1234567890abc1234567890abc1234567890"
+    assert head_sha_matches(full, full[:7]) is True
+
+
+def test_head_sha_matches_rejects_a_mismatched_prefix() -> None:
+    full = "abc1234567890abc1234567890abc1234567890"
+    assert head_sha_matches(full, "def4567") is False
+
+
+def test_head_sha_matches_rejects_a_too_short_abbreviation() -> None:
+    """A 1-3 char value trivially prefix-matches almost any SHA and isn't
+    how anyone actually copies one — `MIN_ABBREVIATED_SHA_LENGTH` refuses
+    it rather than treat it as a legitimate abbreviation."""
+    full = "abc1234567890abc1234567890abc1234567890"
+    assert head_sha_matches(full, "abc") is False
+    assert head_sha_matches(full, "") is False
+
+
+def test_head_sha_matches_is_false_for_an_unborn_branch() -> None:
+    assert head_sha_matches(None, "abc1234") is False

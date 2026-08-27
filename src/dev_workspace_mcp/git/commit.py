@@ -132,9 +132,14 @@ def detect_default_branch(repo_path: Path) -> str | None:
     result = run_git_host_side(repo_path, ["symbolic-ref", "refs/remotes/origin/HEAD"])
     if not result.ok:
         return None
-    # "refs/remotes/origin/main" -> "main"
+    # "refs/remotes/origin/main" -> "main". `removeprefix`, not
+    # `rsplit("/", 1)[-1]` (HR-022) — a branch name containing its own
+    # slash (e.g. "release/v1") would otherwise be mangled down to just
+    # "v1".
     ref = result.stdout.strip()
-    return ref.rsplit("/", 1)[-1] if ref else None
+    if not ref:
+        return None
+    return ref.removeprefix("refs/remotes/origin/")
 
 
 def is_head_published(repo_path: Path) -> bool:

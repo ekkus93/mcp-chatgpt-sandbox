@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.7.2",
+  "contract_version": "0.7.3",
   "tools": [
     {
       "description": "Delete a repository file or directory (\u00a713.5).",
@@ -688,6 +688,10 @@
             "title": "Content",
             "type": "string"
           },
+          "next_offset": {
+            "title": "Next Offset",
+            "type": "integer"
+          },
           "total_bytes": {
             "title": "Total Bytes",
             "type": "integer"
@@ -700,7 +704,8 @@
         "required": [
           "content",
           "truncated",
-          "total_bytes"
+          "total_bytes",
+          "next_offset"
         ],
         "title": "GitDiffOutput",
         "type": "object"

@@ -81,7 +81,7 @@ from dev_workspace_mcp.git.remote import (
     validate_remote_identity_for_push,
 )
 from dev_workspace_mcp.git.service import detect_interrupted_operation, run_git_host_side
-from dev_workspace_mcp.git.status import read_git_status
+from dev_workspace_mcp.git.status import head_sha_matches, read_git_status
 from dev_workspace_mcp.github_api import (
     RemoteProtectionReportOutput,
     RemoteProtectionResult,
@@ -95,6 +95,7 @@ from dev_workspace_mcp.workspace.manager import (
     WorkspaceState,
     get_authorized,
     resolve_repository_root,
+    touch_last_used,
 )
 
 #: HR-015 (`docs/HARDENING_SPEC.md` §8): a denial record SHALL carry the
@@ -195,6 +196,7 @@ class GitDiffOutput:
     content: str
     truncated: bool
     total_bytes: int
+    next_offset: int
 
 
 @dataclass
@@ -316,7 +318,10 @@ def register(
             offset=offset,
         )
         return GitDiffOutput(
-            content=result.content, truncated=result.truncated, total_bytes=result.total_bytes
+            content=result.content,
+            truncated=result.truncated,
+            total_bytes=result.total_bytes,
+            next_offset=result.next_offset,
         )
 
     @server.tool(name="git_log", description="Bounded commit history (§17.3).")
@@ -372,6 +377,7 @@ def register(
             )
         assert record.container_id is not None  # implied by state == RUNNING
         container_id = record.container_id  # narrowed value, captured for the closure below
+        touch_last_used(db, workspace_id)  # §8.1: this is real usage, not idle
 
         # §20.6: preconditions, evaluated before the container is asked to
         # do anything, and fail closed — the working tree is bind-mounted,
@@ -408,7 +414,9 @@ def register(
                 f"expected branch {expected_branch!r}, found {status.branch!r} (§45)",
                 details={"expected_branch": expected_branch, "actual_branch": status.branch},
             )
-        if expected_head_sha is not None and status.head_sha != expected_head_sha:
+        if expected_head_sha is not None and not head_sha_matches(
+            status.head_sha, expected_head_sha
+        ):
             raise GitHeadChangedError(
                 f"expected HEAD {expected_head_sha!r}, found {status.head_sha!r} (§45)",
                 details={
@@ -448,12 +456,18 @@ def register(
                 details={"branch": default_branch, "policy": "default_branch_commit"},
             )
 
+        # HR-022: `!= "allow"` — the same fail-closed shape
+        # `default_branch_push` (below) now also uses — denies both
+        # "deny" and "require_approval" alike; §42: `require_approval`
+        # is a hard denial in this release, no interactive-approval
+        # mechanism exists yet.
         if amend and git_policy_config.amend_published != "allow" and is_head_published(repo_path):
             raise PolicyDeniedError(
                 "amend_published policy denies amending a commit already present "
                 "on its upstream branch (§18.9, §65)",
                 details={
                     "policy": "amend_published",
+                    "value": git_policy_config.amend_published,
                     "upstream": status.upstream,
                     "branch": status.branch,
                 },
@@ -590,7 +604,9 @@ def register(
                 f"expected branch {expected_branch!r}, found {status.branch!r} (§45)",
                 details={"expected_branch": expected_branch, "actual_branch": status.branch},
             )
-        if expected_head_sha is not None and status.head_sha != expected_head_sha:
+        if expected_head_sha is not None and not head_sha_matches(
+            status.head_sha, expected_head_sha
+        ):
             raise GitHeadChangedError(
                 f"expected HEAD {expected_head_sha!r}, found {status.head_sha!r} (§45)",
                 details={
@@ -838,16 +854,31 @@ def register(
         is_default_branch = default_branch is not None and target_branch == default_branch
         if is_default_branch:
             default_branch_push = git_policy_config.default_branch_push
-            if default_branch_push == "deny" or default_branch_push == "require_approval":
+            # HR-022: fail-closed (only "allow"/"allow_fast_forward" are
+            # non-denying), not an enumeration of the known deny values
+            # — the same shape `amend_published` (above) already uses.
+            # Enumerating `"deny" or "require_approval"` explicitly would
+            # silently *permit* the push if `default_branch_push` were
+            # ever set to some other, unrecognized value instead of
+            # correctly refusing it.
+            if default_branch_push not in ("allow", "allow_fast_forward"):
                 raise PolicyDeniedError(
                     f"default_branch_push policy denies pushing to {default_branch!r} (§18.9)",
-                    details={"branch": default_branch, "policy": "default_branch_push"},
+                    details={
+                        "branch": default_branch,
+                        "policy": "default_branch_push",
+                        "value": default_branch_push,
+                    },
                 )
             if default_branch_push == "allow_fast_forward" and (force or force_with_lease):
                 raise PolicyDeniedError(
                     f"default_branch_push: allow_fast_forward permits only a "
                     f"non-force push to {default_branch!r} (§18.9)",
-                    details={"branch": default_branch, "policy": "default_branch_push"},
+                    details={
+                        "branch": default_branch,
+                        "policy": "default_branch_push",
+                        "value": default_branch_push,
+                    },
                 )
 
         if force and _denied(git_policy_config.force_push):

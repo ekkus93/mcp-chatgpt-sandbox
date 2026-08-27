@@ -250,6 +250,54 @@ async def test_default_branch_push_deny_blocks_an_ordinary_push_to_the_default_b
         await server.call_tool("git_push", {"workspace_id": workspace_id, "branch": "main"})
 
 
+async def test_at_h024_default_branch_push_require_approval_blocks_an_ordinary_push(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """H24 (`docs/HARDENING_TODO.md`, HR-022): `require_approval` is a
+    hard denial in this release (§42, no interactive-approval mechanism
+    exists yet) — the same as `deny`, and the same shape `amend_published`
+    already used. `default_branch_push`'s own check is now fail-closed
+    (`not in ("allow", "allow_fast_forward")`) rather than an enumeration
+    of the two known deny-values, so this also guards against a future
+    unrecognized value being silently treated as permitted."""
+    remote_path = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote_path)], check=True)
+    seed_path = tmp_path / "seed"
+    subprocess.run(["git", "clone", "-q", str(remote_path), str(seed_path)], check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=seed_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=seed_path, check=True)
+    (seed_path / "README.md").write_text("hello\n")
+    subprocess.run(["git", "add", "-A"], cwd=seed_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "initial"], cwd=seed_path, check=True)
+    subprocess.run(["git", "push", "-q", "origin", "main"], cwd=seed_path, check=True)
+
+    repo_path = tmp_path / "work" / "example"
+    repo_path.parent.mkdir(parents=True)
+    subprocess.run(["git", "clone", "-q", str(remote_path), str(repo_path)], check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo_path, check=True)
+
+    config = minimal_config.model_copy(
+        update={
+            "docker": minimal_config.docker.model_copy(update={"default_image": default_image_tag}),
+            "repositories": [
+                RepositoryConfig(id="example", path=repo_path, github="owner/example")
+            ],
+            "git_policy": minimal_config.git_policy.model_copy(
+                update={"default_branch_push": "require_approval"}
+            ),
+        }
+    )
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    with pytest.raises(ToolError, match="POLICY_DENIED"):
+        await server.call_tool("git_push", {"workspace_id": workspace_id, "branch": "main"})
+
+
 async def test_default_branch_push_allow_fast_forward_blocks_force_on_the_default_branch(
     minimal_config: ServerConfig,
     default_image_tag: str,

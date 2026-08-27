@@ -1797,20 +1797,165 @@ confirms `docker.errors.NotFound` afterward) and
 `test_at_hr009_delete_reclaims_cache_volumes`, a full CLI-level end-to-end
 test with a real `.mcp-workspace.yml` cache declaration.
 
-### H24 — Assorted Git correctness
+### H24 — Assorted Git correctness ✅
 **Satisfies:** HR-022 (partial)
+**Commit:** `5f47eed`
 
-- [ ] `git_diff`: return `next_offset` and split on character boundaries — byte
+- [x] `git_diff`: return `next_offset` and split on character boundaries — byte
       offsets currently corrupt any non-ASCII diff and reassembly is impossible
-- [ ] `git_diff`: validate `offset`/`max_bytes` (negative values currently
+- [x] `git_diff`: validate `offset`/`max_bytes` (negative values currently
       slice from the end)
-- [ ] `detect_default_branch`: use `removeprefix("refs/remotes/origin/")`, not
+- [x] `detect_default_branch`: use `removeprefix("refs/remotes/origin/")`, not
       `rsplit("/", 1)`, which mangles `release/v1`
-- [ ] Accept abbreviated `expected_head_sha`, or document that it must be full
-- [ ] Handle `amend_published`'s `require_approval` consistently with
+- [x] Accept abbreviated `expected_head_sha`, or document that it must be full
+- [x] Handle `amend_published`'s `require_approval` consistently with
       `default_branch_push`
-- [ ] `git_commit`: call `touch_last_used` so an active commit stream resets the
+- [x] `git_commit`: call `touch_last_used` so an active commit stream resets the
       idle clock
+
+**`git_diff` pagination is now character-safe, with an explicit
+`next_offset`.** The old scheme sliced raw bytes at `offset`/`offset +
+max_bytes` and decoded the window with `errors="replace"` — a boundary
+landing mid-character turned that *whole* character into U+FFFD, and
+since the client had no way to know the boundary shifted, the follow-up
+call started mid-character too and corrupted it a second time. Fixed via
+`_trim_incomplete_trailing_char` (`git/diff.py`): a strict `utf-8` decode
+attempt on the window detects a truncated trailing sequence
+(`UnicodeDecodeError` with `reason == "unexpected end of data"` and
+`exc.end == len(window)`, confirmed empirically rather than assumed —
+`exc.start` is exactly the cut point) and trims it off, so the window
+never splits a character; the new `next_offset` field tells the caller
+exactly how many bytes were actually consumed, since a trimmed window is
+sometimes shorter than the requested `max_bytes`. Two edge cases,
+verified empirically rather than assumed correct:
+- trimming only happens when there's a next call to supply the missing
+  bytes (`reaches_true_end` check) — trimming the genuine tail of the
+  diff would remove bytes with nothing to ever complete them, and repeat
+  forever;
+- a `max_bytes` smaller than the byte width of the character sitting at
+  `offset` (the smallest is 1; a UTF-8 character is up to 4 bytes) would
+  otherwise trim the window to *empty* and make zero progress, forever —
+  the fix keeps the untrimmed (occasionally lossy) window rather than
+  stall in that degenerate case, since forward progress matters more
+  than avoiding that one window's corruption.
+
+Also fixed while re-encoding for this: `result.stdout.encode("utf-8")`
+(no error strategy) would have raised `UnicodeEncodeError` the moment a
+diff touched a non-UTF-8 file, since `run_git_host_side` decodes with
+`errors="surrogateescape"` (H19) specifically to keep such bytes
+representable — re-encoding must use the same strategy to round-trip them
+back losslessly.
+
+`offset`/`max_bytes` are now validated: negative values previously sliced
+from the end of the diff (Python's own slicing semantics) instead of
+being rejected — `read_git_diff` now raises `InvalidArgumentError` for
+either.
+
+**`detect_default_branch` no longer mangles a default branch containing
+its own slash.** `ref.rsplit("/", 1)[-1]` on
+`"refs/remotes/origin/release/v1"` returned `"v1"`; `removeprefix`
+returns `"release/v1"` correctly, since the prefix is always the fixed
+`"refs/remotes/origin/"` string, never something to split on.
+
+**`expected_head_sha` now accepts an abbreviated SHA.** New
+`head_sha_matches` (`git/status.py`): a prefix match against the always-
+full `status.head_sha` (`--porcelain=v2`'s `branch.oid` is never
+abbreviated), gated on `MIN_ABBREVIATED_SHA_LENGTH = 4` (git's own
+historical minimum) so a degenerate 1-3 char value can't trivially match.
+Wired into both `git_commit_tool` and `git_pull_tool`'s `expected_head_sha`
+checks, which previously compared with `!=` — rejecting every caller who
+(routinely) copied an abbreviated SHA from a `git log --oneline`-style
+summary, even when it correctly identified the current HEAD.
+
+**`amend_published`/`default_branch_push` now handle `require_approval`
+the same way.** `amend_published`'s existing `!= "allow"` check was
+already fail-closed (denies "deny" and "require_approval" alike);
+`default_branch_push`'s check is now the same shape
+(`not in ("allow", "allow_fast_forward")`) instead of an enumeration of
+the two known deny-values (`== "deny" or == "require_approval"`) — the
+enumeration silently *permits* the push if this field were ever set to
+some other, unrecognized value, rather than correctly refusing it. Both
+denials' `details` now also carry the actual configured `value`, matching
+the `push`/`force_push`/`force_with_lease`/`delete_remote_*` denials'
+existing convention. Note: since `RemoteWritePolicy`/
+`default_branch_push`'s own type is a closed `Literal`, every value this
+refactor changed the *handling* of was already denied under the old
+enumeration too — the fail-closed shape is a real robustness improvement
+against a hypothetical future literal value, not a behavior change
+reachable through the validated config today, and the two `require_approval`
+regression tests below pass on both the reverted and the fixed code (an
+honestly-disclosed incidental-coverage gap — see "Verified the tests
+catch the regression" below).
+
+**`git_commit` now calls `touch_last_used`.** A real gap: `git_pull`/
+`git_push` are documented (S17's idle-stop) as real usage already via a
+different path, but `git_commit` never touched `last_used_at` at all — an
+active commit-only session (no interleaved `exec`/`read_file`) still
+looked idle to §8.1's sweep and could be stopped out from under it.
+Placed right after the workspace's `RUNNING` state is confirmed, matching
+where `exec`/`read_file` already call it — before the request might still
+be denied by a later precondition, since the attempt itself is real usage
+regardless of outcome.
+
+**Verified the tests catch the regression:** reverted `git/diff.py`,
+`git/commit.py`, `git/status.py`, `tools/git.py`, and `schema_export.py`
+to their pre-H24 versions and reran the new tests. `git_diff`'s five new
+tests failed exactly as predicted (`AttributeError: 'GitDiffResult'
+object has no attribute 'next_offset'`; the two negative-value tests
+failed to raise at all). `detect_default_branch`'s new test failed with
+the literal mangled value (`'v1' != 'release/v1'`). The abbreviated-
+`expected_head_sha` tool test failed with `GIT_HEAD_CHANGED` against the
+reverted exact-comparison. The `touch_last_used` test failed with an
+unchanged timestamp. Honestly disclosed rather than silently kept
+misleading: the two `require_approval` consistency tests (`git_commit`'s
+amend, `git_push`'s default-branch) **passed on the reverted code too** —
+both policies already denied `require_approval` before this task (see
+above); they remain valuable, real regression coverage for "does
+`require_approval` deny," just not for the specific fail-closed/`value`-detail
+refactor. Restored the fix; all pass again. No Docker leftovers after
+either the revert run or the restore run.
+
+**Schema drift, expected and applied:** `git_diff`'s new `next_offset`
+output field is a real contract change (§33.2: a new output field is a
+patch bump) — `CONTRACT_VERSION` bumped `0.7.2` → `0.7.3`
+(`schema_export.py`) and `schemas/tools.json` re-exported and committed.
+
+**Full `tests/git/`/`tests/workspace/`/`tests/test_schema_export.py`
+suite:** the backgrounded run was interrupted twice around the 65–70%
+mark with zero visible failures (the same recurring environmental
+pattern seen since H19), leaving one orphaned container both times
+(`docker rm -f`'d immediately, confirmed clean afterward). Rather than
+retry a third time, committing on the strength of the scoped evidence
+already gathered: every individual file this task touched or that
+exercises the changed code paths, run to completion —
+`tests/git/test_diff.py` (19/19), `tests/git/test_commit.py` (18/18),
+`tests/git/test_status.py` (14/14), `tests/workspace/test_git_commit_tool.py`
+(21/21), `tests/workspace/test_git_push_tool.py` (19/19),
+`tests/workspace/test_git_pull_tool.py` (9/9),
+`tests/workspace/test_git_diff_log_tools.py` (5/5),
+`tests/workspace/test_idle_stop.py` (13/13, real Docker) — plus the
+revert-verification above, `tests/test_schema_export.py` (9/9), and clean
+`ruff check`, `ruff format --check`, and `mypy src` across the whole
+tree.
+
+**New tests:** `tests/git/test_diff.py` — negative `offset`/`max_bytes`
+rejection, `next_offset` matches the actual bytes consumed, a tight
+(`max_bytes=4`) paginated read over genuinely multi-byte diff content
+reassembles byte-for-byte identical to an unpaginated read with no
+replacement character anywhere, and a degenerate `max_bytes=1` still
+terminates. `tests/git/test_commit.py` — a default branch named
+`release/v1` (its own real remote/clone, not a stub) round-trips through
+`detect_default_branch` unmangled. `tests/git/test_status.py` — unit
+coverage for `head_sha_matches`: full match, abbreviated-prefix match,
+mismatched prefix, too-short abbreviation, `None` (unborn branch).
+`tests/workspace/test_git_commit_tool.py` — an abbreviated
+`expected_head_sha` is accepted end-to-end through the real tool; amend
+against a published commit is still denied under
+`amend_published: require_approval`.
+`tests/workspace/test_git_push_tool.py` — a push to the default branch is
+still denied under `default_branch_push: require_approval`.
+`tests/workspace/test_idle_stop.py` — `git_commit` bumps `last_used_at`,
+isolated from `write_file`'s own already-existing bump in the same test.
 
 ---
 

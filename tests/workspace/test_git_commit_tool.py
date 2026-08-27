@@ -217,6 +217,40 @@ async def test_git_commit_expected_head_sha_mismatch_fails_closed(
         )
 
 
+async def test_at_h024_git_commit_accepts_an_abbreviated_expected_head_sha(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """H24 (`docs/HARDENING_TODO.md`, HR-022): `expected_head_sha` is
+    routinely copied from a `git log --oneline`-style abbreviated SHA —
+    a real regression had this rejected outright by an exact `!=`
+    comparison against the always-full `status.head_sha`, even when it
+    correctly identified the current HEAD."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    status = await server.call_tool("git_status", {"workspace_id": workspace_id})
+    abbreviated_head_sha = status.structured_content["head_sha"][:8]
+
+    await server.call_tool(
+        "write_file", {"workspace_id": workspace_id, "path": "a.txt", "content": "a\n"}
+    )
+    result = await server.call_tool(
+        "git_commit",
+        {
+            "workspace_id": workspace_id,
+            "message": "commit guarded by an abbreviated expected_head_sha",
+            "paths": ["a.txt"],
+            "expected_head_sha": abbreviated_head_sha,
+        },
+    )
+    assert result.structured_content["files_committed"] == ["a.txt"]
+
+
 async def test_git_commit_strict_mode_rejects_extraneous_staged_paths(
     minimal_config: ServerConfig,
     default_image_tag: str,
@@ -408,6 +442,61 @@ async def test_git_commit_amend_denied_when_published(
             "repositories": [
                 RepositoryConfig(id="example", path=repo_path, github="owner/example")
             ],
+        }
+    )
+    server = create_server(config)
+    workspace_id = await _open(server)
+    await server.call_tool(
+        "write_file", {"workspace_id": workspace_id, "path": "a.txt", "content": "a\nmore\n"}
+    )
+
+    with pytest.raises(ToolError, match="POLICY_DENIED"):
+        await server.call_tool(
+            "git_commit",
+            {
+                "workspace_id": workspace_id,
+                "message": "rewriting published history",
+                "paths": ["a.txt"],
+                "amend": True,
+            },
+        )
+
+
+async def test_at_h024_git_commit_amend_denied_when_published_and_require_approval(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """H24 (`docs/HARDENING_TODO.md`, HR-022): `amend_published:
+    require_approval` denies exactly like `deny` does (§42: a hard
+    denial in this release, no interactive-approval mechanism exists
+    yet) — the same treatment `default_branch_push` gives
+    `require_approval`."""
+    remote_path = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote_path)], check=True)
+    repo_path = tmp_path / "work" / "example"
+    repo_path.parent.mkdir(parents=True)
+    subprocess.run(["git", "clone", "-q", str(remote_path), str(repo_path)], check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo_path, check=True)
+    (repo_path / "README.md").write_text("hello\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "initial"], cwd=repo_path, check=True)
+    (repo_path / "a.txt").write_text("a\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "published commit"], cwd=repo_path, check=True)
+    subprocess.run(["git", "push", "-q", "origin", "main"], cwd=repo_path, check=True)
+
+    config = minimal_config.model_copy(
+        update={
+            "docker": minimal_config.docker.model_copy(update={"default_image": default_image_tag}),
+            "repositories": [
+                RepositoryConfig(id="example", path=repo_path, github="owner/example")
+            ],
+            "git_policy": minimal_config.git_policy.model_copy(
+                update={"amend_published": "require_approval"}
+            ),
         }
     )
     server = create_server(config)

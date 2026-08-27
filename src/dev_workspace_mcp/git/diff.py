@@ -34,6 +34,30 @@ class GitDiffResult:
     content: str
     truncated: bool
     total_bytes: int
+    next_offset: int
+
+
+def _trim_incomplete_trailing_char(window: bytes) -> bytes:
+    """`window` is an arbitrary byte slice of a UTF-8 diff — its end can
+    land in the middle of a multi-byte character. Trim any incomplete
+    trailing sequence off so decoding `window` never corrupts that
+    character (an offset/`max_bytes` byte window historically fed
+    straight to `bytes.decode(..., errors="replace")`, which turns the
+    *whole* split character into U+FFFD instead of reassembling it
+    correctly once the next window supplies the missing bytes).
+
+    Only a *truncated* sequence — one that would be valid if more bytes
+    followed — is trimmed. A genuinely invalid byte is left in place, to
+    be handled by the caller's own lossy `errors="replace"` decode, same
+    as always: this function's job is pagination correctness, not
+    encoding validation.
+    """
+    try:
+        window.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        if exc.end == len(window) and exc.reason == "unexpected end of data":
+            return window[: exc.start]
+    return window
 
 
 def read_git_diff(
@@ -58,7 +82,11 @@ def read_git_diff(
     `paths` filters to those paths; `stat_only` requests `--stat` instead
     of the full patch text. Bounded by `max_bytes` (§46), with `offset`
     for follow-up retrieval of what a first, truncated call did not
-    include — the same shape `exec_output`'s byte range uses.
+    include — the same shape `exec_output`'s byte range uses. The
+    returned `next_offset` is the byte position to pass as `offset` on
+    the follow-up call; it can differ from `offset + max_bytes` by a few
+    bytes whenever the naive window would have split a multi-byte
+    character (`_trim_incomplete_trailing_char`).
     """
     if head is not None and base is None:
         raise InvalidArgumentError(
@@ -69,6 +97,12 @@ def read_git_diff(
         raise InvalidArgumentError(
             "staged and base/head are mutually exclusive (§17.3)",
             details={"staged": staged, "base": base},
+        )
+    if offset < 0:
+        raise InvalidArgumentError("offset must be >= 0 (§17.3)", details={"offset": offset})
+    if max_bytes is not None and max_bytes < 0:
+        raise InvalidArgumentError(
+            "max_bytes must be >= 0 (§17.3)", details={"max_bytes": max_bytes}
         )
 
     # HR-002(1): a diff-producing read must not invoke a repository's own
@@ -103,14 +137,38 @@ def read_git_diff(
             details={"path": str(repo_path), "stderr": result.stderr},
         )
 
-    encoded = result.stdout.encode("utf-8")
+    # HR-022: `result.stdout` was decoded with `errors="surrogateescape"`
+    # (`run_git_host_side`) precisely so a non-UTF-8 byte in the diff
+    # can't raise here either — re-encode the same way rather than
+    # `.encode("utf-8")`, which would raise `UnicodeEncodeError` on a
+    # lone surrogate the moment the diff touched a non-UTF-8 file.
+    encoded = result.stdout.encode("utf-8", errors="surrogateescape")
     total_bytes = len(encoded)
     limit = max_bytes if max_bytes is not None else DEFAULT_MAX_DIFF_BYTES
     window = encoded[offset : offset + limit]
-    truncated = offset + len(window) < total_bytes
+    reaches_true_end = offset + len(window) >= total_bytes
+    # Only snap the window shorter when there IS a next call that will
+    # supply the trimmed bytes — snapping at the genuine end of the diff
+    # (the trailing bytes are truncated because there's nothing more,
+    # not because of our own windowing) would trim forever and never
+    # make progress.
+    if not reaches_true_end:
+        trimmed = _trim_incomplete_trailing_char(window)
+        # A `max_bytes` smaller than the byte width of the character
+        # sitting at `offset` (the degenerate case — a real character is
+        # at most 4 bytes) would otherwise trim the window all the way
+        # to empty and make zero progress every call, forever. Forward
+        # progress matters more than avoiding this one window's lossy
+        # `errors="replace"` corruption below — keep the untrimmed bytes
+        # rather than stall.
+        if trimmed or not window:
+            window = trimmed
+    next_offset = offset + len(window)
+    truncated = next_offset < total_bytes
 
     return GitDiffResult(
         content=window.decode("utf-8", errors="replace"),
         truncated=truncated,
         total_bytes=total_bytes,
+        next_offset=next_offset,
     )

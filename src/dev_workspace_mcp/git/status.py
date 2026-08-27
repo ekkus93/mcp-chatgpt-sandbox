@@ -152,3 +152,30 @@ def read_git_status(repo_path: Path) -> GitStatus:
         conflicted=conflicted,
         interrupted_operation=detect_interrupted_operation(repo_path),
     )
+
+
+#: git's own historical minimum for an unambiguous abbreviated SHA
+#: (`GIT_MIN_HEXSZ`). Below this, `head_sha_matches` refuses to treat a
+#: short value as a legitimate abbreviation — a 1-2 char value trivially
+#: prefix-matches almost any SHA and isn't how anyone actually copies one.
+MIN_ABBREVIATED_SHA_LENGTH = 4
+
+
+def head_sha_matches(actual_head_sha: str | None, expected_head_sha: str) -> bool:
+    """§45: `expected_head_sha` is routinely copied from a `git log`/`git
+    show`/PR summary line, which by convention displays an *abbreviated*
+    SHA (`git_log`'s own `%H` format is the exception, not the rule
+    callers can assume) — comparing that directly against `head_sha`
+    (always the full 40-hex-character OID; `--porcelain=v2` reports
+    `branch.oid` in full) rejected every legitimate abbreviated caller.
+    Accepted as a prefix match instead, the same relationship git itself
+    uses to resolve an abbreviated revision — gated on
+    `MIN_ABBREVIATED_SHA_LENGTH` so a degenerate short value can't
+    trivially match. No separate hex-character check is needed: a
+    non-hex character at any position can never be a prefix of the
+    (always-hex) `actual_head_sha`, so `startswith` already rejects it."""
+    if actual_head_sha is None:
+        return False
+    if len(expected_head_sha) < MIN_ABBREVIATED_SHA_LENGTH:
+        return False
+    return actual_head_sha.startswith(expected_head_sha)

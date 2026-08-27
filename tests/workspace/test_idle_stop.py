@@ -308,6 +308,69 @@ async def test_exec_bumps_last_used_at(
     assert after != before
 
 
+def _configured_real_git_repo(
+    minimal_config: ServerConfig, default_image_tag: str, repo_path: Path
+) -> ServerConfig:
+    """Like `_configured_server_config`, but with an actual git history
+    (`git_commit` needs a real repository to operate on, not just a bare
+    `.git` directory)."""
+    import subprocess
+
+    repo_path.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo_path, check=True)
+    (repo_path / "README.md").write_text("hello\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "initial"], cwd=repo_path, check=True)
+    return minimal_config.model_copy(
+        update={
+            "docker": minimal_config.docker.model_copy(update={"default_image": default_image_tag}),
+            "repositories": [
+                RepositoryConfig(id="example", path=repo_path, github="owner/example")
+            ],
+        }
+    )
+
+
+async def test_at_h024_git_commit_bumps_last_used_at(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """H24 (`docs/HARDENING_TODO.md`, HR-022): a real regression —
+    `git_commit` never called `touch_last_used`, so an active commit
+    stream (a long session doing nothing but repeated `git_commit`
+    calls, no `exec`/`read_file` in between) still looked idle and could
+    be stopped out from under it by §8.1's sweep."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured_real_git_repo(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+    opened = await server.call_tool("workspace_open", {"repository_id": "example"})
+    workspace_id = opened.structured_content["workspace_id"]
+
+    db = open_db(config.state_db_path)
+    manager = DockerWorkspaceManager(docker_client, db)
+
+    await server.call_tool(
+        "write_file", {"workspace_id": workspace_id, "path": "a.txt", "content": "a\n"}
+    )
+    # backdated *after* write_file (itself already a `touch_last_used`
+    # caller) so what's isolated below is specifically git_commit's own
+    # effect, not write_file's.
+    _backdate_last_used(db, workspace_id, seconds_ago=1000)
+    before = manager.get(workspace_id).last_used_at
+
+    await server.call_tool(
+        "git_commit",
+        {"workspace_id": workspace_id, "message": "bump last_used_at", "paths": ["a.txt"]},
+    )
+
+    after = manager.get(workspace_id).last_used_at
+    assert after != before
+
+
 async def test_read_file_bumps_last_used_at(
     minimal_config: ServerConfig,
     default_image_tag: str,

@@ -94,6 +94,26 @@ def test_detect_default_branch_is_none_without_origin_head(tmp_path: Path) -> No
     assert detect_default_branch(repo) is None
 
 
+def test_at_h024_default_branch_containing_its_own_slash_is_not_mangled(
+    tmp_path: Path,
+) -> None:
+    """A real regression: `ref.rsplit("/", 1)[-1]` on
+    `"refs/remotes/origin/release/v1"` returned `"v1"`, not
+    `"release/v1"` — any default branch name containing its own `/`
+    (a common convention: `release/v1`, `team/feature`) was mangled."""
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "release/v1", str(remote)], check=True)
+    seed = _init_repo(tmp_path / "seed")
+    subprocess.run(["git", "checkout", "-q", "-b", "release/v1"], cwd=seed, check=True)
+    subprocess.run(["git", "remote", "add", "origin", str(remote)], cwd=seed, check=True)
+    subprocess.run(["git", "push", "-q", "origin", "release/v1"], cwd=seed, check=True)
+
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+
+    assert detect_default_branch(clone) == "release/v1"
+
+
 # --- is_head_published ---------------------------------------------------------------
 
 
