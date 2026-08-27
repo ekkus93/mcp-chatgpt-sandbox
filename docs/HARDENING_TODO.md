@@ -1961,16 +1961,57 @@ isolated from `write_file`'s own already-existing bump in the same test.
 
 ## Phase 8 — Test and CI integrity
 
-### H25 — The coverage audit does not satisfy itself
+### H25 — The coverage audit does not satisfy itself ✅
 **Satisfies:** HR-027 · **Verified by:** HAT-021
+**Commit:** `a5c6fd9`
 
-- [ ] Exclude `__file__` from `_all_test_source()`
-- [ ] Add a meta-test: removing every real citation for an AT makes the audit
+- [x] Exclude `__file__` from `_all_test_source()`
+- [x] Add a meta-test: removing every real citation for an AT makes the audit
       fail for that AT
 
 **Defect:** `tests/test_acceptance_test_coverage.py:36,59`. Verified — with all
 real AT-010 citations removed, the audit still passed, because its own error
 message contains the string. Line 23 does the same for AT-011.
+
+**Fix.** `_all_test_source()` now skips `__file__` (resolved once, at
+module load, as `_THIS_FILE`) while walking `tests/`, so this module's
+own error-message text (`f"AT-{uncited} have no citation..."`) and its
+own comments (the original line 23's "`test_at_011_...`" example) can no
+longer supply a vacuous self-citation for whatever AT number they happen
+to mention. One fix covers both AT-010 and AT-011's self-citations named
+in the Defect above — both came from the same root cause (this file being
+included in its own scan), not two separate bugs needing two separate
+patches.
+
+**Verified the exact reported defect reproduces, and that the fix closes
+it — against real test files, not a simulated string.** Backed up
+`tests/git/test_pull.py`, `tests/git/test_push.py`, and this file itself;
+stripped every real `AT-010`/`AT_010` mention from the two backing files
+(their only real citations of AT-010 in the whole suite); reverted this
+file to its pre-H25 version (the one still scanning `__file__`); ran the
+audit — it **passed**, reproducing the exact reported defect live: with
+every real citation gone, the audit's own text still "cited" AT-010 to
+itself. Restored the fixed version of this file (still with `test_pull.py`/
+`test_push.py`'s AT-010 mentions stripped) — the audit now **failed**,
+correctly reporting `AT-[10]` as uncited. Restored `test_pull.py`/
+`test_push.py` from backup; the full file (3 tests, including the new
+meta-test) passes clean again.
+
+**New test — the meta-test the task asked for.**
+`test_meta_removing_every_citation_for_an_at_makes_the_audit_fail_for_it`
+takes the *real* `_all_test_source()` output (so it also implicitly
+depends on the `__file__` exclusion above being correct), regex-scrubs
+every citation of AT-010 out of it, and asserts the audit's own
+uncited-detection logic then flags exactly `[10]` — not empty (the audit
+is not a rubber stamp), and not some other AT (the citation regex is
+correctly scoped to just the target number, not over-matching a
+neighboring one like AT-100 or AT-011).
+
+No Docker involved anywhere in this task (pure test-source scanning); no
+schema drift (no tool code touched). Full-suite collection
+(`pytest --collect-only`) still finds all 788 tests with no import
+errors; `ruff check`, `ruff format --check`, and `mypy src` clean across
+the whole tree.
 
 ### H26 — Coverage claims rest on assertions
 **Satisfies:** HR-028
