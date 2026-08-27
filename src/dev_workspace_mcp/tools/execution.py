@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import posixpath
 import secrets
 import shlex
 import sqlite3
@@ -155,12 +156,40 @@ def _build_cmd(argv: list[str] | None, shell: str | None) -> list[str]:
     return ["bash", "-c", shell]
 
 
-def _validate_cwd(cwd: str, workspace_path: str) -> None:
-    if cwd != workspace_path and not cwd.startswith(workspace_path.rstrip("/") + "/"):
+def _validate_cwd(cwd: str, workspace_path: str) -> str:
+    """Returns the normalized `cwd` — H30 (`docs/HARDENING_TODO.md`,
+    HR-010): normalized *before* the containment test, and what's
+    actually used for the exec call afterward, not just what's checked.
+    A real regression: the old string-prefix check
+    (`cwd.startswith(workspace_path + "/")`) accepted
+    `"/workspace/../etc"` outright — it textually starts with
+    `"/workspace/"` — even though it resolves to a path entirely outside
+    the workspace. `posixpath`, not `os.path`: this is a *container*-side
+    path, evaluated for a Linux container regardless of this daemon's own
+    host OS."""
+    normalized = posixpath.normpath(cwd)
+    if normalized != workspace_path and not normalized.startswith(workspace_path.rstrip("/") + "/"):
         raise InvalidArgumentError(
             f"cwd must be {workspace_path!r} or a path beneath it, not {cwd!r} (§14.2)",
             details={"cwd": cwd, "workspace_path": workspace_path},
         )
+    return normalized
+
+
+def _resolve_timeout(timeout_seconds: float | None, *, ceiling: float) -> float:
+    """§14.4 (`docs/HARDENING_SPEC.md` §9 amendment, H30/HR-010): a
+    client-supplied timeout SHALL be clamped to the configured maximum
+    (`execution.sync_timeout_seconds`/`default_job_timeout_seconds`), not
+    honored unbounded — that config value is a real ceiling, not merely
+    a default used only when the client omits the parameter."""
+    if timeout_seconds is None:
+        return ceiling
+    if timeout_seconds <= 0:
+        raise InvalidArgumentError(
+            f"timeout_seconds must be > 0, not {timeout_seconds}",
+            details={"timeout_seconds": timeout_seconds},
+        )
+    return min(timeout_seconds, ceiling)
 
 
 def _audit_command_started(
@@ -306,13 +335,9 @@ def register(
         touch_last_used(db, workspace_id)  # §8.1: this is real usage, not idle
 
         cmd = _build_cmd(argv, shell)
-        _validate_cwd(cwd, record.workspace_path)
+        cwd = _validate_cwd(cwd, record.workspace_path)
         user = resolve_exec_user(container_config)
-        timeout = (
-            timeout_seconds
-            if timeout_seconds is not None
-            else execution_config.sync_timeout_seconds
-        )
+        timeout = _resolve_timeout(timeout_seconds, ceiling=execution_config.sync_timeout_seconds)
 
         container_id = record.container_id
         # HR-022 (`docs/HARDENING_SPEC.md` §10): `docker.errors.DockerException`
@@ -416,12 +441,10 @@ def register(
         touch_last_used(db, workspace_id)  # §8.1: this is real usage, not idle
 
         cmd = _build_cmd(argv, shell)
-        _validate_cwd(cwd, record.workspace_path)
+        cwd = _validate_cwd(cwd, record.workspace_path)
         user = resolve_exec_user(container_config)
-        timeout = (
-            timeout_seconds
-            if timeout_seconds is not None
-            else execution_config.default_job_timeout_seconds
+        timeout = _resolve_timeout(
+            timeout_seconds, ceiling=execution_config.default_job_timeout_seconds
         )
 
         job_id = _new_job_id()

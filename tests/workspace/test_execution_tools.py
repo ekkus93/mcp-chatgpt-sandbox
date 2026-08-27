@@ -111,6 +111,49 @@ async def test_exec_rejects_cwd_outside_the_workspace(
         )
 
 
+async def test_at_h030_exec_rejects_a_traversal_cwd_that_string_prefix_matching_missed(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """H30 (`docs/HARDENING_TODO.md`, HR-010): the old containment check
+    was a raw string prefix (`cwd.startswith(workspace_path + "/")`) —
+    `"/workspace/../etc"` textually starts with `"/workspace/"` and
+    passed it outright, even though it resolves to `/etc`, entirely
+    outside the workspace. Normalized before the check now."""
+    config = _configured(minimal_config, default_image_tag, tmp_path / "work" / "example")
+    server = create_server(config)
+    workspace_id = await _open_workspace(server)
+
+    with pytest.raises(ToolError, match="INVALID_ARGUMENT"):
+        await server.call_tool(
+            "exec",
+            {"workspace_id": workspace_id, "argv": ["pwd"], "cwd": "/workspace/../etc"},
+        )
+
+
+async def test_at_h030_exec_normalizes_a_legitimate_dotted_cwd(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """The fix must not have broken a legitimate `cwd` that merely
+    contains `.`/`..` segments but still resolves inside the workspace —
+    validated separately from the rejection case above so a regression
+    here is unambiguous."""
+    config = _configured(minimal_config, default_image_tag, tmp_path / "work" / "example")
+    server = create_server(config)
+    workspace_id = await _open_workspace(server)
+
+    result = await server.call_tool(
+        "exec",
+        {"workspace_id": workspace_id, "argv": ["pwd"], "cwd": "/workspace/../workspace"},
+    )
+    assert result.structured_content["stdout_tail"].strip() == "/workspace"
+
+
 async def test_exec_runs_as_the_checkout_owner_not_root(
     minimal_config: ServerConfig,
     default_image_tag: str,
@@ -210,6 +253,59 @@ async def test_exec_real_timeout_actually_kills_the_process(
         "exec", {"workspace_id": workspace_id, "shell": "ps aux | grep '[s]leep 60' || echo NONE"}
     )
     assert "NONE" in check.structured_content["stdout_tail"]
+
+
+async def test_at_h030_a_client_timeout_above_the_ceiling_is_clamped(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """H30 (`docs/HARDENING_TODO.md`, HR-010): `execution.sync_timeout_seconds`
+    is a real ceiling, not merely a default used only when the client
+    omits `timeout_seconds` — a client asking for far more (100s) than
+    the configured ceiling (1s) against a command that would otherwise
+    run for 60s SHALL still time out around the ceiling, not the
+    requested value."""
+    config = _configured(
+        minimal_config,
+        default_image_tag,
+        tmp_path / "work" / "example",
+        execution={"sync_timeout_seconds": 1},
+    )
+    server = create_server(config)
+    workspace_id = await _open_workspace(server)
+
+    started_at = asyncio.get_event_loop().time()
+    with pytest.raises(ToolError, match="COMMAND_TIMEOUT"):
+        await server.call_tool(
+            "exec",
+            {"workspace_id": workspace_id, "shell": "sleep 60", "timeout_seconds": 100},
+        )
+    elapsed = asyncio.get_event_loop().time() - started_at
+    assert elapsed < 30, f"took {elapsed}s — the 100s request was honored, not clamped to 1s"
+
+
+async def test_at_h030_exec_rejects_a_non_positive_timeout(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    config = _configured(minimal_config, default_image_tag, tmp_path / "work" / "example")
+    server = create_server(config)
+    workspace_id = await _open_workspace(server)
+
+    with pytest.raises(ToolError, match="INVALID_ARGUMENT"):
+        await server.call_tool(
+            "exec",
+            {"workspace_id": workspace_id, "argv": ["true"], "timeout_seconds": 0},
+        )
+    with pytest.raises(ToolError, match="INVALID_ARGUMENT"):
+        await server.call_tool(
+            "exec",
+            {"workspace_id": workspace_id, "argv": ["true"], "timeout_seconds": -5},
+        )
 
 
 async def test_exec_output_truncation(

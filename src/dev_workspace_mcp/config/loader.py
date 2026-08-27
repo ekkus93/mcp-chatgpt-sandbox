@@ -31,10 +31,25 @@ def load_config(path: Path, *, home: Path | None = None) -> ServerConfig:
     invariant without touching the real one.
     """
     raw = _read_yaml(path)
-    config = _parse(raw)
-    _check_ssh_key_not_under_host_ssh(config, home=home or Path.home())
-    _check_secrets_outside_repository_roots(config)
-    ensure_known_hosts_file_exists(config)
+    try:
+        config = _parse(raw)
+        _check_ssh_key_not_under_host_ssh(config, home=home or Path.home())
+        _check_secrets_outside_repository_roots(config)
+        _check_repository_roots_exist(config)
+        ensure_known_hosts_file_exists(config)
+    except ConfigError:
+        raise
+    except Exception as exc:
+        # H30 (`docs/HARDENING_TODO.md`, HR-010): the final safety net —
+        # a real regression had `workspace: 5` (a scalar, not a mapping)
+        # reach `_parse`'s own `dict(raw)` and raise a bare `TypeError`
+        # straight out of `load_config`, past §73 step 1's "refuse to
+        # serve on invalid config" and into the CLI as an unhandled
+        # crash instead of the clean `error: ...` message every other
+        # malformed-config shape produces. `_parse` now converts that
+        # one specific shape itself (a better, "workspace: ..."-prefixed
+        # message); this catches anything else, from any step above.
+        raise ConfigError(f"invalid configuration: {exc}") from exc
     return config
 
 
@@ -63,6 +78,16 @@ def _parse(raw: dict[str, Any]) -> ServerConfig:
         try:
             data["workspace"] = WorkspaceConfig.from_yaml_value(data["workspace"])
         except ValueError as exc:
+            raise ConfigError(f"workspace: {exc}") from exc
+        except Exception as exc:
+            # H30 (`docs/HARDENING_TODO.md`, HR-010): a malformed value
+            # shaped like `workspace: 5` (not a mapping at all) reaches
+            # `dict(raw)` inside `from_yaml_value` and raises a raw
+            # `TypeError`, not the `ValueError` the clause above already
+            # handled — every config-load failure SHALL surface as
+            # `ConfigError`, not an unhandled exception escaping
+            # `load_config` (§73 step 1's own "refuse to serve on invalid
+            # config," not "crash on invalid config").
             raise ConfigError(f"workspace: {exc}") from exc
 
     try:
@@ -130,6 +155,31 @@ def _check_secrets_outside_repository_roots(config: ServerConfig) -> None:
     _reject_if_under_a_repository(config.ssh.keys_dir, what="ssh.keys_dir")
     if config.github.api_token_path is not None:
         _reject_if_under_a_repository(config.github.api_token_path, what="github.api_token_path")
+    # H30 (`docs/HARDENING_TODO.md`, HR-010): `audit.path`/`state_db_path`
+    # are not credential files themselves, but they hold the same class
+    # of information §53 exists to keep off a client-readable path — an
+    # audit log records command argv (best-effort redacted, not a
+    # guarantee — HR-013), and the state DB is the daemon's own internal
+    # state. Neither belongs inside a repository the filesystem tools or
+    # a container can read any more than an SSH key or API token does.
+    _reject_if_under_a_repository(config.audit.path, what="audit.path")
+    _reject_if_under_a_repository(config.state_db_path, what="state_db_path")
+
+
+def _check_repository_roots_exist(config: ServerConfig) -> None:
+    """§73 step 7: validate repository roots. `RepositoryRegistry`'s own
+    discovery (`repositories.py`'s `_discover_under_root`) silently
+    yields nothing for a `repository_roots` entry that doesn't exist —
+    correct there (an unrelated request has no business failing over an
+    unrelated discovery root), but that leaves an operator with a typo'd
+    or since-removed root never told anything is wrong: repositories
+    they expected to be auto-discovered just aren't, with no error and
+    no warning. Checked once, loudly, at startup instead."""
+    for root in config.repository_roots:
+        if not root.is_dir():
+            raise ConfigError(
+                f"repository_roots entry does not exist or is not a directory: {root}"
+            )
 
 
 def ensure_known_hosts_file_exists(config: ServerConfig) -> None:

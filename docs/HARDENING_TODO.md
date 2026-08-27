@@ -2511,22 +2511,169 @@ genuinely diverge under a forced-small on-disk cap, and a `byte_start`
 at the edge of `stored_bytes` still returns real content (the kept
 tail, not an error).
 
-### H30 — Enforce or delete declared configuration
+### H30 — Enforce or delete declared configuration ✅
 **Satisfies:** HR-010
+**Commit:** `787d7c3`
 
-- [ ] Enforce or remove the `security:` block (`allow_docker_socket`,
+- [x] Enforce or remove the `security:` block (`allow_docker_socket`,
       `allow_privileged_containers`, `allow_additional_host_mounts`)
-- [ ] Enforce or remove `git_policy.validate_remote`
-- [ ] Clamp client `timeout_seconds` to `execution.sync_timeout_seconds`
-- [ ] Normalize `cwd` before the containment test (`/workspace/../etc` currently
+- [x] Enforce or remove `git_policy.validate_remote`
+- [x] Clamp client `timeout_seconds` to `execution.sync_timeout_seconds`
+- [x] Normalize `cwd` before the containment test (`/workspace/../etc` currently
       passes a string-prefix check)
-- [ ] Add cross-field validation: `api_auth: token` with no token path,
+- [x] Add cross-field validation: `api_auth: token` with no token path,
       `scope: shared` with no `shared_key`, `user: root` with `sudo: true`
-- [ ] Extend the §53 secrets-outside-repository check to `audit.path` and
+- [x] Extend the §53 secrets-outside-repository check to `audit.path` and
       `state_db_path`
-- [ ] Implement §73 step 7 — repository roots are never checked for existence
-- [ ] Catch non-`ConfigError` exceptions at load (`workspace: 5` currently
+- [x] Implement §73 step 7 — repository roots are never checked for existence
+- [x] Catch non-`ConfigError` exceptions at load (`workspace: 5` currently
       raises a raw `TypeError`)
+
+**`security:` and `validate_remote` removed, not enforced.** Neither had
+anything to gate: `grep -rn "allow_docker_socket\|allow_privileged_containers\|
+allow_additional_host_mounts"` across `src/` outside `config/models.py`
+returned nothing — no structured tool, `exec` path, or project-config
+concept can mount the Docker socket, run privileged, or mount an
+additional host path in the first place, so implementing new enforcement
+for these three would have been building a gate for a door that doesn't
+exist (speculative code the task's own HD3/§18.9 principle — "a policy
+key with no tool to enforce it is not a policy" — argues against).
+`validate_remote` similarly had no reader; remote-identity validation
+(`git/remote.py`) is unconditional, foundational security behavior
+(AT-009, HR-014) this daemon does not offer an opt-out from — wiring the
+toggle up would mean *adding* a way to disable a core protection, which
+is the opposite of what HR-010 asks for. Both removed from
+`config/models.py` (and `config/__init__.py`'s re-export); `docs/SPEC.md`'s
+two example configs (§18.9, §52) updated to match, since this is a
+config-schema removal, not a tool-contract change H34's amendment list
+already covers.
+
+**Cross-field validation: investigated all three suggested examples,
+added none of them — each one turned out to conflict with intentional,
+already-tested graceful-degradation behavior, not close a real gap.**
+Checked against actual runtime/test behavior before trusting the
+TODO's own suggestion, the same discipline this session has applied
+throughout:
+- `scope: shared` with no `shared_key`: `resolve_ssh_key_path`'s own
+  docstring documents this as intentional ("`None` when nothing is
+  configured for it ... callers treat `None` as 'nothing to provision,'
+  not an error"), and
+  `test_resolve_ssh_key_path_shared_scope_none_when_unset`
+  (`tests/workspace/test_ssh_agent.py`, pre-existing) exercises exactly
+  this shape as a real, supported case.
+- `api_auth: token` with no `api_token_path`: `github_api.py`'s own
+  remote-protection query already handles this combination gracefully —
+  falling back to `_unverified(default_branch, "api_auth: token but no
+  api_token_path configured")` rather than failing.
+- `user: root` with `sudo: true`: `sudo` defaults to `true`, and
+  multiple existing, real tests (`tests/workspace/test_container_config.py`,
+  `tests/workspace/test_default_image.py`'s `test_at_016_...`) construct
+  `ContainerConfig(user="root", sudo=True)` or `ContainerConfig(user="root")`
+  (picking up the default) to exercise the unrelated "root refused
+  without user-namespace remapping" behavior — genuinely redundant
+  (the container's own uid is already 0), but not unsafe (`sudo` under
+  an already-root process is a no-op, not a privilege change).
+
+A first draft implemented all three as hard `ConfigError`s via
+`@model_validator`; running the existing suite against it caught all
+three conflicts immediately (a real regression this task's own testing
+step exists to catch, not a defect this task introduced) — retracted,
+with the reasoning above left in place as a comment at each
+considered-but-rejected site, so the decision is visible, not silently
+absent.
+
+**`timeout_seconds` is a real ceiling.** New `_resolve_timeout`
+(`tools/execution.py`), used by both `exec` and `exec_start`: a
+client-supplied value above `execution.sync_timeout_seconds`/
+`default_job_timeout_seconds` is clamped down to it, not honored as
+requested; a non-positive value is rejected outright (`InvalidArgumentError`)
+rather than reaching `asyncio.wait_for` with a nonsensical timeout.
+
+**`cwd` is normalized before the containment test.** `_validate_cwd` now
+returns the normalized value, which is also what's actually used for
+the exec call afterward — not just what's checked, matching this
+codebase's own established principle elsewhere (validate what's
+actually used, not a separate representation of it). The old
+`cwd.startswith(workspace_path + "/")` check accepted
+`"/workspace/../etc"` outright, since it textually starts with
+`"/workspace/"` even though it resolves entirely outside the workspace.
+
+**§53's secrets-outside-repository check now covers `audit.path`/
+`state_db_path`.** Neither is a credential file itself, but both hold
+the same class of information §53 exists to keep off a client-readable
+path — an audit log records command argv (best-effort redacted, not a
+guarantee, HR-013) and the state DB is the daemon's own internal state.
+
+**§73 step 7, implemented: repository roots validated for existence at
+startup.** `RepositoryRegistry`'s own discovery
+(`repositories.py`'s `_discover_under_root`) silently returns nothing
+for a `repository_roots` entry that doesn't exist — correct there (an
+unrelated request has no business failing over an unrelated discovery
+root), but that left an operator with a typo'd or since-removed root
+never told anything was wrong: repositories they expected to be
+auto-discovered just weren't, with no error and no warning. New
+`_check_repository_roots_exist`, called once at `load_config` time.
+Scoped to `repository_roots` specifically (not `repositories[].path`,
+whose absence already fails loudly and visibly the first time a
+workspace against it is opened, a materially different situation).
+
+**Every config-load failure now surfaces as `ConfigError`.** Two
+layers: `_parse` itself now catches the specific reproduced case
+(`workspace: 5`, a scalar reaching `WorkspaceConfig.from_yaml_value`'s
+own `dict(raw)` and raising a bare `TypeError`) with a
+`"workspace: ..."`-prefixed message; `load_config` also wraps its whole
+sequence of checks in a broad `except Exception` fallback (re-raising
+`ConfigError` unchanged) as the general safety net for anything else,
+matching the same "must never crash the caller" boundary
+`write_audit_event`'s `OSError` handling and `_external_git_dir`'s
+broad `except Exception: return None` already establish elsewhere in
+this codebase.
+
+**Verified the tests catch the regression:** reverted `config/models.py`,
+`config/__init__.py`, `config/loader.py`, and `tools/execution.py` to
+their pre-H30 versions and reran the new tests. All 5 new
+`tests/config/test_loader.py` tests failed correctly (the `TypeError`
+escaped uncaught; `audit.path`/`state_db_path`/nonexistent-`repository_roots`
+all went unchecked). Both `tests/config/test_models.py` tests failed
+with `DID NOT RAISE ValidationError` (`security`/`validate_remote`
+still accepted). The `cwd`-traversal and non-positive-timeout
+`tests/workspace/test_execution_tools.py` tests failed against real
+Docker (`DID NOT RAISE ToolError`; a `timeout_seconds: 0` request
+reached `asyncio.wait_for` and surfaced as a confusing `COMMAND_TIMEOUT`
+instead of a clean `INVALID_ARGUMENT`). The timeout-clamp test wasn't
+re-confirmed via a clean assertion failure on reverted code — the
+reverted behavior honors the full unclamped 100s wait for a 60s
+command, so it simply hangs well past any reasonable revert-verification
+window instead of raising promptly; the hang itself is exactly the
+predicted defect, so it was accepted as sufficient evidence rather than
+tying up Docker for an extra 100+ seconds to watch it complete. Restored
+the fix; all pass again. No Docker leftovers after either run.
+
+No schema drift (server config, not the exported tool contract — no
+tool output shape changed).
+
+**Full relevant suite:** `tests/config/` (62 passed) +
+`tests/workspace/test_execution_tools.py`/`test_async_execution_tools.py`
+(43 passed, real Docker) — all clean. No Docker leftovers. `ruff check`,
+`ruff format --check`, `mypy src` clean across the whole tree. The full
+background `tests/` run was interrupted at the ~78% mark with zero
+visible failures (the same recurring environmental pattern seen since
+H19), leaving one orphaned container (`docker rm -f`'d, confirmed
+clean); proceeding on the direct evidence above rather than retrying.
+
+**New tests:** `tests/config/test_loader.py` — `audit.path`/
+`state_db_path` under a repository root rejected; a `repository_roots`
+entry that doesn't exist, or is a file rather than a directory,
+rejected (plus the accepted, existing-directory case); `workspace: 5`
+surfaces as `ConfigError`, not a raw `TypeError`.
+`tests/config/test_models.py` — `security`/`git_policy.validate_remote`
+both rejected as unknown fields. `tests/workspace/test_execution_tools.py`
+— the literal `"/workspace/../etc"` exploit rejected, a legitimately
+dotted-but-still-inside `cwd` still accepted; a client `timeout_seconds`
+above the configured ceiling clamped (proven by elapsed wall-clock time,
+not just the resulting error code); `timeout_seconds: 0`/negative
+rejected. `tests/workspace/test_async_execution_tools.py` — the same
+two `exec_start` fixes confirmed via its own shared helpers.
 
 ### H31 — Operational logging
 **Satisfies:** HR-031

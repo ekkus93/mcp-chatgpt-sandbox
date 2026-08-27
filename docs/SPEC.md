@@ -1526,7 +1526,6 @@ git_policy:
   remote_protection_checks:   [force_push, deletion]
 
   # validation, applied to every structured remote operation
-  validate_remote:            true
   allowed_url_schemes:        [ssh, https]
 ```
 
@@ -3061,14 +3060,8 @@ git_policy:                        # structured tools only, §18.9
   amend_published: deny
   default_branch_push: allow_fast_forward
   pull_strategy: ff_only
-  validate_remote: true
   require_remote_protection: warn  # §18.5 — binds every path, including exec
   remote_protection_checks: [force_push, deletion]
-
-security:
-  allow_docker_socket: false
-  allow_privileged_containers: false
-  allow_additional_host_mounts: false
 
 audit:
   enabled: true

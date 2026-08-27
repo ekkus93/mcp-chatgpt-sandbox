@@ -132,6 +132,21 @@ class ContainerConfig(BaseModel):
     sudo: bool = True
     git_dir_mode: Literal["read-write", "read-only", "none"] = "read-write"
 
+    # H30 (`docs/HARDENING_TODO.md`, HR-010) considered, and deliberately
+    # did NOT add, a cross-field check rejecting `user: root` with
+    # `sudo: true` (redundant — the container's own uid is already 0 — but
+    # not dangerous, since `sudo` under an already-root process is simply
+    # a no-op, not a privilege change): `sudo` defaults to `true`, and
+    # multiple existing, real tests
+    # (`tests/workspace/test_container_config.py`,
+    # `tests/workspace/test_default_image.py`'s `test_at_016_...`)
+    # construct `ContainerConfig(user="root", sudo=True)` or
+    # `ContainerConfig(user="root")` (picking up the default) to exercise
+    # the unrelated "root refused without user-namespace remapping"
+    # behavior. Rejecting the combination at construction time would
+    # break those before they ever reach the thing they're actually
+    # testing, for a case that is annoying, not unsafe.
+
 
 # --- §19 ssh -----------------------------------------------------------------
 
@@ -157,6 +172,18 @@ class SSHConfig(BaseModel):
         if not v.is_absolute():
             raise ValueError(f"ssh paths must be absolute: {v}")
         return v
+
+    # H30 (`docs/HARDENING_TODO.md`, HR-010) considered, and deliberately
+    # did NOT add, a cross-field check rejecting `scope: shared` with no
+    # `shared_key` set: `resolve_ssh_key_path`'s own docstring documents
+    # this as intentional ("`None` when nothing is configured for it ...
+    # `scope: shared` with no `ssh.shared_key` set. Callers treat `None`
+    # as 'nothing to provision,' not an error: not every repository need
+    # be push-capable"), and
+    # `test_resolve_ssh_key_path_shared_scope_none_when_unset`
+    # (`tests/workspace/test_ssh_agent.py`) exercises exactly this shape
+    # as a real, supported case. A hard `ConfigError` here would reject a
+    # legitimate, already-tested configuration, not close a real gap.
 
 
 # --- §19.5 / §19.6 github ------------------------------------------------------
@@ -191,6 +218,17 @@ class GithubConfig(BaseModel):
     @classmethod
     def _repositories_owner_repo(cls, v: list[str]) -> list[str]:
         return [_validate_owner_repo(r) for r in v]
+
+    # H30 (`docs/HARDENING_TODO.md`, HR-010) considered, and deliberately
+    # did NOT add, a cross-field check rejecting `api_auth: token` with no
+    # `api_token_path`: `github_api.py`'s own remote-protection query
+    # already handles exactly this combination gracefully — falling back
+    # to "unverified" (`_unverified(default_branch, "api_auth: token but
+    # no api_token_path configured")`) rather than failing — which is the
+    # same documented, intentional "nothing configured → degrade, don't
+    # error" pattern `ssh.scope: shared` with no `shared_key` uses above.
+    # A hard `ConfigError` here would reject a shape the runtime code was
+    # deliberately written to tolerate.
 
 
 # --- §15.6 execution -----------------------------------------------------------
@@ -247,7 +285,14 @@ def _default_allowed_url_schemes() -> list[Literal["ssh", "https"]]:
 
 class GitPolicyConfig(BaseModel):
     """`git_policy:` block — structured tools only (§18.9). This is the
-    authoritative field set; §52's example config may omit any of these."""
+    authoritative field set; §52's example config may omit any of these.
+
+    H30 (`docs/HARDENING_TODO.md`, HR-010): `validate_remote` was removed
+    — declared, but never read anywhere. Remote-identity validation
+    (`git/remote.py`) is unconditional, foundational security behavior
+    (AT-009, HR-014) this daemon does not offer an opt-out from, so the
+    fix is deletion, not wiring up a toggle that would let an operator
+    turn off a core protection."""
 
     model_config = {"extra": "forbid"}
 
@@ -270,23 +315,9 @@ class GitPolicyConfig(BaseModel):
         default_factory=_default_remote_protection_checks
     )
 
-    validate_remote: bool = True
     allowed_url_schemes: list[Literal["ssh", "https"]] = Field(
         default_factory=_default_allowed_url_schemes
     )
-
-
-# --- §5.2 / §5.4 security ----------------------------------------------------------
-
-
-class SecurityConfig(BaseModel):
-    """`security:` block (§5.2, §5.4, §41)."""
-
-    model_config = {"extra": "forbid"}
-
-    allow_docker_socket: bool = False
-    allow_privileged_containers: bool = False
-    allow_additional_host_mounts: bool = False
 
 
 # --- §26 resource controls -----------------------------------------------------------
@@ -354,7 +385,6 @@ class ServerConfig(BaseModel):
     filesystem: FilesystemConfig = Field(default_factory=FilesystemConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     git_policy: GitPolicyConfig = Field(default_factory=GitPolicyConfig)
-    security: SecurityConfig = Field(default_factory=SecurityConfig)
     resources: ResourcesConfig = Field(default_factory=ResourcesConfig)
     audit: AuditConfig
 

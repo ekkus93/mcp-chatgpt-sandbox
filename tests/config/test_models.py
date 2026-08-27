@@ -40,7 +40,6 @@ def test_git_policy_defaults_match_spec_18_9(minimal_config_dict: dict[str, Any]
     assert policy.pull_strategy == "ff_only"
     assert policy.require_remote_protection == "warn"
     assert policy.remote_protection_checks == ["force_push", "deletion"]
-    assert policy.validate_remote is True
     assert policy.allowed_url_schemes == ["ssh", "https"]
 
 
@@ -157,5 +156,35 @@ def test_github_repositories_validated_as_owner_repo(
 
 def test_execution_fields_must_be_positive(minimal_config_dict: dict[str, Any]) -> None:
     minimal_config_dict["execution"] = {"max_output_bytes": 0}
+    with pytest.raises(ValidationError):
+        ServerConfig.model_validate(minimal_config_dict)
+
+
+# --- H30 (`docs/HARDENING_TODO.md`, HR-010): declared config SHALL be
+# enforced or removed -----------------------------------------------------------
+
+
+def test_security_block_is_rejected_as_an_unknown_field(
+    minimal_config_dict: dict[str, Any],
+) -> None:
+    """The `security:` block (`allow_docker_socket`, `allow_privileged_containers`,
+    `allow_additional_host_mounts`) was declared but never read anywhere
+    — removed rather than wired up, since nothing in this codebase can
+    mount the Docker socket, run privileged, or mount an additional host
+    path in the first place; there was nothing for it to gate (HR-010:
+    "a policy key with no tool to enforce it is not a policy")."""
+    minimal_config_dict["security"] = {"allow_docker_socket": True}
+    with pytest.raises(ValidationError):
+        ServerConfig.model_validate(minimal_config_dict)
+
+
+def test_git_policy_validate_remote_is_rejected_as_an_unknown_field(
+    minimal_config_dict: dict[str, Any],
+) -> None:
+    """`git_policy.validate_remote` was declared but never read — remote
+    identity validation (`git/remote.py`) is unconditional, foundational
+    security behavior (AT-009, HR-014), not something this daemon offers
+    an opt-out from."""
+    minimal_config_dict["git_policy"] = {"validate_remote": False}
     with pytest.raises(ValidationError):
         ServerConfig.model_validate(minimal_config_dict)

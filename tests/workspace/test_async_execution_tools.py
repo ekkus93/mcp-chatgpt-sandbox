@@ -507,6 +507,44 @@ async def test_exec_start_honors_timeout_seconds_and_marks_timed_out(
     assert "NONE" in check.structured_content["stdout_tail"]
 
 
+async def test_at_h030_exec_start_rejects_a_traversal_cwd_and_clamps_timeout(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """H30 (`docs/HARDENING_TODO.md`, HR-010): `_validate_cwd`/
+    `_resolve_timeout` are shared with `exec` — confirming both fixes
+    apply to `exec_start` too, not just the synchronous tool."""
+    config = _configured(
+        minimal_config,
+        default_image_tag,
+        tmp_path / "work" / "example",
+        execution={"default_job_timeout_seconds": 1},
+    )
+    server = create_server(config)
+    workspace_id = await _open_workspace(server)
+
+    with pytest.raises(ToolError, match="INVALID_ARGUMENT"):
+        await server.call_tool(
+            "exec_start",
+            {"workspace_id": workspace_id, "argv": ["pwd"], "cwd": "/workspace/../etc"},
+        )
+
+    # timeout_seconds clamped to the 1s ceiling despite requesting 100s.
+    started = await server.call_tool(
+        "exec_start",
+        {"workspace_id": workspace_id, "shell": "sleep 60", "timeout_seconds": 100},
+    )
+    job_id = started.structured_content["job_id"]
+
+    async def timed_out() -> bool:
+        status = await server.call_tool("exec_status", {"job_id": job_id})
+        return bool(status.structured_content["state"] == "timed_out")
+
+    await _wait_until(timed_out, timeout=10.0)
+
+
 # --- HR-020/HAT-017: a failed termination is not reported as success --------------
 
 

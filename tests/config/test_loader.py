@@ -209,12 +209,97 @@ def test_github_api_token_path_under_repository_root_rejected(
 def test_secrets_outside_every_repository_root_are_accepted(
     tmp_path: Path, minimal_config_dict: dict[str, Any]
 ) -> None:
+    (tmp_path / "work").mkdir()
     minimal_config_dict["repository_roots"] = [str(tmp_path / "work")]
     config_path = _write_config(tmp_path, minimal_config_dict)
     # ssh.keys_dir already lives under tmp_path/keys in the fixture, which
     # is a sibling of tmp_path/work, not beneath it.
     config = load_config(config_path, home=tmp_path / "home")
     assert config.ssh.keys_dir == tmp_path / "keys"
+
+
+# --- H30 (`docs/HARDENING_TODO.md`, HR-010): audit.path/state_db_path extend
+# the §53 secrets-outside-repository check -----------------------------------
+
+
+def test_audit_path_under_repository_root_rejected(
+    tmp_path: Path, minimal_config_dict: dict[str, Any]
+) -> None:
+    root = tmp_path / "work"
+    root.mkdir()
+    minimal_config_dict["repository_roots"] = [str(root)]
+    minimal_config_dict["audit"]["path"] = str(root / "audit.jsonl")
+    config_path = _write_config(tmp_path, minimal_config_dict)
+    with pytest.raises(ConfigError, match="audit.path"):
+        load_config(config_path, home=tmp_path / "home")
+
+
+def test_state_db_path_under_repository_root_rejected(
+    tmp_path: Path, minimal_config_dict: dict[str, Any]
+) -> None:
+    root = tmp_path / "work"
+    root.mkdir()
+    minimal_config_dict["repository_roots"] = [str(root)]
+    minimal_config_dict["state_db_path"] = str(root / "state.db")
+    config_path = _write_config(tmp_path, minimal_config_dict)
+    with pytest.raises(ConfigError, match="state_db_path"):
+        load_config(config_path, home=tmp_path / "home")
+
+
+# --- H30 (`docs/HARDENING_TODO.md`, HR-010): §73 step 7 — repository roots
+# validated for existence at startup -------------------------------------------
+
+
+def test_repository_roots_entry_that_does_not_exist_is_rejected(
+    tmp_path: Path, minimal_config_dict: dict[str, Any]
+) -> None:
+    """A real gap: `RepositoryRegistry`'s own discovery silently yields
+    nothing for a nonexistent `repository_roots` entry — an operator with
+    a typo'd or since-removed root was never told anything was wrong."""
+    minimal_config_dict["repository_roots"] = [str(tmp_path / "does-not-exist")]
+    config_path = _write_config(tmp_path, minimal_config_dict)
+    with pytest.raises(ConfigError, match="repository_roots entry does not exist"):
+        load_config(config_path, home=tmp_path / "home")
+
+
+def test_repository_roots_entry_that_is_a_file_not_a_directory_is_rejected(
+    tmp_path: Path, minimal_config_dict: dict[str, Any]
+) -> None:
+    not_a_dir = tmp_path / "not-a-directory"
+    not_a_dir.write_text("")
+    minimal_config_dict["repository_roots"] = [str(not_a_dir)]
+    config_path = _write_config(tmp_path, minimal_config_dict)
+    with pytest.raises(ConfigError, match="repository_roots entry does not exist"):
+        load_config(config_path, home=tmp_path / "home")
+
+
+def test_repository_roots_entry_that_exists_is_accepted(
+    tmp_path: Path, minimal_config_dict: dict[str, Any]
+) -> None:
+    root = tmp_path / "work"
+    root.mkdir()
+    minimal_config_dict["repository_roots"] = [str(root)]
+    config_path = _write_config(tmp_path, minimal_config_dict)
+    config = load_config(config_path, home=tmp_path / "home")
+    assert config.repository_roots == [root]
+
+
+# --- H30 (`docs/HARDENING_TODO.md`, HR-010): every config-load failure
+# surfaces as ConfigError, never an unhandled exception -----------------------
+
+
+def test_workspace_as_a_scalar_raises_config_error_not_a_raw_type_error(
+    tmp_path: Path, minimal_config_dict: dict[str, Any]
+) -> None:
+    """A real regression: `workspace: 5` (a scalar, not a mapping) reached
+    `WorkspaceConfig.from_yaml_value`'s own `dict(raw)` and raised a bare
+    `TypeError`, not the `ValueError` the surrounding `except` clause
+    already handled — escaping `load_config` entirely, past §73 step 1's
+    "refuse to serve on invalid config"."""
+    minimal_config_dict["workspace"] = 5
+    config_path = _write_config(tmp_path, minimal_config_dict)
+    with pytest.raises(ConfigError, match="workspace"):
+        load_config(config_path, home=tmp_path / "home")
 
 
 # --- Docker connectivity probe (§73 step 2) ---------------------------------
