@@ -281,6 +281,29 @@ class SecurityConfig(BaseModel):
     allow_additional_host_mounts: bool = False
 
 
+# --- §26 resource controls -----------------------------------------------------------
+
+
+class ResourcesConfig(BaseModel):
+    """`resources:` block (§26). Every field `None` (the default) means
+    "no limit" — matching Docker's own default of unbounded, not an
+    opinionated daemon-side ceiling; an operator opts in per §26's own
+    example, distinguishing persistent workspaces (generous limits) from
+    ephemeral validation ones (stricter) via separate config, not by this
+    model imposing one for both."""
+
+    model_config = {"extra": "forbid"}
+
+    cpus: float | None = Field(default=None, gt=0)
+    memory: str | None = None
+    """Docker's own size-string syntax (`"16g"`, `"512m"`) — passed
+    through to `docker.containers.run(mem_limit=...)` verbatim rather
+    than parsed here; the Docker SDK/daemon already validates it, and
+    duplicating that parsing would only be a second place for it to
+    disagree with Docker's own."""
+    pids_limit: int | None = Field(default=None, gt=0)
+
+
 # --- §24 audit -----------------------------------------------------------------------
 
 
@@ -324,6 +347,7 @@ class ServerConfig(BaseModel):
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     git_policy: GitPolicyConfig = Field(default_factory=GitPolicyConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
+    resources: ResourcesConfig = Field(default_factory=ResourcesConfig)
     audit: AuditConfig
 
     @field_validator("state_db_path")

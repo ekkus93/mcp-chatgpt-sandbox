@@ -14,8 +14,11 @@ from pathlib import Path
 from typing import Any
 
 import docker
-from dev_workspace_mcp.config.models import ContainerConfig, SSHConfig
+from dev_workspace_mcp.config.models import ContainerConfig, ResourcesConfig, SSHConfig
 from dev_workspace_mcp.errors import ContainerCreateFailedError
+
+#: docker-py's own `nano_cpus` unit (§26): one whole CPU is 1e9 nanocpus.
+_NANO_CPUS_PER_CPU = 1_000_000_000
 
 DEFAULT_IMAGE_TAG = "mcp-dev-ubuntu:24.04"
 
@@ -60,6 +63,7 @@ def build_workspace_run_kwargs(
     checkout_uid: int | None = None,
     checkout_gid: int | None = None,
     extra_env: dict[str, str] | None = None,
+    resources_config: ResourcesConfig | None = None,
 ) -> dict[str, Any]:
     """Build the `run_kwargs` passed to `DockerWorkspaceManager.ensure_workspace`
     (and on to `docker.containers.run`) that give the container the
@@ -107,12 +111,26 @@ def build_workspace_run_kwargs(
             **(extra_env or {}),
         }
 
-    return {
+    run_kwargs: dict[str, Any] = {
         "environment": environment,
         # §41: no-new-privileges blocks the setuid escalation sudo depends
         # on — never set it while sudo is enabled.
         "security_opt": [] if container_config.sudo else ["no-new-privileges:true"],
     }
+
+    # §26: every field `None` (the default `ResourcesConfig`) means no
+    # limit — omitted entirely rather than passed as `None`, so Docker's
+    # own unbounded default applies exactly as if `resources:` were never
+    # configured at all.
+    if resources_config is not None:
+        if resources_config.cpus is not None:
+            run_kwargs["nano_cpus"] = int(resources_config.cpus * _NANO_CPUS_PER_CPU)
+        if resources_config.memory is not None:
+            run_kwargs["mem_limit"] = resources_config.memory
+        if resources_config.pids_limit is not None:
+            run_kwargs["pids_limit"] = resources_config.pids_limit
+
+    return run_kwargs
 
 
 def resolve_exec_user(container_config: ContainerConfig, *, checkout_uid: int | None = None) -> str:

@@ -48,6 +48,7 @@ def _server_with_no_docker(config: ServerConfig) -> MCPServer:
         docker_config=config.docker,
         container_config=config.container,
         execution_config=config.execution,
+        resources_config=config.resources,
         ssh_config=config.ssh,
         workspace_config=config.workspace,
         github_config=config.github,

@@ -97,6 +97,7 @@ def _register_tools(
         docker_config=config.docker,
         container_config=config.container,
         execution_config=config.execution,
+        resources_config=config.resources,
         ssh_config=config.ssh,
         workspace_config=config.workspace,
         github_config=config.github,

@@ -1755,14 +1755,98 @@ tools' output fields changed/added, no new tool).
 
 ## Phase 6 — Hardening
 
-### S31 — Resource and disk controls
+### S31 — Resource and disk controls ✅ (partial — see below)
 **Spec:** §26, §27 · **Verified by:** AT-005
 
-- [ ] `cpus` / `memory` / `pids_limit`; detect and report OOM, disk exhaustion,
-      pid exhaustion
-- [ ] Disk usage reporting and prune operations; never delete repository files
-- [ ] AT-005: operator-path reset leaves the repository intact, clears
+- [x] `cpus` / `memory` / `pids_limit`; detect and report OOM (partial — see
+      below), disk exhaustion (not implemented — see below), pid exhaustion
+- [ ] Disk usage reporting and prune operations — **not implemented, see below**
+- [x] AT-005: operator-path reset leaves the repository intact, clears
       container-local state
+
+**Commit:** `bc9b0f1`
+
+New `ResourcesConfig` (`resources:` block — `cpus`, `memory`,
+`pids_limit`, every field `None`/unset by default, matching Docker's own
+unbounded default rather than imposing an opinionated daemon-side
+ceiling) wired into `build_workspace_run_kwargs` → `docker.containers.run`
+(`nano_cpus`, `mem_limit`, `pids_limit` — the real docker-py kwarg names,
+confirmed by reading docker-py's own source before trusting them, not
+guessed). Verified against the container's real `HostConfig` (`docker
+inspect`) for both the configured and the default-unset case, and
+`pids_limit` additionally against genuine kernel enforcement: a real
+fork-bomb-style command against a real, low `pids_limit` fails with the
+real kernel's own `"Resource temporarily unavailable"` — verified
+empirically against a plain `alpine` container first, before trusting
+that the same behavior holds through this daemon's own wiring.
+
+**OOM detection is only partial** — the underlying classification logic
+(`_state_from_docker_container`'s `OOMKilled` → `WorkspaceState.FAILED`)
+already existed from S18, tested there only against fake container
+objects, deliberately: S18's own test file already judged a real forced
+OOM kill "slow and flaky across kernels/cgroup configs" and not worth
+reproducing. This task respects that same judgment rather than
+overriding it — it adds real `mem_limit` wiring (so an operator's
+`resources.memory` setting genuinely reaches Docker, confirmed via
+inspect) but does not add a new real forced-OOM integration test.
+
+**Disk exhaustion detection and disk-usage/prune tooling are not
+implemented.** §34.3 (`docs/TODO.md`'s own MVP tool-surface deferral
+list) already excludes `workspace_disk_usage`/`cache_prune`/
+`workspace_prune` from the MVP's registered tools entirely — there is no
+tool to build reporting *for* in this phase. A CLI-only disk-usage
+operator command would still have been in scope, but was judged, along
+with a distinct disk-exhaustion signal (Docker has no built-in state for
+it the way it does for OOM; it would surface as an ordinary nonzero exit
+code from whatever write attempt hit `ENOSPC`, already visible through
+`exec`'s existing error reporting, just not classified separately),
+substantial enough to defer as its own follow-up rather than fold into
+an already-large task.
+
+§8.4's operator path (`reset`/`rebuild`/`delete` — "None is exposed as
+an MCP tool in the MVP... reached as operator actions — a CLI
+subcommand on the host") is now real: three new `dev-workspace-mcp`
+subcommands (`reset`, `rebuild`, `delete`), thin wrappers over
+`DockerWorkspaceManager`'s own `reset`/`rebuild`/`delete` (already
+implemented since S6/S18 — `rebuild` and `reset` are, as of this task,
+still identical underlying recreations, a pre-existing characteristic
+neither this task nor its predecessors changed). Each resolves
+`--repository <id>` to the deterministic `persistent_workspace_id`
+(the same trick S23's ssh-agent socket and S30's setup-step "was this
+created" check both already rely on) and fails with a clear message,
+not a traceback, for an unknown repository or a workspace never opened.
+
+`reset`/`rebuild` reconstruct run_kwargs via the same pure, already-
+tested building blocks `workspace_open` itself uses
+(`build_workspace_run_kwargs`, `build_workspace_mounts`,
+`build_known_hosts_mount`), including `.mcp-workspace.yml`'s `image`
+when the repository has one (§9/§10, S30) and the new resource limits —
+but **deliberately does not** reattach an `ssh.mode: agent` socket or
+named cache-volume mounts. Those depend on state (a live agent process,
+a specific cache volume name) tied to `workspace_open`'s own richer
+provisioning flow (§19.2/§11, S23/S30); duplicating that machinery in a
+standalone CLI command was judged out of scope for this task, and — a
+real constraint worth being explicit about — cannot be retrofitted onto
+an already-reset container afterward via a plain `workspace_open` call
+either, since a container's mount list is fixed at creation and
+`workspace_open` only recreates a container for a repository that has
+never had one, not one that already exists but merely lacks a mount.
+
+`tests/workspace/test_resources.py` (3 tests, real Docker) covers the
+default-unset case, all three limits applied and inspectable, and real
+`pids_limit` kernel enforcement. `tests/workspace/test_cli_lifecycle.py`
+(6 tests, real Docker) covers AT-005 itself (a real host-side repository
+write survives; a real container-local marker file does not), `reset`
+honoring `.mcp-workspace.yml`'s `image`, clear failures for an unopened
+workspace and an unknown repository, `rebuild`, and `delete` (repository
+preserved, the workspace genuinely gone from `workspace_info`
+afterward).
+
+No new tools or output fields — `resources:` only affects internal
+container-creation kwargs, and `reset`/`rebuild`/`delete` are CLI
+subcommands, not MCP tools — so `schemas/tools.json` needed no
+regeneration (confirmed by re-running `export-schemas` and diffing — no
+drift).
 
 ### S32 — Advisory locks
 **Spec:** §22.1, §22.2, §20.6, §67 · **Satisfies:** FR-029

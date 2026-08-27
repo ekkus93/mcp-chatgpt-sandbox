@@ -25,6 +25,7 @@ from dev_workspace_mcp.config.models import (
     ExecutionConfig,
     GithubConfig,
     GitPolicyConfig,
+    ResourcesConfig,
     SSHConfig,
     WorkspaceConfig,
 )
@@ -128,6 +129,7 @@ def register(
     docker_config: DockerConfig,
     container_config: ContainerConfig,
     execution_config: ExecutionConfig,
+    resources_config: ResourcesConfig,
     ssh_config: SSHConfig,
     workspace_config: WorkspaceConfig,
     github_config: GithubConfig,
@@ -356,6 +358,7 @@ def register(
             ssh_config=ssh_config,
             workspace_path=DEFAULT_WORKSPACE_PATH,
             extra_env=extra_env,
+            resources_config=resources_config,
         )
         mounts = build_workspace_mounts(
             host_repository_path=repository.canonical_path,

@@ -16,20 +16,28 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import click
 
 import docker
 from dev_workspace_mcp import __version__
 from dev_workspace_mcp.config import ConfigError, docker_available, load_config
+from dev_workspace_mcp.config.models import ServerConfig
 from dev_workspace_mcp.db import open_db
+from dev_workspace_mcp.errors import RepositoryNotAllowedError, WorkspaceNotFoundError
 from dev_workspace_mcp.jobs.reconcile import reconcile_jobs
 from dev_workspace_mcp.jobs.store import JobStore
-from dev_workspace_mcp.repositories import RepositoryRegistry
+from dev_workspace_mcp.project_config import load_project_config
+from dev_workspace_mcp.repositories import RepositoryRecord, RepositoryRegistry
 from dev_workspace_mcp.schema_export import export_schemas
 from dev_workspace_mcp.server import Transport, create_server, run_server
+from dev_workspace_mcp.workspace.container_config import build_workspace_run_kwargs
 from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
+from dev_workspace_mcp.workspace.mounts import build_known_hosts_mount, build_workspace_mounts
+from dev_workspace_mcp.workspace.naming import persistent_workspace_id
 from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager, running_workspace_key_paths
 
 
@@ -167,3 +175,189 @@ def export_schemas_command(config_path: Path, out_path: Path) -> None:
     server = create_server(config)
     asyncio.run(export_schemas(server, out_path))
     click.echo(f"wrote {out_path}")
+
+
+def _repository_option(fn: Callable[..., Any]) -> Callable[..., Any]:
+    return click.option(
+        "--repository",
+        "repository_id",
+        required=True,
+        help="Repository id whose persistent workspace to act on (§7).",
+    )(fn)
+
+
+def _config_option(fn: Callable[..., Any]) -> Callable[..., Any]:
+    return click.option(
+        "--config",
+        "config_path",
+        required=True,
+        type=click.Path(path_type=Path),
+        help="Path to the server configuration file (§52).",
+    )(fn)
+
+
+def _load_config_or_exit(config_path: Path) -> ServerConfig:
+    try:
+        return load_config(config_path)
+    except ConfigError as exc:
+        click.echo(f"error: {exc}", err=True)
+        sys.exit(1)
+
+
+def _docker_client_or_exit() -> docker.DockerClient:
+    try:
+        return docker.from_env()
+    except docker.errors.DockerException as exc:
+        click.echo(f"error: Docker is not reachable: {exc}", err=True)
+        sys.exit(1)
+
+
+def _recreated_run_kwargs(
+    config: ServerConfig, docker_client: docker.DockerClient, repository: RepositoryRecord
+) -> tuple[str, dict[str, Any]]:
+    """§8.4's `reset`/`rebuild`: a fresh container with the working tree
+    and pinned known_hosts mount, using `.mcp-workspace.yml`'s `image` if
+    the repository has one (§9/§10, S30). Deliberately does **not**
+    reattach an `ssh.mode: agent` socket or named cache-volume mounts —
+    those are `workspace_open`'s own concern (§19.2/§11, S23/S30), tied
+    to state (a running agent, a cache volume name) this standalone
+    operator command has no reason to duplicate. An operator who needs
+    those back should follow this with a normal `workspace_open` call
+    for a workspace that does not have them yet; a workspace this
+    command just recreated does — this creates a genuinely fresh
+    container, not a reused one, the same way a first-ever
+    `workspace_open` would."""
+    project_config = load_project_config(repository.canonical_path)
+    image = (
+        project_config.image
+        if project_config is not None and project_config.image is not None
+        else config.docker.default_image
+    )
+    run_kwargs = build_workspace_run_kwargs(
+        container_config=config.container,
+        docker_client=docker_client,
+        ssh_config=config.ssh,
+        resources_config=config.resources,
+    )
+    mounts = build_workspace_mounts(
+        host_repository_path=repository.canonical_path,
+        workspace_path="/workspace",
+        git_dir_mode=config.container.git_dir_mode,
+        authorized_roots=config.repository_roots,
+    )
+    mounts.append(build_known_hosts_mount(config.ssh.known_hosts))
+    run_kwargs["mounts"] = mounts
+    return image, run_kwargs
+
+
+@main.command()
+@_config_option
+@_repository_option
+def reset(config_path: Path, repository_id: str) -> None:
+    """§8.4 operator path (AT-005): discard container-local environment
+    state and recreate the container fresh. The host repository is a
+    bind mount `DockerWorkspaceManager.reset` never touches — it SHALL
+    remain exactly as it was."""
+    config = _load_config_or_exit(config_path)
+    registry = RepositoryRegistry(config)
+    try:
+        repository = registry.get(repository_id)
+    except RepositoryNotAllowedError as exc:
+        click.echo(f"error: {exc}", err=True)
+        sys.exit(1)
+
+    docker_client = _docker_client_or_exit()
+    db = open_db(config.state_db_path)
+    workspace_id = persistent_workspace_id(repository.id)
+    try:
+        image, run_kwargs = _recreated_run_kwargs(config, docker_client, repository)
+        DockerWorkspaceManager(docker_client, db).reset(
+            workspace_id, image=image, run_kwargs=run_kwargs
+        )
+    except WorkspaceNotFoundError:
+        click.echo(
+            f"error: no workspace open yet for repository {repository_id!r}; nothing to reset",
+            err=True,
+        )
+        sys.exit(1)
+    finally:
+        db.close()
+        docker_client.close()
+    click.echo(f"workspace {workspace_id!r} reset: container recreated, repository untouched")
+
+
+@main.command()
+@_config_option
+@_repository_option
+def rebuild(config_path: Path, repository_id: str) -> None:
+    """§8.4 operator path: rebuild the container while preserving the
+    repository. Distinct semantics from `reset` per §8.4; the same
+    underlying recreation mechanism today (`DockerWorkspaceManager`'s own
+    `rebuild`/`reset` are identical as of this task — a pre-existing
+    characteristic of S6/S18's implementation, not something this task
+    changes)."""
+    config = _load_config_or_exit(config_path)
+    registry = RepositoryRegistry(config)
+    try:
+        repository = registry.get(repository_id)
+    except RepositoryNotAllowedError as exc:
+        click.echo(f"error: {exc}", err=True)
+        sys.exit(1)
+
+    docker_client = _docker_client_or_exit()
+    db = open_db(config.state_db_path)
+    workspace_id = persistent_workspace_id(repository.id)
+    try:
+        image, run_kwargs = _recreated_run_kwargs(config, docker_client, repository)
+        DockerWorkspaceManager(docker_client, db).rebuild(
+            workspace_id, image=image, run_kwargs=run_kwargs
+        )
+    except WorkspaceNotFoundError:
+        click.echo(
+            f"error: no workspace open yet for repository {repository_id!r}; nothing to rebuild",
+            err=True,
+        )
+        sys.exit(1)
+    finally:
+        db.close()
+        docker_client.close()
+    click.echo(f"workspace {workspace_id!r} rebuilt: container recreated, repository untouched")
+
+
+@main.command(name="delete")
+@_config_option
+@_repository_option
+def delete_workspace(config_path: Path, repository_id: str) -> None:
+    """§8.4 operator path: remove workspace/container metadata (and
+    terminate its ssh-agent, §19.2). SHALL NOT delete the host
+    repository — Docker resources and the state-db row only."""
+    config = _load_config_or_exit(config_path)
+    registry = RepositoryRegistry(config)
+    try:
+        repository = registry.get(repository_id)
+    except RepositoryNotAllowedError as exc:
+        click.echo(f"error: {exc}", err=True)
+        sys.exit(1)
+
+    docker_client = _docker_client_or_exit()
+    db = open_db(config.state_db_path)
+    workspace_id = persistent_workspace_id(repository.id)
+    ssh_agent_manager = (
+        SSHAgentManager(db, runtime_dir=config.state_db_path.parent / "ssh-agents")
+        if config.ssh.mode == "agent"
+        else None
+    )
+    try:
+        DockerWorkspaceManager(docker_client, db, ssh_agent_manager=ssh_agent_manager).delete(
+            workspace_id
+        )
+    except WorkspaceNotFoundError:
+        click.echo(
+            f"error: no workspace open yet for repository {repository_id!r}; nothing to delete",
+            err=True,
+        )
+        sys.exit(1)
+    finally:
+        db.close()
+        docker_client.close()
+    click.echo(f"workspace {workspace_id!r} deleted: repository untouched")
