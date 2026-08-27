@@ -383,6 +383,21 @@ def register(
 
         status = read_git_status(repo_path)
 
+        # HR-023 (`docs/HARDENING_SPEC.md` §11): `detect_interrupted_operation`
+        # alone is not enough — it only reads marker files (`MERGE_HEAD`,
+        # `rebase-merge/`, etc.) an ordinary `git merge`/`rebase` leaves,
+        # and `git stash pop` does not leave one of those, even though it
+        # can leave exactly the same unresolved-conflict working tree
+        # (`git status` reporting `UU`). Reproduced: without this check,
+        # a commit after a conflicting `stash pop` succeeded, silently
+        # recording whatever half-resolved content happened to be staged.
+        if status.conflicted:
+            raise GitConflictError(
+                f"unresolved conflicts present: {status.conflicted} — resolve them "
+                "before committing (§44.4)",
+                details={"workspace_id": workspace_id, "conflicted": status.conflicted},
+            )
+
         if expected_branch is not None and status.branch != expected_branch:
             raise GitHeadChangedError(
                 f"expected branch {expected_branch!r}, found {status.branch!r} (§45)",

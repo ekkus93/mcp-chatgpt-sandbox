@@ -1529,11 +1529,41 @@ the subject text intact, not two broken ones.
 
 ## Phase 7 — Git and workspace correctness
 
-### H20 — `git_commit` refuses unresolved conflicts
+### H20 — `git_commit` refuses unresolved conflicts ✅
 **Satisfies:** HR-023 · **Verified by:** HAT-018
+**Commit:** `4ae9ea9`
 
-- [ ] Inspect `status.conflicted` alongside `detect_interrupted_operation`
-- [ ] Test via a real `git stash pop` conflict, which leaves no marker file
+- [x] Inspect `status.conflicted` alongside `detect_interrupted_operation`
+- [x] Test via a real `git stash pop` conflict, which leaves no marker file
+
+**Defect:** reproduced via `git stash pop` — status showed `UU`, the guard
+returned `None`, and the commit succeeded.
+
+**Implementation.** `git_commit_tool` now raises `GitConflictError` whenever
+`status.conflicted` is non-empty, checked immediately after `read_git_status`
+runs — alongside, not instead of, the existing `detect_interrupted_operation`
+marker-file check, since the two catch genuinely different situations (an
+in-progress merge/rebase with no conflict yet resolved one way; an
+already-resolved-looking-but-actually-conflicted stash pop the other).
+Verified the exact defect empirically before writing any test: a stash,
+then a conflicting commit on the branch it was stashed from, then `git
+stash pop` leaves `git status` reporting `UU` for the file — but no
+`MERGE_HEAD` (only an `AUTO_MERGE` file, which nothing in
+`detect_interrupted_operation` reads).
+
+**Verified the new test catches the regression:** reverted `tools/git.py`
+to its pre-H20 version and reran the new test — it failed with
+`DID NOT RAISE ToolError` (the commit against the conflicted tree
+succeeded, exactly the defect's reproduction), confirming the test
+genuinely depends on the fix rather than passing for an unrelated reason.
+Restored the fix; it passes again; the full
+`tests/workspace/test_git_commit_tool.py` file (14 tests) shows no
+regressions. No Docker leftovers, no schema drift.
+
+**New tests:** `tests/workspace/test_git_commit_tool.py` — a real `git
+stash pop` conflict (no `MERGE_HEAD` present, confirmed via an explicit
+assertion in the test itself) still fails `git_commit` with
+`GIT_CONFLICT`.
 
 ### H21 — `git_commit` stages exactly what it was told
 **Satisfies:** HR-024 · **Verified by:** HAT-018

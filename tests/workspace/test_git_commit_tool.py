@@ -488,3 +488,36 @@ async def test_git_commit_interrupted_merge_fails_closed(
             "git_commit",
             {"workspace_id": workspace_id, "message": "x", "paths": ["README.md"]},
         )
+
+
+async def test_at_hr023_a_stash_pop_conflict_fails_closed_though_it_leaves_no_marker_file(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """HR-023 (`docs/HARDENING_SPEC.md` §11): `detect_interrupted_operation`
+    alone doesn't catch this — a `git stash pop` conflict leaves no
+    `MERGE_HEAD` (confirmed empirically: only an `AUTO_MERGE` file
+    appears, which nothing in `detect_interrupted_operation` reads) even
+    though `git status` reports the same `UU` unresolved-conflict state
+    an ordinary `git merge` conflict does. The precondition SHALL inspect
+    `status.conflicted` directly, not only marker files."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    (repo_path / "README.md").write_text("line1-stash-change\n")
+    subprocess.run(["git", "stash", "-q"], cwd=repo_path, check=True)
+    (repo_path / "README.md").write_text("line1-main-change\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "main change"], cwd=repo_path, check=True)
+    subprocess.run(["git", "stash", "pop"], cwd=repo_path, check=False)  # expected to conflict
+    assert not (repo_path / ".git" / "MERGE_HEAD").exists()  # confirms no marker file exists
+
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    with pytest.raises(ToolError, match="GIT_CONFLICT"):
+        await server.call_tool(
+            "git_commit",
+            {"workspace_id": workspace_id, "message": "x", "paths": ["README.md"]},
+        )
