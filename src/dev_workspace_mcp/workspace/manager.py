@@ -20,6 +20,7 @@ instance, since a filesystem tool (S9) doesn't otherwise have one.
 from __future__ import annotations
 
 import contextlib
+import logging
 import secrets
 import sqlite3
 from dataclasses import dataclass, replace
@@ -51,6 +52,8 @@ from dev_workspace_mcp.workspace.naming import (
     persistent_workspace_id,
 )
 from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager
+
+_logger = logging.getLogger(__name__)
 
 
 class WorkspaceState(StrEnum):
@@ -434,11 +437,20 @@ class DockerWorkspaceManager:
             )
         except DockerException as exc:
             self._save(replace(record, state=WorkspaceState.FAILED, last_used_at=_now()))
+            _logger.warning(
+                "workspace %s: container create failed (image=%s): %s", record.id, image, exc
+            )
             raise ContainerCreateFailedError(
                 f"failed to create container for workspace {record.id!r}: {exc}",
                 details={"workspace_id": record.id, "image": image},
             ) from exc
 
+        _logger.info(
+            "workspace %s: container %s created (image=%s)",
+            record.id,
+            record.container_name,
+            image,
+        )
         return self._save(
             replace(
                 record,
@@ -459,9 +471,11 @@ class DockerWorkspaceManager:
             container.start()
         except DockerException as exc:
             self._save(replace(record, state=WorkspaceState.FAILED, last_used_at=_now()))
+            _logger.warning("workspace %s: container start failed: %s", workspace_id, exc)
             raise ContainerRuntimeFailedError(
                 f"failed to start container for workspace {workspace_id!r}: {exc}"
             ) from exc
+        _logger.info("workspace %s: container started", workspace_id)
         return self._save(replace(record, state=WorkspaceState.RUNNING, last_used_at=_now()))
 
     def stop(self, workspace_id: str) -> WorkspaceRecord:
@@ -474,9 +488,11 @@ class DockerWorkspaceManager:
             container.stop()
         except DockerException as exc:
             self._save(replace(record, state=WorkspaceState.FAILED, last_used_at=_now()))
+            _logger.warning("workspace %s: container stop failed: %s", workspace_id, exc)
             raise ContainerRuntimeFailedError(
                 f"failed to stop container for workspace {workspace_id!r}: {exc}"
             ) from exc
+        _logger.info("workspace %s: container stopped", workspace_id)
         # §8.1/§19.2: the key comes out of the agent whenever the
         # workspace stops, including this idle stop's own caller — the
         # agent process itself is left running (`unload_key`'s own
@@ -621,6 +637,7 @@ class DockerWorkspaceManager:
         with self._db:
             self._db.execute("DELETE FROM job WHERE workspace_id = ?", (workspace_id,))
             self._db.execute("DELETE FROM workspace WHERE id = ?", (workspace_id,))
+        _logger.info("workspace %s: deleted", workspace_id)
 
     def _remove_cache_volumes(self, cache_volume_names: list[str]) -> None:
         for name in cache_volume_names:
@@ -751,11 +768,26 @@ class DockerWorkspaceManager:
         """
         ids = [row["id"] for row in self._db.execute("SELECT id FROM workspace").fetchall()]
         reconciled: list[WorkspaceRecord] = []
+        skipped = 0
         for workspace_id in ids:
             try:
                 reconciled.append(self.reconcile(workspace_id))
-            except ContainerRuntimeFailedError:
+            except ContainerRuntimeFailedError as exc:
+                # H31 (`docs/HARDENING_TODO.md`, HR-031): a real
+                # "swallowed exception" — correctly not fatal to the
+                # whole startup sweep (this docstring's own §69
+                # rationale), but previously invisible: an operator
+                # would only discover a workspace needing their
+                # attention by noticing it never came back, not from
+                # anything the daemon told them.
+                skipped += 1
+                _logger.warning("workspace %s: reconciliation failed: %s", workspace_id, exc)
                 continue
+        _logger.info(
+            "startup reconciliation: %d workspace(s) reconciled, %d skipped",
+            len(reconciled),
+            skipped,
+        )
         return reconciled
 
 

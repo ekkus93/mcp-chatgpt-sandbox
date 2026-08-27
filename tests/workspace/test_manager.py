@@ -47,6 +47,26 @@ def test_ensure_workspace_creates_a_running_container(
     assert container.labels[LABEL_REPOSITORY_ID] == repository.id
 
 
+def test_at_h031_container_lifecycle_transitions_are_logged(
+    manager: DockerWorkspaceManager,
+    docker_client: docker.DockerClient,
+    repository: RepositoryRecord,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """H31 (`docs/HARDENING_TODO.md`, HR-031): container lifecycle
+    transitions (create, delete) SHALL be logged — before this task,
+    `getLogger` appeared nowhere in this module at all."""
+    with caplog.at_level("INFO", logger="dev_workspace_mcp.workspace.manager"):
+        record = manager.ensure_workspace(
+            repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
+        )
+        manager.delete(record.id)
+
+    messages = [r.message for r in caplog.records]
+    assert any("created" in m and record.id in m for m in messages)
+    assert any("deleted" in m and record.id in m for m in messages)
+
+
 def test_ensure_workspace_reuses_the_persistent_workspace(
     manager: DockerWorkspaceManager, repository: RepositoryRecord
 ) -> None:

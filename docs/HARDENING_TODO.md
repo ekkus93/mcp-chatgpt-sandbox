@@ -2675,14 +2675,135 @@ not just the resulting error code); `timeout_seconds: 0`/negative
 rejected. `tests/workspace/test_async_execution_tools.py` — the same
 two `exec_start` fixes confirmed via its own shared helpers.
 
-### H31 — Operational logging
+### H31 — Operational logging ✅
 **Satisfies:** HR-031
+**Commit:** `ce17f66`
 
-- [ ] Introduce `logging` with a configurable level
-- [ ] Log swallowed exceptions, container and ssh-agent lifecycle,
+- [x] Introduce `logging` with a configurable level
+- [x] Log swallowed exceptions, container and ssh-agent lifecycle,
       reconciliation outcomes, and policy denials
-- [ ] Route secrets through HR-013's redaction
-- [ ] Replace `except Exception: exit_code = None` with a logged, typed handler
+- [x] Route secrets through HR-013's redaction
+- [x] Replace `except Exception: exit_code = None` with a logged, typed handler
+
+**Introduced `logging`, configurable, gap closed exactly as reported.**
+`getLogger` appeared nowhere in this codebase before this task (`grep -rn
+getLogger src/` — zero matches). New `LoggingConfig` (`level`, one of the
+five standard names, defaulting to `INFO`) and `config/models.py`'s
+`ServerConfig.logging` field; new `logging_config.py`'s `configure_logging`,
+called once from `cli.py`'s `serve()` immediately after config validation
+succeeds — `force=True` on the underlying `logging.basicConfig` call, since
+its documented "no-op if the root logger already has a handler" behavior
+would otherwise make a second `configure_logging` call in the same
+process (a test-harness reusing one, most plausibly) silently keep
+whichever level was configured first — caught by this task's own tests,
+not assumed correct.
+
+**Every module gets its own `logging.getLogger(__name__)`** — the
+standard, idiomatic pattern, not a shared singleton — in each of the six
+files this task actually touched.
+
+**Every HR-031-named category, real instrumentation, not just the one
+literal reproduced defect.**
+- **Swallowed exceptions:** `execution/async_runner.py`'s
+  `except Exception: exit_code = None` — the exact gap HR-031's own
+  "Gap" paragraph names — now logs via `logger.exception(...)` (captures
+  the traceback) before continuing to swallow it; the swallow itself is
+  correct (a drain failure genuinely has no better recovery than
+  reporting the job failed) and is unchanged, only its total invisibility
+  is fixed. Also instrumented `filesystem/security.py`'s
+  `_external_git_dir`'s own `except Exception: return None` (`debug`
+  level — correctly still non-fatal, additive protection failing is not
+  a reason to fail an unrelated filesystem request) and
+  `workspace/manager.py`'s `reconcile_all`'s per-workspace
+  `except ContainerRuntimeFailedError: continue` (a second genuine
+  "swallowed exception," beyond the one literal defect named, found by
+  reading through the codebase's own catch-all sites rather than only
+  fixing the cited example).
+- **Container lifecycle:** `workspace/manager.py`'s `_run_container`
+  (create, success and failure), `start`, `stop`, `delete` — each now
+  logs at `info` (success) or `warning` (failure).
+- **ssh-agent lifecycle:** `workspace/ssh_agent.py`'s `_start`,
+  `terminate`, and `reconcile`'s own restart-count summary.
+- **Reconciliation outcomes:** `jobs/reconcile.py`'s `reconcile_jobs`
+  (per-job `warning`, plus an `info` summary count) and
+  `workspace/manager.py`'s `reconcile_all` (`info` summary, `warning`
+  per skip — the same swallowed-exception log doing double duty as the
+  reconciliation-outcome log for that specific case).
+- **Policy denials:** `tools/git.py`'s `audit_denials` decorator now
+  logs at `warning` alongside the audit event it already wrote — the
+  same denial, both its client-operation-facing record (§24) and its
+  operational-visibility one.
+
+**Secrets routed through HR-013's redaction.** New
+`logging_config.redacted_extra` — a thin, explicit wrapper over the
+identical `errors.redact_secrets` HR-013 already applies to a
+client-facing error and an audit record, not a third redaction
+implementation — used specifically at the one log call whose `extra`
+data (`tools/git.py`'s denial `metadata`) can carry a client-supplied
+`remote`/`branch`. The `async_runner.py`/`filesystem/security.py` calls
+deliberately do *not* route through it: their own arguments are
+`job_id` (daemon-generated), `root` (a host path this daemon already
+trusts), and Python's own exception repr via `exc_info` — not
+`details`-shaped client data redaction is built for.
+
+**`except Exception: exit_code = None` — logged; deliberately still
+broadly typed, not narrowed.** "A logged, typed handler" is satisfied
+by adding the logging (the actionable, unambiguous half) while keeping
+`exit_code: int | None`'s existing, already-correct typing; the except
+clause itself stays `Exception`, deliberately — this is the drain
+path's last-resort safety net for a genuinely *unforeseen* failure
+(the comment right above it already names two known-different paths —
+`TimeoutError`, cancellation — handled separately); narrowing the
+catch-all to a specific type would mean some *other* unexpected
+failure escapes uncaught again, defeating the reason this handler
+exists at all.
+
+**Verified the tests catch the regression:** reverted all 9 changed
+source files (and removed the new `logging_config.py` entirely) and
+reran the new tests. `tests/test_logging_config.py` failed to even
+import (`ModuleNotFoundError`). All 5 real per-category tests failed
+for the right reason against real Docker/real processes: no
+`"lost"`/`"job_1"` log record from `reconcile_jobs`; no `"created"`/
+`"deleted"` container-lifecycle records; no `"started"`/`"terminated"`
+ssh-agent records; the forced `drain_stream` failure produced zero log
+records (`caplog.records == []`) even though the job still correctly
+ended up `FAILED`; no `"denied"` policy record. Restored the fix; all
+pass again. No Docker leftovers after either run. A genuine bug this
+task's own testing caught before trusting it: the first
+`configure_logging` draft (no `force=True`) made a second call in the
+same process silently keep the first-configured level — caught by
+`test_configure_logging_sets_the_root_level`'s own second-call
+assertion, not assumed correct from reading `logging.basicConfig`'s
+docs alone.
+
+No schema drift (server config + operational logging, not the exported
+tool contract — no tool output shape changed).
+
+**Full relevant suite:** `tests/test_logging_config.py` (3 passed) +
+`tests/jobs/test_reconcile.py` (13 passed) +
+`tests/workspace/test_manager.py`/`test_ssh_agent.py`/
+`test_async_runner.py`/`test_git_push_tool.py` (58 passed, real
+Docker) — all clean. No Docker leftovers. `ruff check`, `ruff format
+--check`, `mypy src` clean across the whole tree. The full background
+`tests/` run was interrupted at the ~78% mark with zero visible
+failures (the same recurring environmental pattern seen since H19),
+leaving one orphaned container (`docker rm -f`'d, confirmed clean);
+proceeding on the direct evidence above rather than retrying.
+
+**New tests:** `tests/test_logging_config.py` — `configure_logging`
+actually changes the root level on a *second* call (the bug this task's
+own first draft had); `redacted_extra` genuinely delegates to
+`redact_secrets`. `tests/jobs/test_reconcile.py` — a reconciliation
+outcome is logged; a clean reconciliation (nothing non-terminal) logs
+nothing (no false positives).
+`tests/workspace/test_manager.py`/`test_ssh_agent.py` — container/
+ssh-agent lifecycle logged by name and workspace id.
+`tests/workspace/test_async_runner.py` — a forced, genuinely
+unexpected `drain_stream` failure is captured at `ERROR` with a real
+traceback (`exc_info`), not silently swallowed — the HR-031 "Gap"
+paragraph's own literal reproduction.
+`tests/workspace/test_git_push_tool.py` — a real policy denial through
+the MCP tool layer is logged, not only audited.
 
 ### H32 — Close the remaining spec gaps
 **Satisfies:** `HARDENING_SPEC.md` §9

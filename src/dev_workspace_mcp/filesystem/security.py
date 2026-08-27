@@ -8,11 +8,14 @@ ever touches disk — this is the boundary AT-001, AT-002, and AT-033 test.
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 from pathlib import Path, PurePosixPath
 
 from dev_workspace_mcp.errors import PathGitMetadataError, PathOutsideRepositoryError
 from dev_workspace_mcp.workspace.mounts import resolve_git_dir
+
+_logger = logging.getLogger(__name__)
 
 
 class FilesystemSecurity:
@@ -228,5 +231,17 @@ def _external_git_dir(root: Path, authorized_roots: list[Path]) -> Path | None:
     try:
         info = resolve_git_dir(root, workspace_path="/workspace", authorized_roots=authorized_roots)
     except Exception:
+        # H31 (`docs/HARDENING_TODO.md`, HR-031): still swallowed —
+        # additive protection failing is correctly not a reason to fail
+        # an unrelated filesystem request — but now visible for
+        # troubleshooting instead of silent. `root` only, not the
+        # exception's own text: `resolve_git_dir` can echo repository-
+        # controlled `.git`-file content, which HR-013 redaction is
+        # built for `details` dicts and client-facing messages, not a
+        # bare log string — logging only the host path this daemon
+        # itself already trusts keeps that content out of the log
+        # entirely rather than routing it through redaction after the
+        # fact.
+        _logger.debug("external git dir resolution failed for %s", root, exc_info=True)
         return None
     return None if info.is_ordinary_in_tree else info.host_path

@@ -25,9 +25,12 @@ task gives the execution service a way to re-attach.
 
 from __future__ import annotations
 
+import logging
 import os
 
 from dev_workspace_mcp.jobs.store import NON_TERMINAL_STATES, JobStore
+
+_logger = logging.getLogger(__name__)
 
 
 def _pid_alive(pid: int) -> bool:
@@ -58,4 +61,9 @@ def reconcile_jobs(job_store: JobStore) -> list[tuple[str, bool]]:
         pid_alive = job.pid is not None and _pid_alive(job.pid)
         job_store.mark_lost(job.id)
         results.append((job.id, pid_alive))
+        _logger.warning(
+            "job %s: marked lost at startup (host process still alive: %s)", job.id, pid_alive
+        )
+    if results:
+        _logger.info("job reconciliation: %d non-terminal job(s) marked lost", len(results))
     return results

@@ -4,6 +4,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 from dev_workspace_mcp.jobs.reconcile import reconcile_jobs
 from dev_workspace_mcp.jobs.store import JobState, JobStore
 from tests.jobs.conftest import WORKSPACE_ID
@@ -39,6 +41,32 @@ def test_reconcile_marks_queued_job_lost(job_store: JobStore) -> None:
     result = reconcile_jobs(job_store)
     assert result == [("job_1", False)]
     assert job_store.get("job_1").state == JobState.LOST
+
+
+def test_at_h031_reconciliation_outcome_is_logged(
+    job_store: JobStore, caplog: pytest.LogCaptureFixture
+) -> None:
+    """H31 (`docs/HARDENING_TODO.md`, HR-031): reconciliation outcomes
+    SHALL be logged — an operator restarting the daemon after an unclean
+    shutdown should see this in the log, not only in `serve()`'s own
+    stderr summary."""
+    _create(job_store)
+    with caplog.at_level("INFO", logger="dev_workspace_mcp.jobs.reconcile"):
+        reconcile_jobs(job_store)
+
+    messages = [r.message for r in caplog.records]
+    assert any("job_1" in m and "lost" in m for m in messages)
+    assert any("1 non-terminal job" in m for m in messages)
+
+
+def test_at_h031_a_clean_reconciliation_logs_nothing(
+    job_store: JobStore, caplog: pytest.LogCaptureFixture
+) -> None:
+    """No false positives: nothing non-terminal means nothing to log."""
+    with caplog.at_level("INFO", logger="dev_workspace_mcp.jobs.reconcile"):
+        result = reconcile_jobs(job_store)
+    assert result == []
+    assert caplog.records == []
 
 
 def test_reconcile_marks_starting_job_lost(job_store: JobStore) -> None:

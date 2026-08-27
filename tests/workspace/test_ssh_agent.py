@@ -141,6 +141,25 @@ def test_ensure_starts_a_real_agent_with_the_key_loaded(
     )
 
 
+def test_at_h031_agent_start_and_terminate_are_logged(
+    tmp_path: Path, _cleanup_spawned_agents, caplog: pytest.LogCaptureFixture
+) -> None:
+    """H31 (`docs/HARDENING_TODO.md`, HR-031): ssh-agent lifecycle
+    (start, terminate) SHALL be logged."""
+    db = _seeded_db()
+    key_path = _real_keypair(tmp_path)
+    manager = SSHAgentManager(db, runtime_dir=tmp_path / "agents")
+
+    with caplog.at_level("INFO", logger="dev_workspace_mcp.workspace.ssh_agent"):
+        record = manager.ensure("ws_test", key_path)
+        _cleanup_spawned_agents.append(record.pid)
+        manager.terminate("ws_test")
+
+    messages = [r.message for r in caplog.records]
+    assert any("started" in m and "ws_test" in m for m in messages)
+    assert any("terminated" in m and "ws_test" in m for m in messages)
+
+
 def test_ensure_is_idempotent_no_churn_on_an_already_running_agent(
     tmp_path: Path, _cleanup_spawned_agents
 ) -> None:

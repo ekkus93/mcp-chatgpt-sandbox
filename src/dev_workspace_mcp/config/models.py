@@ -362,6 +362,20 @@ class AuditConfig(BaseModel):
         return v
 
 
+# --- H31 (`docs/HARDENING_TODO.md`, HR-031) logging -----------------------------
+
+
+class LoggingConfig(BaseModel):
+    """`logging:` block (HR-031: operational logs, distinct from `audit:`'s
+    structured per-operation records) — a configurable level for the
+    standard `logging` module, which nothing in this daemon used at all
+    before this task."""
+
+    model_config = {"extra": "forbid"}
+
+    level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+
+
 # --- top level ------------------------------------------------------------------------
 
 
@@ -387,6 +401,7 @@ class ServerConfig(BaseModel):
     git_policy: GitPolicyConfig = Field(default_factory=GitPolicyConfig)
     resources: ResourcesConfig = Field(default_factory=ResourcesConfig)
     audit: AuditConfig
+    logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
     @field_validator("state_db_path")
     @classmethod

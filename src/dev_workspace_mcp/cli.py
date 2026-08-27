@@ -30,6 +30,7 @@ from dev_workspace_mcp.db import open_db
 from dev_workspace_mcp.errors import RepositoryNotAllowedError, WorkspaceNotFoundError
 from dev_workspace_mcp.jobs.reconcile import reconcile_jobs
 from dev_workspace_mcp.jobs.store import JobStore
+from dev_workspace_mcp.logging_config import configure_logging
 from dev_workspace_mcp.project_config import load_project_config
 from dev_workspace_mcp.repositories import RepositoryRecord, RepositoryRegistry
 from dev_workspace_mcp.schema_export import export_schemas
@@ -71,6 +72,11 @@ def serve(config_path: Path, transport: Transport) -> None:
     except ConfigError as exc:
         click.echo(f"error: {exc}", err=True)
         sys.exit(1)
+
+    # H31 (`docs/HARDENING_TODO.md`, HR-031): as early as possible after
+    # config validation succeeds — every log call below this point,
+    # anywhere in the daemon, depends on this having already run.
+    configure_logging(config.logging.level)
 
     # §73 step 2: verify Docker connectivity. A missing daemon is reported,
     # not fatal — the daemon starts degraded rather than refusing to serve

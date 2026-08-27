@@ -125,3 +125,65 @@ async def test_at_hat017_live_job_entry_is_evicted_after_completion(
 
     await _wait_until(evicted, timeout=10.0)
     assert job_store.get("job_1").state == JobState.SUCCEEDED  # the durable record still exists
+
+
+async def test_at_h031_an_unexpected_drain_failure_is_logged_not_silent(
+    manager: DockerWorkspaceManager,
+    docker_client: docker.DockerClient,
+    db: sqlite3.Connection,
+    repository: RepositoryRecord,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """H31 (`docs/HARDENING_TODO.md`, HR-031): `_run`'s
+    `except Exception: exit_code = None` used to swallow *any*
+    unexpected drain-path failure with zero record of what happened —
+    the exact gap HR-031 names. Forces `drain_stream` itself to raise
+    (standing in for the "unforeseen `asyncio.wait` failure" the
+    original comment describes, not the already-handled timeout/cancel
+    paths) and confirms it reaches the log, not just the job's own
+    `FAILED` state."""
+    workspace = manager.ensure_workspace(
+        repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
+    )
+    runner, job_store = _runner(docker_client, db)
+    job_store.create(
+        job_id="job_1",
+        workspace_id=workspace.id,
+        command="true",
+        cwd="/",
+        stdout_log_path=str(tmp_path / "out.log"),
+        stderr_log_path=str(tmp_path / "err.log"),
+    )
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("simulated unexpected drain failure")
+
+    runner._execution.drain_stream = _boom  # type: ignore[method-assign]
+
+    with caplog.at_level("ERROR", logger="dev_workspace_mcp.execution.async_runner"):
+        await runner.start_job(
+            "job_1",
+            container_id=workspace.container_id,
+            cmd=["true"],
+            cwd="/",
+            user="",
+            env=None,
+            timeout_seconds=None,
+            stdout_log_path=tmp_path / "out.log",
+            stderr_log_path=tmp_path / "err.log",
+            max_output_bytes=1024,
+            tail_keep_bytes=1024,
+        )
+
+        async def finished() -> bool:
+            return job_store.get("job_1").state in (JobState.FAILED, JobState.SUCCEEDED)
+
+        await _wait_until(finished, timeout=10.0)
+
+    assert job_store.get("job_1").state == JobState.FAILED
+    assert job_store.get("job_1").exit_code is None
+    matching = [r for r in caplog.records if "job_1" in r.message and "drain failed" in r.message]
+    assert matching, f"no matching log record; got: {[r.message for r in caplog.records]}"
+    assert matching[0].levelname == "ERROR"
+    assert matching[0].exc_info is not None  # the traceback was captured, not discarded

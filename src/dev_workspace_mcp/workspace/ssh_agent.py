@@ -19,6 +19,7 @@ guessing from `ps` output.
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import signal
 import sqlite3
@@ -31,6 +32,8 @@ from pathlib import Path
 from dev_workspace_mcp.config.models import SSHConfig
 from dev_workspace_mcp.errors import RepositoryNotAllowedError, SSHKeyProvisionFailedError
 from dev_workspace_mcp.repositories import RepositoryRecord, RepositoryRegistry
+
+_logger = logging.getLogger(__name__)
 
 #: How long to wait for a freshly spawned `ssh-agent -D` to actually bind
 #: its listening socket before giving up — real, but fast: `ssh-agent`
@@ -229,6 +232,7 @@ class SSHAgentManager:
 
         record = SSHAgentRecord(workspace_id=workspace_id, pid=process.pid, socket_path=socket_path)
         self._save(record)
+        _logger.info("workspace %s: ssh-agent started (pid=%d)", workspace_id, process.pid)
         return record
 
     @staticmethod
@@ -276,6 +280,7 @@ class SSHAgentManager:
         _terminate_pid(record.pid)
         record.socket_path.unlink(missing_ok=True)
         self._forget(workspace_id)
+        _logger.info("workspace %s: ssh-agent terminated (pid=%d)", workspace_id, record.pid)
 
     # --- §44.1 steps 4-5: daemon-restart reconciliation --------------------------
 
@@ -297,6 +302,8 @@ class SSHAgentManager:
 
         for workspace_id, key_path in running_workspaces.items():
             self._start(workspace_id, key_path)
+
+        _logger.info("ssh-agent reconciliation: %d agent(s) restarted", len(running_workspaces))
 
 
 def running_workspace_key_paths(

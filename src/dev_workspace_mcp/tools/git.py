@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import posixpath
 import sqlite3
 from collections.abc import Awaitable, Callable
@@ -88,6 +89,7 @@ from dev_workspace_mcp.github_api import (
     deserialize_remote_protection,
     to_report_output,
 )
+from dev_workspace_mcp.logging_config import redacted_extra
 from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.workspace.container_config import resolve_exec_user
 from dev_workspace_mcp.workspace.manager import (
@@ -105,6 +107,8 @@ from dev_workspace_mcp.workspace.manager import (
 #: that point; e.g. `remote_repository` is absent from every denial raised
 #: before remote validation has run, which is the correct, honest gap).
 _DENIAL_DETAIL_FIELDS = ("policy", "remote", "branch", "remote_repository")
+
+_logger = logging.getLogger(__name__)
 
 
 def audit_denials(
@@ -167,6 +171,20 @@ def audit_denials(
                     workspace_id=workspace_id,
                     repository_id=repository_id,
                     metadata=metadata,
+                )
+                # H31 (`docs/HARDENING_TODO.md`, HR-031): the audit event
+                # above is the client-operation-facing record (§24); this
+                # is the same denial's operational-visibility half —
+                # `redacted_extra` routes it through the identical
+                # `redact_secrets` HR-013 already applies to a
+                # client-facing error and an audit record, since
+                # `metadata` can carry a client-supplied `remote`/`branch`.
+                _logger.warning(
+                    "workspace %s: %s %s (%s)",
+                    workspace_id,
+                    operation,
+                    "denied" if exc.code == ErrorCode.POLICY_DENIED else "failed",
+                    redacted_extra(metadata),
                 )
                 raise
 

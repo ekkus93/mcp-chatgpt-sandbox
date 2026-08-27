@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,6 +34,8 @@ from dev_workspace_mcp.errors import ContainerRuntimeFailedError
 from dev_workspace_mcp.execution.log_capture import StreamCapture
 from dev_workspace_mcp.execution.service import ExecutionService
 from dev_workspace_mcp.jobs.store import JobState, JobStore
+
+_logger = logging.getLogger(__name__)
 
 #: Between TERM and KILL, whether canceling (`exec_cancel`) or timing out
 #: (`exec_start`'s `timeout_seconds`) — §15.3's "graceful termination
@@ -207,6 +210,19 @@ class AsyncJobRunner:
             else:
                 exit_code = await drain
         except Exception:
+            # H31 (`docs/HARDENING_TODO.md`, HR-031): the exact gap named
+            # in the review — this used to swallow *any* unexpected
+            # exception from the drain path (a `drain.result()`
+            # re-raise, an unforeseen `asyncio.wait` failure) into a
+            # bare `exit_code = None`, indistinguishable from an
+            # ordinary failed command and, before this task, entirely
+            # unlogged: a failure here was invisible. `logger.exception`
+            # captures the traceback; nothing here is client-controlled
+            # text needing HR-013 redaction (this is `job_id`, a
+            # daemon-generated identifier, and Python's own exception
+            # repr) — unlike the audit-event/policy-denial logging
+            # below, which does route through it.
+            _logger.exception("job %s: drain failed unexpectedly", job_id)
             exit_code = None
 
         live.finished_monotonic = time.monotonic()

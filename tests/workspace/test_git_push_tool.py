@@ -169,6 +169,36 @@ async def test_at_011_force_true_is_denied_before_git_runs_under_default_policy(
         )
 
 
+async def test_at_h031_policy_denial_is_logged_not_only_audited(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """H31 (`docs/HARDENING_TODO.md`, HR-031): policy denials SHALL be
+    logged — `audit_denials` (`tools/git.py`) already writes the
+    client-operation-facing audit record (§24); this is its operational-
+    visibility half, through the standard `logging` module."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path, github="owner/example")
+    _set_remote(repo_path, "ext::sh -c 'touch /tmp/pwned'")
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    with (
+        caplog.at_level("WARNING", logger="dev_workspace_mcp.tools.git"),
+        pytest.raises(ToolError, match="POLICY_DENIED"),
+    ):
+        await server.call_tool(
+            "git_push",
+            {"workspace_id": workspace_id, "force": True, "expected_local_head_sha": "0" * 40},
+        )
+
+    messages = [r.message for r in caplog.records]
+    assert any("git_push" in m and "denied" in m for m in messages)
+
+
 async def test_push_policy_deny_blocks_the_whole_tool(
     minimal_config: ServerConfig,
     default_image_tag: str,
