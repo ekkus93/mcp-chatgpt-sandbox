@@ -63,6 +63,16 @@ def _home_relative_path(raw_path: str, *, cache_name: str) -> str:
             f"cache {cache_name!r}: path {raw_path!r} is not a valid $HOME-relative path (§11)",
             details={"cache": cache_name, "path": raw_path},
         )
+    if ":" in relative:
+        # HR-008: `build_cache_mounts`' caller joins every resolved cache
+        # path into one colon-separated `MCP_CACHE_PATHS` string
+        # (`tools/workspace.py`) that `entrypoint.sh` splits on `:` — a
+        # path containing a literal `:` would silently become two
+        # entries there instead of the one intended here.
+        raise ContainerCreateFailedError(
+            f"cache {cache_name!r}: path {raw_path!r} may not contain ':' (§11)",
+            details={"cache": cache_name, "path": raw_path},
+        )
     return relative
 
 

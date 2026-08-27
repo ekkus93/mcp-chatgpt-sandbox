@@ -58,6 +58,19 @@ def test_resolve_caches_rejects_path_traversal() -> None:
         )
 
 
+def test_at_hat007_resolve_caches_rejects_a_colon_in_the_path() -> None:
+    """HR-008: `build_cache_mounts`' caller joins every resolved cache
+    path into one colon-separated `MCP_CACHE_PATHS` string that
+    `entrypoint.sh` splits on `:` — a path containing a literal `:`
+    would silently become two entries there instead of the one this
+    config entry actually named."""
+    with pytest.raises(ContainerCreateFailedError):
+        resolve_caches(
+            repository_id="example",
+            project_caches=[ProjectCacheEntry(path="$HOME/weird:path", name="cargo")],
+        )
+
+
 def test_resolve_caches_rejects_an_empty_relative_path() -> None:
     with pytest.raises(ContainerCreateFailedError):
         resolve_caches(

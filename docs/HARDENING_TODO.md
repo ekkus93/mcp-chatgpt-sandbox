@@ -543,16 +543,64 @@ different jobs, and both are needed.
 `ssh.shared_key` error naming that specific path; a "legitimate shared key
 outside `~/.ssh` still accepted" guard; and the structural meta-test above.
 
-### H8 — The entrypoint re-validates cache paths
+### H8 — The entrypoint re-validates cache paths ✅
 **Satisfies:** HR-008 · **Verified by:** HAT-007
+**Commit:** `b012229`
 
-- [ ] Reject absolute, `..`-containing, and empty `MCP_CACHE_PATHS` entries in
+- [x] Reject absolute, `..`-containing, and empty `MCP_CACHE_PATHS` entries in
       `entrypoint.sh` before `mkdir`/`chown`
-- [ ] Reject `:` in a cache path host-side (it is the separator)
-- [ ] Keep host-side validation too — both sides of the boundary
+- [x] Reject `:` in a cache path host-side (it is the separator)
+- [x] Keep host-side validation too — both sides of the boundary
 
 **Defect:** reproduced — `'../../etc:../../usr/bin'` left `/etc` and `/usr/bin`
 owned by the container user.
+
+**H6 already closed the specific path this defect was originally reproduced
+through**, discovered while writing this task's own test: `.mcp-workspace.yml`
+setting `environment: {MCP_CACHE_PATHS: '../../etc'}` is now rejected at
+project-config load time, since `MCP_CACHE_PATHS` is itself `MCP_`-prefixed
+and H6's validator rejects any such key unconditionally — verified directly
+before writing this task's tests, rather than assumed. This task's fix is
+therefore genuine defense in depth, not the only barrier: it holds regardless
+of *how* an unsafe `MCP_CACHE_PATHS` value might reach the container (a future
+code path, a bug in `caches.py`'s own resolution), not only the one route
+already closed.
+
+**Implementation.** `entrypoint.sh` validates each `:`-split
+`MCP_CACHE_PATHS` entry before `mkdir`/`chown` — rejects empty, rejects a
+leading `/` (absolute), and rejects any `/`-separated component exactly equal
+to `..` (checked component-wise, not by substring, so a path merely
+*containing* the string `..` isn't wrongly rejected) — exiting non-zero with a
+clear message rather than silently skipping the bad entry, since this runs as
+root before the identity drop and a silent skip would hide a misconfiguration
+that also lost a cache mount. `workspace/caches.py`'s `_home_relative_path`
+now also rejects a literal `:` in a cache path, since the daemon joins every
+resolved path into one colon-separated string before it ever reaches the
+entrypoint — a legitimate path containing `:` would otherwise silently
+fracture into two separate `MCP_CACHE_PATHS` entries.
+
+**Verified against a real container, both ways.** Rebuilt the test image
+before probing by hand — confirmed a stale, pre-existing tagged image (from
+before this edit) let `MCP_CACHE_PATHS='../../etc'` straight through, which is
+why the test uses the `default_image_tag` fixture's own session-scoped
+rebuild rather than assuming an already-tagged image reflects the current
+source. With the fix, `docker.errors.ContainerError` is raised with the
+entrypoint's own message. Since H6 already blocks the project-config route,
+the real-Docker test passes the hostile value as `extra_env` directly to
+`build_workspace_run_kwargs` — the same "simulate an earlier layer being
+bypassed" technique H6's own `test_at_hat005_hostile_extra_env_cannot_make_pid_1_root`
+uses — to exercise the entrypoint's defense specifically, independent of how
+the value might arrive.
+
+**Verified the fix actually verifies something**: reverted `entrypoint.sh`
+and `caches.py` together and reran both new tests — the real-container test
+failed with "DID NOT RAISE `ContainerError`," the pure-Python `:`-rejection
+test failed with "DID NOT RAISE `ContainerCreateFailedError`." Restored both;
+reran; both pass, and no other cache/mount/project-config test regressed.
+
+**New tests:** `tests/workspace/test_default_image.py` (the real-container
+traversal-through-`extra_env` proof above) and `tests/workspace/test_caches.py`
+(the `:`-rejection unit test).
 
 ---
 

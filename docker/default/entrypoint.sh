@@ -86,9 +86,36 @@ chown "$MCP_UID:$MCP_GID" "$HOME_DIR" 2>/dev/null || true
 # it; not recursive, matching $HOME's own chown above — this is about
 # making the mount point itself writable, not repairing ownership of
 # whatever a previous container run already left inside it.
+#
+# HR-008 (docs/HARDENING_SPEC.md §6): this daemon-side validation is
+# necessary but not sufficient on its own. `workspace/caches.py`
+# validates `caches[].path` from `.mcp-workspace.yml`, but
+# `MCP_CACHE_PATHS` can also be set directly through a project's own
+# `environment:` when it declares no caches at all — reaching this
+# script unvalidated. Since this runs as root, before the identity drop
+# below, an unsafe entry here means an arbitrary `mkdir`/`chown` as root:
+# reproduced with `MCP_CACHE_PATHS='../../etc:../../usr/bin'` leaving
+# `/etc` and `/usr/bin` owned by the container user.
 if [ -n "$MCP_CACHE_PATHS" ]; then
     IFS=':' read -ra CACHE_PATHS <<< "$MCP_CACHE_PATHS"
     for cache_path in "${CACHE_PATHS[@]}"; do
+        if [ -z "$cache_path" ]; then
+            echo "entrypoint: MCP_CACHE_PATHS contains an empty entry" >&2
+            exit 1
+        fi
+        case "$cache_path" in
+            /*)
+                echo "entrypoint: MCP_CACHE_PATHS entry must be \$HOME-relative, not absolute: $cache_path" >&2
+                exit 1
+                ;;
+        esac
+        IFS='/' read -ra _cache_path_parts <<< "$cache_path"
+        for _part in "${_cache_path_parts[@]}"; do
+            if [ "$_part" = ".." ]; then
+                echo "entrypoint: MCP_CACHE_PATHS entry may not contain '..': $cache_path" >&2
+                exit 1
+            fi
+        done
         mkdir -p "$HOME_DIR/$cache_path"
         chown "$MCP_UID:$MCP_GID" "$HOME_DIR/$cache_path"
     done

@@ -83,6 +83,41 @@ def test_at_hat005_hostile_extra_env_cannot_make_pid_1_root(
     assert output.strip() == "1234"  # not "0"
 
 
+def test_at_hat007_a_traversal_in_mcp_cache_paths_is_rejected_by_the_entrypoint(
+    docker_client: docker.DockerClient, default_image_tag: str, ssh_config: SSHConfig
+) -> None:
+    """HR-008 (`docs/HARDENING_SPEC.md` §6): `workspace/caches.py`
+    validates `caches[].path`, but `MCP_CACHE_PATHS` can reach the
+    container by other paths too — H6 already closes the specific one
+    reachable through `.mcp-workspace.yml`'s own `environment:` block
+    (that key is `MCP_`-prefixed and rejected at config-load time), so
+    this constructs the hostile value directly and passes it as
+    `extra_env`, the same way `test_at_hat005_*` above simulates a
+    bypass of an earlier layer — proving the entrypoint's own defense
+    holds regardless of how the value got there. Since this runs as
+    root, before the identity drop, an unvalidated entry here means an
+    arbitrary `mkdir`/`chown` as root: reproduced with
+    `MCP_CACHE_PATHS='../../etc'` leaving `/etc` owned by the container
+    user."""
+    config = ContainerConfig(user="host", sudo=False)
+    run_kwargs = build_workspace_run_kwargs(
+        ssh_config=ssh_config,
+        container_config=config,
+        docker_client=docker_client,
+        checkout_uid=1234,
+        checkout_gid=1234,
+        extra_env={"MCP_CACHE_PATHS": "../../etc"},
+    )
+    with pytest.raises(docker.errors.ContainerError, match="MCP_CACHE_PATHS"):
+        docker_client.containers.run(
+            default_image_tag,
+            ["sh", "-c", "id -u"],
+            remove=True,
+            labels={LABEL_MANAGED: "true"},
+            environment=run_kwargs["environment"],
+        )
+
+
 def test_at_014_sudo_apt_get_install_works_as_non_root(
     docker_client: docker.DockerClient, default_image_tag: str, ssh_config: SSHConfig
 ) -> None:
