@@ -68,6 +68,72 @@ def test_list_files_reports_type_size_symlink_status(tmp_path: Path) -> None:
     assert entries["src/lib.rs"].modified_at is not None
 
 
+# --- HR-012 (docs/HARDENING_SPEC.md §7): an escaping symlink doesn't break listing ---
+
+
+def test_at_hat010_an_escaping_symlink_to_a_real_target_does_not_break_listing(
+    tmp_path: Path,
+) -> None:
+    """A real regression: a symlink escaping the repository to a target
+    that genuinely exists on the host (`.venv/bin/python ->
+    /usr/bin/python3` is the ordinary, unremarkable case this generalizes
+    from) used to make `resolve()`'s `PathOutsideRepositoryError`
+    propagate straight out of `list_files`'s loop — aborting the *entire*
+    listing over one symlink, not just omitting that one entry."""
+    root = _repo(tmp_path)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("real host content\n")
+    (root / "escape_real").symlink_to(outside)
+    svc = _service(root)
+
+    entries = {e.path: e for e in svc.list_files(recursive=True)}
+
+    assert "escape_real" in entries
+    assert entries["escape_real"].type == "symlink"
+    assert entries["escape_real"].is_symlink is True
+    # the host target's real size/mtime is not disclosed either.
+    assert entries["escape_real"].size is None
+    assert entries["escape_real"].modified_at is None
+    # the rest of the listing is unaffected.
+    assert entries["src/lib.rs"].type == "file"
+
+
+def test_at_hat010_a_dangling_symlink_does_not_break_listing(tmp_path: Path) -> None:
+    root = _repo(tmp_path)
+    (root / "dangling").symlink_to(tmp_path / "does-not-exist")
+    svc = _service(root)
+
+    entries = {e.path: e for e in svc.list_files(recursive=True)}
+
+    assert entries["dangling"].type == "symlink"
+    assert entries["dangling"].size is None
+    assert entries["src/lib.rs"].type == "file"
+
+
+def test_at_hat010_search_files_skips_an_escaping_symlink_without_crashing(
+    tmp_path: Path,
+) -> None:
+    """`search_files` has the same gap through a different call site
+    (`security.resolve` inside its own filter loop) — an escaping
+    symlink used to abort the entire search. Unlike `list_files`, a
+    search has no reason to read through the symlink into host content,
+    so it's skipped rather than reported."""
+    from dev_workspace_mcp.filesystem.search import search_files
+
+    root = _repo(tmp_path)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("findme-in-host-content\n")
+    (root / "escape_real").symlink_to(outside)
+    (root / "normal.txt").write_text("findme-in-repo-content\n")
+    security = FilesystemSecurity(root, authorized_roots=[root.parent])
+
+    results = search_files(security, pattern="findme", mode="text")
+
+    paths = {r.path for r in results}
+    assert "normal.txt" in paths
+    assert "escape_real" not in paths  # never read through the symlink
+
+
 def test_list_files_respects_max_entries(tmp_path: Path) -> None:
     root = _repo(tmp_path)
     for i in range(10):

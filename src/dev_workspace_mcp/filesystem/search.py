@@ -20,7 +20,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from dev_workspace_mcp.errors import InvalidArgumentError, PathGitMetadataError
+from dev_workspace_mcp.errors import (
+    InvalidArgumentError,
+    PathGitMetadataError,
+    PathOutsideRepositoryError,
+)
 from dev_workspace_mcp.filesystem.security import FilesystemSecurity
 
 SearchMode = Literal["glob", "text", "regex"]
@@ -92,6 +96,16 @@ def search_files(
         try:
             security.resolve(relative)
         except PathGitMetadataError:
+            continue
+        except PathOutsideRepositoryError:
+            # HR-012 (`docs/HARDENING_SPEC.md` §7): a symlink escaping the
+            # repository to a target that genuinely exists passes the
+            # `is_file()` check above (which follows symlinks) and used
+            # to reach here unguarded, crashing the *entire* search over
+            # one symlink. Unlike `list_files` (which reports an escaping
+            # symlink as a plain entry), a search has no reason to read
+            # through it into host content — skipped, same as an entry
+            # `.gitignore`-excludes.
             continue
 
         if mode == "glob":

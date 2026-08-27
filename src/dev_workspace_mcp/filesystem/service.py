@@ -90,23 +90,43 @@ class FilesystemService:
         return entries
 
     def _is_git_metadata(self, path: Path) -> bool:
-        """§12.1: excluded from listings by default (§13.1)."""
+        """§12.1: excluded from listings by default (§13.1).
+
+        HR-012 (`docs/HARDENING_SPEC.md` §7): an escaping symlink
+        (`PathOutsideRepositoryError`) is *not* Git metadata — it is not
+        excluded here at all. A real regression: this used to let
+        `resolve()`'s `PathOutsideRepositoryError` propagate straight out
+        of `list_files`'s loop, aborting the *entire* listing over one
+        symlink (an ordinary `.venv/bin/python -> /usr/bin/python3` is
+        enough). `_describe` below is what reports it as a plain entry
+        instead, per HR-012's actual requirement — this function's only
+        job is the Git-metadata question.
+        """
         try:
             self._security.resolve(path.relative_to(self._security.root).as_posix())
         except PathGitMetadataError:
             return True
+        except PathOutsideRepositoryError:
+            return False
         return False
 
     def _describe(self, path: Path) -> ListEntry:
         relative = path.relative_to(self._security.root).as_posix()
         is_symlink = path.is_symlink()
-        if is_symlink and not path.exists():
-            # A dangling symlink (including one that escapes the
-            # repository, §7.1/AT-002): reported as an entry, but with no
-            # stat-able size/mtime.
-            return ListEntry(
-                path=relative, type="symlink", size=None, modified_at=None, is_symlink=True
-            )
+        if is_symlink:
+            # A dangling symlink, or one that escapes the repository to a
+            # target that genuinely exists (§7.1/AT-002, HR-012): both
+            # reported as a plain entry, with no stat-able size/mtime.
+            # For the escaping-to-a-real-target case specifically, this
+            # also avoids the alternative below (`path.stat()` would
+            # follow the symlink and report the *host* target's real
+            # size/mtime) — a disclosure HR-012 doesn't ask for and this
+            # daemon has no reason to allow.
+            target_within_root = path.exists() and self._security.is_within_root(path.resolve())
+            if not target_within_root:
+                return ListEntry(
+                    path=relative, type="symlink", size=None, modified_at=None, is_symlink=True
+                )
         stat = path.stat()
         kind = "directory" if path.is_dir() else "file"
         modified_at = datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat()

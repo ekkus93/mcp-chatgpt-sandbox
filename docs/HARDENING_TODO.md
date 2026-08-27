@@ -699,14 +699,61 @@ fixture (the background-thread race harness above) and three tests
 `..._delete_file_never_deletes_outside_the_repository`), each independently
 confirmed to fail against the pre-fix code.
 
-### H10 — An escaping symlink does not break enumeration
+### H10 — An escaping symlink does not break enumeration ✅
 **Satisfies:** HR-012 · **Verified by:** HAT-010
+**Commit:** `5a7b62b`
 
-- [ ] Catch `PathOutsideRepositoryError` alongside `PathGitMetadataError` in
+- [x] Catch `PathOutsideRepositoryError` alongside `PathGitMetadataError` in
       `list_files` and `search_files`
-- [ ] Report escaping and dangling symlinks as entries, as `_describe`'s
+- [x] Report escaping and dangling symlinks as entries, as `_describe`'s
       docstring already promises
-- [ ] Test with a `.venv/bin/python`-style link, the common real case
+- [x] Test with a `.venv/bin/python`-style link, the common real case
+
+**Implementation.** `_is_git_metadata` (`list_files`'s per-candidate filter)
+now catches `PathOutsideRepositoryError` too, treating it as "not excluded" —
+`_describe` is what actually reports the entry, which is HR-012's real
+requirement, not this function's job. `search_files` gained the same catch at
+its own, separate `security.resolve()` call site, treating it as `continue`
+(skip) instead — a search has no reason to read *through* an escaping symlink
+into host content, so it's dropped the same way a `.gitignore`-excluded file
+already is, not reported as a match.
+
+**`_describe`'s own docstring turned out to overclaim, caught while fixing
+this.** It already said an escaping symlink was "reported as an entry, but
+with no stat-able size/mtime" via the `is_symlink and not path.exists()`
+branch — but `path.exists()` *follows* symlinks, so that branch only ever
+fired for a **dangling** target, never one that escapes to somewhere that
+genuinely exists (confirmed directly: `Path.exists()` on a symlink to a real
+file outside the repo returns `True`). An escaping symlink to a real target
+therefore fell through to `path.stat()`, which followed it and reported the
+**host target's own real size and mtime** — a real, if minor, information
+disclosure the docstring's own claim had been masking. Fixed by checking
+`self._security.is_within_root(path.resolve())` (the same primitive H9 added)
+alongside the existence check, so both the dangling case and the
+escapes-to-something-real case take the no-stat-info branch; an ordinary
+in-repo symlink is unaffected (still reports its real target's stat, unchanged
+behavior, no existing test depended on the disclosure case either way).
+
+**Verified against the exact reproduction, both fixed and reverted.** Built a
+repo with a normal file, a symlink escaping to a real host file, and a
+dangling symlink; confirmed `list_files`/`search_files` both succeed with the
+fix (correctly reporting the escaping symlink with `size=None`/`modified_at=None`,
+and the search correctly matching the in-repo file while never reading through
+the symlink) and both crash with `PathOutsideRepositoryError` on the reverted
+code — including, unexpectedly, the **dangling** case too: `_is_git_metadata`
+calls `resolve()` before `_describe` is ever reached, and `resolve()`'s
+containment check fires regardless of whether the target exists, so the
+pre-fix code was already broken for a dangling symlink pointing outside the
+repository, not only the escapes-to-something-real case the docstring
+described. All three reverted variants failed with the same
+`PathOutsideRepositoryError`; restored, reran, all pass.
+
+**New tests**, all in `tests/filesystem/test_service.py`: an escaping symlink
+to a real target (asserting the listing succeeds, the entry is reported
+correctly, no host metadata leaks, and the rest of the listing is
+unaffected); a dangling symlink (the same, without a real target); and a
+`search_files` test proving it matches real in-repo content while skipping
+the escaping symlink rather than crashing or reading through it.
 
 ---
 
