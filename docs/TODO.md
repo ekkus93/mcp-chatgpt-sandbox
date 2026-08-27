@@ -822,18 +822,85 @@ staged one.
 `schemas/tools.json` re-exported (two new tools); `CONTRACT_VERSION`
 bumped `0.3.0` → `0.4.0` per §33.2 (minor).
 
-### S22 — `git_commit`
-**Spec:** §17.4, §20.6, §45, §65, §18.9 · **Satisfies:** FR-020, FR-024 · **Verified by:** AT-008, AT-019
+### S22 — `git_commit` ✅
+**Spec:** §17.4, §20.6, §45, §65, §18.9 · **Satisfies:** FR-020, FR-024 · **Verified by:** AT-008, AT-019 · **Commit:** `43abc8c`
 
-- [ ] Explicit `paths`; stages exactly what it is told (no separate `git_add`)
-- [ ] `expected_branch` / `expected_head_sha` guards; mismatch → `GIT_HEAD_CHANGED`
-- [ ] Strict mode: refuse when a path outside `paths` is staged
-- [ ] `amend` parameter, governed by `git_policy.amend_published`
-- [ ] `no_verify` parameter
-- [ ] `default_branch_commit` policy
-- [ ] Preconditions per §20.6; failures leave state unmodified
-- [ ] AT-008: guarded commit against a stale HEAD fails
-- [ ] AT-019: clean-tree-required operation fails with unrelated changes present
+- [x] Explicit `paths`; stages exactly what it is told (no separate `git_add`)
+- [x] `expected_branch` / `expected_head_sha` guards; mismatch → `GIT_HEAD_CHANGED`
+- [x] Strict mode: refuse when a path outside `paths` is staged
+- [x] `amend` parameter, governed by `git_policy.amend_published`
+- [x] `no_verify` parameter
+- [x] `default_branch_commit` policy
+- [x] Preconditions per §20.6; failures leave state unmodified
+- [x] AT-008: guarded commit against a stale HEAD fails
+- [x] AT-019: clean-tree-required operation fails with unrelated changes present
+
+The first structured *mutating* Git tool — runs in-container (§20.1),
+through `ExecutionService`, exactly like `exec`. Two commands, not one:
+`git add -- <paths>` then `git commit --only -m <message> -- <paths>`.
+"No separate `git_add`" (§17.4) means the *client* never makes a separate
+tool call to stage anything, not that the implementation avoids `git add`
+as a subprocess — verified it can't: `git commit --only <path>` alone
+raises "pathspec ... did not match any file(s) known to git" for a
+genuinely new, untracked file (a real failure hit while testing, not
+theorized). `--only` is still essential: it's what makes "stages exactly
+what it is told" true in the presence of anything *else* already staged
+— without it, a plain `git commit -m ...` would commit that too, which is
+exactly what strict mode (a separate, earlier check) and non-strict mode
+(silently leave it staged, uncommitted) both depend on.
+
+A second real bug, same root cause pattern as the first: `git/commit.py`'s
+argv builders initially omitted the leading `"git"` — `run_git_host_side`
+(S19) prepends it itself, but the execution service (S12/S15) that runs
+`git_commit`'s in-container commands does not; the omission surfaced as
+`exec: "add": executable file not found in $PATH` against a real
+container, not a hypothesis.
+
+§20.6's preconditions run host-side, before the container is asked to do
+anything, and fail closed: interrupted-operation detection (§44.4,
+reused from S19) → `GIT_CONFLICT`; `expected_branch`/`expected_head_sha`
+(§45) → `GIT_HEAD_CHANGED`; strict mode → `GIT_DIRTY`. Two policy checks
+from §18.9, both evaluated the same way:
+
+- `default_branch_commit`: the default branch is read from
+  `refs/remotes/origin/HEAD` — a *local* ref a normal `git clone` sets up
+  without any network round trip, verified against a real clone. `None`
+  when never set (e.g. a repository the daemon didn't clone itself) —
+  enforcement is skipped rather than guessed at with "main"/"master".
+- `amend_published`: `git merge-base --is-ancestor HEAD @{upstream}`,
+  checked against the *pre-amend* HEAD, verified against a real push.
+  No upstream at all is treated as "not published" deliberately, not
+  "unknown, block to be safe" — with no upstream branch there is
+  categorically no "upstream branch" to have been published to (a
+  distinct, verified error from "not an ancestor").
+
+`src/dev_workspace_mcp/git/commit.py`: `build_add_argv`, `build_commit_argv`,
+`detect_default_branch`, `is_head_published` — the host-side-checkable
+pieces, pure enough to unit-test without touching a container.
+`tools/git.py`'s `git_commit_tool` wires them to `ExecutionService`,
+sharing `register()` with the read-only Git tools (S20/S21) but now also
+taking `docker_client`/`container_config`/`execution_config`/
+`git_policy_config`/`audit_config`. Emits a `write_audit_event` per commit
+(§20.7), the same minimal audit infrastructure S17 built — the fuller
+§24 event list and denial-fidelity work stays S29's job.
+
+`tests/git/test_commit.py` (9 tests, no Docker): the argv builders
+(including the missing-`"git"` regression), `detect_default_branch`
+against a real clone and a repo without one, `is_head_published` for a
+published, an unpushed, and a no-upstream commit.
+`tests/workspace/test_git_commit_tool.py` (12 tests, real Docker): a
+basic commit, staging exactly the given paths (a second untracked file
+stays untracked), the empty-`paths` rejection, both `expected_*` guards
+failing closed with nothing committed, strict mode rejecting (and
+non-strict mode ignoring) an extraneous staged file, `default_branch_commit:
+deny` against a real pushed default branch, `amend` allowed when
+unpublished and denied when published (both against a real remote),
+`no_verify` bypassing a real failing `pre-commit` hook, and a real merge
+conflict (the same scenario AT-020 uses for `git_status`) triggering
+`git_commit`'s own interrupted-operation precondition.
+
+`schemas/tools.json` re-exported (one new tool); `CONTRACT_VERSION`
+bumped `0.4.0` → `0.5.0` per §33.2 (minor).
 
 ---
 

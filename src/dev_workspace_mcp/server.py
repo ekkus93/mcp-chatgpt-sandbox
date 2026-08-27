@@ -102,7 +102,15 @@ def _register_tools(
         execution_config=config.execution,
         state_dir=config.state_db_path.parent,
     )
-    git_tools.register(server, db=db)
+    git_tools.register(
+        server,
+        db=db,
+        docker_client=docker_client,
+        container_config=config.container,
+        execution_config=config.execution,
+        git_policy_config=config.git_policy,
+        audit_config=config.audit,
+    )
 
 
 def run_server(server: MCPServer, transport: Transport = "stdio") -> None:

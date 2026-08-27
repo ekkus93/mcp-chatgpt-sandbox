@@ -107,6 +107,14 @@ async def test_git_status_does_not_require_docker(
     workspace_id = opened.structured_content["workspace_id"]
 
     degraded_server = MCPServer(name="degraded")
-    git_tools.register(degraded_server, db=open_db(config.state_db_path))
+    git_tools.register(
+        degraded_server,
+        db=open_db(config.state_db_path),
+        docker_client=None,
+        container_config=config.container,
+        execution_config=config.execution,
+        git_policy_config=config.git_policy,
+        audit_config=config.audit,
+    )
     result = await degraded_server.call_tool("git_status", {"workspace_id": workspace_id})
     assert result.structured_content["branch"] == "main"

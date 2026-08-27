@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.4.0",
+  "contract_version": "0.5.0",
   "tools": [
     {
       "description": "Delete a repository file or directory (\u00a713.5).",
@@ -495,6 +495,108 @@
           "output_truncated"
         ],
         "title": "ExecStatusOutput",
+        "type": "object"
+      }
+    },
+    {
+      "description": "Create a commit from explicit paths, with branch/HEAD guards and policy checks (\u00a717.4).",
+      "input_schema": {
+        "properties": {
+          "amend": {
+            "default": false,
+            "title": "Amend",
+            "type": "boolean"
+          },
+          "expected_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Branch"
+          },
+          "expected_head_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Head Sha"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "no_verify": {
+            "default": false,
+            "title": "No Verify",
+            "type": "boolean"
+          },
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Paths",
+            "type": "array"
+          },
+          "strict": {
+            "default": false,
+            "title": "Strict",
+            "type": "boolean"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "message",
+          "paths"
+        ],
+        "title": "git_commit_toolArguments",
+        "type": "object"
+      },
+      "name": "git_commit",
+      "output_schema": {
+        "properties": {
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          },
+          "commit_sha": {
+            "title": "Commit Sha",
+            "type": "string"
+          },
+          "files_committed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Files Committed",
+            "type": "array"
+          }
+        },
+        "required": [
+          "commit_sha",
+          "branch",
+          "files_committed"
+        ],
+        "title": "GitCommitOutput",
         "type": "object"
       }
     },
