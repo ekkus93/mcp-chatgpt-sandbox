@@ -4,7 +4,12 @@ import threading
 import time
 from pathlib import Path
 
-from dev_workspace_mcp.execution.log_capture import StreamCapture, read_log_bytes
+from dev_workspace_mcp.execution.log_capture import (
+    StreamCapture,
+    read_log_bytes,
+    read_log_tail,
+    stat_log_bytes,
+)
 
 
 def test_write_below_cap_is_not_truncated(tmp_path: Path) -> None:
@@ -155,3 +160,79 @@ def test_read_log_bytes_reads_real_content(tmp_path: Path) -> None:
     capture.write(b"hello world")
     capture.finish()
     assert read_log_bytes(str(path)) == b"hello world"
+
+
+# --- H29 (`docs/HARDENING_TODO.md`, HD3): seek rather than slurp -----------------
+
+
+def test_read_log_bytes_offset_and_max_bytes_return_a_real_window(tmp_path: Path) -> None:
+    path = tmp_path / "out.log"
+    path.write_bytes(b"0123456789ABCDEFGHIJ")
+    assert read_log_bytes(str(path), offset=5, max_bytes=3) == b"567"
+    assert read_log_bytes(str(path), offset=18, max_bytes=100) == b"IJ"
+    assert read_log_bytes(str(path), offset=0, max_bytes=0) == b""
+
+
+def test_read_log_bytes_offset_past_end_of_file_is_empty(tmp_path: Path) -> None:
+    path = tmp_path / "out.log"
+    path.write_bytes(b"short")
+    assert read_log_bytes(str(path), offset=1000, max_bytes=10) == b""
+
+
+def test_stat_log_bytes_matches_the_real_file_size(tmp_path: Path) -> None:
+    path = tmp_path / "out.log"
+    path.write_bytes(b"x" * 12345)
+    assert stat_log_bytes(str(path)) == 12345
+
+
+def test_stat_log_bytes_is_zero_for_a_missing_or_none_path(tmp_path: Path) -> None:
+    assert stat_log_bytes(None) == 0
+    assert stat_log_bytes(str(tmp_path / "does-not-exist.log")) == 0
+
+
+def test_read_log_tail_returns_the_last_n_lines(tmp_path: Path) -> None:
+    path = tmp_path / "out.log"
+    lines = [f"line-{i:04d}\n".encode() for i in range(1000)]
+    path.write_bytes(b"".join(lines))
+
+    tail = read_log_tail(str(path), max_lines=5)
+
+    assert tail.count(b"\n") >= 5
+    reconstructed = tail.decode().splitlines(keepends=True)
+    assert reconstructed[-5:] == [f"line-{i:04d}\n" for i in range(995, 1000)]
+
+
+def test_read_log_tail_grows_its_read_window_when_lines_are_long(tmp_path: Path) -> None:
+    """Real regression risk: a file whose lines are longer than
+    `_TAIL_INITIAL_CHUNK_BYTES`'s single-chunk window needs a second,
+    doubled read to find enough newlines — reproduced with lines wide
+    enough that the initial 64 KiB chunk holds fewer than the requested
+    line count."""
+    path = tmp_path / "out.log"
+    wide_line = ("x" * 20_000 + "\n").encode()  # ~20 KB per line
+    path.write_bytes(wide_line * 10)  # ~200 KB total, > one 64 KiB chunk
+
+    tail = read_log_tail(str(path), max_lines=5)
+
+    assert tail.count(b"\n") >= 5
+
+
+def test_read_log_tail_returns_the_whole_file_when_shorter_than_requested(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "out.log"
+    path.write_bytes(b"only\ntwo\nlines\n")
+    tail = read_log_tail(str(path), max_lines=1000)
+    assert tail == b"only\ntwo\nlines\n"
+
+
+def test_read_log_tail_is_empty_for_a_missing_or_none_path(tmp_path: Path) -> None:
+    assert read_log_tail(None, max_lines=5) == b""
+    assert read_log_tail(str(tmp_path / "does-not-exist.log"), max_lines=5) == b""
+
+
+def test_read_log_tail_is_empty_for_zero_or_negative_max_lines(tmp_path: Path) -> None:
+    path = tmp_path / "out.log"
+    path.write_bytes(b"some content\n")
+    assert read_log_tail(str(path), max_lines=0) == b""
+    assert read_log_tail(str(path), max_lines=-1) == b""

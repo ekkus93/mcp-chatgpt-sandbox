@@ -281,6 +281,146 @@ async def test_exec_output_rejects_unknown_stream(
         await server.call_tool("exec_output", {"job_id": job_id, "stream": "stdin"})
 
 
+# --- H29 (`docs/HARDENING_TODO.md`, HD3): bound output by default ----------------
+
+
+async def test_at_h029_exec_output_default_is_bounded_to_roughly_64kib(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """H29's own Defect: the old default was `max_output_bytes +
+    tail_keep_bytes` (10.25 MiB with the stock config), defeating §15.5's
+    stated purpose. A real job producing far more than 64 KiB, retrieved
+    with no `max_bytes` at all, must come back small and marked
+    truncated — the full capture stays reachable, just only through an
+    explicit `max_bytes`."""
+    config = _configured(minimal_config, default_image_tag, tmp_path / "work" / "example")
+    server = create_server(config)
+    workspace_id = await _open_workspace(server)
+
+    started = await server.call_tool(
+        "exec_start",
+        # ~200 KiB of realistic, line-oriented stdout — comfortably past
+        # the default response cap, comfortably under the on-disk
+        # max_output_bytes cap (still the stock 10 MiB), so this
+        # specifically exercises the *response* default, not §15.6's
+        # on-disk one.
+        {"workspace_id": workspace_id, "shell": "yes '0123456789' | head -n 20000"},
+    )
+    job_id = started.structured_content["job_id"]
+
+    async def finished() -> bool:
+        status = await server.call_tool("exec_status", {"job_id": job_id})
+        return bool(status.structured_content["state"] == "succeeded")
+
+    await _wait_until(finished, timeout=20.0)
+
+    default_output = await server.call_tool("exec_output", {"job_id": job_id})
+    content = default_output.structured_content
+    assert len(content["content"].encode()) <= 64 * 1024
+    assert content["truncated"] is True
+    assert content["stream_total_bytes"] >= 200_000
+
+    # The full capture is still reachable — just only through an
+    # explicit, larger max_bytes.
+    full_output = await server.call_tool(
+        "exec_output", {"job_id": job_id, "max_bytes": 1024 * 1024}
+    )
+    assert len(full_output.structured_content["content"].encode()) >= 200_000
+    assert full_output.structured_content["truncated"] is False
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["byte_start", "byte_end", "line_start", "line_end", "max_bytes"],
+)
+async def test_at_h029_exec_output_rejects_a_negative_offset(
+    field: str,
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """H29: a negative value used to silently slice from the end
+    (Python's own slicing semantics) instead of the documented "position
+    N from the start" — reject outright."""
+    config = _configured(minimal_config, default_image_tag, tmp_path / "work" / "example")
+    server = create_server(config)
+    workspace_id = await _open_workspace(server)
+
+    started = await server.call_tool(
+        "exec_start", {"workspace_id": workspace_id, "argv": ["echo", "hello"]}
+    )
+    job_id = started.structured_content["job_id"]
+
+    async def finished() -> bool:
+        status = await server.call_tool("exec_status", {"job_id": job_id})
+        return bool(status.structured_content["state"] == "succeeded")
+
+    await _wait_until(finished)
+
+    with pytest.raises(ToolError, match="INVALID_ARGUMENT"):
+        await server.call_tool("exec_output", {"job_id": job_id, field: -1})
+
+
+async def test_at_h029_stored_bytes_and_stream_total_bytes_diverge_once_truncated(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """H29: `stored_bytes` (what `byte_start`/`byte_end` actually index
+    into) and `stream_total_bytes` (§15.6's uncapped production total)
+    used to be silently conflated — a client paging by byte offset
+    against `stream_total_bytes` on a stream that was ever truncated on
+    disk would be indexing into the wrong scale. Forcing the on-disk cap
+    down to something the real output blows past makes the divergence
+    real, not hypothetical."""
+    config = _configured(
+        minimal_config,
+        default_image_tag,
+        tmp_path / "work" / "example",
+        execution={"max_output_bytes": 4096, "tail_keep_bytes": 512, "response_tail_lines": 5},
+    )
+    server = create_server(config)
+    workspace_id = await _open_workspace(server)
+
+    started = await server.call_tool(
+        "exec_start",
+        {"workspace_id": workspace_id, "shell": "yes '0123456789' | head -n 20000"},
+    )
+    job_id = started.structured_content["job_id"]
+
+    async def finished() -> bool:
+        status = await server.call_tool("exec_status", {"job_id": job_id})
+        return bool(status.structured_content["state"] == "succeeded")
+
+    await _wait_until(finished, timeout=20.0)
+
+    output = await server.call_tool("exec_output", {"job_id": job_id, "max_bytes": 1024 * 1024})
+    content = output.structured_content
+    assert content["stream_total_bytes"] >= 200_000
+    # On-disk cap: max_output_bytes + tail_keep_bytes + a small marker —
+    # far less than stream_total_bytes here.
+    assert content["stored_bytes"] < content["stream_total_bytes"]
+    assert content["stored_bytes"] <= 4096 + 512 + 64
+
+    # byte_start/byte_end index into stored_bytes, not stream_total_bytes
+    # — a start right at the edge of what's actually stored still comes
+    # back with real content (the kept tail, not an error or emptiness).
+    near_end = await server.call_tool(
+        "exec_output",
+        {
+            "job_id": job_id,
+            "byte_start": content["stored_bytes"] - 5,
+            "byte_end": content["stored_bytes"],
+        },
+    )
+    assert len(near_end.structured_content["content"]) > 0
+
+
 async def test_exec_cancel_terminates_a_running_job(
     minimal_config: ServerConfig,
     default_image_tag: str,

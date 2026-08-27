@@ -26,6 +26,13 @@ def sha256_of(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+#: H29 (`docs/HARDENING_TODO.md`, HD3): `read_file`'s streaming pass over
+#: whatever lies past its bounded content buffer, for `full_sha` — large
+#: enough to keep syscall overhead low, small relative to a multi-gigabyte
+#: file (the whole point of never holding it all in memory at once).
+_READ_FILE_HASH_CHUNK_BYTES = 1024 * 1024
+
+
 @dataclass(frozen=True, slots=True)
 class ListEntry:
     path: str
@@ -151,6 +158,13 @@ class FilesystemService:
                 details={"path": relative_path},
             )
 
+        # H29 (`docs/HARDENING_TODO.md`, HD3): computed before the read,
+        # not derived from `len(data)` after unconditionally reading the
+        # whole file — the bound this task exists to apply.
+        limit = self._config.max_read_bytes
+        if max_bytes is not None:
+            limit = min(max_bytes, limit)
+
         # HR-011: race-free open (`FilesystemSecurity.open_validated`) —
         # `is_file()`/`read_bytes()` against the path string again, after
         # `resolve()` already validated it, is exactly the window a
@@ -166,13 +180,42 @@ class FilesystemService:
                 )
             with os.fdopen(fd, "rb", closefd=True) as f:
                 fd = -1  # ownership transferred to `f`; nothing left for `finally` to close
-                data = f.read()
+                if byte_range is None and line_range is None:
+                    # H29: the common case — bound the *content* buffer
+                    # by `limit`, known before reading, rather than
+                    # reading the whole file into memory first and
+                    # truncating the response afterward. The remainder
+                    # (if any) is still streamed through the hasher in
+                    # bounded chunks, never held alongside `data`: §13.2
+                    # requires `sha256` to be the *whole* file's hash
+                    # regardless of truncation (`write_file`'s
+                    # `expected_sha256` conflict check depends on this
+                    # being correct), so every byte is still read and
+                    # hashed — just never all held in memory at once.
+                    # `total_size` comes from what was actually counted
+                    # while streaming, the same "size == what was really
+                    # read" semantics as before (and more accurate than a
+                    # pre-read `fstat` under a concurrently-growing file,
+                    # which this daemon does not otherwise guard against
+                    # here — see HR-011's own file-content race, a
+                    # different, already-closed concern).
+                    data = f.read(limit + 1)  # +1: detect "more" without slurping it
+                    hasher = hashlib.sha256(data)
+                    total_size = len(data)
+                    while chunk := f.read(_READ_FILE_HASH_CHUNK_BYTES):
+                        hasher.update(chunk)
+                        total_size += len(chunk)
+                    full_sha = hasher.hexdigest()
+                else:
+                    # byte_range/line_range can name a window anywhere in
+                    # the file — needs the full content decoded to slice
+                    # at an arbitrary position, unlike the case above.
+                    data = f.read()
+                    full_sha = sha256_of(data)
+                    total_size = len(data)
         finally:
             if fd != -1:
                 os.close(fd)
-
-        full_sha = sha256_of(data)
-        total_size = len(data)
 
         try:
             text = data.decode("utf-8")
@@ -194,9 +237,7 @@ class FilesystemService:
             start, end = byte_range
             text = text.encode("utf-8")[start:end].decode("utf-8", errors="replace")
 
-        limit = self._config.max_read_bytes
-        if max_bytes is not None:
-            limit = min(max_bytes, limit)
+        # `limit` was already computed above, before the read.
         encoded = text.encode("utf-8")
         truncated = len(encoded) > limit
         if truncated:

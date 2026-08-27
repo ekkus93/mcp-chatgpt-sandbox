@@ -206,6 +206,58 @@ def test_read_file_sha256_is_of_full_content_even_when_truncated(tmp_path: Path)
     assert result.sha256 == sha256_of(full.encode())
 
 
+# --- H29 (`docs/HARDENING_TODO.md`, HD3): stat before reading, not after --------
+
+
+def test_at_h029_full_sha_and_size_are_correct_for_a_multi_megabyte_file(
+    tmp_path: Path,
+) -> None:
+    """H29: `read_file` now bounds its *content* buffer to `max_read_bytes`
+    before reading, streaming the remainder through the hasher in
+    `_READ_FILE_HASH_CHUNK_BYTES`-sized chunks rather than holding the
+    whole file in memory — a file genuinely larger than one such chunk
+    (unlike the pre-existing 100-byte truncation tests above, too small
+    to exercise the streaming loop at all) is what actually proves the
+    multi-chunk path computes the same `sha256`/`size` a full read
+    would."""
+    from dev_workspace_mcp.filesystem.service import _READ_FILE_HASH_CHUNK_BYTES
+
+    root = _repo(tmp_path)
+    # A few chunks' worth, so the streaming loop actually iterates more
+    # than once — not just one bounded head read.
+    full = ("0123456789" * 100_000)[: _READ_FILE_HASH_CHUNK_BYTES * 3 + 12345]
+    (root / "huge.txt").write_text(full)
+    svc = _service(root, config=FilesystemConfig(max_read_bytes=64))
+
+    result = svc.read_file("huge.txt")
+
+    assert result.truncated is True
+    assert len(result.content.encode()) <= 64
+    assert result.size == len(full.encode())
+    assert result.sha256 == sha256_of(full.encode())
+
+
+def test_at_h029_a_byte_range_deep_in_a_large_file_still_works(tmp_path: Path) -> None:
+    """The ranged path (`byte_range`/`line_range`) deliberately keeps
+    reading the whole file — an arbitrary-position window can't be
+    served from a bounded head buffer — confirmed still correct for a
+    file larger than the streaming chunk size used by the no-range path
+    above."""
+    from dev_workspace_mcp.filesystem.service import _READ_FILE_HASH_CHUNK_BYTES
+
+    root = _repo(tmp_path)
+    full = "0123456789" * (_READ_FILE_HASH_CHUNK_BYTES // 5)
+    (root / "huge.txt").write_text(full)
+    svc = _service(root, config=FilesystemConfig(max_read_bytes=len(full.encode())))
+
+    deep_offset = _READ_FILE_HASH_CHUNK_BYTES * 2
+    result = svc.read_file("huge.txt", byte_range=(deep_offset, deep_offset + 10))
+
+    assert result.content == full[deep_offset : deep_offset + 10]
+    assert result.sha256 == sha256_of(full.encode())
+    assert result.size == len(full.encode())
+
+
 def test_read_file_binary_reports_is_binary_without_content(tmp_path: Path) -> None:
     root = _repo(tmp_path)
     (root / "binary.dat").write_bytes(b"\x00\x01\xff\xfe\x02")

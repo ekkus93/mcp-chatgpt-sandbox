@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.7.3",
+  "contract_version": "0.7.4",
   "tools": [
     {
       "description": "Delete a repository file or directory (\u00a713.5).",
@@ -290,6 +290,10 @@
             "title": "Logs Pruned",
             "type": "boolean"
           },
+          "stored_bytes": {
+            "title": "Stored Bytes",
+            "type": "integer"
+          },
           "stream": {
             "title": "Stream",
             "type": "string"
@@ -308,6 +312,7 @@
           "stream",
           "content",
           "stream_total_bytes",
+          "stored_bytes",
           "truncated",
           "logs_pruned"
         ],

@@ -2382,21 +2382,134 @@ closed with `JOB_NOT_FOUND`).
 
 ## Phase 9 — Defaults, dead configuration, observability, documentation
 
-### H29 — Bound output by default
+### H29 — Bound output by default ✅
 **Satisfies:** HD3, `HARDENING_SPEC.md` §9 (§15.5 amendment)
+**Commit:** `64baedd`
 
-- [ ] Default the `exec_output` response cap to ~64 KiB, with the full capture
+- [x] Default the `exec_output` response cap to ~64 KiB, with the full capture
       reachable only through explicit ranged retrieval
-- [ ] Validate `byte_start`/`byte_end`/`line_start`/`line_end` (negatives
+- [x] Validate `byte_start`/`byte_end`/`line_start`/`line_end` (negatives
       currently slice from the end)
-- [ ] Reconcile byte offsets against `stream_total_bytes`, which currently index
+- [x] Reconcile byte offsets against `stream_total_bytes`, which currently index
       different things and silently mislead a paging client
-- [ ] Stream rather than slurping in `read_log_bytes`
-- [ ] Bound `read_file` by stat before reading, not after
+- [x] Stream rather than slurping in `read_log_bytes`
+- [x] Bound `read_file` by stat before reading, not after
 
 **Defect:** the current default is `max_output_bytes + tail_keep_bytes` =
 10.25 MiB, defeating §15.5's stated purpose. AT-007 passes only because that
 test reconfigures the cap to 4096.
+
+**A real config default, per HD3.** New `ExecutionConfig.default_output_response_bytes`
+(64 KiB), distinct from `max_output_bytes`/`tail_keep_bytes` (what stays
+*captured on disk*, §15.6, unchanged) — `exec_output` now defaults to
+this when `max_bytes` is omitted; the full on-disk capture stays
+reachable, just only through an explicit, larger `max_bytes`. This is
+the actual code fix — `docs/SPEC.md` §15.5's own text (H34's job,
+`docs/HARDENING_SPEC.md` §9's amendment list) still describes the old
+default and is updated there, not here, to keep one task per commit.
+
+**Negative offsets rejected outright.** `byte_start`/`byte_end`/
+`line_start`/`line_end`/`max_bytes` all used to accept a negative value
+silently — Python's own slicing semantics turn that into "N from the
+end," a meaning the documented contract ("position N from the start")
+never intended. All five now raise `InvalidArgumentError` for a
+negative value.
+
+**`stored_bytes` reconciles what byte offsets actually index into.**
+`stream_total_bytes` (§15.6's uncapped production total) and what
+`byte_start`/`byte_end` can actually retrieve are not the same number
+once a stream has ever been truncated on disk — the gap between them
+was silently invisible to a paging client before. New `stored_bytes`
+field (`os.stat`, not a read) reports the real, retrievable count;
+`byte_start`/`byte_end` are documented as indexing into it, not
+`stream_total_bytes`.
+
+**`read_log_bytes` seeks; `exec_status`'s tail reads backward in
+chunks.** `read_log_bytes` gained `offset`/`max_bytes` (seek + bounded
+read, not a full-file slurp followed by Python slicing) — `exec_output`'s
+byte-range and no-range cases (the common ones) now use it directly.
+New `read_log_tail` for `exec_status`'s "last N lines": reads backward
+from disk in growing chunks (64 KiB doubling) rather than reading the
+whole capped capture — up to 10.25 MiB with the stock config — just to
+keep its final 200 lines, on *every poll* of a still-running job.
+`line_start`/`line_end` retrieval in `exec_output` still reads the whole
+on-disk capture: line boundaries aren't determinable without scanning,
+and this is a real, deliberate, documented scope decision, not an
+oversight.
+
+**`read_file` bounds its content buffer by the known limit before
+reading, streams the rest for the hash.** `total_size` now comes from
+what was actually counted while streaming (more accurate than a
+pre-read `fstat` under a concurrently-growing file, and — unlike a
+`stat()` snapshot — exactly the "size == what was really read"
+semantics the code already had). For the common no-range case: reads
+`limit + 1` bytes (a peek, to detect "more" without holding it), then
+streams the remainder through `hashlib.sha256` in
+`_READ_FILE_HASH_CHUNK_BYTES`-sized chunks — `full_sha` (§13.2's
+contract: the *whole* file's hash regardless of truncation, since
+`write_file`'s `expected_sha256` conflict check depends on this being
+correct) is still computed over every byte, just never all held in
+memory simultaneously. A documented, narrower scope, not silently
+applied everywhere: `byte_range`/`line_range` can name a window
+anywhere in the file, so that path still reads the whole content to
+slice at an arbitrary position — unchanged from before this task. Binary
+detection for the bounded no-range path now only inspects the bytes
+actually kept as content, not bytes beyond the limit — a real, small
+semantic narrowing (a file that's valid UTF-8 for its first `limit`
+bytes but has an invalid byte far beyond that would now read as
+non-binary where it previously wouldn't), explicitly acknowledged
+rather than silently introduced; in practice a genuinely binary file
+almost always has non-text bytes within the first few KiB, so this
+rarely changes real-world behavior.
+
+**Verified the tests catch the regression:** reverted `config/models.py`,
+`execution/log_capture.py`, `tools/execution.py`, `filesystem/service.py`,
+and `schema_export.py` to their pre-H29 versions and reran the new
+tests. `tests/execution/test_log_capture.py` failed to even collect
+(`ImportError: cannot import name 'read_log_tail'`).
+`tests/filesystem/test_service.py -k h029` failed the same way
+(`_READ_FILE_HASH_CHUNK_BYTES` doesn't exist on the reverted module).
+All 7 new `tests/workspace/test_async_execution_tools.py -k h029` tests
+failed against real Docker: the default-cap test got the old ~10 MiB
+response back untruncated; all 5 negative-offset tests raised nothing
+(`DID NOT RAISE ToolError`); the `stored_bytes` test hit a `KeyError` —
+the field didn't exist. Restored the fix; all pass again. No Docker
+leftovers after either run.
+
+**Schema drift, expected and applied:** `exec_output`'s new
+`stored_bytes` output field is a real contract change (§33.2: a new
+output field is a patch bump) — `CONTRACT_VERSION` bumped `0.7.3` →
+`0.7.4` and `schemas/tools.json` re-exported and committed.
+
+**Full relevant suite:** `tests/execution/test_log_capture.py` (22
+passed) + `tests/filesystem/`/`tests/tools/test_filesystem.py` (127
+passed) + `tests/workspace/test_async_execution_tools.py`/
+`test_execution_tools.py`/`test_job_restart_survival.py` (41 passed,
+real Docker) — all clean. No Docker leftovers. `ruff check`, `ruff
+format --check`, `mypy src` clean across the whole tree; no schema
+drift beyond the intentional `stored_bytes` addition. The full
+background `tests/` run was interrupted at the ~82% mark with zero
+visible failures (the same recurring environmental pattern seen since
+H19), leaving one orphaned container (`docker rm -f`'d, confirmed
+clean); proceeding on the direct evidence above rather than retrying.
+
+**New tests:** `tests/execution/test_log_capture.py` —
+`read_log_bytes`'s offset/max_bytes windowing (including past-EOF and
+zero-length requests), `stat_log_bytes`, `read_log_tail` (last-N-lines
+correctness, a growing-chunk case with lines wider than the initial
+64 KiB window, shorter-than-requested files, missing paths,
+zero/negative `max_lines`). `tests/filesystem/test_service.py` — a
+multi-megabyte file (genuinely larger than one hash-stream chunk, unlike
+the pre-existing 100-byte truncation tests) confirms `sha256`/`size`
+still match a full read; a `byte_range` deep inside a large file
+confirms the still-full-read ranged path is unaffected.
+`tests/workspace/test_async_execution_tools.py` — the default cap
+bounds a ~200 KiB real job's output to ≤64 KiB while the full capture
+stays reachable via an explicit `max_bytes`; all five fields reject a
+negative value (parametrized); `stored_bytes`/`stream_total_bytes`
+genuinely diverge under a forced-small on-disk cap, and a `byte_start`
+at the edge of `stored_bytes` still returns real content (the kept
+tail, not an error).
 
 ### H30 — Enforce or delete declared configuration
 **Satisfies:** HR-010

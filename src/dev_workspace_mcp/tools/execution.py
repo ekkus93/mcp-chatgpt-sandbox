@@ -11,8 +11,9 @@ fields; a running job's live byte counts come from `AsyncJobRunner`'s
 in-memory `LiveJob` (cheap counters only), while actual output content —
 for both a running and a finished job — is read straight from its
 capped, host-side log files (§15.6, `execution/log_capture.py`'s
-`read_log_bytes`), which is what makes it available even for a job this
-process didn't start (e.g. after a restart, before its logs are pruned).
+`read_log_bytes`/`read_log_tail`, seeking rather than slurping since H29),
+which is what makes it available even for a job this process didn't
+start (e.g. after a restart, before its logs are pruned).
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ from dev_workspace_mcp.errors import (
     translate_workspace_errors,
 )
 from dev_workspace_mcp.execution.async_runner import AsyncJobRunner
-from dev_workspace_mcp.execution.log_capture import read_log_bytes
+from dev_workspace_mcp.execution.log_capture import read_log_bytes, read_log_tail, stat_log_bytes
 from dev_workspace_mcp.execution.service import ExecutionService, tail_text
 from dev_workspace_mcp.jobs.retention import prune_job_logs
 from dev_workspace_mcp.jobs.store import JobRecord, JobStore
@@ -123,6 +124,13 @@ class ExecOutputOutput:
     stream: str
     content: str
     stream_total_bytes: int
+    """§15.6's uncapped total — how much the job actually produced. NOT
+    what `byte_start`/`byte_end` index into once a stream has ever been
+    truncated on disk (see `stored_bytes`) — the two used to be silently
+    conflated (H29, `docs/HARDENING_TODO.md`, HD3)."""
+    stored_bytes: int
+    """What's actually retrievable from this endpoint — `byte_start`/
+    `byte_end` index into this, not `stream_total_bytes`."""
     truncated: bool
     logs_pruned: bool
 
@@ -256,10 +264,16 @@ def register(
             exit_code=record.exit_code,
             elapsed_seconds=elapsed,
             stdout_tail=tail_text(
-                read_log_bytes(record.stdout_log_path), execution_config.response_tail_lines
+                read_log_tail(
+                    record.stdout_log_path, max_lines=execution_config.response_tail_lines
+                ),
+                execution_config.response_tail_lines,
             ),
             stderr_tail=tail_text(
-                read_log_bytes(record.stderr_log_path), execution_config.response_tail_lines
+                read_log_tail(
+                    record.stderr_log_path, max_lines=execution_config.response_tail_lines
+                ),
+                execution_config.response_tail_lines,
             ),
             stdout_total_bytes=stdout_total,
             stderr_total_bytes=stderr_total,
@@ -498,6 +512,21 @@ def register(
             raise InvalidArgumentError(
                 "byte_start/byte_end and line_start/line_end are mutually exclusive"
             )
+        # H29 (HR-030/HD3): a negative value used to silently slice from
+        # the end (Python's own slicing semantics) instead of the
+        # documented "position N from the start" — reject outright
+        # rather than accept a meaning nobody asked for.
+        for name, value in (
+            ("byte_start", byte_start),
+            ("byte_end", byte_end),
+            ("line_start", line_start),
+            ("line_end", line_end),
+            ("max_bytes", max_bytes),
+        ):
+            if value is not None and value < 0:
+                raise InvalidArgumentError(
+                    f"{name} must be >= 0, not {value}", details={name: value}
+                )
 
         record = job_store.get(job_id)  # existence check; raises JobNotFoundError
         live = runner.live_job(job_id) if runner is not None else None
@@ -512,34 +541,59 @@ def register(
                 record.stdout_total_bytes if stream == "stdout" else record.stderr_total_bytes
             )
         log_path = record.stdout_log_path if stream == "stdout" else record.stderr_log_path
-        data = read_log_bytes(log_path)  # bounded on disk (§15.6); may be < stream_total_bytes
+
+        # H29: `stored_bytes` — what byte_start/byte_end actually index
+        # into — is not `stream_total_bytes` (§15.6's uncapped production
+        # total) once a stream has ever been truncated on disk; the two
+        # used to be silently conflated, misleading a client paging by
+        # byte offset. `os.stat`, not a read.
+        stored_bytes = stat_log_bytes(log_path)
+
+        # H29/HD3: the full on-disk capture stays reachable, just only
+        # through an explicit max_bytes/ranged request, not by default —
+        # the old default (max_output_bytes + tail_keep_bytes, up to
+        # 10.25 MiB) defeated §15.5's whole stated purpose.
+        max_limit = execution_config.max_output_bytes + execution_config.tail_keep_bytes
+        limit = (
+            min(max_bytes, max_limit)
+            if max_bytes is not None
+            else (execution_config.default_output_response_bytes)
+        )
 
         if has_line_range:
+            # Line boundaries aren't determinable without scanning — the
+            # one case that still reads the whole on-disk capture rather
+            # than a seek-bounded window.
+            data = read_log_bytes(log_path)
             lines = data.decode("utf-8", errors="replace").splitlines(keepends=True)
             text = "".join(lines[line_start or 0 : line_end])
-        elif has_byte_range:
-            text = data[byte_start or 0 : byte_end].decode("utf-8", errors="replace")
+            encoded = text.encode("utf-8")
+            truncated = len(encoded) > limit
+            if truncated:
+                text = encoded[:limit].decode("utf-8", errors="ignore")
         else:
-            text = data.decode("utf-8", errors="replace")
-
-        # Default limit: the whole capture (§15.6 already bounded what's on
-        # disk to max_output_bytes + tail_keep_bytes + a small marker), not
-        # max_output_bytes alone — that would re-truncate the response
-        # right where the omission marker and kept tail live, hiding the
-        # one part of a capped log that says something was capped.
-        limit = execution_config.max_output_bytes + execution_config.tail_keep_bytes
-        if max_bytes is not None:
-            limit = min(max_bytes, limit)
-        encoded = text.encode("utf-8")
-        truncated = len(encoded) > limit
-        if truncated:
-            text = encoded[:limit].decode("utf-8", errors="ignore")
+            # H29: seeks rather than slurping — reads only the requested
+            # window from disk, not the whole (possibly multi-megabyte)
+            # capture just to slice it in Python afterward.
+            start = byte_start or 0
+            requested = (byte_end - start) if byte_end is not None else None
+            capped = max(min(requested, limit) if requested is not None else limit, 0)
+            # +1: a peek past the cap to detect "there's more retrievable
+            # data" without reading it — `truncated` means exactly that,
+            # not "we reached the end of the file."
+            chunk = read_log_bytes(log_path, offset=start, max_bytes=capped + 1)
+            truncated = len(chunk) > capped
+            if truncated:
+                text = chunk[:capped].decode("utf-8", errors="ignore")
+            else:
+                text = chunk.decode("utf-8", errors="replace")
 
         return ExecOutputOutput(
             job_id=job_id,
             stream=stream,
             content=text,
             stream_total_bytes=stream_total_bytes,
+            stored_bytes=stored_bytes,
             truncated=truncated,
             logs_pruned=record.logs_pruned,
         )

@@ -208,6 +208,14 @@ class ExecutionConfig(BaseModel):
     response_tail_lines: int = Field(default=200, gt=0)
     job_retention_days: int = Field(default=7, gt=0)
     job_log_max_total_bytes: int = Field(default=2 * 1024 * 1024 * 1024, gt=0)
+    #: HD3/HR-029 (`docs/HARDENING_SPEC.md` §9, §15.5 amendment): `exec_output`'s
+    #: own *response* default, distinct from `max_output_bytes`/`tail_keep_bytes`
+    #: (what stays *captured on disk*, §15.6). The old default —
+    #: `max_output_bytes + tail_keep_bytes`, 10.25 MiB — defeated §15.5's
+    #: whole stated purpose of preventing multi-megabyte output from
+    #: consuming MCP context. The full on-disk capture stays reachable, just
+    #: only through an explicit `max_bytes`/ranged request, not by default.
+    default_output_response_bytes: int = Field(default=64 * 1024, gt=0)
 
 
 # --- §12.2 filesystem ------------------------------------------------------------
