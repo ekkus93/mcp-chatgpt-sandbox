@@ -19,6 +19,7 @@ import docker
 from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
 from dev_workspace_mcp.db import open_db
 from dev_workspace_mcp.server import create_server
+from dev_workspace_mcp.workspace.caches import cache_volume_name
 from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
 from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager
 
@@ -248,8 +249,10 @@ async def test_cache_volume_is_mounted_writable_and_owned_by_the_container_user(
     )
     assert mount_result.structured_content["stdout_tail"].strip() == "1"
 
+    # H23 (`docs/HARDENING_TODO.md`, HR-009): hash-derived, not the plain
+    # `mcp-cache-example-cargo` this asserted before that task.
     volume_names = [v.name for v in docker_client.volumes.list()]
-    assert "mcp-cache-example-cargo" in volume_names
+    assert cache_volume_name(repository_id="example", cache_name="cargo") in volume_names
 
 
 async def test_cache_volume_persists_across_a_stop_and_start_cycle(
