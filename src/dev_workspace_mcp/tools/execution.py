@@ -243,9 +243,26 @@ def register(
                 timeout=timeout,
             )
         except TimeoutError:
-            await asyncio.to_thread(service.kill, exec_id)
-            await asyncio.sleep(KILL_GRACE_PERIOD_SECONDS)
-            await asyncio.to_thread(service.kill, exec_id, grace_period_reached=True)
+            # HR-020: `kill` can raise `PermissionError` (the daemon's
+            # own uid lacks permission to signal this pid/process
+            # group) — reported as a structured error rather than an
+            # unhandled `OSError` escaping this tool as a crash.
+            # `consume`'s own blocked read (unlike `exec_start`'s split
+            # start/drain) has no stream reference available here to
+            # force-close on a failed kill — a stream that never EOFs
+            # can still hold this call's `asyncio.to_thread` executor
+            # slot indefinitely; scoped out of this task, which the
+            # HARDENING_TODO.md write-up documents explicitly.
+            try:
+                await asyncio.to_thread(service.kill, exec_id)
+                await asyncio.sleep(KILL_GRACE_PERIOD_SECONDS)
+                await asyncio.to_thread(service.kill, exec_id, grace_period_reached=True)
+            except OSError as exc:
+                raise ContainerRuntimeFailedError(
+                    f"command exceeded {timeout}s and could not be terminated: {exc}",
+                    details={"workspace_id": workspace_id, "timeout_seconds": timeout},
+                    recoverable=False,
+                ) from exc
             raise CommandTimeoutError(
                 f"command exceeded {timeout}s and was terminated",
                 details={"workspace_id": workspace_id, "timeout_seconds": timeout},

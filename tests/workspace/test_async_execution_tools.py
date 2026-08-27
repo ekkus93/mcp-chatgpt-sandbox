@@ -367,6 +367,92 @@ async def test_exec_start_honors_timeout_seconds_and_marks_timed_out(
     assert "NONE" in check.structured_content["stdout_tail"]
 
 
+# --- HR-020/HAT-017: a failed termination is not reported as success --------------
+
+
+async def test_at_hat017_cancel_kills_the_whole_process_group_not_only_the_direct_child(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """A real regression: `os.kill(pid, sig)` only ever reached the
+    direct exec'd process — `sh`'s own pid here — leaving any child it
+    forked (`sleep 61`, backgrounded) running. `os.killpg` on the whole
+    process group (confirmed empirically that each `docker exec` starts
+    as the leader of its own fresh group) reaches both."""
+    config = _configured(minimal_config, default_image_tag, tmp_path / "work" / "example")
+    server = create_server(config)
+    workspace_id = await _open_workspace(server)
+
+    started = await server.call_tool(
+        "exec_start", {"workspace_id": workspace_id, "shell": "sleep 61 & sleep 60"}
+    )
+    job_id = started.structured_content["job_id"]
+
+    await server.call_tool("exec_cancel", {"job_id": job_id})
+
+    async def canceled() -> bool:
+        status = await server.call_tool("exec_status", {"job_id": job_id})
+        return bool(status.structured_content["state"] == "canceled")
+
+    await _wait_until(canceled, timeout=10.0)
+
+    check = await server.call_tool(
+        "exec",
+        {"workspace_id": workspace_id, "shell": "ps aux | grep -E '[s]leep 6[01]' || echo NONE"},
+    )
+    assert "NONE" in check.structured_content["stdout_tail"]
+
+
+async def test_at_hat017_failed_termination_is_reported_and_not_marked_canceled(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HAT-017: with a process the daemon cannot signal, `exec_cancel`
+    SHALL return a structured error, the job SHALL NOT be marked
+    `canceled`, and the daemon SHALL still shut down cleanly (here:
+    reach a terminal state within a bounded wait, not hang). A genuine
+    `PermissionError` needs a real privilege split (a process owned by a
+    uid this daemon cannot signal) this sandbox has no way to set up
+    without root — `os.killpg` is monkeypatched to raise it instead, the
+    same failure it would genuinely raise under that condition."""
+    import dev_workspace_mcp.execution.service as service_module
+
+    def _raise_permission_error(pgid: int, sig: int) -> None:
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(service_module.os, "killpg", _raise_permission_error)
+
+    config = _configured(minimal_config, default_image_tag, tmp_path / "work" / "example")
+    server = create_server(config)
+    workspace_id = await _open_workspace(server)
+
+    started = await server.call_tool(
+        "exec_start", {"workspace_id": workspace_id, "shell": "sleep 60"}
+    )
+    job_id = started.structured_content["job_id"]
+
+    with pytest.raises(ToolError, match="CONTAINER_RUNTIME_FAILED"):
+        await server.call_tool("exec_cancel", {"job_id": job_id})
+
+    status = await server.call_tool("exec_status", {"job_id": job_id})
+    assert status.structured_content["state"] != "canceled"
+
+    # Bounded, not hung: the force-closed stream lets `drain_stream`'s
+    # blocked read return even though the process itself was never
+    # actually signaled (the monkeypatch prevented that) — proving the
+    # executor thread genuinely gets released rather than held forever.
+    async def reached_a_terminal_state() -> bool:
+        current = await server.call_tool("exec_status", {"job_id": job_id})
+        return bool(current.structured_content["state"] == "failed")
+
+    await _wait_until(reached_a_terminal_state, timeout=10.0)
+
+
 async def test_exec_start_disconnect_reconnect_job_still_queryable(
     minimal_config: ServerConfig,
     default_image_tag: str,

@@ -183,9 +183,25 @@ class ExecutionService:
         return pid or None
 
     def kill(self, exec_id: str, *, grace_period_reached: bool = False) -> None:
-        """Signals the exec'd process directly via `os.kill`: TERM, or
-        KILL once `grace_period_reached`. See the module docstring for
-        why this is not a second `docker exec`."""
+        """Signals the exec'd process's *process group* directly via
+        `os.killpg`: TERM, or KILL once `grace_period_reached`. See the
+        module docstring for why this is not a second `docker exec`.
+
+        HR-020 (`docs/HARDENING_SPEC.md` §9): a plain `os.kill(pid, sig)`
+        only ever reached the direct exec'd process, not any children it
+        spawned (e.g. `sh -c 'cmd1 & cmd2'`, or any command that forks) —
+        those survived. Confirmed empirically that each `docker exec`
+        starts as the leader of its own, fresh process group (`PGID ==
+        PID`), never sharing the container's own init process group, so
+        `killpg` here cannot reach anything outside this one exec's own
+        process tree.
+
+        `PermissionError` (the daemon's own uid lacks permission to
+        signal this pid) is deliberately allowed to propagate — HR-020
+        requires a failed signal be reported as a structured error, not
+        silently swallowed; only `ProcessLookupError` (the process — or
+        its whole group — is already gone) is treated as a benign no-op.
+        """
         try:
             info = self._docker.api.exec_inspect(exec_id)
         except docker.errors.DockerException:
@@ -195,8 +211,12 @@ class ExecutionService:
             return
 
         sig = signal.SIGKILL if grace_period_reached else signal.SIGTERM
+        try:
+            pgid = os.getpgid(pid)
+        except ProcessLookupError:
+            return
         with contextlib.suppress(ProcessLookupError):
-            os.kill(pid, sig)
+            os.killpg(pgid, sig)
 
 
 def tail_text(data: bytes, max_lines: int) -> str:

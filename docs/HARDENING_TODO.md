@@ -1322,17 +1322,104 @@ values on a fresh connection; two real connections to the same file, one
 holding a write lock while the other attempts a write, prove the second
 genuinely waits and then succeeds rather than failing immediately.
 
-### H18 — A failed termination is not reported as success
+### H18 — A failed termination is not reported as success ✅
 **Satisfies:** HR-020, HR-021 · **Verified by:** HAT-017
+**Commit:** `4323fd7`
 
-- [ ] Propagate `PermissionError` from `kill` as a structured error
-- [ ] Do not mark a job `timed_out`/`canceled` when termination failed
-- [ ] Bound the drain task so a stream that never EOFs cannot hold an executor
+- [x] Propagate `PermissionError` from `kill` as a structured error
+- [x] Do not mark a job `timed_out`/`canceled` when termination failed
+- [x] Bound the drain task so a stream that never EOFs cannot hold an executor
       thread forever
-- [ ] Kill the process group, not only the direct child
-- [ ] Mark a job terminal when its exec start fails, so it stops pinning the
+- [x] Kill the process group, not only the direct child
+- [x] Mark a job terminal when its exec start fails, so it stops pinning the
       workspace against idle stop
-- [ ] Evict `AsyncJobRunner._live` entries on completion (currently unbounded)
+- [x] Evict `AsyncJobRunner._live` entries on completion (currently unbounded)
+
+**Process-group kill (`execution/service.py`).** Verified empirically before
+changing anything: each `docker exec` starts as the leader of its own,
+*fresh* process group (`PGID == PID`) — confirmed with a real container
+running `sh -c 'sleep 200 & sleep 300'`, checking `/proc/<pid>/stat`'s
+`pgrp` field from the host — never sharing the container's own init process
+group. `kill` now signals via `os.killpg(os.getpgid(pid), sig)` instead of
+`os.kill(pid, sig)`, reaching any child the exec'd process forked (a real
+gap: `sh -c 'cmd1 & cmd2'` left the backgrounded `cmd2` running after the
+direct child, `sh` itself, was killed). `PermissionError` still propagates
+uncaught from `kill` itself — only `ProcessLookupError` (already gone) is
+suppressed, unchanged from before.
+
+**Termination failure tracking (`async_runner.py`).** `_terminate` now
+catches `OSError` from `kill` and re-raises as a structured
+`ContainerRuntimeFailedError(recoverable=False)`. A new shared
+`_terminate_and_track_failure` (used by both `_run`'s own timeout handling
+and `cancel_job`) sets `LiveJob.termination_failed` on that failure and
+force-closes the exec's stream socket — `CancellableStream.close()` is
+docker-py's own documented "cancel from another thread" mechanism — so the
+still-blocked `drain_stream` call, which would otherwise wait for an EOF
+that can never come since the process was never actually signaled, returns
+promptly instead of holding its `asyncio.to_thread` executor slot forever.
+`_run`'s terminal-state decision checks `termination_failed` *first*, ahead
+of `cancel_requested`/`timed_out` — necessary because `cancel_job` and the
+internal timeout path are two separate call sites, and only a flag on the
+shared `LiveJob` lets either one's failure be seen correctly regardless of
+which one hit it, however long `_run` itself takes to actually observe the
+process ending. `_run`'s final `await drain` is now bounded by
+`asyncio.wait_for(..., timeout=_DRAIN_GRACE_SECONDS)` (10s) as a second,
+independent bound beyond the stream-close mechanism.
+
+**Exec-start failure (`async_runner.py`'s `start_job`, HR-021).** A job
+whose `start_and_open_stream` call itself fails (container gone, a Docker
+API error) used to stay in `starting` — a `NON_TERMINAL_STATES` member that
+pins the workspace against idle-stop — forever, since nothing marked it
+terminal. Now caught and `mark_finished(state=FAILED, ...)` before
+re-raising as `ContainerRuntimeFailedError`, so the caller still sees the
+real error while the job itself stops blocking idle-stop.
+
+**`_live` eviction.** `_run` now `self._live.pop(job_id, None)` once
+`mark_finished` has run — `_live` previously held every job this process
+ever started for the rest of its uptime, unbounded growth over a
+long-running daemon.
+
+**A related, deliberately out-of-scope gap, documented rather than silently
+left unmentioned:** `tools/execution.py`'s synchronous `exec` tool has its
+own, separate kill-on-timeout path (`service.kill` called directly, not
+through `AsyncJobRunner`) with the identical "stream that never EOFs holds
+an executor thread forever" shape — but `consume()` opens its stream
+internally with no reference the caller can force-close the way
+`start_and_open_stream`/`drain_stream`'s split design allows for
+`exec_start`. Fixing that would mean restructuring `consume()` the same
+way, which the given defect's file locations (`async_runner.py`,
+`execution/service.py`'s `kill` specifically) don't call for and this task
+did not attempt. What *was* fixed there, at low cost and clearly in scope
+(HR-020's general principle, the same shared `kill()`): `exec`'s own
+kill-on-timeout now reports a `PermissionError` as a structured
+`ContainerRuntimeFailedError` rather than letting it crash out unhandled —
+and `kill()`'s process-group fix applies to `exec` for free, since both
+tools share the one `ExecutionService.kill` method.
+
+**Verified the tests catch the regression:** reverted all three changed
+files to their pre-H18 versions and reran all four new tests — each failed
+distinctly: the process-group test showed both the direct and backgrounded
+process still running after cancel; the termination-failure test's
+`exec_cancel` call did not raise, and the job never reached a terminal
+state within the bounded wait (it hung, exactly the deadlock this task
+exists to prevent); the exec-start-failure test's job stayed non-terminal;
+the eviction test never observed `_live` shrink. Restored the fix; all four
+pass again; the broader `tests/workspace/test_async_execution_tools.py`
+(21 tests), `tests/workspace/test_async_runner.py` (new file, 2 tests), and
+`tests/workspace/test_execution_tools.py` (12 tests) show no regressions.
+No Docker leftovers, no schema drift.
+
+**New tests:** `tests/workspace/test_async_execution_tools.py` — a
+backgrounded child process survives a direct-child-only kill and does not
+survive a process-group kill; a monkeypatched `os.killpg` (a genuine
+`PermissionError` needs a real privilege split this sandbox has no way to
+set up without root — documented explicitly in the test itself) proves
+`exec_cancel` raises a structured `CONTAINER_RUNTIME_FAILED` error, the job
+is not marked `canceled`, and it reaches a terminal state within a bounded
+wait rather than hanging. `tests/workspace/test_async_runner.py` (new) — a
+failed exec start (a nonexistent `container_id`) marks the job `FAILED`
+rather than leaving it in `starting`; a completed job's `_live` entry is
+evicted while the durable `JobStore` record remains.
 
 ### H19 — Structured errors survive Docker and decoding failures
 **Satisfies:** HR-022 · **Verified by:** HAT-019

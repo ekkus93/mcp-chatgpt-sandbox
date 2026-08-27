@@ -23,10 +23,13 @@ yet pruned, are still readable directly.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import docker
+from dev_workspace_mcp.errors import ContainerRuntimeFailedError
 from dev_workspace_mcp.execution.log_capture import StreamCapture
 from dev_workspace_mcp.execution.service import ExecutionService
 from dev_workspace_mcp.jobs.store import JobState, JobStore
@@ -39,6 +42,15 @@ from dev_workspace_mcp.jobs.store import JobState, JobStore
 #: no dependency on the tools layer.
 KILL_GRACE_PERIOD_SECONDS = 2.0
 
+#: HR-020: once termination has been attempted (whether it succeeded or
+#: not — `_terminate_and_track_failure` force-closes the stream on
+#: failure specifically so this bound is rarely the thing that actually
+#: ends the wait), how much longer `_run` waits for `drain_stream` to
+#: return before giving up on it — bounding the wait so a stream that
+#: never reaches EOF cannot hold its `asyncio.to_thread` executor slot
+#: forever.
+_DRAIN_GRACE_SECONDS = 10.0
+
 
 @dataclass
 class LiveJob:
@@ -50,9 +62,22 @@ class LiveJob:
     exec_id: str
     stdout_capture: StreamCapture
     stderr_capture: StreamCapture
+    stream: object
+    """The open `CancellableStream` `drain_stream` is blocking on, kept
+    here (not just as a local in `_run`) so `cancel_job` — a separate
+    call path — can also force-close it if termination fails (see
+    `termination_failed` below)."""
     started_monotonic: float = field(default_factory=time.monotonic)
     finished_monotonic: float | None = None
     cancel_requested: bool = False
+    termination_failed: bool = False
+    """HR-020: set once `_terminate` itself fails to signal the process
+    (most commonly `PermissionError`) — checked ahead of
+    `cancel_requested`/timeout in `_run`'s own terminal-state decision,
+    since a failed termination attempt is neither a successful cancel
+    nor a successful timeout, regardless of which call path (the
+    internal timeout branch, or a separate `cancel_job` call) attempted
+    it."""
 
     def elapsed_seconds(self) -> float:
         end = self.finished_monotonic if self.finished_monotonic is not None else time.monotonic()
@@ -92,16 +117,40 @@ class AsyncJobRunner:
         a real pid, and launches the background task that drains its
         output. Returns once the process has actually started — so the
         caller's response can truthfully report `state: "running"` per
-        §63's example — not once it finishes."""
+        §63's example — not once it finishes.
+
+        HR-021 (`docs/HARDENING_SPEC.md` §9): if `start_and_open_stream`
+        itself fails (the container disappeared, a Docker API error), the
+        job used to stay in `starting` forever — a state
+        `NON_TERMINAL_STATES` counts as active, pinning the workspace
+        against idle-stop until the next daemon restart. Marked terminal
+        (`FAILED`, no output ever produced) here before re-raising, so
+        the caller still sees the real error while the job itself stops
+        blocking idle-stop."""
         self._job_store.mark_starting(job_id)
-        exec_id, stream, pid = await asyncio.to_thread(
-            self._execution.start_and_open_stream,
-            container_id,
-            cmd,
-            cwd=cwd,
-            user=user,
-            env=env,
-        )
+        try:
+            exec_id, stream, pid = await asyncio.to_thread(
+                self._execution.start_and_open_stream,
+                container_id,
+                cmd,
+                cwd=cwd,
+                user=user,
+                env=env,
+            )
+        except docker.errors.DockerException as exc:
+            self._job_store.mark_finished(
+                job_id,
+                state=JobState.FAILED,
+                exit_code=None,
+                stdout_total_bytes=0,
+                stderr_total_bytes=0,
+                output_truncated=False,
+            )
+            raise ContainerRuntimeFailedError(
+                f"failed to start exec for job {job_id!r}: {exc}",
+                details={"job_id": job_id, "container_id": container_id},
+            ) from exc
+
         live = LiveJob(
             exec_id=exec_id,
             stdout_capture=StreamCapture(
@@ -110,10 +159,11 @@ class AsyncJobRunner:
             stderr_capture=StreamCapture(
                 stderr_log_path, max_output_bytes=max_output_bytes, tail_keep_bytes=tail_keep_bytes
             ),
+            stream=stream,
         )
         self._live[job_id] = live
         self._job_store.mark_running(job_id, pid=pid)
-        task = asyncio.create_task(self._run(job_id, live, stream, timeout_seconds))
+        task = asyncio.create_task(self._run(job_id, live, timeout_seconds))
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
 
@@ -121,14 +171,13 @@ class AsyncJobRunner:
         self,
         job_id: str,
         live: LiveJob,
-        stream: object,
         timeout_seconds: float | None,
     ) -> None:
         drain = asyncio.ensure_future(
             asyncio.to_thread(
                 self._execution.drain_stream,
                 live.exec_id,
-                stream,  # type: ignore[arg-type]
+                live.stream,  # type: ignore[arg-type]
                 on_stdout=live.stdout_capture.write,
                 on_stderr=live.stderr_capture.write,
             )
@@ -141,8 +190,18 @@ class AsyncJobRunner:
                 _done, pending = await asyncio.wait({drain}, timeout=timeout_seconds)
                 if drain in pending:
                     timed_out = True
-                    await self._terminate(live.exec_id)
-                    exit_code = await drain  # killing it lets drain_stream's loop end
+                    with contextlib.suppress(ContainerRuntimeFailedError):
+                        await self._terminate_and_track_failure(live)
+                    # HR-020: bounded, not an unconditional `await drain` —
+                    # if termination itself failed, `_terminate_and_track_failure`
+                    # already force-closed the stream, so `drain_stream`'s
+                    # blocked read SHALL have already returned; this wait
+                    # is a bound against anything else unexpected, not the
+                    # primary mechanism.
+                    try:
+                        exit_code = await asyncio.wait_for(drain, timeout=_DRAIN_GRACE_SECONDS)
+                    except TimeoutError:
+                        exit_code = None
                 else:
                     exit_code = drain.result()
             else:
@@ -154,7 +213,13 @@ class AsyncJobRunner:
         live.stdout_capture.finish()
         live.stderr_capture.finish()
 
-        if live.cancel_requested:
+        # HR-020: checked first — a failed termination is neither a
+        # successful cancel nor a successful timeout, regardless of
+        # which call path (below, or a separate `cancel_job` call)
+        # attempted it.
+        if live.termination_failed:
+            state = JobState.FAILED
+        elif live.cancel_requested:
             state = JobState.CANCELED
         elif timed_out:
             state = JobState.TIMED_OUT
@@ -171,22 +236,68 @@ class AsyncJobRunner:
             stderr_total_bytes=live.stderr_capture.total_bytes,
             output_truncated=live.stdout_capture.truncated or live.stderr_capture.truncated,
         )
+        # HR-020's own bullet: `_live` held every job ever started for the
+        # rest of the process's lifetime — unbounded growth. Nothing past
+        # this point needs the live entry; JobStore (just updated above)
+        # is the durable record.
+        self._live.pop(job_id, None)
 
     async def _terminate(self, exec_id: str) -> None:
         """TERM, wait a grace period, then KILL if still running (§15.3).
         Safe to call on an exec that has already exited: `kill` is a
-        no-op when `exec_inspect` reports it isn't running."""
-        await asyncio.to_thread(self._execution.kill, exec_id)
-        await asyncio.sleep(KILL_GRACE_PERIOD_SECONDS)
-        await asyncio.to_thread(self._execution.kill, exec_id, grace_period_reached=True)
+        no-op when `exec_inspect` reports it isn't running.
+
+        HR-020: `kill` can raise `PermissionError` (the daemon's own uid
+        lacks permission to signal this pid/process group) — re-raised
+        here as a structured `ContainerRuntimeFailedError` rather than
+        left as a raw `OSError` a broad `except Exception` elsewhere
+        could quietly absorb."""
+        try:
+            await asyncio.to_thread(self._execution.kill, exec_id)
+            await asyncio.sleep(KILL_GRACE_PERIOD_SECONDS)
+            await asyncio.to_thread(self._execution.kill, exec_id, grace_period_reached=True)
+        except OSError as exc:
+            raise ContainerRuntimeFailedError(
+                f"failed to signal process for exec {exec_id!r}: {exc}",
+                details={"exec_id": exec_id},
+                recoverable=False,
+            ) from exc
+
+    async def _terminate_and_track_failure(self, live: LiveJob) -> None:
+        """Shared by `_run`'s own timeout handling and `cancel_job`: on a
+        failed `_terminate`, marks `live.termination_failed` (read by
+        `_run`'s terminal-state decision, from whichever call path
+        actually reaches it) and force-closes `live.stream`'s underlying
+        socket — `CancellableStream.close()` is explicitly documented as
+        safe to call from another thread — so the still-blocked
+        `drain_stream` call (which would otherwise wait for an EOF that
+        may never come, since the process could not actually be
+        signaled) returns promptly instead of holding its
+        `asyncio.to_thread` executor slot forever (HR-020). Re-raises the
+        original error so a caller with a client-facing response
+        (`exec_cancel`, notably) can report it as a structured failure."""
+        try:
+            await self._terminate(live.exec_id)
+        except ContainerRuntimeFailedError:
+            live.termination_failed = True
+            with contextlib.suppress(Exception):
+                live.stream.close()  # type: ignore[attr-defined]
+            raise
 
     async def cancel_job(self, job_id: str) -> None:
         """§15.3's `exec_cancel`. Idempotent no-op for a job this process
         is not actively running — already finished, or unknown to this
         process (e.g. a `lost` job from before a restart) — since there
-        is nothing left here to terminate."""
+        is nothing left here to terminate.
+
+        HAT-017: if termination itself fails, this SHALL raise (the tool
+        layer reports it as a structured error) and SHALL NOT mark the
+        job `canceled` — `_terminate_and_track_failure` sets
+        `live.termination_failed`, which `_run`'s own terminal-state
+        decision checks ahead of `cancel_requested`, however long `_run`
+        itself takes to actually observe the process ending."""
         live = self._live.get(job_id)
         if live is None or live.finished_monotonic is not None:
             return
         live.cancel_requested = True
-        await self._terminate(live.exec_id)
+        await self._terminate_and_track_failure(live)
