@@ -370,6 +370,15 @@ class DockerWorkspaceManager:
             return self._docker.containers.get(name)
         except DockerNotFound:
             return None
+        except DockerException as exc:
+            # HR-022 (`docs/HARDENING_SPEC.md` §10): a transient Docker
+            # API error here (unlike "not found") isn't safe to treat as
+            # "no container" — translated to a structured error rather
+            # than left to escape uncaught past `translate_workspace_errors`.
+            raise ContainerRuntimeFailedError(
+                f"failed to look up container {name!r}: {exc}",
+                details={"container_name": name},
+            ) from exc
 
     def _adopt_or_remove_by_name(self, record: WorkspaceRecord) -> WorkspaceRecord | None:
         """HR-017 (`docs/HARDENING_SPEC.md` §9): before creating a
@@ -619,6 +628,16 @@ class DockerWorkspaceManager:
             return self._docker.containers.get(record.container_id)
         except DockerNotFound:
             return None
+        except DockerException as exc:
+            # HR-022: a transient Docker API error (unlike "not found")
+            # isn't safe to treat as "no container" — this is the
+            # chokepoint `stop`/`start`/`restart`/`delete`/`reconcile`
+            # all resolve a workspace's container through.
+            raise ContainerRuntimeFailedError(
+                f"failed to look up container {record.container_id!r} "
+                f"for workspace {record.id!r}: {exc}",
+                details={"workspace_id": record.id},
+            ) from exc
 
     def _require_container(self, record: WorkspaceRecord) -> Container:
         container = self._find_container(record)
@@ -642,9 +661,18 @@ class DockerWorkspaceManager:
         """
         record = self._get_or_raise(workspace_id)
 
-        labeled = self._docker.containers.list(
-            all=True, filters={"label": f"{LABEL_WORKSPACE_ID}={workspace_id}"}
-        )
+        # HR-022: a transient Docker API error here used to escape
+        # uncaught — `ensure_workspace` (and so `workspace_open`) calls
+        # this whenever a workspace row already exists.
+        try:
+            labeled = self._docker.containers.list(
+                all=True, filters={"label": f"{LABEL_WORKSPACE_ID}={workspace_id}"}
+            )
+        except DockerException as exc:
+            raise ContainerRuntimeFailedError(
+                f"failed to list containers for workspace {workspace_id!r}: {exc}",
+                details={"workspace_id": workspace_id},
+            ) from exc
         if len(labeled) > 1:
             raise ContainerRuntimeFailedError(
                 f"multiple containers are labeled for workspace {workspace_id!r}; "

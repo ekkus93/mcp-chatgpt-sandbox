@@ -228,9 +228,20 @@ def register(
         )
 
         container_id = record.container_id
-        exec_id = await asyncio.to_thread(
-            service.start, container_id, cmd, cwd=cwd, user=user, env=env
-        )
+        # HR-022 (`docs/HARDENING_SPEC.md` §10): `docker.errors.DockerException`
+        # from either call — the container disappearing out from under
+        # this exec, a Docker API error — used to escape uncaught, past
+        # `@translate_workspace_errors` (which only shapes `WorkspaceError`
+        # subclasses), reaching the client as an unstructured crash.
+        try:
+            exec_id = await asyncio.to_thread(
+                service.start, container_id, cmd, cwd=cwd, user=user, env=env
+            )
+        except docker.errors.DockerException as exc:
+            raise ContainerRuntimeFailedError(
+                f"failed to start command in workspace {workspace_id!r}: {exc}",
+                details={"workspace_id": workspace_id},
+            ) from exc
 
         try:
             result = await asyncio.wait_for(
@@ -242,6 +253,11 @@ def register(
                 ),
                 timeout=timeout,
             )
+        except docker.errors.DockerException as exc:
+            raise ContainerRuntimeFailedError(
+                f"failed while running command in workspace {workspace_id!r}: {exc}",
+                details={"workspace_id": workspace_id},
+            ) from exc
         except TimeoutError:
             # HR-020: `kill` can raise `PermissionError` (the daemon's
             # own uid lacks permission to signal this pid/process

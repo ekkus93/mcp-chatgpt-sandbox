@@ -1421,14 +1421,109 @@ failed exec start (a nonexistent `container_id`) marks the job `FAILED`
 rather than leaving it in `starting`; a completed job's `_live` entry is
 evicted while the durable `JobStore` record remains.
 
-### H19 — Structured errors survive Docker and decoding failures
+### H19 — Structured errors survive Docker and decoding failures ✅
 **Satisfies:** HR-022 · **Verified by:** HAT-019
+**Commit:** `e5ec6bf`
 
-- [ ] Translate `docker.errors.DockerException` in the exec and workspace paths
-- [ ] Decode host-side Git output with an explicit error strategy so a non-UTF-8
+- [x] Translate `docker.errors.DockerException` in the exec and workspace paths
+- [x] Decode host-side Git output with an explicit error strategy so a non-UTF-8
       filename cannot crash `git_status`/`git_diff`/`workspace_open`
-- [ ] Tolerate a commit subject containing `\x1e` in `git_log`'s parser
-- [ ] Correct the `log.py` docstring claiming such bytes are invalid in a subject
+- [x] Tolerate a commit subject containing `\x1e` in `git_log`'s parser
+- [x] Correct the `log.py` docstring claiming such bytes are invalid in a subject
+
+**`docker.errors.DockerException` translation.** Added try/except around every
+remaining call into Docker that could raise uncaught, past
+`@translate_workspace_errors`: `tools/execution.py`'s synchronous `exec_tool`
+(`service.start`/`service.consume`, in addition to H18's own `kill`
+`PermissionError` handling there); `tools/workspace.py`'s `_run_setup_steps`
+(`.mcp-workspace.yml` setup commands — the same `start`/`consume` pair);
+`workspace/manager.py`'s `_find_container`/`_find_container_by_name`
+(previously caught only `DockerNotFound`, letting a real API error through
+uncaught) and `reconcile`'s `containers.list` call (no handling at all). The
+async job path (`exec_start`/`exec_cancel`) was already covered by H18's own
+`start_job`/`kill` fixes.
+
+**Host-side Git output decoding, verified empirically at every step rather
+than trusted from the spec's wording alone:**
+
+1. Confirmed `git status -z` (used by `git_status`) disables
+   `core.quotePath`'s octal-escaping, so a genuinely invalid UTF-8 filename
+   appears raw in Git's stdout — and that decoding it with `text=True`'s
+   default `errors="strict"` really does raise `UnicodeDecodeError`, exactly
+   as HR-022 describes. Both `subprocess.run` calls in `git/service.py`
+   (`run_git_host_side` and `_discover_code_executing_overrides`) now pass
+   `errors="surrogateescape"`.
+2. That alone was not sufficient — reproduced a *second*, downstream crash:
+   the MCP SDK's own response serialization (`pydantic_core.to_json`) raises
+   `UnicodeEncodeError` on a lone surrogate escape, the identical failure
+   class `surrogateescape` exists to avoid at the subprocess boundary, just
+   moved one layer down. New `sanitize_for_client` (`git/service.py`)
+   re-encodes with `surrogateescape` and decodes back with `errors="replace"`
+   — U+FFFD for the invalid bytes, the same lossy-but-safe tradeoff
+   `git/diff.py` already uses for diff content — applied at the point a
+   git-derived string becomes a client-facing field: every path
+   `git/status.py` reports (staged/unstaged/untracked/conflicted, plus
+   branch/upstream defensively), and `git/log.py`'s subject/author fields.
+   Verified end to end against the real MCP tool layer (not just the
+   parsing functions in isolation): `git_status` and `git_diff` both now
+   return cleanly for a repository containing a `\xff\xfe`-named file,
+   where before this task they crashed with `UnexpectedToolError`.
+
+**`git_log`'s record separator, HR-022's `\x1e` requirement — a two-step
+empirical process, not a one-line fix:**
+
+1. Confirmed a commit subject *can* literally contain `\x1e` (no Git-side
+   restriction), and that the existing `_RECORD_SEP = "\x1e"` design's own
+   docstring claim ("not valid in a commit subject line at all") was simply
+   wrong — reproduced the exact mis-split HAT-019 describes.
+2. First fix attempt — switching `_RECORD_SEP` to a literal `"\x00"` Python
+   string (NUL, which Git *does* provably refuse in a commit message:
+   confirmed `git commit` itself errors "a NUL byte in commit log message
+   not allowed") — introduced a *new*, different crash: `subprocess.run`
+   itself raises `ValueError: embedded null byte`, since `execve`'s argv
+   strings are NUL-terminated C strings and a literal NUL cannot be embedded
+   inside one at all — an OS-level constraint, not a Python quirk, and not
+   something the earlier `\x1f` field separator ever hit (an ordinary byte,
+   fine to embed raw). Fixed by using Git's own `%x00` *placeholder syntax*
+   (four literal ASCII characters, safe in argv) to build the format string
+   sent to Git, keeping a separate constant for the *actual* NUL byte Git
+   emits into its own stdout at runtime, which is what the parser then
+   splits on. Verified the final version end to end, including through the
+   real MCP tool layer: a commit whose subject contains `\x1e` now returns
+   as one correct record, subject text intact.
+
+**Module docstring corrected** (`git/log.py`): the false "not valid in a
+subject" claim about `\x1e`/`\x1f` is replaced with the actual, verified
+distinction — `\x00` is genuinely impossible in a commit subject (Git
+enforces it), `\x1e` merely used to be assumed so.
+
+**Verified the tests catch the regression:** reverted all six changed source
+files to their pre-H19 versions and reran the new tests. `test_service.py`'s
+own import failed outright (`sanitize_for_client` doesn't exist on the
+reverted module) — the strongest possible signal. The filename and
+`\x1e`-subject tests each failed with the exact predicted exception
+(`UnicodeDecodeError`, `ValueError: not enough values to unpack`). One test
+was caught and removed during this process, not shipped: a "non-UTF-8
+author name" test passed identically against both reverted and fixed code,
+because Git's own argv/commit handling re-encodes an author name's invalid
+bytes into valid UTF-8 (confirmed empirically: `\xff\xfe` became `Ã¿Ã¾`,
+Latin-1-shaped) before they ever reach `git log`'s output at all — unlike a
+filename or a commit *message*, an author name isn't a reliable path to a
+genuinely invalid byte, so the test was removed rather than kept for a
+false sense of coverage. Restored the fix; all remaining tests pass; full
+`tests/git/test_service.py`/`test_status.py`/`test_log.py` (41 tests) show
+no regressions. No Docker leftovers (one leftover container was found and
+removed, left behind by this task's own ad-hoc manual reproduction scripts,
+which — unlike the test suite — have no fixture teardown of their own). No
+schema drift.
+
+**New tests:** `tests/git/test_service.py` — a non-UTF-8 filename no longer
+crashes `run_git_host_side`; `sanitize_for_client` turns a surrogate-escaped
+string into one safe to UTF-8-encode while leaving ordinary text untouched.
+`tests/git/test_status.py` — a non-UTF-8 filename is reported in
+`untracked` and is itself UTF-8-encodable. `tests/git/test_log.py` — a
+commit subject containing `\x1e` produces exactly one correct record with
+the subject text intact, not two broken ones.
 
 ---
 

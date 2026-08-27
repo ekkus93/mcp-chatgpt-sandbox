@@ -172,3 +172,25 @@ def test_status_reports_merge_conflict_rather_than_repairing_it(tmp_path: Path) 
     assert status.conflicted == ["a.txt"]
     assert status.interrupted_operation == InterruptedOperation.MERGE
     assert status.clean is False
+
+
+def test_at_hat019_a_non_utf8_filename_is_listed_untracked_and_json_safe(
+    tmp_path: Path,
+) -> None:
+    """HAT-019: a repository containing a non-UTF-8 filename SHALL be
+    statusable — and the reported path SHALL be safe to hand back to an
+    MCP client (JSON serialization on a lone surrogate escape crashes,
+    confirmed empirically), not merely not crash `read_git_status`
+    itself."""
+    import os
+
+    repo = _init_repo(tmp_path / "repo")
+    hostile_name = os.fsdecode(b"bad-\xff\xfe-name.txt")
+    (repo / hostile_name).write_bytes(b"hi")
+
+    status = read_git_status(repo)
+
+    assert len(status.untracked) == 1
+    assert "bad-" in status.untracked[0]
+    assert status.untracked[0].encode("utf-8")  # SHALL NOT raise UnicodeEncodeError
+    assert status.clean is False

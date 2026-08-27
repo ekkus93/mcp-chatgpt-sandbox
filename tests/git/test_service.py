@@ -1,5 +1,6 @@
 """S19: Git execution plumbing (§20.1, §18.7, §44.4)."""
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from dev_workspace_mcp.git.service import (
     InterruptedOperation,
     detect_interrupted_operation,
     run_git_host_side,
+    sanitize_for_client,
 )
 
 
@@ -46,6 +48,52 @@ def test_run_git_host_side_reports_failure(tmp_path: Path) -> None:
 def test_git_command_result_ok_property() -> None:
     assert GitCommandResult(returncode=0, stdout="", stderr="").ok is True
     assert GitCommandResult(returncode=1, stdout="", stderr="").ok is False
+
+
+# --- HR-022/HAT-019: a non-UTF-8 filename does not crash a host-side read --------
+
+
+def test_at_hat019_a_non_utf8_filename_does_not_crash_run_git_host_side(
+    tmp_path: Path,
+) -> None:
+    """`git status -z` (`git/status.py`) disables `core.quotePath`'s
+    octal-escaping, so a genuinely invalid UTF-8 filename appears raw,
+    unescaped, in Git's own stdout — confirmed empirically that decoding
+    that with the default `text=True` (`errors="strict"`) raises
+    `UnicodeDecodeError` before this fix existed."""
+    repo = _init_repo(tmp_path / "repo")
+    hostile_name = os.fsdecode(b"bad-\xff\xfe-name.txt")
+    (repo / hostile_name).write_bytes(b"hi")
+
+    result = run_git_host_side(
+        repo, ["status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z"]
+    )  # SHALL NOT raise UnicodeDecodeError
+
+    assert result.ok
+    assert "bad-" in result.stdout
+
+
+def test_sanitize_for_client_turns_surrogate_escapes_into_the_replacement_character() -> None:
+    """`run_git_host_side`'s `errors="surrogateescape"` decode is
+    lossless but produces a string the MCP SDK's own response
+    serialization cannot handle — confirmed empirically that
+    `pydantic_core.to_json` raises `UnicodeEncodeError` on a lone
+    surrogate with the exact same message shape `surrogateescape` exists
+    to avoid at the subprocess boundary, just moved downstream.
+    `sanitize_for_client` SHALL produce a string safe to serialize."""
+    raw = b"bad-\xff\xfe-name.txt"
+    surrogate_escaped = raw.decode("utf-8", errors="surrogateescape")
+    assert "\udcff" in surrogate_escaped  # sanity: this really is surrogate-escaped
+
+    sanitized = sanitize_for_client(surrogate_escaped)
+
+    assert sanitized.encode("utf-8")  # SHALL NOT raise UnicodeEncodeError
+    assert "�" in sanitized  # the invalid bytes became U+FFFD
+    assert "bad-" in sanitized and "name.txt" in sanitized  # the valid parts survive
+
+
+def test_sanitize_for_client_is_a_noop_for_ordinary_text() -> None:
+    assert sanitize_for_client("ordinary/path.txt") == "ordinary/path.txt"
 
 
 def test_run_git_host_side_finds_git_via_path(tmp_path: Path) -> None:

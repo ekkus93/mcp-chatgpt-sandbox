@@ -25,6 +25,7 @@ from dev_workspace_mcp.git.service import (
     InterruptedOperation,
     detect_interrupted_operation,
     run_git_host_side,
+    sanitize_for_client,
 )
 
 _AB_RE = re.compile(r"\+(\d+) -(\d+)")
@@ -85,9 +86,9 @@ def read_git_status(repo_path: Path) -> GitStatus:
             if value == "(detached)":
                 detached_head = True
             else:
-                branch = value
+                branch = sanitize_for_client(value)
         elif token.startswith("# branch.upstream "):
-            upstream = token.removeprefix("# branch.upstream ")
+            upstream = sanitize_for_client(token.removeprefix("# branch.upstream "))
         elif token.startswith("# branch.ab "):
             match = _AB_RE.search(token)
             if match is not None:
@@ -97,7 +98,7 @@ def read_git_status(repo_path: Path) -> GitStatus:
             # 8 fields (XY, sub, mH, mI, mW, hH, hI, plus the leading
             # "1") then path.
             parts = token.split(" ", 8)
-            xy, path = parts[1], parts[8]
+            xy, path = parts[1], sanitize_for_client(parts[8])
             if xy[0] != ".":
                 staged.append(path)
             if xy[1] != ".":
@@ -109,7 +110,7 @@ def read_git_status(repo_path: Path) -> GitStatus:
             # NUL-delimited token (origPath), which this loop skips by
             # advancing `index` past it.
             parts = token.split(" ", 9)
-            xy, path = parts[1], parts[9]
+            xy, path = parts[1], sanitize_for_client(parts[9])
             if xy[0] != ".":
                 staged.append(path)
             if xy[1] != ".":
@@ -118,9 +119,9 @@ def read_git_status(repo_path: Path) -> GitStatus:
         elif token.startswith("u "):
             # Unmerged/conflict entry — 9 fields then path.
             parts = token.split(" ", 10)
-            conflicted.append(parts[10])
+            conflicted.append(sanitize_for_client(parts[10]))
         elif token.startswith("? "):
-            untracked.append(token[2:])
+            untracked.append(sanitize_for_client(token[2:]))
         # "!" (ignored) is never requested (`--ignored` not passed).
 
     clean = not (staged or unstaged or untracked or conflicted)

@@ -210,14 +210,24 @@ def register(
         container_id = record.container_id
         user = resolve_exec_user(container_config)
         for step in steps:
-            exec_id = await asyncio.to_thread(
-                execution_service.start,
-                container_id,
-                ["bash", "-c", step],
-                cwd=record.workspace_path,
-                user=user,
-                env=None,
-            )
+            # HR-022 (`docs/HARDENING_SPEC.md` §10): `docker.errors.DockerException`
+            # from either call used to escape uncaught, past
+            # `@translate_workspace_errors`, reaching the client as an
+            # unstructured crash instead of a clean workspace_open failure.
+            try:
+                exec_id = await asyncio.to_thread(
+                    execution_service.start,
+                    container_id,
+                    ["bash", "-c", step],
+                    cwd=record.workspace_path,
+                    user=user,
+                    env=None,
+                )
+            except docker.errors.DockerException as exc:
+                raise ContainerRuntimeFailedError(
+                    f"failed to start .mcp-workspace.yml setup step: {step!r}: {exc}",
+                    details={"workspace_id": record.id, "step": step},
+                ) from exc
             try:
                 result = await asyncio.wait_for(
                     asyncio.to_thread(
@@ -228,6 +238,11 @@ def register(
                     ),
                     timeout=_SETUP_STEP_TIMEOUT_SECONDS,
                 )
+            except docker.errors.DockerException as exc:
+                raise ContainerRuntimeFailedError(
+                    f"failed while running .mcp-workspace.yml setup step: {step!r}: {exc}",
+                    details={"workspace_id": record.id, "step": step},
+                ) from exc
             except TimeoutError:
                 await asyncio.to_thread(execution_service.kill, exec_id)
                 await asyncio.sleep(_SETUP_KILL_GRACE_PERIOD_SECONDS)

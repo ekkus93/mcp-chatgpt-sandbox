@@ -1,11 +1,24 @@
 """`git_log` — bounded commit history (§17.3's "bounded output", §46) — S21.
 
-Uses `git log --pretty=format:...` with ASCII field/record separators
-(`\\x1f`/`\\x1e`) rather than a human-oriented format: commit subjects can
-legitimately contain almost anything (including characters that would
-collide with a naive delimiter like `|` or `,`), and the two ASCII
-control characters git's own `%x1f`/`%x1e` placeholders emit are not
-valid in a commit subject line at all.
+Uses `git log --pretty=format:...` with a NUL record separator and an
+ASCII (`\\x1f`) field separator rather than a human-oriented format:
+commit subjects can legitimately contain almost anything (including
+characters that would collide with a naive delimiter like `|` or `,`).
+
+HR-022 (`docs/HARDENING_SPEC.md` §10): a commit subject is *not*
+guaranteed to avoid `\\x1e` — confirmed empirically that Git itself
+places no such restriction on a commit message's bytes, and a subject
+containing `\\x1e` will appear, unescaped, right in the middle of this
+format's own record. An earlier version of this module used `\\x1e` as
+the record separator on the mistaken assumption that it "is not valid in
+a commit subject line at all"; NUL (`\\x00`) is used instead, since Git
+*does* enforce that constraint (verified empirically: `git commit` itself
+refuses "a NUL byte in commit log message not allowed"), making a false
+split here actually impossible rather than merely unlikely. `\\x1f` as
+the field separator needs no equivalent guarantee — `read_git_log`'s own
+parse only ever splits on it with a bounded `maxsplit`, so an embedded
+`\\x1f` inside the subject (the last, unbounded field) is captured as
+part of the subject rather than mis-splitting anything.
 """
 
 from __future__ import annotations
@@ -17,6 +30,7 @@ from dev_workspace_mcp.errors import CommandFailedError, InvalidArgumentError
 from dev_workspace_mcp.git.service import (
     END_OF_OPTIONS,
     run_git_host_side,
+    sanitize_for_client,
     validate_revision_argument,
 )
 
@@ -26,8 +40,25 @@ from dev_workspace_mcp.git.service import (
 DEFAULT_MAX_LOG_ENTRIES = 50
 
 _FIELD_SEP = "\x1f"
-_RECORD_SEP = "\x1e"
-_LOG_FORMAT = _FIELD_SEP.join(["%H", "%an <%ae>", "%aI", "%s"]) + _RECORD_SEP
+#: Two distinct constants for one separator, not an oversight: `%x00` is
+#: Git's own *placeholder syntax* (four literal ASCII characters —
+#: `%`, `x`, `0`, `0`) — safe to embed directly in the `argv` string
+#: `subprocess.run` execs, since it contains no actual NUL byte at that
+#: point. Confirmed empirically that the alternative (embedding a real
+#: `"\x00"` character in the Python string built for the format
+#: argument, the way `_FIELD_SEP` above is embedded raw) makes
+#: `subprocess.run` itself raise `ValueError: embedded null byte` —
+#: `execve`'s argv strings are NUL-terminated C strings, so a literal
+#: NUL *inside* one is inexpressible at the OS level, not merely a
+#: Python quirk. Git only produces the real `\x00` byte *after* it runs,
+#: in its own stdout — `_RECORD_SEP` (the actual byte) is for parsing
+#: that output, never for building the command line.
+_RECORD_SEP_PLACEHOLDER = "%x00"
+#: NUL, not `\x1e` — see the module docstring for why a record separator
+#: has to be a byte Git itself guarantees can never appear inside a
+#: commit subject, not merely one that's unlikely to.
+_RECORD_SEP = "\x00"
+_LOG_FORMAT = _FIELD_SEP.join(["%H", "%an <%ae>", "%aI", "%s"]) + _RECORD_SEP_PLACEHOLDER
 
 #: `git log` on a branch with zero commits yet exits nonzero with this
 #: message — an empty log, not a real failure.
@@ -83,5 +114,12 @@ def read_git_log(
         if not record:
             continue
         sha, author, date, subject = record.split(_FIELD_SEP, 3)
-        entries.append(GitLogEntry(sha=sha, author=author, date=date, subject=subject))
+        entries.append(
+            GitLogEntry(
+                sha=sha,
+                author=sanitize_for_client(author),
+                date=date,
+                subject=sanitize_for_client(subject),
+            )
+        )
     return entries

@@ -121,3 +121,24 @@ def test_log_subject_with_special_characters_survives_intact(tmp_path: Path) -> 
 
     entries = read_git_log(repo)
     assert entries[0].subject == subject
+
+
+def test_at_hat019_a_subject_containing_the_record_separator_does_not_break_parsing(
+    tmp_path: Path,
+) -> None:
+    """HAT-019: a commit subject containing `\\x1e` SHALL not break
+    `git_log`. Confirmed empirically that Git places no restriction on a
+    commit message containing `\\x1e` (unlike NUL, which it refuses
+    outright) — the earlier `\\x1e`-as-record-separator design assumed
+    otherwise and mis-split exactly this case."""
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "a.txt").write_text("x\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    msgfile = tmp_path / "commitmsg.txt"
+    msgfile.write_bytes(b"evil\x1esubject with a record separator")
+    subprocess.run(["git", "commit", "-q", "-F", str(msgfile)], cwd=repo, check=True)
+
+    entries = read_git_log(repo)
+
+    assert len(entries) == 1  # not mis-split into two broken records
+    assert entries[0].subject == "evil\x1esubject with a record separator"

@@ -128,6 +128,7 @@ def _discover_code_executing_overrides(repo_path: Path) -> list[str]:
             ["git", "-C", str(repo_path), "config", "--list", "-z", scope_flag],
             capture_output=True,
             text=True,
+            errors="surrogateescape",
             env=env,
         )
         if result.returncode != 0:
@@ -168,6 +169,20 @@ def validate_revision_argument(value: str, *, param_name: str) -> None:
 
 @dataclass(frozen=True, slots=True)
 class GitCommandResult:
+    """`stdout`/`stderr` are decoded with `errors="surrogateescape"`
+    (HR-022, `docs/HARDENING_SPEC.md` §10): a repository-tracked filename
+    is not guaranteed to be valid UTF-8, and `git status`/`git diff` (run
+    with `-z`, which disables `core.quotePath`'s octal-escaping —
+    confirmed empirically that a non-UTF-8 byte then appears raw in the
+    output) would otherwise raise an uncaught `UnicodeDecodeError` on a
+    hostile filename. `surrogateescape` keeps every byte losslessly
+    representable as a Python `str` — including round-tripping back to
+    the exact original bytes if ever re-encoded — rather than the
+    silent, information-losing alternative (`errors="replace"`) `git/diff.py`
+    already uses for actual file *content* (a different case: content is
+    read for display, so lossy is an acceptable tradeoff there; a
+    filename is read to be acted on, where losing information is not)."""
+
     returncode: int
     stdout: str
     stderr: str
@@ -175,6 +190,27 @@ class GitCommandResult:
     @property
     def ok(self) -> bool:
         return self.returncode == 0
+
+
+def sanitize_for_client(value: str) -> str:
+    """A string decoded from `run_git_host_side`'s
+    `errors="surrogateescape"` output — a repository-tracked path, or a
+    commit subject/author, neither of which Git requires to be valid
+    UTF-8 — is safe to hold and reason about *within* this process, but
+    a lone surrogate escape is not valid JSON output. Confirmed
+    empirically that the MCP SDK's own response serialization
+    (`pydantic_core.to_json`) crashes on one with the exact
+    `UnicodeEncodeError` `surrogateescape` exists to avoid at the
+    subprocess boundary in the first place — moving the crash
+    downstream, not preventing it. Re-encoding with `surrogateescape`
+    and decoding back with `errors="replace"` turns any such byte into
+    U+FFFD — the same lossy-but-safe tradeoff `git/diff.py` already
+    makes for diff *content*. Call this at the point a git-derived
+    string is about to become a client-facing field (a path, a commit
+    subject/author, a branch/upstream name), not any earlier —
+    `run_git_host_side`'s own result stays lossless, since not every
+    caller necessarily hands it straight to client output."""
+    return value.encode("utf-8", errors="surrogateescape").decode("utf-8", errors="replace")
 
 
 def run_git_host_side(repo_path: Path, args: list[str]) -> GitCommandResult:
@@ -224,6 +260,7 @@ def run_git_host_side(repo_path: Path, args: list[str]) -> GitCommandResult:
             ],
             capture_output=True,
             text=True,
+            errors="surrogateescape",
             env=env,
         )
     return GitCommandResult(
