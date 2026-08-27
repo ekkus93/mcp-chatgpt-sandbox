@@ -12,6 +12,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 import docker
 from dev_workspace_mcp.config.models import ExecutionConfig, RepositoryConfig, ServerConfig
 from dev_workspace_mcp.db import open_db
+from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.server import create_server
 from dev_workspace_mcp.tools import execution as execution_tools
 from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
@@ -261,6 +262,7 @@ async def test_exec_fails_clearly_when_docker_unreachable(minimal_config: Server
         server,
         db=db,
         docker_client=None,
+        registry=RepositoryRegistry(minimal_config),
         container_config=minimal_config.container,
         execution_config=minimal_config.execution,
         state_dir=minimal_config.state_db_path.parent,

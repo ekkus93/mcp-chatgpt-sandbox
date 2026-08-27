@@ -27,14 +27,19 @@ from dev_workspace_mcp.filesystem.search import SearchMode
 from dev_workspace_mcp.filesystem.search import search_files as _search_files
 from dev_workspace_mcp.filesystem.security import FilesystemSecurity
 from dev_workspace_mcp.filesystem.service import FilesystemService
+from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.workspace.manager import resolve_repository_root, touch_last_used
 
 
-def _resolve_repository_root(db: sqlite3.Connection, workspace_id: str) -> Path:
+def _resolve_repository_root(
+    db: sqlite3.Connection, workspace_id: str, registry: RepositoryRegistry
+) -> Path:
     # §8.1: every one of this module's six tools resolves through here,
     # so touching once here covers all of them — a filesystem write/read
     # is real usage and must count against idle-stop the same as `exec`.
-    root = resolve_repository_root(db, workspace_id)
+    # HR-016: `resolve_repository_root` re-validates against `registry`
+    # (the live RepositoryRegistry) — see its own docstring.
+    root = resolve_repository_root(db, workspace_id, registry)
     touch_last_used(db, workspace_id)
     return root
 
@@ -107,11 +112,12 @@ def register(
     server: MCPServer,
     *,
     db: sqlite3.Connection,
+    registry: RepositoryRegistry,
     filesystem_config: FilesystemConfig,
     repository_roots: list[Path],
 ) -> None:
     def service_for(workspace_id: str) -> FilesystemService:
-        root = _resolve_repository_root(db, workspace_id)
+        root = _resolve_repository_root(db, workspace_id, registry)
         security = FilesystemSecurity(root, authorized_roots=repository_roots)
         return FilesystemService(security, filesystem_config)
 
@@ -269,7 +275,7 @@ def register(
         max_results: int | None = None,
         include_ignored: bool = False,
     ) -> list[SearchMatchOutput]:
-        root = _resolve_repository_root(db, workspace_id)
+        root = _resolve_repository_root(db, workspace_id, registry)
         security = FilesystemSecurity(root, authorized_roots=repository_roots)
         limit = filesystem_config.max_search_results
         if max_results is not None:

@@ -86,6 +86,7 @@ def _register_tools(
     filesystem_tools.register(
         server,
         db=db,
+        registry=registry,
         filesystem_config=config.filesystem,
         repository_roots=config.repository_roots,
     )
@@ -110,6 +111,7 @@ def _register_tools(
         server,
         db=db,
         docker_client=docker_client,
+        registry=registry,
         container_config=config.container,
         execution_config=config.execution,
         state_dir=config.state_db_path.parent,

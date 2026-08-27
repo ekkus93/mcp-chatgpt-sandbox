@@ -41,10 +41,12 @@ from dev_workspace_mcp.execution.log_capture import read_log_bytes
 from dev_workspace_mcp.execution.service import ExecutionService, tail_text
 from dev_workspace_mcp.jobs.retention import prune_job_logs
 from dev_workspace_mcp.jobs.store import JobRecord, JobStore
+from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.workspace.container_config import resolve_exec_user
 from dev_workspace_mcp.workspace.manager import (
     DockerWorkspaceManager,
     WorkspaceState,
+    get_authorized,
     touch_last_used,
 )
 
@@ -153,6 +155,7 @@ def register(
     *,
     db: sqlite3.Connection,
     docker_client: docker.DockerClient | None,
+    registry: RepositoryRegistry,
     container_config: ContainerConfig,
     execution_config: ExecutionConfig,
     state_dir: Path,
@@ -206,7 +209,7 @@ def register(
                 "state (§73) and cannot execute commands"
             )
 
-        record = manager.get(workspace_id)
+        record = get_authorized(manager, workspace_id, registry)
         if record.state != WorkspaceState.RUNNING:
             raise WorkspaceNotRunningError(
                 f"workspace {workspace_id!r} is not running (state: {record.state.value})",
@@ -274,7 +277,7 @@ def register(
                 "state (§73) and cannot start jobs"
             )
 
-        record = manager.get(workspace_id)
+        record = get_authorized(manager, workspace_id, registry)
         if record.state != WorkspaceState.RUNNING:
             raise WorkspaceNotRunningError(
                 f"workspace {workspace_id!r} is not running (state: {record.state.value})",

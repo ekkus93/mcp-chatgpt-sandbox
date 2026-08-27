@@ -88,6 +88,7 @@ from dev_workspace_mcp.workspace.container_config import resolve_exec_user
 from dev_workspace_mcp.workspace.manager import (
     DockerWorkspaceManager,
     WorkspaceState,
+    get_authorized,
     resolve_repository_root,
 )
 
@@ -261,7 +262,7 @@ def register(
         # Read-only, host-side, never touches the container — deliberately
         # does not call `touch_last_used` (§8.1's idle-stop is measured
         # against container usage; this tool never uses the container).
-        repo_path = resolve_repository_root(db, workspace_id)
+        repo_path = resolve_repository_root(db, workspace_id, registry)
         status = read_git_status(repo_path)
         return GitStatusOutput(
             branch=status.branch,
@@ -298,7 +299,7 @@ def register(
         max_bytes: int | None = None,
         offset: int = 0,
     ) -> GitDiffOutput:
-        repo_path = resolve_repository_root(db, workspace_id)
+        repo_path = resolve_repository_root(db, workspace_id, registry)
         result = read_git_diff(
             repo_path,
             staged=staged,
@@ -321,7 +322,7 @@ def register(
         paths: list[str] | None = None,
         ref: str | None = None,
     ) -> list[GitLogEntryOutput]:
-        repo_path = resolve_repository_root(db, workspace_id)
+        repo_path = resolve_repository_root(db, workspace_id, registry)
         entries = read_git_log(repo_path, max_entries=max_entries, paths=paths, ref=ref)
         return [
             GitLogEntryOutput(sha=e.sha, author=e.author, date=e.date, subject=e.subject)
@@ -358,7 +359,7 @@ def register(
         if not message.strip():
             raise InvalidArgumentError("git_commit requires a non-empty message")
 
-        record = manager.get(workspace_id)
+        record = get_authorized(manager, workspace_id, registry)
         if record.state != WorkspaceState.RUNNING:
             raise WorkspaceNotRunningError(
                 f"workspace {workspace_id!r} is not running (state: {record.state.value})",
@@ -370,7 +371,7 @@ def register(
         # §20.6: preconditions, evaluated before the container is asked to
         # do anything, and fail closed — the working tree is bind-mounted,
         # so a host-side read here sees exactly what the container would.
-        repo_path = resolve_repository_root(db, workspace_id)
+        repo_path = resolve_repository_root(db, workspace_id, registry)
 
         interrupted = detect_interrupted_operation(repo_path)
         if interrupted is not None:
@@ -501,7 +502,7 @@ def register(
                 "state (§73) and cannot pull"
             )
 
-        record = manager.get(workspace_id)
+        record = get_authorized(manager, workspace_id, registry)
         if record.state != WorkspaceState.RUNNING:
             raise WorkspaceNotRunningError(
                 f"workspace {workspace_id!r} is not running (state: {record.state.value})",
@@ -512,7 +513,7 @@ def register(
 
         # §20.6 preconditions, host-side, before anything runs in-container
         # or touches the network — same ordering `git_commit` already uses.
-        repo_path = resolve_repository_root(db, workspace_id)
+        repo_path = resolve_repository_root(db, workspace_id, registry)
 
         interrupted = detect_interrupted_operation(repo_path)
         if interrupted is not None:
@@ -713,7 +714,7 @@ def register(
                 details={"delete": delete},
             )
 
-        record = manager.get(workspace_id)
+        record = get_authorized(manager, workspace_id, registry)
         if record.state != WorkspaceState.RUNNING:
             raise WorkspaceNotRunningError(
                 f"workspace {workspace_id!r} is not running (state: {record.state.value})",
@@ -722,7 +723,7 @@ def register(
         assert record.container_id is not None  # implied by state == RUNNING
         container_id = record.container_id  # narrowed value, captured for the closure below
 
-        repo_path = resolve_repository_root(db, workspace_id)
+        repo_path = resolve_repository_root(db, workspace_id, registry)
 
         interrupted = detect_interrupted_operation(repo_path)
         if interrupted is not None:

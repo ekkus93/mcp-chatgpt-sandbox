@@ -1013,13 +1013,116 @@ and `branch`; a non-policy denial (`GIT_REMOTE_NOT_ALLOWED`, raised before
 remote validation) carries `repository_id` and `remote` but correctly
 omits `remote_repository`.
 
-### H14 — Authorization is re-checked against live configuration
+### H14 — Authorization is re-checked against live configuration ✅
 **Satisfies:** HR-016 · **Verified by:** HAT-013
+**Commit:** `37f28ab`
 
-- [ ] Validate the resolved repository against the live `RepositoryRegistry` on
+- [x] Validate the resolved repository against the live `RepositoryRegistry` on
       every workspace-scoped call
-- [ ] Test that removing a repository from config immediately revokes access
+- [x] Test that removing a repository from config immediately revokes access
       through its stale `workspace_id`
+
+**Defect:** `workspace/manager.py:99–123` resolves `workspace_id → canonical_path`
+from the database with no registry consultation, so a repository removed from
+configuration remains fully accessible through its stale rows. Reproduced
+against a registry authorizing nothing.
+
+**Scope, established first.** The CLI's own operator path (`cli.py`'s `reset`/
+`rebuild`/`delete`) already requires `registry.get(repository_id)` to succeed
+*before* it ever constructs a `DockerWorkspaceManager` — each invocation loads
+config fresh, so it has no "stale in-memory registry" problem to begin with,
+and those commands take a `repository_id` directly, never a `workspace_id`.
+The defect is specific to the long-running MCP server: `RepositoryRegistry` is
+built once at startup, and every workspace-scoped *tool* call resolves a
+client-supplied `workspace_id` against the state DB with no re-check against
+that registry. The fix is scoped to the tool layer only — `DockerWorkspaceManager`
+itself and the CLI are untouched.
+
+**Implementation.** Two shared chokepoints already existed for exactly this
+kind of cross-cutting concern, so the fix lives entirely in
+`workspace/manager.py`, with no changes to any tool's actual logic:
+
+- `resolve_repository_root(db, workspace_id, registry)` — a new required
+  `registry` parameter. Still returns the *persisted* `canonical_path` (what
+  the workspace's container was actually bind-mounted against at open time),
+  not the registry's own copy — this is authorization (is `repository_id`
+  still allowed at all), not path reconciliation; a live edit to a
+  repository's `path` without removing it is a different, unaddressed
+  concern, and conflating the two risked returning a canonical_path that
+  doesn't match what's actually mounted in the container. Used directly by
+  the three host-side Git reads (`git_status`/`git_diff`/`git_log`) and by
+  `git_commit`/`git_pull`/`git_push`'s own precondition reads, and indirectly
+  by all six filesystem tools through `tools/filesystem.py`'s existing
+  `_resolve_repository_root` wrapper — one signature change covers every
+  caller.
+- `get_authorized(manager, workspace_id, registry)` — new, for the
+  `DockerWorkspaceManager.get(workspace_id)` call sites that need a
+  `WorkspaceRecord` (state, container id, mode), not just a path: `exec`/
+  `exec_start` (`tools/execution.py`), `workspace_info` (`tools/workspace.py`),
+  and `git_commit`/`git_pull`/`git_push`'s own `record = manager.get(...)`
+  calls (`tools/git.py`). Deliberately a free function wrapping `manager.get`
+  rather than a change to `DockerWorkspaceManager.get` itself — the CLI also
+  calls `.get()` (via `reset`/`rebuild`/`delete`), and per the scope note
+  above those commands are already correctly gated on the registry one layer
+  up; making `.get()` itself registry-aware would have been redundant there
+  and would have coupled `DockerWorkspaceManager` to a `RepositoryRegistry`
+  it doesn't otherwise need.
+
+`registry: RepositoryRegistry` is now a required parameter of
+`tools/filesystem.py`'s and `tools/execution.py`'s `register()` (git.py's and
+workspace.py's already had it); `server.py`'s `_register_tools` passes it to
+both.
+
+**A test discipline finding, not a code bug:** the first draft's revert
+check showed `workspace_info` and `git_push` "passing" even against the
+reverted, pre-fix code — not because the fix was unnecessary there, but
+because both already touch `registry.get()` for an *unrelated* reason
+(`workspace_info`'s `_info()` needs the live `canonical_path` for git state;
+`git_push`/`git_pull` already read `repository_record.github` for remote
+validation). Those incidental calls happen to enforce the same invariant by
+accident. Caught by reading the revert failure output closely rather than
+trusting "6/6 passed against reverted code" at face value — replaced the
+`git_push` test with a `git_commit` one (genuinely isolates
+`get_authorized`'s effect: `git_commit` never touches the registry anywhere
+else), and documented the `workspace_info` case's incidental-coverage nuance
+directly in that test rather than deleting it (HAT-013 cares about the
+*behavior*, and it's honest, correct behavior regardless of mechanism).
+
+**Verified the new tests actually catch the regression**, this time for the
+right reason: reverted all six changed source files to their pre-H14
+versions and reran `tests/workspace/test_authorization_recheck.py` — the four
+tests that genuinely depend on this task's fix (`exec`, one representative
+filesystem tool, `git_status`, `git_commit`) failed, each with the *original*
+resolution succeeding where it should have been rejected; the two tests that
+were never expected to distinguish reverted from fixed code (`workspace_info`,
+and the negative-space "an unrelated removal doesn't affect a still-configured
+repository" check) still passed, as documented. Restored the fix; all six
+pass again. Broader relevant suite (`tests/workspace/`, `tests/filesystem/`,
+`tests/git/`) — 489 passed, no regressions.
+
+**Two genuinely self-inflicted false starts along the way, neither a code
+defect:** running the new test file directly while a background full-suite
+run was still active produced real 409 container-name conflicts (this
+project's deterministic `mcp-dev-ws-<repository_id>-<hash>` naming makes any
+two concurrent processes sharing a `repository_id` collide) — resolved by
+never running Docker-touching commands concurrently with each other for the
+rest of this task, and by cleaning up an unrelated container left behind by
+an ad-hoc manual reproduction script that (unlike the test suite) has no
+fixture teardown of its own.
+
+**New tests:** `tests/workspace/test_authorization_recheck.py` — six
+end-to-end tests, each opening a workspace against one server, then building
+a *second* server from the same `state_db_path` with the repository removed
+from configuration (simulating an operator edit + restart), then reusing the
+original `workspace_id` against the second server: `workspace_info`, `exec`,
+a representative filesystem tool (`list_files`), `git_status`, and
+`git_commit` all fail closed with `REPOSITORY_NOT_ALLOWED`; a control test
+confirms removing a *different*, unrelated repository leaves a
+still-configured one's workspace fully usable. Also fixed two pre-existing
+tests (`tests/workspace/test_execution_tools.py`,
+`tests/workspace/test_async_execution_tools.py`) that constructed
+`execution_tools.register(...)` directly and needed the new required
+`registry` argument.
 
 ---
 

@@ -496,6 +496,7 @@ async def test_exec_start_fails_clearly_when_docker_unreachable(
     from mcp.server import MCPServer
 
     from dev_workspace_mcp.db import open_db
+    from dev_workspace_mcp.repositories import RepositoryRegistry
     from dev_workspace_mcp.tools import execution as execution_tools
 
     server = MCPServer(name="t")
@@ -504,6 +505,7 @@ async def test_exec_start_fails_clearly_when_docker_unreachable(
         server,
         db=db,
         docker_client=None,
+        registry=RepositoryRegistry(minimal_config),
         container_config=minimal_config.container,
         execution_config=minimal_config.execution,
         state_dir=minimal_config.state_db_path.parent,

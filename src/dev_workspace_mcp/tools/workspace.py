@@ -56,7 +56,11 @@ from dev_workspace_mcp.workspace.container_config import (
     build_workspace_run_kwargs,
     resolve_exec_user,
 )
-from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager, WorkspaceRecord
+from dev_workspace_mcp.workspace.manager import (
+    DockerWorkspaceManager,
+    WorkspaceRecord,
+    get_authorized,
+)
 from dev_workspace_mcp.workspace.mounts import (
     build_known_hosts_mount,
     build_ssh_agent_mount,
@@ -469,7 +473,7 @@ def register(
         # ability to act on it, and a degraded daemon should say so plainly
         # rather than report state it cannot currently corroborate.
         active_manager, _ = _require_docker()
-        record = active_manager.get(workspace_id)
+        record = get_authorized(active_manager, workspace_id, registry)
         return _info(record)
 
     @server.tool(name="server_info", description="Server version, capabilities, and health (§25).")
