@@ -24,6 +24,7 @@ import sqlite3
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 from docker.errors import DockerException
@@ -92,6 +93,33 @@ def touch_last_used(db: sqlite3.Connection, workspace_id: str) -> None:
     callers that need existence checked have already done so."""
     with db:
         db.execute("UPDATE workspace SET last_used_at = ? WHERE id = ?", (_now(), workspace_id))
+
+
+def resolve_repository_root(db: sqlite3.Connection, workspace_id: str) -> Path:
+    """Repository root for `workspace_id`, via the `repository` row a
+    workspace's creation upserts (S6) — what a workspace_id-scoped tool
+    needs without necessarily depending on `DockerWorkspaceManager` or
+    `workspace_open` (S11) having run in this process. Shared by S9's
+    filesystem tools and S20+'s host-side Git reads.
+
+    Read-only: does not call `touch_last_used`. A host-side Git read
+    (`git_status`/`git_diff`/`git_log`, §20.1) never touches the
+    container at all, so it should not reset the idle-stop clock the
+    container's own usage is measured by; a filesystem tool, which reads
+    the same working tree the container has mounted, does — its caller
+    calls `touch_last_used` alongside this."""
+    row = db.execute(
+        """
+        SELECT repository.canonical_path AS canonical_path
+        FROM workspace
+        JOIN repository ON repository.id = workspace.repository_id
+        WHERE workspace.id = ?
+        """,
+        (workspace_id,),
+    ).fetchone()
+    if row is None:
+        raise WorkspaceNotFoundError(f"workspace not found: {workspace_id!r}")
+    return Path(row["canonical_path"])
 
 
 class DockerWorkspaceManager:

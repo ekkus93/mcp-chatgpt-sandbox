@@ -4,7 +4,7 @@ from dev_workspace_mcp import __version__
 from dev_workspace_mcp.config.models import ServerConfig
 from dev_workspace_mcp.server import SERVER_NAME, create_server
 
-#: §34.1's tool surface, as much of it as is registered through S15.
+#: §34.1's tool surface, as much of it as is registered through S20.
 REGISTERED_TOOLS = {
     "repository_list",
     "list_files",
@@ -21,6 +21,7 @@ REGISTERED_TOOLS = {
     "exec_status",
     "exec_output",
     "exec_cancel",
+    "git_status",
 }
 
 

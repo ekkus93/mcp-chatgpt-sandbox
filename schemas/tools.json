@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.2.1",
+  "contract_version": "0.3.0",
   "tools": [
     {
       "description": "Delete a repository file or directory (\u00a713.5).",
@@ -495,6 +495,131 @@
           "output_truncated"
         ],
         "title": "ExecStatusOutput",
+        "type": "object"
+      }
+    },
+    {
+      "description": "Structured repository status: branch, head, ahead/behind, staged/unstaged/untracked/conflicted paths (\u00a717.2).",
+      "input_schema": {
+        "properties": {
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id"
+        ],
+        "title": "git_status_toolArguments",
+        "type": "object"
+      },
+      "name": "git_status",
+      "output_schema": {
+        "properties": {
+          "ahead": {
+            "title": "Ahead",
+            "type": "integer"
+          },
+          "behind": {
+            "title": "Behind",
+            "type": "integer"
+          },
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          },
+          "clean": {
+            "title": "Clean",
+            "type": "boolean"
+          },
+          "conflicted": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Conflicted",
+            "type": "array"
+          },
+          "detached_head": {
+            "title": "Detached Head",
+            "type": "boolean"
+          },
+          "head_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Head Sha"
+          },
+          "interrupted_operation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Interrupted Operation"
+          },
+          "staged": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Staged",
+            "type": "array"
+          },
+          "unstaged": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unstaged",
+            "type": "array"
+          },
+          "untracked": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Untracked",
+            "type": "array"
+          },
+          "upstream": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upstream"
+          }
+        },
+        "required": [
+          "branch",
+          "head_sha",
+          "upstream",
+          "ahead",
+          "behind",
+          "detached_head",
+          "clean",
+          "staged",
+          "unstaged",
+          "untracked",
+          "conflicted"
+        ],
+        "title": "GitStatusOutput",
         "type": "object"
       }
     },

@@ -20,7 +20,6 @@ from dev_workspace_mcp.config.models import FilesystemConfig
 from dev_workspace_mcp.errors import (
     FileConflictError,
     InvalidArgumentError,
-    WorkspaceNotFoundError,
     translate_workspace_errors,
 )
 from dev_workspace_mcp.filesystem.patch import PatchFormatError, apply_unified_diff
@@ -28,26 +27,16 @@ from dev_workspace_mcp.filesystem.search import SearchMode
 from dev_workspace_mcp.filesystem.search import search_files as _search_files
 from dev_workspace_mcp.filesystem.security import FilesystemSecurity
 from dev_workspace_mcp.filesystem.service import FilesystemService
-from dev_workspace_mcp.workspace.manager import touch_last_used
+from dev_workspace_mcp.workspace.manager import resolve_repository_root, touch_last_used
 
 
 def _resolve_repository_root(db: sqlite3.Connection, workspace_id: str) -> Path:
-    row = db.execute(
-        """
-        SELECT repository.canonical_path AS canonical_path
-        FROM workspace
-        JOIN repository ON repository.id = workspace.repository_id
-        WHERE workspace.id = ?
-        """,
-        (workspace_id,),
-    ).fetchone()
-    if row is None:
-        raise WorkspaceNotFoundError(f"workspace not found: {workspace_id!r}")
     # §8.1: every one of this module's six tools resolves through here,
     # so touching once here covers all of them — a filesystem write/read
     # is real usage and must count against idle-stop the same as `exec`.
+    root = resolve_repository_root(db, workspace_id)
     touch_last_used(db, workspace_id)
-    return Path(row["canonical_path"])
+    return root
 
 
 # --- tool I/O shapes -----------------------------------------------------------------

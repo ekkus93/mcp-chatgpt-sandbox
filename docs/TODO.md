@@ -724,13 +724,58 @@ above (both proven, not assumed), exit-code/stdout/stderr plumbing, the
 every §44.4 state plus the clean-repo, non-repo, and linked-worktree
 cases.
 
-### S20 — `git_status`
-**Spec:** §17.2, §22.3 · **Satisfies:** FR-018 · **Verified by:** AT-020
+### S20 — `git_status` ✅
+**Spec:** §17.2, §22.3 · **Satisfies:** FR-018 · **Verified by:** AT-020 · **Commit:** `20a3e23`
 
-- [ ] Structured output per §17.2: branch, head_sha, upstream, ahead/behind,
+- [x] Structured output per §17.2: branch, head_sha, upstream, ahead/behind,
       detached, clean, staged/unstaged/untracked
-- [ ] Report conflict and interrupted state rather than repairing it
-- [ ] AT-020: a merge conflict is reported, not auto-repaired
+- [x] Report conflict and interrupted state rather than repairing it
+- [x] AT-020: a merge conflict is reported, not auto-repaired
+
+`src/dev_workspace_mcp/git/status.py`'s `read_git_status` parses a
+single `git status --porcelain=v2 --branch --untracked-files=all -z`
+call rather than several separate `git` invocations — branch, head,
+upstream, ahead/behind, and every path's staged/unstaged/untracked/
+conflicted state all come from one consistent snapshot. `-z` (NUL
+records, no C-style path quoting) is what makes it reliably parseable.
+Beyond §17.2's illustrative fields, the output also carries `conflicted`
+(a separate list, not folded into staged/unstaged) and
+`interrupted_operation` (S19's `detect_interrupted_operation`) — real,
+additive fields AT-020 needs that the spec's own JSON example, marked
+"SHOULD include", never claimed to be exhaustive.
+
+Getting the porcelain v2 field layout right took real verification, not
+assumption: a first version used the same field-count split for both `1`
+(ordinary changed) and `2` (rename/copy) records, which is wrong — a `2`
+record has one extra field (the rename/copy score, e.g. `R100`) before
+the path. Caught by `test_status_on_a_renamed_staged_file`, which failed
+with `staged == ['R100 a-renamed.txt']` against a real `git mv` before
+the fix. Every record type (`1`, `2`, `u` unmerged, `?` untracked, plus
+the `# branch.*` headers) was verified against real `git status -z`
+output before being trusted, not written from memory of the format spec.
+
+`tools/git.py`'s `register()` takes only `db` — no `docker_client`, no
+container config — since `git_status` is host-side only (§20.1) and
+needs nothing else; `resolve_repository_root` (newly extracted from
+`tools/filesystem.py`'s private copy into `workspace/manager.py`, shared
+by both now) resolves `workspace_id` → repository root without touching
+Docker. Deliberately does not call `touch_last_used` (§8.1's idle-stop is
+measured against *container* usage; a host-side read never touches the
+container at all, so counting it would be measuring the wrong thing).
+
+`tests/git/test_status.py` (8 tests): clean repo, staged/unstaged/
+untracked, a path both staged and unstaged, a real renamed file, real
+ahead/behind against a real remote, detached HEAD, an unborn branch, and
+AT-020 itself — a real merge conflict, confirming `conflicted` and
+`interrupted_operation` report it without repairing anything.
+`tests/workspace/test_git_status_tool.py` (4 tests, real Docker): the
+tool end to end through `workspace_open`, reflecting a write made
+through `write_file`, `WORKSPACE_NOT_FOUND` on an unknown workspace, and
+confirming the tool works even when Docker itself is unreachable —
+§20.1's whole point.
+
+`schemas/tools.json` re-exported (`git_status` is a new tool);
+`CONTRACT_VERSION` bumped `0.2.1` → `0.3.0` per §33.2 (minor).
 
 ### S21 — `git_diff` and `git_log`
 **Spec:** §17.3, §46 · **Satisfies:** FR-019

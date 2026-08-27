@@ -20,6 +20,7 @@ from dev_workspace_mcp.db import open_db
 from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.tools import execution as execution_tools
 from dev_workspace_mcp.tools import filesystem as filesystem_tools
+from dev_workspace_mcp.tools import git as git_tools
 from dev_workspace_mcp.tools import repository as repository_tools
 from dev_workspace_mcp.tools import workspace as workspace_tools
 
@@ -101,6 +102,7 @@ def _register_tools(
         execution_config=config.execution,
         state_dir=config.state_db_path.parent,
     )
+    git_tools.register(server, db=db)
 
 
 def run_server(server: MCPServer, transport: Transport = "stdio") -> None:
