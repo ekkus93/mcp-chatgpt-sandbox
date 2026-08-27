@@ -663,19 +663,66 @@ request's lifetime).
 
 Acceptance: a client can implement, validate, and commit a change safely.
 
-### S19 — Git execution plumbing
-**Spec:** §20.1, §18.7, §44.4 · **Verified by:** AT-025
+### S19 — Git execution plumbing ✅
+**Spec:** §20.1, §18.7, §44.4 · **Verified by:** AT-025 · **Commit:** `142b88d`
 
-- [ ] Structured Git tools execute **in-container** via the execution service, as
+- [x] Structured Git tools execute **in-container** via the execution service, as
       the container user
-- [ ] `git_status` / `git_diff` / `git_log` MAY run host-side for speed, as the
+- [x] `git_status` / `git_diff` / `git_log` MAY run host-side for speed, as the
       daemon uid
-- [ ] Host-side reads always invoked with `-c core.hooksPath=<empty-dir>
+- [x] Host-side reads always invoked with `-c core.hooksPath=<empty-dir>
       -c core.fsmonitor=` and `GIT_OPTIONAL_LOCKS=0`
-- [ ] Hooks run normally for in-container operations — they are a feature (§18.7)
-- [ ] Interrupted-operation detection: merge, rebase, cherry-pick, bisect (§44.4)
-- [ ] AT-025: a `core.hooksPath` hook inside the working tree does not execute
+- [x] Hooks run normally for in-container operations — they are a feature (§18.7)
+- [x] Interrupted-operation detection: merge, rebase, cherry-pick, bisect (§44.4)
+- [x] AT-025: a `core.hooksPath` hook inside the working tree does not execute
       during a host-side `git_status`
+
+New `src/dev_workspace_mcp/git/` package. `git/service.py`'s
+`run_git_host_side` is the one host-side entry point `git_status`/
+`git_diff`/`git_log` (S20/S21) will call — real `-c core.hooksPath=<a
+fresh empty dir>`, `-c core.fsmonitor=`, `GIT_OPTIONAL_LOCKS=0`, and the
+*real* environment plus that one override (not a replacement `env={...}`,
+which drops `PATH`). There is no separate "in-container git runner": per
+§20.1's own rationale (one execution identity, one credential), a
+mutating structured tool (`git_commit`/`git_pull`/`git_push`, S22/S26/S27)
+will call `ExecutionService`/`AsyncJobRunner` directly with a `["git",
+...]` argv, exactly as `exec("git ...")` already does — hooks run
+normally there because nothing suppresses them, which is the point
+(§18.7: hooks are a feature, not a threat, under the trusted-container
+model).
+
+`detect_interrupted_operation` (§44.4) reads Git's own marker files
+(`MERGE_HEAD`, `rebase-merge`/`rebase-apply`, `CHERRY_PICK_HEAD`,
+`BISECT_LOG`) under the resolved `.git` directory — following one level
+of gitfile `gitdir:` indirection for a linked worktree/submodule (§18.2),
+verified against a real `git worktree add`. Diagnostic only: unlike
+`workspace/mounts.py`'s `resolve_git_dir`, it does not authorize the
+resolved path against anything.
+
+Also refactored `git_state.py` (S11) to call `run_git_host_side` instead
+of its own ad hoc `subprocess.run` — which passed a *replacement*
+`env={"GIT_OPTIONAL_LOCKS": "0"}`, silently dropping `PATH`. It happened
+to keep working only because `git` sits at a location POSIX's default
+fallback search path covers on every host tested here; a regression test
+(`test_run_git_host_side_finds_git_via_path`) guards the fixed version.
+
+AT-025's literal phrasing ("a `core.hooksPath` hook... does not
+execute") doesn't map onto a real, standard Git hook: no stock hook
+fires on `status`/`diff`/`log`. The actual host-side-read hook vector is
+`core.fsmonitor`, which those commands genuinely do consult — that's why
+§18.7 calls it out by name alongside `core.hooksPath`. The test proves
+both: a real script configured via `core.fsmonitor` does *not* run
+through `run_git_host_side`, and does run through a plain, unmediated
+`git status` on the same repository — so the test demonstrates real
+suppression, not just "the script never had a reason to fire."
+`core.hooksPath`'s own override is verified more directly, by confirming
+our value wins over a repo-configured one in `git config`'s own output.
+
+`tests/git/test_service.py` (15 tests, no Docker): the two overrides
+above (both proven, not assumed), exit-code/stdout/stderr plumbing, the
+`PATH`-drop regression guard, and `detect_interrupted_operation` for
+every §44.4 state plus the clean-repo, non-repo, and linked-worktree
+cases.
 
 ### S20 — `git_status`
 **Spec:** §17.2, §22.3 · **Satisfies:** FR-018 · **Verified by:** AT-020
