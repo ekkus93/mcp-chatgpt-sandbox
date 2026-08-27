@@ -248,3 +248,173 @@ def test_non_github_host_is_rejected_even_with_an_allowed_scheme(tmp_path: Path)
             allowlisted_repositories=[],
             expected_remote_repository=None,
         )
+
+
+# --- resolve_remote_push_url / validate_remote_identity_for_push (HR-014) ----------
+
+
+def _repo_with_pushurl(path: Path, *, fetch_url: str, push_url: str) -> Path:
+    repo = _repo_with_remote(path, fetch_url)
+    subprocess.run(
+        ["git", "config", "--local", "remote.origin.pushurl", push_url], cwd=repo, check=True
+    )
+    return repo
+
+
+def test_resolve_remote_push_url_reads_the_configured_pushurl(tmp_path: Path) -> None:
+    from dev_workspace_mcp.git.remote import resolve_remote_push_url
+
+    repo = _repo_with_pushurl(
+        tmp_path / "repo",
+        fetch_url="https://github.com/owner/repo.git",
+        push_url="https://github.com/owner/different-repo.git",
+    )
+    assert resolve_remote_push_url(repo, "origin") == "https://github.com/owner/different-repo.git"
+
+
+def test_resolve_remote_push_url_falls_back_to_fetch_url_when_unset(tmp_path: Path) -> None:
+    """Git itself falls back to the fetch URL for `get-url --push` when no
+    `remote.<name>.pushurl` is configured — the common case, where push
+    and fetch legitimately go to the same place."""
+    from dev_workspace_mcp.git.remote import resolve_remote_push_url
+
+    repo = _repo_with_remote(tmp_path / "repo", "https://github.com/owner/repo.git")
+    assert resolve_remote_push_url(repo, "origin") == "https://github.com/owner/repo.git"
+
+
+def test_h12_pushurl_redirect_to_an_unauthorized_host_is_rejected(tmp_path: Path) -> None:
+    """A real regression: `remote.origin.pushurl` pointed at a different
+    host than the validated fetch URL. The old `validate_remote_identity`
+    (fetch-only) approved this remote; `git push` would have actually
+    contacted the pushurl host instead. `validate_remote_identity_for_push`
+    SHALL reject it."""
+    from dev_workspace_mcp.git.remote import validate_remote_identity_for_push
+
+    repo = _repo_with_pushurl(
+        tmp_path / "repo",
+        fetch_url="https://github.com/owner/repo.git",
+        push_url="https://evil.example.com/evil/other.git",
+    )
+    with pytest.raises(GitRemoteNotAllowedError) as excinfo:
+        validate_remote_identity_for_push(
+            repo,
+            remote="origin",
+            allowed_url_schemes=["ssh", "https"],
+            configured_github="owner/repo",
+            allowlisted_repositories=[],
+            expected_remote_repository=None,
+        )
+    assert excinfo.value.details["url"] == "https://evil.example.com/evil/other.git"
+
+
+def test_h12_pushurl_redirect_to_an_unauthorized_sibling_repo_is_rejected(tmp_path: Path) -> None:
+    """Same host, same owner, different repo — a subtler redirect than a
+    different host entirely, and still SHALL be rejected."""
+    from dev_workspace_mcp.git.remote import validate_remote_identity_for_push
+
+    repo = _repo_with_pushurl(
+        tmp_path / "repo",
+        fetch_url="https://github.com/owner/repo.git",
+        push_url="https://github.com/owner/different-repo.git",
+    )
+    with pytest.raises(GitRemoteNotAllowedError) as excinfo:
+        validate_remote_identity_for_push(
+            repo,
+            remote="origin",
+            allowed_url_schemes=["ssh", "https"],
+            configured_github="owner/repo",
+            allowlisted_repositories=[],
+            expected_remote_repository=None,
+        )
+    assert excinfo.value.details["resolved"] == "owner/different-repo"
+
+
+def test_h12_pushurl_redirect_to_an_allowlisted_repo_is_accepted(tmp_path: Path) -> None:
+    """The push URL differs from the fetch URL but resolves to an
+    identity the operator has explicitly allowlisted — SHALL be accepted,
+    and the returned identity SHALL be the push destination's, not the
+    fetch URL's (the caller uses this to name the actual destination in
+    the audit record, per HR-014)."""
+    from dev_workspace_mcp.git.remote import validate_remote_identity_for_push
+
+    repo = _repo_with_pushurl(
+        tmp_path / "repo",
+        fetch_url="https://github.com/owner/repo.git",
+        push_url="https://github.com/other-owner/other-repo.git",
+    )
+    identity = validate_remote_identity_for_push(
+        repo,
+        remote="origin",
+        allowed_url_schemes=["ssh", "https"],
+        configured_github="owner/repo",
+        allowlisted_repositories=["other-owner/other-repo"],
+        expected_remote_repository=None,
+    )
+    assert identity == "other-owner/other-repo"
+
+
+def test_h12_matching_pushurl_is_accepted_same_as_plain_case(tmp_path: Path) -> None:
+    """Push URL explicitly configured but identical to the fetch URL —
+    ordinary case, not a redirect — SHALL still validate normally."""
+    from dev_workspace_mcp.git.remote import validate_remote_identity_for_push
+
+    repo = _repo_with_pushurl(
+        tmp_path / "repo",
+        fetch_url="https://github.com/owner/repo.git",
+        push_url="https://github.com/owner/repo.git",
+    )
+    identity = validate_remote_identity_for_push(
+        repo,
+        remote="origin",
+        allowed_url_schemes=["ssh", "https"],
+        configured_github="owner/repo",
+        allowlisted_repositories=[],
+        expected_remote_repository=None,
+    )
+    assert identity == "owner/repo"
+
+
+def test_h12_no_pushurl_configured_behaves_like_plain_validate_remote_identity(
+    tmp_path: Path,
+) -> None:
+    """No `pushurl` at all (the common case) — push and fetch URL are the
+    same string, and validation behaves exactly like
+    `validate_remote_identity`."""
+    from dev_workspace_mcp.git.remote import validate_remote_identity_for_push
+
+    repo = _repo_with_remote(tmp_path / "repo", "https://github.com/owner/repo.git")
+    identity = validate_remote_identity_for_push(
+        repo,
+        remote="origin",
+        allowed_url_schemes=["ssh", "https"],
+        configured_github="owner/repo",
+        allowlisted_repositories=[],
+        expected_remote_repository=None,
+    )
+    assert identity == "owner/repo"
+
+
+def test_h12_expected_remote_repository_checked_against_push_destination(
+    tmp_path: Path,
+) -> None:
+    """`expected_remote_repository` (client-supplied, honoured regardless
+    of server config) SHALL be checked against the actual push
+    destination, not just the fetch URL — otherwise a caller who pinned
+    an expected repository could still be redirected by a pushurl."""
+    from dev_workspace_mcp.git.remote import validate_remote_identity_for_push
+
+    repo = _repo_with_pushurl(
+        tmp_path / "repo",
+        fetch_url="https://github.com/owner/repo.git",
+        push_url="https://github.com/owner/different-repo.git",
+    )
+    with pytest.raises(GitRemoteNotAllowedError) as excinfo:
+        validate_remote_identity_for_push(
+            repo,
+            remote="origin",
+            allowed_url_schemes=["ssh", "https"],
+            configured_github="owner/repo",
+            allowlisted_repositories=["owner/different-repo"],
+            expected_remote_repository="owner/repo",
+        )
+    assert excinfo.value.details["expected_remote_repository"] == "owner/repo"

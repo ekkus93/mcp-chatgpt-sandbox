@@ -68,6 +68,15 @@ def _set_remote(repo_path: Path, url: str) -> None:
     subprocess.run(["git", "remote", "add", "origin", url], cwd=repo_path, check=True)
 
 
+def _set_remote_with_pushurl(repo_path: Path, *, fetch_url: str, push_url: str) -> None:
+    _set_remote(repo_path, fetch_url)
+    subprocess.run(
+        ["git", "config", "--local", "remote.origin.pushurl", push_url],
+        cwd=repo_path,
+        check=True,
+    )
+
+
 # --- input validation, before anything else (no remote, no workspace needed) -------
 
 
@@ -392,6 +401,33 @@ async def test_at_009_unauthorized_remote_is_rejected(
     repo_path = tmp_path / "work" / "example"
     config = _configured(minimal_config, default_image_tag, repo_path, github="owner/example")
     _set_remote(repo_path, "https://github.com/attacker/unrelated.git")
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    with pytest.raises(ToolError, match="GIT_REMOTE_NOT_ALLOWED"):
+        await server.call_tool("git_push", {"workspace_id": workspace_id})
+
+
+async def test_h12_pushurl_redirect_to_an_unauthorized_repo_is_rejected(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """HR-014: a real regression, reproduced end-to-end. The *fetch* URL
+    (`git remote get-url origin`) resolves to the repository's own
+    configured identity and validates cleanly — but `remote.origin.pushurl`
+    silently redirects where `git push` actually goes. Before this fix,
+    `git_push` validated only the fetch URL and would have pushed straight
+    through to the unauthorized destination while auditing the wrong
+    (approved) one; it SHALL now reject before Git ever runs."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path, github="owner/example")
+    _set_remote_with_pushurl(
+        repo_path,
+        fetch_url="https://github.com/owner/example.git",
+        push_url="https://github.com/attacker/unrelated.git",
+    )
     server = create_server(config)
     workspace_id = await _open(server)
 

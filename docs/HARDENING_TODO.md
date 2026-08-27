@@ -825,17 +825,97 @@ URL in `details`, both redacted). `tests/test_project_config.py` — the
 YAML-echo path through the real `load_project_config`/`to_tool_error` pair,
 with the token-length caveat above documented in the test itself.
 
-### H12 — The validated push destination is the one used
+### H12 — The validated push destination is the one used ✅
 **Satisfies:** HR-014 · **Verified by:** HAT-012
+**Commit:** `e2040d2`
 
-- [ ] Resolve with `git remote get-url --push`, or push to the validated URL
+- [x] Resolve with `git remote get-url --push`, or push to the validated URL
       rather than the remote name
-- [ ] Validate both URLs where fetch and push differ
-- [ ] Assert the audit record names the destination actually used
+- [x] Validate both URLs where fetch and push differ
+- [x] Assert the audit record names the destination actually used
 
 **Defect:** `git/remote.py:48–65`, `git/push.py:96–100`. Reproduced: validation
 approved `owner/repo` while the commit landed elsewhere and the audit record
 named the wrong destination.
+
+**Implementation.** `git/remote.py` gained `resolve_remote_push_url` (`git
+remote get-url --push <name>`, host-side, mirroring `resolve_remote_url`),
+and `validate_remote_identity`'s old body was extracted into a new shared
+`_validate_url_identity` helper taking an already-resolved URL string, so
+the six §20.2 checks (transport, owner/repo form, allowlist, caller-supplied
+`expected_remote_repository`) run identically regardless of which URL —
+fetch or push — is being checked. `validate_remote_identity` (used by
+`git_pull`, fetch-only, unchanged) calls the helper once against the fetch
+URL. The new `validate_remote_identity_for_push` (used by `git_push`) calls
+it against the fetch URL first, then — only if the push URL differs from
+the fetch URL — calls it again against the push URL, returning *that*
+result. `tools/git.py`'s `git_push_tool` now calls
+`validate_remote_identity_for_push` instead of `validate_remote_identity`,
+and its single `remote_repository` local (fed into both the audit event's
+`metadata["remote_repository"]` and `GitPushOutput.remote_repository`) now
+comes directly from that call — satisfying the third bullet by
+construction, since there is no longer any separate fetch-only-derived
+value in scope to accidentally name instead.
+
+**Empirically verified real Git behavior before trusting the claim, twice.**
+First, that `git remote get-url` and `git remote get-url --push` genuinely
+return different strings once `remote.<name>.pushurl` (or
+`url.<base>.pushInsteadOf`) is configured — confirmed against git 2.43.0 in
+a real repository. Second, before writing any test, reproduced the *exact*
+original exploit manually against two real repositories: (a) a
+`pushurl` pointed at a different host entirely
+(`https://evil.example.com/evil/other.git`) — old `validate_remote_identity`
+wrongly approved `owner/repo` (the fetch URL's identity); new
+`validate_remote_identity_for_push` correctly rejected with the push URL's
+own scheme/identity failure. (b) a `pushurl` pointed at a same-host,
+different-repo destination (`https://github.com/owner/different-repo.git`)
+— new function correctly rejected with `resolved: 'owner/different-repo'`
+not matching the configured identity.
+
+**A self-caught bug before it ever ran:** the first draft of
+`validate_remote_identity_for_push`'s `push_url == fetch_url` fast path
+re-derived `normalize_to_owner_repo(fetch_url)` a second time and asserted
+the result was not `None` — the exact `assert`-in-production-code
+anti-pattern this session's own earlier review flagged (stripped under
+`-O`; `AssertionError` isn't a `WorkspaceError` the error-translation layer
+handles). Fixed before running anything: `_validate_url_identity`'s return
+value is now captured once (`fetch_normalized`) and returned directly on
+the fast path, eliminating both the redundant re-derivation and the assert.
+
+**Verified the new tests actually catch the regression.** Reverted
+`git/remote.py` and `tools/git.py` to their pre-H12 versions and reran the
+new tests: all 6 new unit tests in `tests/git/test_remote.py` failed with
+`ImportError` (the function doesn't exist yet on the reverted code — the
+strongest possible "this test depends on the fix" signal), and the new
+end-to-end test in `tests/workspace/test_git_push_tool.py` failed
+differently but just as tellingly: instead of raising `GIT_REMOTE_NOT_ALLOWED`
+before Git ever ran, the *old* code let the push attempt proceed all the way
+to a real SSH connection to the (unauthorized) `pushurl` host, failing only
+on host-key verification — direct proof the pre-fix code does not stop the
+push before it reaches the network. Restored the fix; all 7 new tests pass
+again; no regressions in the 53 pre-existing tests across
+`tests/git/test_remote.py`, `tests/workspace/test_git_push_tool.py`,
+`tests/workspace/test_git_pull_tool.py` (now 162 total across that broader
+run).
+
+**New tests:** `tests/git/test_remote.py` — `resolve_remote_push_url`
+reading a configured `pushurl` and falling back to the fetch URL when unset;
+`validate_remote_identity_for_push` rejecting a cross-host redirect and a
+same-host different-repo redirect, accepting a redirect that resolves to an
+allowlisted identity (asserting the *returned* identity is the push
+destination's, not the fetch URL's), accepting the ordinary matching-pushurl
+and no-pushurl-configured cases, and checking `expected_remote_repository`
+against the actual push destination rather than the fetch URL.
+`tests/workspace/test_git_push_tool.py` — one real-Docker end-to-end test
+reproducing the `pushurl`-redirect exploit through the actual `git_push` MCP
+tool (`test_h12_pushurl_redirect_to_an_unauthorized_repo_is_rejected`),
+mirroring the existing `test_at_009_unauthorized_remote_is_rejected` pattern.
+A genuine success-path end-to-end test (pushing through an allowlisted
+`pushurl` redirect all the way to a real accepted push) isn't reachable in
+this suite without a provisioned SSH key (D3, blocked) — the same
+constraint the file's own module docstring already documents for the
+ordinary authenticated-push case; the unit-level tests cover that path
+directly instead.
 
 ### H13 — Denials are audited at §20.7 fidelity
 **Satisfies:** HR-015

@@ -70,7 +70,10 @@ from dev_workspace_mcp.git.push import (
     is_push_non_fast_forward_failure,
     validate_branch_name,
 )
-from dev_workspace_mcp.git.remote import validate_remote_identity
+from dev_workspace_mcp.git.remote import (
+    validate_remote_identity,
+    validate_remote_identity_for_push,
+)
 from dev_workspace_mcp.git.service import detect_interrupted_operation, run_git_host_side
 from dev_workspace_mcp.git.status import read_git_status
 from dev_workspace_mcp.github_api import (
@@ -774,9 +777,13 @@ def register(
                 },
             )
 
-        # §20.2: validate the remote before contacting it at all.
+        # §20.2/HR-014: validate the remote before contacting it at all —
+        # the *push* URL specifically (`validate_remote_identity_for_push`),
+        # since `git push` can resolve to a different destination than
+        # the plain fetch URL `validate_remote_identity` alone checks
+        # (`remote.<name>.pushurl`/`url.<base>.pushInsteadOf`).
         repository_record = registry.get(record.repository_id)
-        remote_repository = validate_remote_identity(
+        remote_repository = validate_remote_identity_for_push(
             repo_path,
             remote=remote,
             allowed_url_schemes=git_policy_config.allowed_url_schemes,

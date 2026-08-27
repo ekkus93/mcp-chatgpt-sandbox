@@ -65,6 +65,26 @@ def resolve_remote_url(repo_path: Path, remote: str) -> str:
     return result.stdout.strip()
 
 
+def resolve_remote_push_url(repo_path: Path, remote: str) -> str:
+    """HR-014 (`docs/HARDENING_SPEC.md` §8): `git remote get-url --push
+    <name>` — the URL `git push` actually resolves to, which can differ
+    from `resolve_remote_url`'s plain fetch URL via
+    `remote.<name>.pushurl` or `url.<base>.pushInsteadOf` (verified
+    empirically against git 2.43.0: with either configured, `get-url`
+    and `get-url --push` return different strings for the same remote
+    name). `.git/config` is container-writable by default, so either is
+    reachable through `exec` alone, with no structured tool involved."""
+    result = run_git_host_side(
+        repo_path, [*PROTOCOL_EXT_DISABLED_ARGS, "remote", "get-url", "--push", remote]
+    )
+    if not result.ok:
+        raise GitRemoteNotAllowedError(
+            f"remote {remote!r} has no push URL configured: {result.stderr.strip()}",
+            details={"remote": remote},
+        )
+    return result.stdout.strip()
+
+
 def classify_url_scheme(url: str) -> UrlScheme:
     """§20.2 steps 2-3: what transport this URL string would invoke.
     `ext` and `file` are named explicitly in the spec and rejected
@@ -99,8 +119,8 @@ def normalize_to_owner_repo(url: str) -> str | None:
     return None
 
 
-def validate_remote_identity(
-    repo_path: Path,
+def _validate_url_identity(
+    url: str,
     *,
     remote: str,
     allowed_url_schemes: list[Literal["ssh", "https"]],
@@ -108,15 +128,11 @@ def validate_remote_identity(
     allowlisted_repositories: list[str],
     expected_remote_repository: str | None,
 ) -> str:
-    """§20.2 steps 1-6, run before any structured operation contacts
-    `remote`. Returns the normalized `owner/repo` identity on success;
-    raises `GitRemoteNotAllowedError` on the first check that fails.
-    Callers invoke Git in-container only after this returns — exactly how
-    `git_commit` runs its mutating commands only once every precondition
-    in §20.6 has already passed.
-    """
-    url = resolve_remote_url(repo_path, remote)
-
+    """§20.2 steps 2-6 against one already-resolved URL string — shared by
+    `validate_remote_identity` (the fetch URL) and
+    `validate_remote_identity_for_push` (additionally, the push URL,
+    HR-014), since either can be the one a structured operation is about
+    to actually contact."""
     scheme = classify_url_scheme(url)
     if scheme in ("ext", "file", "other") or scheme not in allowed_url_schemes:
         raise GitRemoteNotAllowedError(
@@ -160,3 +176,88 @@ def validate_remote_identity(
         )
 
     return normalized
+
+
+def validate_remote_identity(
+    repo_path: Path,
+    *,
+    remote: str,
+    allowed_url_schemes: list[Literal["ssh", "https"]],
+    configured_github: str,
+    allowlisted_repositories: list[str],
+    expected_remote_repository: str | None,
+) -> str:
+    """§20.2 steps 1-6, run before any structured operation contacts
+    `remote`. Returns the normalized `owner/repo` identity on success;
+    raises `GitRemoteNotAllowedError` on the first check that fails.
+    Callers invoke Git in-container only after this returns — exactly how
+    `git_commit` runs its mutating commands only once every precondition
+    in §20.6 has already passed.
+
+    Validates the *fetch* URL (`git remote get-url`) — correct for
+    `git_pull`, which only ever fetches. `git_push` SHALL use
+    `validate_remote_identity_for_push` instead (HR-014): `git push`
+    resolves its destination differently, and validating the fetch URL
+    alone can approve a destination the push itself never goes to.
+    """
+    url = resolve_remote_url(repo_path, remote)
+    return _validate_url_identity(
+        url,
+        remote=remote,
+        allowed_url_schemes=allowed_url_schemes,
+        configured_github=configured_github,
+        allowlisted_repositories=allowlisted_repositories,
+        expected_remote_repository=expected_remote_repository,
+    )
+
+
+def validate_remote_identity_for_push(
+    repo_path: Path,
+    *,
+    remote: str,
+    allowed_url_schemes: list[Literal["ssh", "https"]],
+    configured_github: str,
+    allowlisted_repositories: list[str],
+    expected_remote_repository: str | None,
+) -> str:
+    """HR-014 (`docs/HARDENING_SPEC.md` §8): `git push` resolves its
+    destination via `git remote get-url --push`, which can silently
+    differ from the plain fetch URL `validate_remote_identity` alone
+    checks — `remote.<name>.pushurl` or `url.<base>.pushInsteadOf`
+    redirect it, and `.git/config` is container-writable by default, so
+    either is reachable through `exec` with no structured tool involved.
+    A real regression: validating only the fetch URL let a push actually
+    land in a different repository than the one validation approved, and
+    the resulting audit record named the approved (wrong) destination,
+    not the real one.
+
+    Validates the fetch URL first (unchanged), then the actual push URL
+    too, whenever it differs from the fetch URL — so a `pushurl`/
+    `pushInsteadOf` redirect cannot bypass validation by only being
+    checked against the wrong URL. Returns the *push* destination's
+    normalized identity, since that is what `git_push_tool` is about to
+    actually contact and is what its audit record and response SHALL
+    report (§20.7).
+    """
+    fetch_url = resolve_remote_url(repo_path, remote)
+    fetch_normalized = _validate_url_identity(
+        fetch_url,
+        remote=remote,
+        allowed_url_schemes=allowed_url_schemes,
+        configured_github=configured_github,
+        allowlisted_repositories=allowlisted_repositories,
+        expected_remote_repository=expected_remote_repository,
+    )
+
+    push_url = resolve_remote_push_url(repo_path, remote)
+    if push_url == fetch_url:
+        return fetch_normalized
+
+    return _validate_url_identity(
+        push_url,
+        remote=remote,
+        allowed_url_schemes=allowed_url_schemes,
+        configured_github=configured_github,
+        allowlisted_repositories=allowlisted_repositories,
+        expected_remote_repository=expected_remote_repository,
+    )
