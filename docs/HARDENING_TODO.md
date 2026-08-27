@@ -2135,15 +2135,105 @@ audit record); `test_at_037_exec_produces_an_ssh_auth_audit_event_with_a_fingerp
 `exec`); `test_no_ssh_auth_event_when_the_repository_has_no_configured_key`
 (no key resolves → no fabricated event).
 
-### H27 — A degraded CI run fails
+### H27 — A degraded CI run fails ✅
 **Satisfies:** HR-029 · **Verified by:** HAT-022
+**Commit:** `0e3e0a3`
 
-- [ ] Fail CI when Docker-dependent tests skip (`--strict-markers` plus an
+- [x] Fail CI when Docker-dependent tests skip (`--strict-markers` plus an
       explicit skip guard, or a minimum-collected assertion)
-- [ ] Replace the stale `alpine:3.20` pull step, which is no longer the test
+- [x] Replace the stale `alpine:3.20` pull step, which is no longer the test
       image
-- [ ] Make the contract check able to fail on an unbumped `contract_version` —
+- [x] Make the contract check able to fail on an unbumped `contract_version` —
       it currently compares the constant against itself
+
+**Any skip now fails the run — not `--strict-markers` (nothing in this
+suite uses an unregistered marker; the actual mechanism is a plain
+runtime `pytest.skip()` call, which markers can't intercept).** New
+`tests/_skip_policy.py`: `pytest_runtest_logreport` collects every
+skipped report, `pytest_sessionfinish` sets `session.exitstatus = 1`
+when any were collected. `tests/conftest.py` installs both as real
+pytest hooks. Blanket ("any skip fails"), not scoped to a specific skip
+message, because there are exactly two `pytest.skip(...)` call sites in
+the entire suite (both in `workspace/conftest.py`, both meaning "Docker
+is not reachable") — verified via `grep -rn "pytest.skip\|@pytest.mark.skip"
+tests/` before relying on it. The module docstring says so explicitly,
+so a future genuinely-unrelated skip reason gets a deliberate decision,
+not a silent policy violation.
+
+**Stale `alpine:3.20` pull replaced with actually building the real test
+image.** `docker/default/Dockerfile` is `FROM ubuntu:24.04` —
+`alpine:3.20` was never the image anything in this suite uses; pulling
+it proved nothing about whether the real image (built lazily by
+`tests/workspace/conftest.py`'s `default_image_tag` fixture, from the
+same context) actually builds. Replaced with `docker build -t
+mcp-dev-test-s7:24.04 docker/default/` — same tag `DEFAULT_IMAGE_TEST_TAG`
+names, so this step's build becomes the fixture's later build's cache
+hit, keeping the cost visible as a distinct CI step rather than hidden
+inside the first test that needs it (the CI step's own original intent,
+which the alpine pull never actually served).
+
+**contract_version bump check, git-history-aware.** The existing "MCP
+contract check" step only diffs a fresh `export-schemas` run against the
+committed `schemas/tools.json` — both sides derive `contract_version`
+from the same `CONTRACT_VERSION` constant, so the check can detect
+*staleness* (committed file doesn't match current source) but not a
+forgotten version bump (source changed a tool's schema, the developer
+correctly regenerated and committed the file, but never touched
+`CONTRACT_VERSION` — both sides of the diff would still match). New
+step: `git show <base>:schemas/tools.json` against the base commit
+(`github.event.pull_request.base.sha` for a PR, `github.event.before`
+for a push; skips gracefully with neither available or when the base
+predates `schemas/tools.json`'s own existence), then `jq -S .tools`
+compared between base and `HEAD` with `contract_version` excluded from
+that comparison — if the tools differ but `contract_version` doesn't,
+fail. Needs `actions/checkout@v4`'s default shallow (`fetch-depth: 1`)
+history widened to `fetch-depth: 0`, so the base commit's blob is
+actually reachable via `git show`.
+
+**Verified the logic directly, not just by reading it.** The `jq`
+comparison was run by hand against real commits before trusting it: `git
+show 3349553:schemas/tools.json` (H23, `contract_version: 0.7.2`)
+against the current `schemas/tools.json` (H24, `0.7.3`) — tools differ,
+version differs, correctly no violation. Then simulated the actual
+defect this check exists for: hand-edited a scratch copy of the current
+`schemas/tools.json` with a real schema change (a tool's `description`)
+while keeping `contract_version` unchanged — the same comparison
+correctly flagged it as a violation. `docker build -t
+mcp-dev-test-s7:24.04 docker/default/` was run for real, confirmed it
+builds and produces exactly the tag the fixture expects. The workflow
+YAML was parsed with `yaml.safe_load` to confirm it's syntactically
+valid — this repo has no way to run the real GitHub Actions runner, so
+this is the strongest verification available short of an actual CI run.
+
+**Verified the skip-detection tests catch the regression:** reverted
+`tests/conftest.py` to its pre-H27 version (no `pytest_plugins`
+declaration, no hook installation) and reran the new
+`tests/test_skip_policy.py`. All 4 failed — not with "skip didn't fail
+the run" (the more obviously-expected failure mode) but with `fixture
+'pytester' not found`, since the reverted `conftest.py` no longer
+enables that plugin either — still a correct, load-bearing failure
+tied directly to what was reverted. Restored the fix; all 4 pass again.
+
+**New tests:** `tests/test_skip_policy.py`, exercised through pytest's
+own `pytester` plugin (a real, separate subprocess — `session.exitstatus`
+is process-level state a mocked call can't stand in for) against the
+*real* `_skip_policy.py` hooks, not a hand-duplicated copy that could
+drift from what `conftest.py` actually installs:
+`test_a_clean_pass_exits_zero` (no false positives), `test_at_hat022_a_skip_fails_the_run`
+(HAT-022 itself), `test_a_mix_of_pass_and_skip_still_fails` (one skip
+among passes is still enough), `test_a_genuine_failure_still_fails_without_the_hooks_help`
+(an ordinary assertion failure was never the gap).
+
+No Docker leftovers after the revert or restore runs. No schema drift.
+`ruff check`, `ruff format --check`, `mypy src` clean across the whole
+tree; `tests/test_skip_policy.py` (4/4) and the broader `tests/`
+collection (`pytest --collect-only`, no import errors) — the full
+background suite run was interrupted at the ~84% mark with zero visible
+failures (the same recurring environmental pattern seen since H19,
+this time on the *entire* suite rather than a scoped subset, since H27
+touches global test infra); proceeding on the direct evidence above
+rather than retrying, since none of it depends on that specific run
+completing.
 
 ### H28 — Adversarial coverage for every input boundary
 **Satisfies:** HR-030

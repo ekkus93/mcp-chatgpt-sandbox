@@ -9,7 +9,13 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
+      # HR-029 (`docs/HARDENING_SPEC.md` §12): full history, not the
+      # default shallow single-commit checkout — the contract_version
+      # bump check below needs to `git show` the previous commit's
+      # `schemas/tools.json`.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -20,10 +26,19 @@ jobs:
         run: uv sync --group dev
 
       # ubuntu-latest ships Docker pre-installed and running (§71's
-      # "Docker-backed integration tests"); pulling here keeps the cost
-      # visible instead of hiding inside the first test that needs it.
-      - name: Pull test image
-        run: docker pull alpine:3.20
+      # "Docker-backed integration tests"); building here keeps the cost
+      # visible instead of hiding inside the first test that needs it
+      # (`tests/workspace/conftest.py`'s `default_image_tag` fixture
+      # builds this same image lazily, from the same context and tag —
+      # this step is a cache-warming duplicate of that build, not a
+      # separate image). HR-029: this was `docker pull alpine:3.20`,
+      # which is not, and never was, an image anything in this suite
+      # actually uses (`docker/default/Dockerfile` is `FROM ubuntu:24.04`)
+      # — pulling it proved nothing about whether the real test image
+      # builds. The tag here MUST match `DEFAULT_IMAGE_TEST_TAG` in
+      # `tests/workspace/conftest.py`.
+      - name: Build test image
+        run: docker build -t mcp-dev-test-s7:24.04 docker/default/
 
       - name: ruff format
         run: uv run ruff format --check .
@@ -60,6 +75,36 @@ jobs:
             echo "::error::schemas/tools.json is stale — run 'dev-workspace-mcp export-schemas' and commit the result (bump contract_version per §33.2 if the change is intentional)";
             exit 1;
           }
+
+      # §33.2: a tool-schema change SHALL bump contract_version. The
+      # check above only catches schemas/tools.json drifting from what
+      # the current source produces — it re-derives contract_version
+      # from the same CONTRACT_VERSION constant on both sides of its
+      # diff, so it cannot by itself tell "the schemas changed but
+      # contract_version didn't" from "nothing changed at all." This
+      # step is the git-history-aware half: compare this commit's tool
+      # schemas (contract_version stripped) against the base commit's —
+      # if they differ, contract_version SHALL have changed too.
+      - name: contract_version bump check (§33.2)
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            echo "No base commit to compare against (first commit on this branch) — skipping."
+            exit 0
+          fi
+          if ! git cat-file -e "$BASE_SHA:schemas/tools.json" 2>/dev/null; then
+            echo "Base commit has no schemas/tools.json yet — skipping."
+            exit 0
+          fi
+          git show "$BASE_SHA:schemas/tools.json" > /tmp/base_tools.json
+          OLD_VERSION=$(jq -r .contract_version /tmp/base_tools.json)
+          NEW_VERSION=$(jq -r .contract_version schemas/tools.json)
+          OLD_TOOLS=$(jq -S .tools /tmp/base_tools.json)
+          NEW_TOOLS=$(jq -S .tools schemas/tools.json)
+          if [ "$OLD_TOOLS" != "$NEW_TOOLS" ] && [ "$OLD_VERSION" = "$NEW_VERSION" ]; then
+            echo "::error::schemas/tools.json's tool schemas changed since $BASE_SHA but contract_version ($NEW_VERSION) was not bumped (§33.2)";
+            exit 1;
+          fi
 
       - name: pytest
         run: uv run pytest --cov --cov-report=term-missing

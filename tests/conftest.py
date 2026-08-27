@@ -6,6 +6,14 @@ from typing import Any
 import pytest
 
 from dev_workspace_mcp.config.models import ServerConfig
+from tests._skip_policy import pytest_runtest_logreport, pytest_sessionfinish
+
+__all__ = ["pytest_runtest_logreport", "pytest_sessionfinish"]
+
+# HR-029: lets `test_skip_policy.py` use the `pytester` fixture at all —
+# pytest only enables that (internal, off-by-default) plugin when a
+# top-level conftest opts in.
+pytest_plugins = ["pytester"]
 
 
 @pytest.fixture
