@@ -88,6 +88,20 @@ def _check_ssh_key_not_under_host_ssh(config: ServerConfig, *, home: Path) -> No
             )
 
     _reject_if_under_host_ssh(config.ssh.keys_dir, what="ssh.keys_dir")
+    # HR-007 (`docs/HARDENING_SPEC.md` §6): every configuration path that
+    # can name a key file, not only the per-repository one. A real
+    # regression: `ssh.shared_key` (used under `scope: shared` — §19.1's
+    # own "one key installed on every configured repository" mode) was
+    # never checked here, and a value like `"../fakehome/.ssh/id_ed25519"`
+    # resolved straight to the host user's personal key.
+    # `tests/config/test_loader.py`'s
+    # `test_every_ssh_config_key_bearing_field_is_checked` is this
+    # function's other half: it fails, on its own, the moment a new
+    # key-bearing field is added to either `SSHConfig` or
+    # `RepositoryConfig` without a matching line added here.
+    if config.ssh.shared_key is not None:
+        key_path = config.ssh.keys_dir / config.ssh.shared_key
+        _reject_if_under_host_ssh(key_path, what="ssh.shared_key")
     for repo in config.repositories:
         if repo.ssh_key is not None:
             key_path = config.ssh.keys_dir / repo.ssh_key

@@ -494,17 +494,54 @@ only the non-root one); `tests/workspace/test_project_config_integration.py`
 MCP tool, asserting no container is created at all); `tests/workspace/
 test_default_image.py` (the real-container PID-1 proof above).
 
-### H7 — The §19.1 key invariant covers every key path
+### H7 — The §19.1 key invariant covers every key path ✅
 **Satisfies:** HR-007 · **Verified by:** HAT-006
+**Commit:** `e8e39ba`
 
-- [ ] Extend `_check_ssh_key_not_under_host_ssh` to `ssh.shared_key`
-- [ ] Restructure so a new key-bearing config field that is not checked fails a
+- [x] Extend `_check_ssh_key_not_under_host_ssh` to `ssh.shared_key`
+- [x] Restructure so a new key-bearing config field that is not checked fails a
       test rather than passing silently
-- [ ] Cover all three paths in tests
+- [x] Cover all three paths in tests
 
 **Defect:** `config/loader.py:74–94`. Reproduced: `shared_key:
 "../fakehome/.ssh/id_ed25519"` accepted, resolving to the host user's personal
 key. FR-025 says this "SHALL NOT be relaxed by policy or configuration."
+
+**Implementation.** `_check_ssh_key_not_under_host_ssh` now checks
+`config.ssh.shared_key` (resolved against `keys_dir`, same as the per-repository
+check) alongside `ssh.keys_dir` and every `repositories[].ssh_key`.
+
+**The "restructure" bullet was deliberately NOT a cross-module refactor.**
+`workspace/ssh_agent.py`'s `resolve_ssh_key_path` already encodes "which key
+file will actually be loaded" — importing it into `config/loader.py` was
+considered and rejected: it would make a config-validation module depend on a
+runtime/process-management one (`ssh_agent.py` pulls in `subprocess`/`signal`
+for spawning real agent processes), inverting the codebase's normal
+config → workspace dependency direction for a benefit `field_validator`-free
+restructuring didn't need. Instead, `tests/config/test_loader.py` gained
+`test_every_ssh_config_key_bearing_field_is_checked`: a meta-test asserting
+`set(SSHConfig.model_fields)` and `set(RepositoryConfig.model_fields)` each
+equal exactly (the fields the check inspects) ∪ (an explicit, named allowlist
+of fields decided to be non-key-bearing). Adding any new field to either
+model without updating one of those two sets fails this test immediately —
+which is HR-007's actual requirement, achieved without new coupling.
+
+**That meta-test's actual guarantee, verified precisely, not assumed:** it
+protects against a *future* field being added silently — confirmed by adding
+a synthetic extra field to the checked set and watching the assertion fail —
+but it does **not**, and structurally cannot, retroactively prove
+`shared_key`'s pre-existing gap was closed, since it only compares the
+*model's* field set, not the *check function's* actual behavior. Reverted
+`config/loader.py` alone and confirmed the meta-test still passed (correctly
+— `SSHConfig`'s fields didn't change), while the dedicated
+`test_at_hat006_shared_ssh_key_under_host_ssh_rejected` regression test failed
+with "DID NOT RAISE `ConfigError`". The two tests are doing genuinely
+different jobs, and both are needed.
+
+**New tests:** `tests/config/test_loader.py` — the literal exploit config
+(`scope: shared`, `shared_key` walking into `~/.ssh`) rejected with the
+`ssh.shared_key` error naming that specific path; a "legitimate shared key
+outside `~/.ssh` still accepted" guard; and the structural meta-test above.
 
 ### H8 — The entrypoint re-validates cache paths
 **Satisfies:** HR-008 · **Verified by:** HAT-007

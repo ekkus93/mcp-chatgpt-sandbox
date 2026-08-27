@@ -121,6 +121,53 @@ def test_repository_ssh_key_outside_host_ssh_is_accepted(
     assert config.repositories[0].ssh_key == "example.ed25519"
 
 
+def test_at_hat006_shared_ssh_key_under_host_ssh_rejected(
+    tmp_path: Path, minimal_config_dict: dict[str, Any]
+) -> None:
+    """A real regression: `ssh.shared_key` (used under `scope: shared`)
+    was never checked, so a value resolving under the host user's own
+    `.ssh` — the human's personal key — was accepted."""
+    home = tmp_path / "home"
+    minimal_config_dict["ssh"]["keys_dir"] = str(home)
+    minimal_config_dict["ssh"]["scope"] = "shared"
+    minimal_config_dict["ssh"]["shared_key"] = ".ssh/id_ed25519"
+    config_path = _write_config(tmp_path, minimal_config_dict)
+    with pytest.raises(ConfigError, match=r"ssh\.shared_key"):
+        load_config(config_path, home=home)
+
+
+def test_at_hat006_shared_ssh_key_outside_host_ssh_is_accepted(
+    tmp_path: Path, minimal_config_dict: dict[str, Any]
+) -> None:
+    home = tmp_path / "home"
+    minimal_config_dict["ssh"]["scope"] = "shared"
+    minimal_config_dict["ssh"]["shared_key"] = "shared.ed25519"
+    config_path = _write_config(tmp_path, minimal_config_dict)
+    config = load_config(config_path, home=home)
+    assert config.ssh.shared_key == "shared.ed25519"
+
+
+def test_every_ssh_config_key_bearing_field_is_checked() -> None:
+    """HR-007's own structural guarantee: this test — not memory — is
+    what makes "a new key-bearing field fails a test rather than passing
+    silently" true. It fails the moment a field is added to `SSHConfig`
+    or `RepositoryConfig` without a corresponding decision recorded in
+    the two sets below (and, for a key-bearing field, a matching check
+    added to `_check_ssh_key_not_under_host_ssh`)."""
+    from dev_workspace_mcp.config.models import RepositoryConfig, SSHConfig
+
+    checked_ssh_fields = {"keys_dir", "shared_key"}
+    known_non_key_bearing_ssh_fields = {"mode", "scope", "known_hosts"}
+    assert set(SSHConfig.model_fields) == checked_ssh_fields | known_non_key_bearing_ssh_fields
+
+    checked_repository_fields = {"ssh_key"}
+    known_non_key_bearing_repository_fields = {"id", "path", "github"}
+    assert (
+        set(RepositoryConfig.model_fields)
+        == checked_repository_fields | known_non_key_bearing_repository_fields
+    )
+
+
 # --- §53: secrets never live under a repository root or path ---------------
 
 
