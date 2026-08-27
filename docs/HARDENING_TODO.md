@@ -606,17 +606,98 @@ traversal-through-`extra_env` proof above) and `tests/workspace/test_caches.py`
 
 ## Phase 4 — Path containment
 
-### H9 — File access is race-free
+### H9 — File access is race-free ✅
 **Satisfies:** HR-011 · **Verified by:** HAT-009
+**Commit:** `4bfff54`
 
-- [ ] Open files with `O_NOFOLLOW` relative to a directory fd pinned at
+- [x] Open files with `O_NOFOLLOW` relative to a directory fd pinned at
       validation time, or re-verify the opened inode with `fstat`
-- [ ] Apply to read, write, patch, and delete paths
-- [ ] Test with a sustained concurrent flipper, not a single attempt
+- [x] Apply to read, write, patch, and delete paths
+- [x] Test with a sustained concurrent flipper, not a single attempt
 
 **Defect:** `filesystem/security.py:69–80` validates by path;
 `service.py:132,196` re-open by path. Reproduced: a host private key returned on
 iteration 1; an escaping write within 24.
+
+**Implementation: the "re-verify with fstat" alternative, generalized to a real
+path comparison.** `FilesystemSecurity` gained three primitives — `open_validated`
+(open + verify in one call), `open_parent_validated` (opens the *parent* as a
+`dir_fd`, for `delete_file`'s `dir_fd`-relative operations), and the pair
+`resolve_open_fd`/`is_within_root` a caller with a more involved open sequence
+(`write_file`) can use directly. All three read `/proc/self/fd/<fd>` — the
+kernel's own record of an open fd's canonical path — rather than a bare `fstat`
+inode number: an `open()` is atomic, so whatever this reports is genuinely what
+got opened, immune to any race after the fact, and it gives back an actual
+*path* to compare against the repository root rather than an opaque inode to
+match against a second, separately-racy `stat()`. Linux-only (`/proc`), matching
+this daemon's existing Linux-only assumptions elsewhere (`entrypoint.sh`'s
+`setpriv`/`useradd`).
+
+`read_file` now opens via `open_validated` and uses `fstat` on the *opened fd*
+(not a fresh `stat()` on the path) for its "is this a regular file" check —
+that check was itself a second, independent race in the original code.
+`delete_file` opens the *parent* directory race-free and passes `dir_fd=` to
+`os.unlink`/`shutil.rmtree` — `unlinkat`/`shutil.rmtree(dir_fd=...)` resolve the
+target relative to that pinned fd with no further path-string re-resolution at
+all, closing the race for the delete syscalls themselves, not only the
+validation before them (confirmed `shutil.rmtree` on this Python already walks
+recursively via `dir_fd`-relative operations internally once it has its own
+top-level fd — `shutil._use_fd_functions` — so passing `dir_fd` here extends
+that same safety to the initial hop too). `patch_file` needed no separate
+change: it already goes through `read_file` then `write_file`.
+
+**A real bug in my own first draft, caught by adversarial testing before it
+shipped, not assumed away.** The first version of `write_file`'s fix correctly
+*rejected* an escaped write (no success ever returned to the caller) but cleaned
+up the just-created file by calling `path.unlink()` — the same racy path
+*string* the fix exists to stop trusting. Under sustained racing, the race that
+redirected the `open()` to the escaped location had usually already moved on by
+cleanup time, so the unlink silently missed the real file and a stray,
+attacker-content file was left behind outside the repository — confirmed with
+a dedicated adversarial script: escaped on iteration 7, with the rejection
+correctly reported to the caller every time. Fixed by capturing the actual
+kernel-reported path (`resolve_open_fd`) *before* attempting cleanup and
+unlinking that, not the original string — re-tested with the same script for
+3000 iterations with zero stray files afterward. Deliberately did **not** put
+the actual escaped host path in the exception's `details`, since §31 errors are
+serialized straight back to the MCP client — surfacing it there would leak host
+filesystem structure through what's supposed to be a client-facing "your path
+was invalid" error.
+
+**Two residual gaps, deliberately scoped out and documented, not silently
+dropped:** (1) `write_file`'s `path.parent.mkdir(parents=True, exist_ok=True)`
+still resolves by path string, so a pre-existing malicious symlink at an
+intermediate component could make `mkdir` create empty directories through it
+before the fd-based checks below ever run — those checks still guarantee no
+*data* is ever written outside the root even so (HR-011's actual property), but
+the *mkdir* side effect itself isn't closed; doing so would need the full
+per-component `O_NOFOLLOW` walk HR-011 names as its alternative technique. (2)
+`delete_file`'s nested-`.git` scan (`path.rglob(".git")`, H4) still walks the
+resolved path string rather than the pinned `dir_fd` — a narrower,
+already-accepted race matching H4's own scope (a TOCTOU in the scan-then-delete
+pattern itself, not the repository-escape race this task targets), immediately
+preceding the `dir_fd`-anchored `rmtree` that this task's fix does cover.
+
+**Verified with sustained concurrent races, not single attempts, per the task's
+own bullet** — a background thread continuously flips a directory between a
+real directory and a symlink pointing outside the repository (standing in for
+the container racing the daemon via `exec`) while the main thread hammers
+`read_file`/`write_file`/`delete_file` for 2000 iterations each. Verified each
+race genuinely reproduces the original defect by reverting the fix and
+confirming: the read race leaked host content on iteration 134 (not the first
+attempt — genuinely intermittent, which is why a single-attempt test would have
+been insufficient); the write race escaped on iteration 7; the delete race
+destroyed the host file on iteration 52. Restored the fix; reran all three;
+zero leaks/escapes/deletions across 2000 iterations each, and the escaped
+directory left completely empty afterward in both cases (confirmed by listing
+it, not just checking the specific filename).
+
+**New tests:** `tests/filesystem/test_service.py` — a shared `_symlink_flipper`
+fixture (the background-thread race harness above) and three tests
+(`test_at_hat009_read_file_never_returns_content_from_outside_the_repository`,
+`..._write_file_never_lands_outside_the_repository`,
+`..._delete_file_never_deletes_outside_the_repository`), each independently
+confirmed to fail against the pre-fix code.
 
 ### H10 — An escaping symlink does not break enumeration
 **Satisfies:** HR-012 · **Verified by:** HAT-010

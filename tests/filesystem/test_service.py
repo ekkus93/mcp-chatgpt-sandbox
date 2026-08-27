@@ -1,6 +1,11 @@
 """S10: filesystem tool primitives — list/read/write/delete
 (§13.1-§13.6, §12.2, §47, AT-003, AT-018)."""
 
+import contextlib
+import os
+import shutil
+import threading
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -380,3 +385,99 @@ def test_delete_file_recursive_without_nested_git_is_unaffected(tmp_path: Path) 
 
     svc.delete_file("plain", recursive=True)
     assert not (root / "plain").exists()
+
+
+# --- HR-011 (docs/HARDENING_SPEC.md §7): race-free file access -----------------------
+
+
+@pytest.fixture
+def _symlink_flipper(tmp_path: Path) -> Iterator[tuple[Path, Path, Path]]:
+    """A background thread that continuously flips a directory `d`
+    between a real directory and a symlink pointing outside the
+    repository — standing in for the container racing the daemon via
+    `exec`, the same threat `open_validated`'s own docstring names.
+    Yields `(root, d, outside)`; stops the thread on teardown."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    d = root / "d"
+    d.mkdir()
+
+    stop = threading.Event()
+
+    def flip() -> None:
+        while not stop.is_set():
+            try:
+                if d.is_dir() and not d.is_symlink():
+                    shutil.rmtree(str(d))
+            except OSError:
+                pass
+            with contextlib.suppress(FileExistsError):
+                os.symlink(str(outside), str(d))
+            with contextlib.suppress(OSError):
+                os.unlink(str(d))
+            with contextlib.suppress(FileExistsError):
+                d.mkdir()
+
+    thread = threading.Thread(target=flip, daemon=True)
+    thread.start()
+    try:
+        yield root, d, outside
+    finally:
+        stop.set()
+        thread.join(timeout=2)
+
+
+def test_at_hat009_read_file_never_returns_content_from_outside_the_repository(
+    _symlink_flipper: tuple[Path, Path, Path],
+) -> None:
+    """A real regression: with `d` flipping between a real directory and
+    a symlink to `outside`, `read_file("d/secret.txt")` returned the
+    *host* file's content — a real private key, in the original
+    reproduction — on the very first race iteration. Sustained here for
+    2000 iterations with no leak, confirmed (by reverting the fix) to
+    fail within ~150 iterations without it."""
+    root, _d, outside = _symlink_flipper
+    (outside / "secret.txt").write_text("OUTSIDE-THE-REPOSITORY\n")
+    security = FilesystemSecurity(root, authorized_roots=[root.parent])
+    service = FilesystemService(security, FilesystemConfig())
+
+    for _ in range(2000):
+        try:
+            result = service.read_file("d/secret.txt")
+        except Exception:
+            continue
+        assert result.content is None or "OUTSIDE-THE-REPOSITORY" not in result.content
+
+
+def test_at_hat009_write_file_never_lands_outside_the_repository(
+    _symlink_flipper: tuple[Path, Path, Path],
+) -> None:
+    """The write-side counterpart: `write_file("d/pwned.txt", ...)` must
+    never create a file under `outside`, and — the bug this test itself
+    caught while this task was being written — a *rejected* write must
+    not leave a stray file behind outside the repository either."""
+    root, _d, outside = _symlink_flipper
+    security = FilesystemSecurity(root, authorized_roots=[root.parent])
+    service = FilesystemService(security, FilesystemConfig())
+
+    for _ in range(2000):
+        with contextlib.suppress(Exception):
+            service.write_file("d/pwned.txt", "written by the container\n")
+        assert not (outside / "pwned.txt").exists()
+
+
+def test_at_hat009_delete_file_never_deletes_outside_the_repository(
+    _symlink_flipper: tuple[Path, Path, Path],
+) -> None:
+    root, _d, outside = _symlink_flipper
+    important = outside / "important-host-file.txt"
+    important.write_text("do not delete me\n")
+    security = FilesystemSecurity(root, authorized_roots=[root.parent])
+    service = FilesystemService(security, FilesystemConfig())
+
+    for _ in range(2000):
+        with contextlib.suppress(Exception):
+            service.delete_file("d/important-host-file.txt")
+        assert important.exists()
