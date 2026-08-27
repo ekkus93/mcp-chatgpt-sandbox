@@ -50,9 +50,18 @@ def test_reconcile_marks_starting_job_lost(job_store: JobStore) -> None:
 
 
 def test_reconcile_marks_running_job_lost_even_with_no_live_pid(job_store: JobStore) -> None:
+    """H28 (`docs/HARDENING_TODO.md`, HR-030): a real, reaped pid — not
+    `2**30` (this host's own `pid_max` is 4194304; a hand-picked value
+    far past it is a shape `mark_running`'s real callers (always a
+    genuine `Popen.pid`) never produce, and `_pid_alive`'s `os.kill`
+    call can't actually distinguish "never a valid pid at all" from
+    "was valid, has since exited" — both raise `ProcessLookupError` the
+    same way, so an out-of-range placeholder risks silently exercising
+    the wrong scenario)."""
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])  # noqa: S603
+    proc.wait(timeout=5)  # exited and reaped — pid is now genuinely dead
     _create(job_store)
-    # A pid essentially guaranteed not to be alive.
-    job_store.mark_running("job_1", pid=2**30)
+    job_store.mark_running("job_1", pid=proc.pid)
     result = reconcile_jobs(job_store)
     assert result == [("job_1", False)]
     assert job_store.get("job_1").state == JobState.LOST

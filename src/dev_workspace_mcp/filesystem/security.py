@@ -7,6 +7,7 @@ ever touches disk — this is the boundary AT-001, AT-002, and AT-033 test.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path, PurePosixPath
 
@@ -107,6 +108,56 @@ class FilesystemSecurity:
         parent_fd = os.open(resolved.parent, os.O_RDONLY | os.O_DIRECTORY)
         self.verify_fd_within_root(parent_fd, relative_path)
         return parent_fd, resolved.name
+
+    def ensure_parent_directories(self, relative_path: str) -> None:
+        """HR-011 (`docs/HARDENING_SPEC.md` §7): closes `write_file`'s
+        one remaining documented gap — a plain `path.parent.mkdir(parents=True,
+        exist_ok=True)` against the resolved path *string* would follow a
+        pre-existing malicious symlink at an intermediate component,
+        creating directories through it (the existing `open_validated`/
+        `resolve_open_fd` checks elsewhere still guarantee no *data* is
+        ever written outside the root even so — that's HR-011's actual
+        property — but this `mkdir` side effect itself was not covered).
+
+        The full per-component `O_NOFOLLOW` walk HR-011 names as the
+        alternative to the fd+readlink technique: starting from the
+        repository root's own fd (trusted — `self._root` is already a
+        resolved, validated path), each intermediate component is
+        created with `os.mkdir(..., dir_fd=parent_fd)` (a no-op if it
+        already exists as a real directory) and then *opened* with
+        `O_NOFOLLOW` before descending into it — atomically refusing a
+        symlink at that name, whether it was already there or was
+        swapped in between the `mkdir` and the `open` (the kernel checks
+        what is actually at that name at the moment of the `open`
+        syscall itself, the same atomicity guarantee `open_validated`'s
+        own containment check relies on)."""
+        normalized = relative_path.replace("\\", "/").lstrip("/")
+        parts = [p for p in PurePosixPath(normalized).parent.parts if p not in ("", ".")]
+
+        dir_fd = os.open(self._root, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            for part in parts:
+                if part == "..":
+                    raise PathOutsideRepositoryError(
+                        f"path escapes the repository root: {relative_path!r}",
+                        details={"path": relative_path},
+                    )
+                # already a real directory, or a symlink — O_NOFOLLOW below decides
+                with contextlib.suppress(FileExistsError):
+                    os.mkdir(part, mode=0o777, dir_fd=dir_fd)
+                try:
+                    next_fd = os.open(
+                        part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd
+                    )
+                except OSError as exc:
+                    raise PathOutsideRepositoryError(
+                        f"path escapes the repository root: {relative_path!r}",
+                        details={"path": relative_path},
+                    ) from exc
+                os.close(dir_fd)
+                dir_fd = next_fd
+        finally:
+            os.close(dir_fd)
 
     def resolve_open_fd(self, fd: int) -> Path:
         """The kernel's own record of `fd`'s canonical path

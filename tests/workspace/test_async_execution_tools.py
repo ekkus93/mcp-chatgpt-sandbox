@@ -453,36 +453,52 @@ async def test_at_hat017_failed_termination_is_reported_and_not_marked_canceled(
     await _wait_until(reached_a_terminal_state, timeout=10.0)
 
 
-async def test_exec_start_disconnect_reconnect_job_still_queryable(
+async def test_at_h028_exec_start_disconnect_reconnect_job_still_queryable(
     minimal_config: ServerConfig,
     default_image_tag: str,
     docker_client: docker.DockerClient,
     tmp_path: Path,
 ) -> None:
-    """AT-006: start a long build, disconnect/reconnect, job still
-    queryable. Simulated by discarding the `exec_start` response and
-    looking the job up again purely by id, as a fresh client would."""
+    """AT-006, made genuinely cross-session (H28, `docs/HARDENING_TODO.md`,
+    HR-030): the predecessor of this test simulated "disconnect" by
+    `del`-ing the `exec_start` response inside the *same* Python
+    `server` object and the *same* `AsyncJobRunner` instance — proving
+    nothing about whether job state survives independent of the
+    in-process object graph that started it, since nothing here ever
+    actually severed a connection. `create_server` opens its own real,
+    file-backed `sqlite3.Connection` (`config.state_db_path`, not
+    `:memory:`) and its own fresh `AsyncJobRunner` on every call — a
+    *second*, independent `create_server(config)` instance is a much
+    closer analogue to a genuinely different client session hitting the
+    daemon fresh, with no Python reference to anything the first session
+    created: its `AsyncJobRunner` never started this job, so
+    `exec_status`/`exec_output` here can only be reading real, persisted
+    `JobStore` state (§15.4's own durability contract), not an
+    in-memory shortcut."""
     config = _configured(minimal_config, default_image_tag, tmp_path / "work" / "example")
-    server = create_server(config)
-    workspace_id = await _open_workspace(server)
+    session_one = create_server(config)
+    workspace_id = await _open_workspace(session_one)
 
-    started = await server.call_tool(
+    started = await session_one.call_tool(
         "exec_start", {"workspace_id": workspace_id, "shell": "sleep 1 && echo built"}
     )
     job_id = started.structured_content["job_id"]
-    del started  # the "disconnect" — nothing further comes from this call
+    del session_one  # the "disconnect" — no reference to this session survives
 
-    # "Reconnect": a fresh status query using only the remembered job_id.
-    status = await server.call_tool("exec_status", {"job_id": job_id})
+    # "Reconnect": a genuinely independent server instance, sharing only
+    # the on-disk state `config` points at — the same session_id no
+    # in-process client of session_one would ever hold.
+    session_two = create_server(config)
+    status = await session_two.call_tool("exec_status", {"job_id": job_id})
     assert status.structured_content["job_id"] == job_id
     assert status.structured_content["state"] in ("running", "succeeded")
 
     async def finished() -> bool:
-        s = await server.call_tool("exec_status", {"job_id": job_id})
+        s = await session_two.call_tool("exec_status", {"job_id": job_id})
         return bool(s.structured_content["state"] == "succeeded")
 
     await _wait_until(finished)
-    output = await server.call_tool("exec_output", {"job_id": job_id})
+    output = await session_two.call_tool("exec_output", {"job_id": job_id})
     assert "built" in output.structured_content["content"]
 
 

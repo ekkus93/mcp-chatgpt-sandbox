@@ -547,3 +547,34 @@ def test_at_hat009_delete_file_never_deletes_outside_the_repository(
         with contextlib.suppress(Exception):
             service.delete_file("d/important-host-file.txt")
         assert important.exists()
+
+
+def test_at_h028_write_file_never_mkdirs_through_an_intermediate_symlink(
+    _symlink_flipper: tuple[Path, Path, Path],
+) -> None:
+    """H28 (`docs/HARDENING_TODO.md`, HR-030): the mkdir-side gap H9
+    (HR-011) documented and deliberately left open — `write_file`'s old
+    `path.parent.mkdir(parents=True, exist_ok=True)` walked the
+    *resolved path string*, which happily creates directories through
+    whatever `d` currently is. A single-level target (`d/pwned.txt`,
+    the existing HAT-009 write test above) can't reach this gap at
+    all: `resolve()` itself already rejects the call outright if `d` is
+    a symlink to `outside` at resolution time, since the immediate
+    parent needs no `mkdir` — there's no intermediate component left to
+    create. A *nested* target (`d/nested/pwned.txt`) is what actually
+    exercises it: `resolve()` can legitimately succeed while `d` is
+    still a real, in-bounds directory (the deeper `nested` component
+    doesn't exist yet, so nothing to follow), and only *after* that
+    does `d` get swapped to a symlink before the parent-directory walk
+    runs — reproduced, by reverting `ensure_parent_directories` back to
+    the old `mkdir(parents=True)`, as a real `outside/nested/` directory
+    left behind on the host."""
+    root, _d, outside = _symlink_flipper
+    security = FilesystemSecurity(root, authorized_roots=[root.parent])
+    service = FilesystemService(security, FilesystemConfig())
+
+    for _ in range(2000):
+        with contextlib.suppress(Exception):
+            service.write_file("d/nested/pwned.txt", "written by the container\n")
+        assert not (outside / "nested").exists()
+        assert not (outside / "nested" / "pwned.txt").exists()

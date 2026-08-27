@@ -1,5 +1,7 @@
 """S16: on-disk job log capture (§15.6)."""
 
+import threading
+import time
 from pathlib import Path
 
 from dev_workspace_mcp.execution.log_capture import StreamCapture, read_log_bytes
@@ -20,12 +22,66 @@ def test_write_never_opens_a_file_when_nothing_is_written(tmp_path: Path) -> Non
     assert not (tmp_path / "out.log").exists()
 
 
-def test_write_is_flushed_immediately_for_concurrent_readers(tmp_path: Path) -> None:
+def test_write_is_flushed_immediately_for_a_same_thread_reread(tmp_path: Path) -> None:
+    """A `write()` that returns without a `flush()` would leave this
+    unread from Python's own buffer, not just from another thread — this
+    is the narrower, same-thread half of the property; H28's
+    `test_a_concurrent_reader_thread_never_observes_a_torn_or_stale_write`
+    below is the genuinely multi-threaded half."""
     path = tmp_path / "out.log"
     capture = StreamCapture(path, max_output_bytes=100, tail_keep_bytes=20)
     capture.write(b"partial")
     # No finish() yet — a concurrent reader must already see this chunk.
     assert path.read_bytes() == b"partial"
+
+
+def test_at_h028_a_concurrent_reader_thread_never_observes_a_torn_or_stale_write(
+    tmp_path: Path,
+) -> None:
+    """H28 (`docs/HARDENING_TODO.md`, HR-030): the predecessor of this
+    test (`test_write_is_flushed_immediately_for_a_same_thread_reread`)
+    was named for concurrent readers but was itself single-threaded — a
+    sequential write-then-read in one thread can't distinguish "flushed
+    for any reader" from "flushed only as far as *this* thread's own
+    view." `AsyncJobRunner`'s actual production shape is exactly this:
+    a background thread writing while `exec_output`'s async tool layer
+    reads the same file from a different thread. A genuine reader
+    thread, polling *while* the writer thread is still writing, must
+    never see content that isn't a real prefix of what the file
+    eventually contains — a torn write or a stale, unflushed read would
+    show up here as a snapshot the final content doesn't start with."""
+    path = tmp_path / "out.log"
+    capture = StreamCapture(path, max_output_bytes=10_000, tail_keep_bytes=100)
+    observed: list[bytes] = []
+    stop = threading.Event()
+
+    def reader() -> None:
+        while not stop.is_set():
+            if path.exists():
+                observed.append(path.read_bytes())
+            time.sleep(0.0005)
+
+    reader_thread = threading.Thread(target=reader)
+    reader_thread.start()
+    try:
+        for i in range(200):
+            capture.write(f"chunk-{i:03d}\n".encode())
+            time.sleep(0.001)
+    finally:
+        stop.set()
+        reader_thread.join(timeout=5.0)
+    capture.finish()
+
+    final_content = path.read_bytes()
+    assert len(observed) >= 5, "the reader thread barely ran — test is not exercising concurrency"
+    for snapshot in observed:
+        assert final_content.startswith(snapshot), (
+            "a concurrent reader observed content that is not a genuine prefix "
+            "of the final file — a torn write or a stale, unflushed read"
+        )
+    # Real concurrency, not the reader thread just catching the same
+    # already-finished state repeatedly.
+    assert len({len(s) for s in observed}) > 1
 
 
 def test_total_bytes_counts_past_the_cap(tmp_path: Path) -> None:

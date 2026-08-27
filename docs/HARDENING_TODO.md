@@ -2235,16 +2235,148 @@ touches global test infra); proceeding on the direct evidence above
 rather than retrying, since none of it depends on that specific run
 completing.
 
-### H28 — Adversarial coverage for every input boundary
+### H28 — Adversarial coverage for every input boundary ✅
 **Satisfies:** HR-030
+**Commit:** `5cce337`
 
-- [ ] For each control in Phases 1–5, add a hostile-input test alongside the
+- [x] For each control in Phases 1–5, add a hostile-input test alongside the
       well-formed one
-- [ ] Fix the tests the review found asserting nothing meaningful: AT-006's
+- [x] Fix the tests the review found asserting nothing meaningful: AT-006's
       "disconnect" (`del started` on an in-process server), `test_write_is_
       flushed_immediately_for_concurrent_readers` (single-threaded), and
       `test_reconcile`'s hand-set `pid` (a shape production never produces)
-- [ ] Add restart-survival coverage for jobs, which currently has none
+- [x] Add restart-survival coverage for jobs, which currently has none
+
+**Phase 1–5 audit, not a blind fill-in.** Rather than assume every
+control needed a new test, every control in §4–§8 (HR-001 through
+HR-016, plus HR-009/HR-024 from Phase 7, named explicitly in the task)
+was individually re-checked against the actual test bodies already in
+the suite — not just the TODO doc's own narrative. 15 of 16 controls
+already had genuine, on-point hostile-input coverage (real
+option-injection strings, real attempted code execution via a planted
+shell driver with a host-side side-effect probe, a sustained
+2000-iteration symlink race, redaction cases chosen specifically to
+evade the *other* three redaction mechanisms, and more) — this
+codebase's own prior hardening tasks were already unusually rigorous
+about this. **Exactly one genuine gap surfaced**, and it was already
+self-documented as deliberately deferred, not silently missing:
+HR-011's `write_file` mkdir side effect (below).
+
+**Closed the one real gap: `write_file`'s mkdir-side symlink race
+(HR-011).** `path.parent.mkdir(parents=True, exist_ok=True)` walked the
+*resolved path string* — a pre-existing malicious symlink at an
+intermediate component could make it create directories through it,
+even though the existing fd+readlink checks already guaranteed no
+*data* ever lands outside the root. New
+`FilesystemSecurity.ensure_parent_directories`: the full per-component
+`O_NOFOLLOW` walk HR-011 itself names as the alternative technique —
+starting from the repository root's own trusted fd, each intermediate
+component is `mkdir`'d (a no-op if it already exists) and then *opened*
+with `O_NOFOLLOW` before descending, atomically refusing a symlink at
+that name whether it was already there or swapped in between the
+`mkdir` and the `open` (the kernel checks what's actually there at the
+moment of the `open` syscall itself). Deliberate, documented tradeoff:
+a previously-legitimate layout with an in-bounds symlinked intermediate
+directory is now rejected too, not only a malicious one — a `mkdir`
+that gets `FileExistsError` cannot distinguish "existed benignly before
+this call" from "just swapped in by a racing attacker," so accepting
+either would silently reopen the exact race this closes.
+
+**Verified the exact reported defect reproduces, and that the fix
+closes it — a real race, not a simulated string.** Reused
+`test_service.py`'s existing `_symlink_flipper` fixture (a background
+thread continuously flipping a directory between a real directory and
+a symlink to outside the repository), targeting a *nested* path
+(`d/nested/pwned.txt`) rather than the single-level target the
+existing HAT-009 write test uses — a single-level target can't reach
+this gap at all, since `resolve()` itself already rejects the whole
+call if the immediate parent is currently an escaping symlink at
+resolution time (there being no intermediate component left to
+`mkdir`). Reverted `ensure_parent_directories` back to the old
+`mkdir(parents=True)` and reran: a real `outside/nested/` directory was
+left behind on the host, confirmed by the new test's own failure.
+Restored the fix; 2000 iterations, no leftover directory.
+
+**AT-006's "disconnect" is now genuinely cross-session.** The
+predecessor `del`'d the `exec_start` response inside the *same* Python
+`server` object and the *same* `AsyncJobRunner` — proving nothing about
+whether job state survives independent of the in-process object graph
+that started it, since nothing ever severed a connection.
+`create_server` opens its own real, file-backed `sqlite3.Connection`
+and its own fresh `AsyncJobRunner` on every call — a *second*,
+independent `create_server(config)` instance queries the job with no
+Python reference to anything the first session created, so
+`exec_status`/`exec_output` can only be reading real, persisted
+`JobStore` state, not an in-memory shortcut.
+
+**The concurrent-reader test is now genuinely multi-threaded.** The
+predecessor's single-threaded write-then-reread *did* catch a missing
+`flush()` (verified by disabling it and confirming the old test failed)
+— its problem was the "concurrent readers" claim in its own name, not
+that it asserted nothing. New test: a real reader thread polls the log
+file while a writer thread is still writing 200 chunks; every
+intermediate snapshot the reader observes must be a genuine prefix of
+the eventual final content (a torn write or a stale read would show up
+as a snapshot the final content doesn't start with), and the reader
+must have observed genuine growth over time (multiple distinct sizes),
+not just caught the final state once. Stable across 5 repeated runs.
+
+**`test_reconcile`'s hand-set pid is now a real, realistic one.** The
+old `pid=2**30` is a magnitude no real `Popen.pid` could ever take
+(this host's own `pid_max` is 4194304) — a shape `mark_running`'s real
+callers never produce, and `_pid_alive`'s `os.kill` can't actually
+distinguish "never a valid pid at all" from "was valid, has since
+exited" (both raise `ProcessLookupError` identically), so an
+out-of-range placeholder risked exercising the wrong scenario without
+anyone noticing. Now a real subprocess, spawned and `wait()`-reaped
+(genuinely dead, genuinely realistic) before its pid is used.
+
+**Restart-survival coverage for jobs, genuinely new — the existing
+`test_serve_reconciles_non_terminal_jobs_and_warns` (`tests/test_cli.py`,
+pre-dating this hardening pass) already covered the CLI's real wiring
+into `reconcile_jobs`, but only against a hand-inserted `JobStore` row
+(`pid=1`, no real process, no real output ever written) — proving
+reconciliation flips a DB column, not that a job's already-captured
+output is still correctly *served*, through the real `exec_status`/
+`exec_output` MCP tools, by a different server instance afterward. New
+`tests/workspace/test_job_restart_survival.py`: a real, Docker-backed
+job produces real output, is abandoned mid-run with no clean shutdown
+("crashed"), goes through the real `serve` CLI startup sequence
+(`docker_available`/`run_server` mocked, everything else — config
+load, reconciliation — genuinely runs), then is queried by a *third*,
+independent `create_server` instance standing in for the restarted
+daemon — the closest approximation of an actual restart this harness
+can produce. Not a fix for a defect (`reconcile_jobs`/the CLI wiring
+already worked correctly) — new coverage of already-correct behavior
+this task's own audit found untested, verified by writing the test and
+watching it pass, not by reverting anything.
+
+**Full relevant suite:** `tests/filesystem/`, `tests/tools/test_filesystem.py`,
+`tests/execution/`, `tests/jobs/`, `tests/test_cli.py` (157 passed),
+`tests/workspace/test_async_execution_tools.py` +
+`tests/workspace/test_job_restart_survival.py` (22 passed, real
+Docker). No Docker leftovers after any run. No schema drift. `ruff
+check`, `ruff format --check`, `mypy src` clean across the whole tree.
+The full background `tests/` run was interrupted at the ~82% mark with
+zero visible failures (the same recurring environmental pattern seen
+since H19), leaving one orphaned container (`docker rm -f`'d,
+confirmed clean); proceeding on the direct evidence above rather than
+retrying.
+
+**New tests:** `tests/filesystem/test_service.py` —
+`test_at_h028_write_file_never_mkdirs_through_an_intermediate_symlink`
+(2000-iteration race, real `outside/nested/` reproduction on revert).
+`tests/workspace/test_async_execution_tools.py` — AT-006 rewritten
+cross-session. `tests/execution/test_log_capture.py` — a real reader
+thread racing a real writer thread. `tests/jobs/test_reconcile.py` — a
+real, reaped subprocess pid. `tests/workspace/test_job_restart_survival.py`
+— `test_at_h028_a_crashed_jobs_output_survives_a_real_restart`,
+`test_at_h028_a_finished_jobs_output_survives_a_real_restart` (the
+non-crash counterpart — reconciliation correctly leaves an
+already-terminal job alone), `test_at_h028_exec_status_on_an_unknown_job_after_restart_fails_closed`
+(a hostile-input companion: a plausible but never-real `job_id` against
+a fresh post-restart session with no in-memory fallback still fails
+closed with `JOB_NOT_FOUND`).
 
 ---
 

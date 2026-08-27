@@ -221,16 +221,17 @@ class FilesystemService:
                 details={"path": relative_path, "size": len(data)},
             )
 
-        # HR-011: `mkdir -p` against the resolved path string has its own,
-        # narrower residual race (a pre-existing malicious symlink at an
-        # intermediate component could make it create directories through
-        # it) — the `open_validated`/`verify_fd_within_root` calls below
-        # still independently guarantee no *data* is ever written outside
-        # the repository root even in that case, which is HR-011's actual
-        # property; closing the mkdir side effect too would need the full
-        # per-component `O_NOFOLLOW` walk HR-011 offers as the alternative
-        # to this fd+readlink technique, deferred as a documented gap.
-        path.parent.mkdir(parents=True, exist_ok=True)
+        # H28 (`docs/HARDENING_TODO.md`, HR-030): closes the mkdir-side
+        # gap this used to leave open — see `ensure_parent_directories`'s
+        # own docstring. A previously-legitimate layout with an in-bounds
+        # symlinked intermediate directory used as a `write_file` target
+        # is now rejected too, not only a malicious one: distinguishing
+        # "existed benignly before this call" from "just swapped in by a
+        # racing attacker" is not possible from a single `mkdir`/`open`
+        # sequence (both look identical — `FileExistsError` either way),
+        # so accepting either would silently reopen the exact race this
+        # closes. A deliberate, documented tradeoff, not an oversight.
+        self._security.ensure_parent_directories(relative_path)
 
         # Race-free create-or-open, distinguishing the two (unlike a
         # single `O_CREAT` open) because `expected_sha256=None` and
