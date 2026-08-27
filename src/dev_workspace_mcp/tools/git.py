@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import posixpath
 import sqlite3
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -56,6 +57,7 @@ from dev_workspace_mcp.git.commit import (
     build_commit_argv,
     detect_default_branch,
     is_head_published,
+    read_committed_files,
 )
 from dev_workspace_mcp.git.diff import read_git_diff
 from dev_workspace_mcp.git.log import DEFAULT_MAX_LOG_ENTRIES, read_git_log
@@ -413,7 +415,18 @@ def register(
             )
 
         if strict:
-            extraneous = sorted(set(status.staged) - set(paths))
+            # HR-024: normalized before comparing — a caller-supplied
+            # `./foo.txt` or `a/../foo.txt` is the same path as `git
+            # status`'s own `foo.txt`, but a literal-string set
+            # difference would treat them as different, flagging
+            # `foo.txt` as extraneous even though it was, in substance,
+            # requested. `status.staged` (git/status.py) now also
+            # includes a staged rename's old path alongside its new
+            # one — a caller who names only the new path is correctly
+            # flagged here, rather than going on to silently produce a
+            # broken partial-rename commit.
+            normalized_paths = {posixpath.normpath(path) for path in paths}
+            extraneous = sorted(set(status.staged) - normalized_paths)
             if extraneous:
                 raise GitDirtyError(
                     f"strict mode: paths staged outside the commit request (§20.6): {extraneous}",
@@ -476,6 +489,11 @@ def register(
 
         new_status = read_git_status(repo_path)
         assert new_status.head_sha is not None  # a commit just succeeded
+        # HR-024: `files_committed` SHALL report what Git actually
+        # committed, not the request echo — a directory path legitimately
+        # expands to many files, and `paths` itself is never a reliable
+        # stand-in for "what actually changed" in general.
+        files_committed = read_committed_files(repo_path, new_status.head_sha)
 
         write_audit_event(
             audit_config,
@@ -489,11 +507,14 @@ def register(
                 "amend": amend,
                 "no_verify": no_verify,
                 "commit_sha": new_status.head_sha,
+                "files_committed": files_committed,
             },
         )
 
         return GitCommitOutput(
-            commit_sha=new_status.head_sha, branch=new_status.branch, files_committed=paths
+            commit_sha=new_status.head_sha,
+            branch=new_status.branch,
+            files_committed=files_committed,
         )
 
     @server.tool(

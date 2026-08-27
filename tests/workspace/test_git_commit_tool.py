@@ -521,3 +521,68 @@ async def test_at_hr023_a_stash_pop_conflict_fails_closed_though_it_leaves_no_ma
             "git_commit",
             {"workspace_id": workspace_id, "message": "x", "paths": ["README.md"]},
         )
+
+
+async def test_at_hr024_a_magic_pathspec_does_not_stage_the_whole_repository(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """HR-024 (`docs/HARDENING_SPEC.md` §11): a real regression —
+    `paths=[":/"]` used to reach `git add` unprefixed, and `:/` is Git's
+    own pathspec syntax for "the entire repository root", staging (and
+    then committing) every changed file rather than failing the way a
+    genuinely nonexistent literal path named ":/" should."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    await server.call_tool(
+        "write_file", {"workspace_id": workspace_id, "path": "a.txt", "content": "a\n"}
+    )
+    await server.call_tool(
+        "write_file", {"workspace_id": workspace_id, "path": "b.txt", "content": "b\n"}
+    )
+
+    with pytest.raises(ToolError, match="COMMAND_FAILED"):
+        await server.call_tool(
+            "git_commit",
+            {"workspace_id": workspace_id, "message": "x", "paths": [":/"]},
+        )
+
+    # Nothing was staged or committed — both files are still untracked.
+    status = await server.call_tool("git_status", {"workspace_id": workspace_id})
+    assert set(status.structured_content["untracked"]) == {"a.txt", "b.txt"}
+    assert status.structured_content["staged"] == []
+
+
+async def test_at_hr024_files_committed_reports_what_git_actually_committed(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """`files_committed` SHALL report what Git actually committed, not
+    the request echo — a directory path is the clearest case where the
+    two differ: the request names one path, but the commit touches every
+    file beneath it."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    await server.call_tool(
+        "write_file", {"workspace_id": workspace_id, "path": "dir/a.txt", "content": "a\n"}
+    )
+    await server.call_tool(
+        "write_file", {"workspace_id": workspace_id, "path": "dir/b.txt", "content": "b\n"}
+    )
+
+    result = await server.call_tool(
+        "git_commit",
+        {"workspace_id": workspace_id, "message": "add dir", "paths": ["dir"]},
+    )
+
+    assert sorted(result.structured_content["files_committed"]) == ["dir/a.txt", "dir/b.txt"]

@@ -8,6 +8,7 @@ from dev_workspace_mcp.git.commit import (
     build_commit_argv,
     detect_default_branch,
     is_head_published,
+    read_committed_files,
 )
 
 
@@ -30,13 +31,13 @@ def _init_repo(path: Path) -> Path:
 def test_build_add_argv_includes_git() -> None:
     argv = build_add_argv(["a.txt", "b.txt"])
     assert argv[0] == "git"
-    assert argv == ["git", "add", "--", "a.txt", "b.txt"]
+    assert argv == ["git", "add", "--", ":(literal)a.txt", ":(literal)b.txt"]
 
 
 def test_build_commit_argv_includes_git() -> None:
     argv = build_commit_argv(message="msg", paths=["a.txt"], amend=False, no_verify=False)
     assert argv[0] == "git"
-    assert argv == ["git", "commit", "--only", "-m", "msg", "--", "a.txt"]
+    assert argv == ["git", "commit", "--only", "-m", "msg", "--", ":(literal)a.txt"]
 
 
 def test_build_commit_argv_amend_and_no_verify() -> None:
@@ -44,12 +45,30 @@ def test_build_commit_argv_amend_and_no_verify() -> None:
     assert "--amend" in argv
     assert "--no-verify" in argv
     # paths stay last, after "--", regardless of flag order.
-    assert argv[-2:] == ["--", "a.txt"]
+    assert argv[-2:] == ["--", ":(literal)a.txt"]
 
 
 def test_build_commit_argv_multiple_paths() -> None:
     argv = build_commit_argv(message="msg", paths=["a.txt", "b.txt"], amend=False, no_verify=False)
-    assert argv[-2:] == ["a.txt", "b.txt"]
+    assert argv[-2:] == [":(literal)a.txt", ":(literal)b.txt"]
+
+
+# --- HR-024: paths are literal pathspecs, not pathspec magic ----------------------
+
+
+def test_build_add_argv_prefixes_every_path_with_literal_magic() -> None:
+    """A real regression: `paths=[":/"]` (or any string Git's pathspec
+    syntax gives special meaning to) used to reach `git add` unprefixed,
+    letting a single client-supplied "path" match — and stage — the
+    entire repository instead of the one file a caller believed they
+    were naming."""
+    argv = build_add_argv([":/"])
+    assert argv == ["git", "add", "--", ":(literal):/"]
+
+
+def test_build_commit_argv_prefixes_every_path_with_literal_magic() -> None:
+    argv = build_commit_argv(message="msg", paths=[":(glob)**"], amend=False, no_verify=False)
+    assert argv[-1] == ":(literal):(glob)**"
 
 
 # --- detect_default_branch ----------------------------------------------------------
@@ -104,3 +123,37 @@ def test_is_head_published_false_without_any_upstream(tmp_path: Path) -> None:
     published to — not "unknown, assume published"."""
     repo = _init_repo(tmp_path / "repo")
     assert is_head_published(repo) is False
+
+
+# --- read_committed_files -----------------------------------------------------------
+
+
+def test_read_committed_files_reports_the_root_commit(tmp_path: Path) -> None:
+    """`git diff-tree` needs `--root` for a commit with no parent —
+    verified empirically that omitting it reports zero files for a
+    repository's very first commit, since there is nothing to diff
+    against without it."""
+    repo = _init_repo(tmp_path / "repo")
+    head_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+    assert read_committed_files(repo, head_sha) == ["a.txt"]
+
+
+def test_read_committed_files_reports_a_normal_commit(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "b.txt").write_text("b\n")
+    (repo / "c.txt").write_text("c\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "second"], cwd=repo, check=True)
+    head_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+    assert read_committed_files(repo, head_sha) == ["b.txt", "c.txt"]
+
+
+def test_read_committed_files_returns_empty_for_an_unknown_sha(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    assert read_committed_files(repo, "0" * 40) == []

@@ -19,13 +19,32 @@ does not itself introduce an untracked file to git the way `git add`
 does. `--only` is still what makes "stages exactly what it is told" true
 in the presence of anything *else* already staged: without it, a plain
 `git commit -m ...` would commit that too.
+
+HR-024 (`docs/HARDENING_SPEC.md` §11): every client-supplied path is
+prefixed with the `:(literal)` pathspec magic before it ever reaches
+`git`. Without it, a "path" is not necessarily a path at all — Git's own
+pathspec syntax gives `:` special meaning (`:/` anchors to, and by itself
+matches, the entire repository root; `:(glob)**` is a wildcard), so a
+string that merely *looks* like a filename can stage the whole working
+tree instead of the one file a caller believed they were naming.
+Reproduced empirically: `git add -- ':/'` staged every modified file in
+the repository; `git add -- ':(literal):/'` correctly fails with
+"pathspec ':(literal):/' did not match any files" instead, exactly the
+"there is no such file" response §17.4 promises for a nonexistent path.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from dev_workspace_mcp.git.service import run_git_host_side
+from dev_workspace_mcp.git.service import run_git_host_side, sanitize_for_client
+
+
+def _literal_pathspecs(paths: list[str]) -> list[str]:
+    """`:(literal)` disables *all* pathspec magic for this one entry —
+    no glob, no `:/`-anchoring, no icase — so every client-supplied
+    string is matched only as the exact literal path it names."""
+    return [f":(literal){path}" for path in paths]
 
 
 def build_add_argv(paths: list[str]) -> list[str]:
@@ -33,7 +52,7 @@ def build_add_argv(paths: list[str]) -> list[str]:
     `run_git_host_side`, which prepends `git` itself, a raw in-container
     exec needs it spelled out (verified the hard way: omitting it exec's
     the literal argument `"add"` as the program, which is not on `$PATH`)."""
-    return ["git", "add", "--", *paths]
+    return ["git", "add", "--", *_literal_pathspecs(paths)]
 
 
 def build_commit_argv(*, message: str, paths: list[str], amend: bool, no_verify: bool) -> list[str]:
@@ -43,8 +62,32 @@ def build_commit_argv(*, message: str, paths: list[str], amend: bool, no_verify:
     if no_verify:
         cmd.append("--no-verify")
     cmd.append("--")
-    cmd.extend(paths)
+    cmd.extend(_literal_pathspecs(paths))
     return cmd
+
+
+def read_committed_files(repo_path: Path, commit_sha: str) -> list[str]:
+    """HR-024: `files_committed` SHALL report what Git actually
+    committed, not the request echo — the two can differ (a path that
+    matched nothing would have already failed `build_add_argv`'s `git
+    add` before reaching here, but a directory path legitimately expands
+    to many files, and a case-insensitive filesystem can resolve a path
+    to different literal casing than what was requested). Read host-side,
+    same as every other post-commit status check in this module's
+    caller — a single commit's own file list needs no container.
+
+    `--root` is required, not decorative: verified empirically that
+    `git diff-tree` without it reports *no* files at all for a commit
+    with no parent (nothing to diff against) — `--root` makes it diff
+    against the empty tree instead, and has no effect on an ordinary,
+    non-root commit's own result."""
+    result = run_git_host_side(
+        repo_path,
+        ["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "--root", commit_sha],
+    )
+    if not result.ok:
+        return []
+    return [sanitize_for_client(name) for name in result.stdout.split("\0") if name]
 
 
 def detect_default_branch(repo_path: Path) -> str | None:

@@ -107,15 +107,27 @@ def read_git_status(repo_path: Path) -> GitStatus:
             # Rename/copy: `2 XY sub mH mI mW hH hI score path` — one
             # extra field (the score, e.g. "R100") versus a `1` record,
             # so path is one token later. Followed by one more
-            # NUL-delimited token (origPath), which this loop skips by
-            # advancing `index` past it.
+            # NUL-delimited token (origPath), which this loop consumes
+            # by advancing `index` past it.
             parts = token.split(" ", 9)
-            xy, path = parts[1], sanitize_for_client(parts[9])
+            xy, score, path = parts[1], parts[8], sanitize_for_client(parts[9])
+            orig_path = sanitize_for_client(tokens[index]) if index < len(tokens) else None
+            index += 1  # consume the trailing origPath token
             if xy[0] != ".":
                 staged.append(path)
+                # HR-024 (`docs/HARDENING_SPEC.md` §11): a staged rename
+                # (not a copy — a copy's original is untouched, so it is
+                # not itself a pending change) also removes the old path,
+                # which `git_commit`'s own strict-mode check needs to see
+                # too: `git commit --only -- <newpath>` alone, without
+                # `<oldpath>` also named, was reproduced to silently
+                # leave the old path staged-for-deletion and *outside*
+                # the commit — a caller relying on this list to know what
+                # to pass needs both names, not just the new one.
+                if score.startswith("R") and orig_path is not None:
+                    staged.append(orig_path)
             if xy[1] != ".":
                 unstaged.append(path)
-            index += 1  # consume the trailing origPath token
         elif token.startswith("u "):
             # Unmerged/conflict entry — 9 fields then path.
             parts = token.split(" ", 10)

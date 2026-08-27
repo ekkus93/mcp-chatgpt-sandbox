@@ -75,13 +75,20 @@ def test_status_reports_a_path_both_staged_and_unstaged(tmp_path: Path) -> None:
 
 
 def test_status_on_a_renamed_staged_file(tmp_path: Path) -> None:
+    """HR-024 (`docs/HARDENING_SPEC.md` §11): `staged` includes *both*
+    the new and old path for a staged rename, not only the new one — a
+    real regression: `git commit --only -- <newpath>` alone, without the
+    old path also named, was reproduced to silently commit only the new
+    file's creation, leaving the old path staged-for-deletion and
+    outside the commit entirely. A caller relying on this list to know
+    what to pass to `git_commit` needs to see both names."""
     repo = _init_repo(tmp_path / "repo")
     (repo / "a.txt").write_text("line one\nline two\nline three\n")
     _commit_all(repo, "initial")
     subprocess.run(["git", "mv", "a.txt", "a-renamed.txt"], cwd=repo, check=True)
 
     status = read_git_status(repo)
-    assert status.staged == ["a-renamed.txt"]
+    assert status.staged == ["a-renamed.txt", "a.txt"]
     assert status.unstaged == []
     # The parser must have consumed the origPath token correctly — a bug
     # there would leave "a.txt" misparsed as a bogus record afterward.

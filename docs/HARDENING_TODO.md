@@ -1565,15 +1565,78 @@ stash pop` conflict (no `MERGE_HEAD` present, confirmed via an explicit
 assertion in the test itself) still fails `git_commit` with
 `GIT_CONFLICT`.
 
-### H21 — `git_commit` stages exactly what it was told
+### H21 — `git_commit` stages exactly what it was told ✅
 **Satisfies:** HR-024 · **Verified by:** HAT-018
+**Commit:** `665c020`
 
-- [ ] Pass client paths as literal pathspecs (`:(literal)` or
+- [x] Pass client paths as literal pathspecs (`:(literal)` or
       `--pathspec-file-nul`)
-- [ ] Report `files_committed` from what Git committed, not the request echo
-- [ ] Normalize paths before the strict-mode set-difference check, and account
+- [x] Report `files_committed` from what Git committed, not the request echo
+- [x] Normalize paths before the strict-mode set-difference check, and account
       for staged renames
-- [ ] Test `paths=[":/"]` and `[":(glob)**"]`
+- [x] Test `paths=[":/"]` and `[":(glob)**"]`
+
+**Literal pathspecs.** Every client-supplied path is now prefixed with
+`:(literal)` before reaching `git add`/`git commit --only`
+(`_literal_pathspecs`, `git/commit.py`), disabling all of Git's own pathspec
+magic — no glob, no `:/`-anchoring, no icase — for every entry. Verified
+empirically, not assumed from the spec's wording: `git add -- ':/'` really
+does stage every modified file in a real repository; `git add --
+':(literal):/'` correctly fails with "pathspec ':(literal):/' did not match
+any files" instead — the same "no such file" response §17.4 already
+promises for a literal nonexistent path — and a directory path (`paths:
+["dir"]`) still expands to every file beneath it under `:(literal)`, since
+directory-prefix matching isn't itself pathspec "magic."
+
+**`files_committed`.** New `read_committed_files` (`git/commit.py`) reads
+`git diff-tree --no-commit-id --name-only -r -z --root <sha>` host-side
+after the commit, and `git_commit_tool` now returns that instead of echoing
+`paths` back. `--root` is required, not decorative: verified empirically
+that `git diff-tree` without it reports zero files for a commit with no
+parent (nothing to diff against without it) — a bug that would have made
+every repository's very first `git_commit` call report an empty
+`files_committed`.
+
+**Strict-mode path normalization and staged renames.** The set-difference
+check now compares against `{posixpath.normpath(p) for p in paths}`, so a
+caller-supplied `./foo.txt` correctly matches `git status`'s own `foo.txt`
+rather than being flagged as a spurious mismatch. Separately — and this
+surfaced a second, independent bug while investigating "account for staged
+renames": `git/status.py`'s rename/copy parsing (the porcelain `2 ` record)
+discarded the old path (`origPath`) entirely, reporting only the new name in
+`staged`. Reproduced the real consequence: `git commit --only -- <newpath>`
+alone, without `<oldpath>` also named, does *not* commit a clean rename —
+it commits only the new file's *creation*, leaving the old path staged for
+deletion and entirely outside the commit. `staged` now includes both the
+new and old path for a genuine rename (a *copy*'s original is deliberately
+excluded — it is untouched, not itself a pending change), so strict mode
+correctly flags an incomplete rename request as extraneous, and any caller
+reading `git_status`'s own output to decide what to pass to `git_commit`
+sees both names it actually needs.
+
+**Verified the tests catch the regression:** reverted all three changed
+source files to their pre-H21 versions and reran the new/updated tests.
+`test_commit.py`'s own import failed outright (`read_committed_files`
+doesn't exist on the reverted module). The rename-status test failed with
+the old, incomplete `["a-renamed.txt"]` list. Both new tool-level tests
+failed as predicted: the `:/`-magic-pathspec commit *succeeded* instead of
+raising `COMMAND_FAILED`, and `files_committed` echoed `["dir"]` instead of
+the real `["dir/a.txt", "dir/b.txt"]`. Restored the fix; all pass again; the
+full `tests/git/test_commit.py`/`test_status.py` (23 tests) and
+`tests/workspace/test_git_commit_tool.py` (16 tests) show no regressions.
+No Docker leftovers, no schema drift.
+
+**New tests:** `tests/git/test_commit.py` — `build_add_argv`/
+`build_commit_argv` prefix every path with `:(literal)` (including the
+`":/"`/`":(glob)**"` cases HR-024 explicitly names); `read_committed_files`
+correctly reports a root commit's files (the `--root`-dependent case), an
+ordinary commit's files, and an empty list for an unknown sha.
+`tests/git/test_status.py` — a staged rename's `staged` list now includes
+both the new and old path. `tests/workspace/test_git_commit_tool.py` —
+`paths=[":/"]` fails closed rather than staging the whole repository
+(confirming nothing was staged or committed afterward); `files_committed`
+for a directory-path commit reports the real per-file list, not the
+directory name.
 
 ### H22 — A failed commit leaves the index unchanged
 **Satisfies:** HR-025
