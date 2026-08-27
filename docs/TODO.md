@@ -1091,13 +1091,84 @@ blocked by D3) don't exist yet:
   module. Noted here as a design constraint to carry into S26, not
   something to re-verify at this layer.
 
-### S26 — `git_pull`
+### S26 — `git_pull` ✅
 **Spec:** §20.5, §18.8 · **Satisfies:** FR-021 · **Verified by:** AT-010
 
-- [ ] Fetch then integrate per `pull_strategy`, default `ff_only`
-- [ ] `--no-recurse-submodules` on the fetch step
-- [ ] Non-fast-forward under `ff_only` → `GIT_NON_FAST_FORWARD`, never escalate
-- [ ] AT-010: push against a diverged remote fails without forcing
+- [x] Fetch then integrate per `pull_strategy`, default `ff_only`
+- [x] `--no-recurse-submodules` on the fetch step
+- [x] Non-fast-forward under `ff_only` → `GIT_NON_FAST_FORWARD`, never escalate
+- [x] AT-010: push against a diverged remote fails without forcing
+
+**Commit:** `4a86a6b`
+
+New `src/dev_workspace_mcp/git/pull.py` (pure argv builders and outcome
+classification, mirroring `git/commit.py`'s own split) plus a `git_pull`
+tool in `tools/git.py`, wired the same way `git_commit` (S22) is: §20.6
+preconditions host-side (interrupted-operation detection,
+`expected_branch`/`expected_head_sha` guards, and — new for a
+remote-contacting operation — a detached-HEAD check, since there is no
+branch to integrate into), then S25's `validate_remote_identity` *before*
+anything is fetched, then two in-container commands through the
+execution service: `git fetch --no-recurse-submodules <remote>` (§18.8 —
+this, not any special handling in this module, is AT-030's actual
+mechanism: a structured pull never asks Git to contact a submodule's own
+remote at all, regardless of what a tracked `.gitmodules` says), then an
+integration step chosen by `git_policy.pull_strategy` (`git merge
+--ff-only`, `git merge`, or `git rebase` against `<remote>/<branch>` —
+the same same-named-branch convention §20.3's refspec table already
+assumes for the opposite direction). A `git merge --ff-only` failure is
+classified as `GIT_NON_FAST_FORWARD` only when Git's own stderr contains
+its specific "Not possible to fast-forward" wording (verified empirically
+against a real diverged repository before trusting it) — anything else
+(e.g. uncommitted local changes the merge would overwrite) surfaces as an
+ordinary `COMMAND_FAILED` instead, not misclassified as the recoverable
+non-fast-forward case. Whether the result was a genuine fast-forward is
+verified after the fact via a real `git merge-base --is-ancestor`, not
+inferred from `strategy` alone — plain `merge`/`rebase` can *also*
+resolve to a fast-forward when there was nothing to actually integrate.
+
+`git_pull` needed two things no earlier structured tool did:
+`RepositoryRegistry` (to look up the repository's configured `github`
+identity for §20.2 validation) and `GithubConfig` (for the
+`github.repositories` allowlist) — both threaded through
+`git_tools.register()` and `server.py`'s `_register_tools`, which is why
+this task also touches `tests/workspace/test_git_status_tool.py`'s
+degraded-mode `git_tools.register(...)` call site.
+
+`tests/git/test_pull.py` (16 tests) proves the real fetch/integrate
+*mechanics* — fast-forward success, already-up-to-date no-op,
+non-fast-forward failure with Git's exact real wording, `merge`
+producing a genuine merge commit only on true divergence, `rebase`
+replaying local commits — against real local Git repositories, with no
+Docker and no remote-identity validation involved (this tool doesn't
+touch a remote at all; validation is S25's concern, tested separately).
+
+`tests/workspace/test_git_pull_tool.py` (7 tests, real Docker) covers the
+MCP-tool-level wiring: AT-026 (`ext::` rejected before any fetch), AT-009
+(unauthorized remote rejected), `expected_remote_repository` overriding
+server config, the §20.6 preconditions (interrupted merge, branch/HEAD
+guards), and one test of a real connection to the real `github.com` host.
+
+That last test surfaced a genuine, non-obvious interaction with S24: a
+validated `https://github.com/...` origin is rewritten to SSH by S24's
+`url."git@github.com:".insteadOf` (§19.3) — same as any other structured
+operation — and GitHub requires an authenticated key for *any* SSH
+operation, including reading a public repository anonymously. Without
+S23 (SSH key provisioning, blocked by D3) there is therefore no way to
+complete a real end-to-end fetch yet, which the first version of this
+test discovered the hard way (it assumed anonymous HTTPS would bypass
+SSH entirely — it does not, by design, once `insteadOf` is in effect).
+The test now verifies the honest boundary instead: with GitHub's real,
+freshly `ssh-keyscan`-obtained host key pinned into `known_hosts`, the
+connection passes host verification (proving S24's mount and this tool's
+fetch step are correctly wired together) and fails specifically at the
+authentication stage — cleanly, without hanging — which is exactly the
+expected shape of "the plumbing works; the credential doesn't exist yet."
+A full success-path AT-028/AT-030 exercise against the real GitHub host
+remains deferred to S23.
+
+`schemas/tools.json` gained `git_pull`'s schema; `CONTRACT_VERSION`
+bumped `0.5.0` → `0.6.0` (§33.2: new tool, minor).
 
 ### S27 — `git_push` and refspec construction
 **Spec:** §20.3, §20.5, §18.9, §20.6 · **Satisfies:** FR-022, FR-034 · **Verified by:** AT-011, AT-029, AT-031

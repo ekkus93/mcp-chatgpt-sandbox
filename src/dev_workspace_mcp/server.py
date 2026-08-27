@@ -113,9 +113,11 @@ def _register_tools(
         server,
         db=db,
         docker_client=docker_client,
+        registry=registry,
         container_config=config.container,
         execution_config=config.execution,
         git_policy_config=config.git_policy,
+        github_config=config.github,
         audit_config=config.audit,
     )
 

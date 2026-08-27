@@ -16,6 +16,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 import docker
 from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
 from dev_workspace_mcp.db import open_db
+from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.server import create_server
 from dev_workspace_mcp.tools import git as git_tools
 
@@ -111,9 +112,11 @@ async def test_git_status_does_not_require_docker(
         degraded_server,
         db=open_db(config.state_db_path),
         docker_client=None,
+        registry=RepositoryRegistry(config),
         container_config=config.container,
         execution_config=config.execution,
         git_policy_config=config.git_policy,
+        github_config=config.github,
         audit_config=config.audit,
     )
     result = await degraded_server.call_tool("git_status", {"workspace_id": workspace_id})
