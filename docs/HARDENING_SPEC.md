@@ -466,9 +466,20 @@ requirements address why.
 
 ### HR-026 Test teardown SHALL NOT destroy host state
 
-Fixtures SHALL remove only resources they created, identified by a test-run
-specific label or name prefix — never by the daemon's production label, and
+Fixtures SHALL remove only resources they created — identified precisely, by
+tracking the exact identity of what was created (a container ID, a volume
+name read off the mount that referenced it), a test-run specific label, or a
+test-run specific name prefix. Never by the daemon's production label, and
 never by a global name filter.
+
+*Implementation note:* the shipped fix (H1) uses direct-identity tracking —
+`ContainerCollection.run` is wrapped for the whole test session to record
+every container ID and referenced volume name as they're created, and
+teardown removes exactly those. This is stricter than a shared label or name
+prefix would be (nothing is inferred from a naming convention; each removal
+targets an ID this process itself observed being created) and was chosen over
+threading a session token through container/volume naming because it
+requires no change to production naming at all.
 
 *Defect:* `tests/workspace/conftest.py:61–70` removes **every** container
 carrying the production `managed` label and **every** `mcp-cache-` volume on the

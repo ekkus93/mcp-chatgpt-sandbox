@@ -49,24 +49,93 @@ Phases 8–9 are cleanup and can trail.
 
 ## Phase 0 — Make it safe to run the tests
 
-### H1 — Scope test teardown to test-created resources
+### H1 — Scope test teardown to test-created resources ✅ (partial — see below)
 **Satisfies:** HR-026 · **Verified by:** HAT-020
+**Commit:** `dfb5ac0`
 
-- [ ] Label every container the suite creates with a test-run-specific label
-      (session id or PID), and filter teardown on that label instead of the
-      production `dev-workspace-mcp.managed` label
-- [ ] Name cache volumes created by tests with a test-run-specific prefix, and
-      filter volume teardown on it instead of the global `mcp-cache-` prefix
-- [ ] Correct the fixture docstring, which currently claims "nothing else on the
-      host's Docker daemon is touched"
-- [ ] Add a sentinel container and sentinel volume, both carrying production
+- [x] Track every container the suite creates and remove exactly those at
+      teardown — **not** the label/prefix approach originally proposed (see
+      below)
+- [x] Track cache volumes the same way, from the mount that referenced them,
+      and remove exactly those — not the global `mcp-cache-` prefix
+- [x] Correct the fixture docstring, which claimed "nothing else on the host's
+      Docker daemon is touched"
+- [x] Add a sentinel container and sentinel volume, both carrying production
       identifiers, and assert a full suite run leaves them intact
-- [ ] Make concurrent suite runs non-destructive to each other (deterministic
-      container names currently collide; give test workspaces unique repository
-      ids or a run-scoped suffix)
+- [ ] Make concurrent suite runs non-destructive to each other — **only the
+      destructive half is fixed; the collision half is not** (see below)
 
-**Why first:** `tests/workspace/conftest.py:61–70`. This is the one finding that
-makes the act of verifying the others dangerous.
+**Why first:** `tests/workspace/conftest.py:61–70`. This is the one finding
+that makes the act of verifying the others dangerous.
+
+**Implementation departs from the literal task text, and `HARDENING_SPEC.md`'s
+HR-026 was amended to match** (see its own "Implementation note"). Rather than
+labeling containers or prefixing volume names with a session token, teardown
+now tracks the *exact identity* of what was created: `conftest.py` monkeypatches
+`docker.models.containers.ContainerCollection.run` for the whole test session,
+recording every returned container's ID and — read straight off that same
+call's `mounts` kwarg — every referenced volume name. `docker_client`'s teardown
+drains those two lists and removes exactly what's in them. This is strictly
+more precise than a label or prefix (nothing is inferred from a naming
+convention; every removal targets an identity this process itself watched get
+created) and needs zero changes to production code — no session token has to
+be threaded through `container_labels()`/`cache_volume_name()`.
+
+Patching the class method rather than an instance was deliberate: production
+code (`workspace/manager.py`'s `_run_container`) and the handful of tests that
+create a second container directly both call `docker.from_env()` for their own
+fresh client, so an instance-level patch would miss most of what needs
+tracking.
+
+**A real bug the first version of this fix had**, caught by running the full
+suite rather than trusting the new fixture in isolation: `containers.run()`
+called without `detach=True` — the one-shot pattern `test_default_image.py`'s
+`_run_oneshot` and two tests in `test_mounts_integration.py` use, always
+paired with `remove=True` — returns the captured output as `bytes`, not a
+`Container`. The first cut of `_tracking_run` assumed a `Container` back
+unconditionally and crashed every one-shot call with
+`AttributeError: 'bytes' object has no attribute 'id'`. Fixed by checking
+`isinstance(result, docker.models.containers.Container)` before tracking;
+bytes-returning one-shot calls need no tracking anyway, since Docker has
+already force-removed that container by the time `run()` returns.
+
+**Verified the fix actually verifies something**, not just that it passes:
+temporarily restored the old label/prefix teardown logic and reran
+`test_conftest_teardown.py`'s end-to-end test (the one that spawns a real,
+separate `pytest` process against a throwaway test file placed inside
+`tests/workspace/` so its real, wired-in fixture teardown executes — not a
+direct call into the extracted cleanup function). It failed with a real
+`docker.errors.NotFound` against the sentinel container, confirming the test
+catches the regression it exists to catch. Restored the fix; reran; passes.
+
+**`tests/workspace/test_conftest_teardown.py` (HAT-020) is two tests, not
+one**, because a single test using pytest fixture dependencies for both the
+sentinel and the client-under-test would have proven nothing: fixture
+teardown order is LIFO, so a `sentinel_container` fixture depending on
+`docker_client` tears down *before* `docker_client`'s own teardown runs,
+meaning the sentinel would already be gone by the time the code under test
+executes — passing regardless of whether that code is correct. First
+`test_teardown_removes_only_what_it_tracked` calls the extracted
+`remove_tracked_docker_resources` function directly, mid-test, to verify the
+removal logic itself is selective. Second,
+`test_a_full_suite_run_leaves_a_foreign_sentinel_intact` spawns a real nested
+`pytest` subprocess so the *actual* fixture wiring — not a stand-in — is what
+runs, which is the only way to honestly claim HAT-020 ("a full suite run
+SHALL leave both intact") is covered.
+
+**Not fixed — left honest, not silently dropped:** the last bullet named two
+distinct problems bundled together. Teardown no longer *destroys* another
+concurrent run's containers/volumes (each process only ever removes what it
+itself tracked creating) — that half is fixed as a direct consequence of this
+change. But the *collision* half is untouched: every test hard-codes
+repository/workspace id `"example"`, so `container_name()`'s deterministic
+naming means two pytest processes racing to `containers.run(name=
+"mcp-dev-ws-example-<hash>", ...)` still hit a real `409 Conflict` — this fix
+makes concurrent runs non-destructive to each other, not collision-free.
+Making workspace ids unique per test run would touch dozens of test files
+that assert on the deterministic name and is out of scope for a teardown fix;
+left as a known gap for whoever next needs concurrent CI runs on shared
+infrastructure.
 
 ---
 
