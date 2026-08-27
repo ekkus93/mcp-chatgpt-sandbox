@@ -426,19 +426,73 @@ content.
 
 ## Phase 3 — Configuration boundary
 
-### H6 — Project configuration cannot set daemon-controlled variables
+### H6 — Project configuration cannot set daemon-controlled variables ✅
 **Satisfies:** HR-006 · **Verified by:** HAT-005
+**Commit:** `c5c4a1b`
 
-- [ ] Reject `SSH_AUTH_SOCK` and any `MCP_*` key in `.mcp-workspace.yml`'s
+- [x] Reject `SSH_AUTH_SOCK` and any `MCP_*` key in `.mcp-workspace.yml`'s
       `environment:`, naming the rejected key in the error
-- [ ] Independently, merge daemon-controlled variables **last** in
+- [x] Independently, merge daemon-controlled variables **last** in
       `build_workspace_run_kwargs` so ordering alone cannot override them
-- [ ] Keep both controls — neither is sufficient alone
-- [ ] Assert PID 1 does not run as root on a daemon without userns remapping
+- [x] Keep both controls — neither is sufficient alone
+- [x] Assert PID 1 does not run as root on a daemon without userns remapping
 
 **Defect:** `container_config.py:100–112`, `tools/workspace.py:351`. The §5.3
 refusal at line 89 inspects only `container_config.user`. Reproduced: root PID 1
 and a setuid-root host binary via the bind mount.
+
+**Implementation, two independent controls.** (1) A new `field_validator` on
+`ProjectWorkspaceConfig.environment` (`project_config.py`) rejects any key that
+is `SSH_AUTH_SOCK` or starts with `MCP_`, naming every offending key in the
+error, at project-config *load* time — before `workspace_open` ever reaches
+Docker. (2) `build_workspace_run_kwargs` now merges `extra_env` **first** in
+both the `root` and non-`root` branches, with the daemon's own `MCP_UID`/
+`MCP_GID`/`MCP_SUDO`/`MCP_WORKSPACE_PATH`/`MCP_SSH_MODE`/`SSH_AUTH_SOCK`
+merged last — so ordering alone still holds even if control (1) is somehow
+bypassed. Neither is redundant: (1) is what makes the failure legible (a clear
+error naming the key, before any container exists); (2) is what holds if (1)
+doesn't.
+
+**A pre-existing test collided with the new reserved namespace, and got fixed
+rather than the control weakened.** `test_environment_from_project_config_reaches_the_container`
+used `MCP_TEST_VAR` as its example variable name — which the new validator
+correctly rejects, since `MCP_*` is now unconditionally reserved for the
+daemon, not just the specific names it happens to use today. Renamed the
+test's variable to `PROJECT_TEST_VAR` and added a comment explaining why,
+rather than narrowing the validator to only the daemon's current specific
+variable names — narrowing it that way would silently reopen the door to any
+`MCP_*` name the daemon adds later.
+
+**Verified against a real container, not only the `run_kwargs` dict.** Added
+`test_at_hat005_hostile_extra_env_cannot_make_pid_1_root` to
+`test_default_image.py`, in the same one-shot-container style S7's own
+identity tests use (a one-shot container's command *is* PID 1, unlike
+`docker exec`, which uses the image's default user) — `extra_env={"MCP_UID":
+"0", "MCP_GID": "0"}` passed directly to `build_workspace_run_kwargs`
+(bypassing control (1), simulating it being defeated) still produces `id -u`
+== the real checkout uid, not `0`. Reverted `container_config.py` alone and
+reran: `AssertionError: assert '0' == '1234'` — PID 1 genuinely was root under
+the old code, against a real container, not merely a constructed dict.
+Restored the fix; reran; passes.
+
+**Verified the fix actually verifies something** at every layer: reverted
+`project_config.py` and `container_config.py` together and reran every new
+test — all 9 `HAT-005`-parametrized/named tests across `test_project_config.py`
+and `test_container_config.py` failed as expected (one legitimate
+"still works normally" test correctly kept passing throughout); reverted the
+end-to-end `test_project_config_integration.py` test alone and confirmed
+"DID NOT RAISE `ToolError`" while a container was genuinely created (visible
+until H1's own tracked teardown removed it — a small confirmation that H1 and
+H6 compose correctly). Restored both files; reran everything; all pass.
+
+**New tests:** `tests/test_project_config.py` (parametrized over all six
+reserved variable names, plus a "still works normally" guard);
+`tests/workspace/test_container_config.py` (three tests proving the ordering
+control alone, including the `container.user: root` branch specifically, not
+only the non-root one); `tests/workspace/test_project_config_integration.py`
+(the literal exploit `.mcp-workspace.yml` through the real `workspace_open`
+MCP tool, asserting no container is created at all); `tests/workspace/
+test_default_image.py` (the real-container PID-1 proof above).
 
 ### H7 — The §19.1 key invariant covers every key path
 **Satisfies:** HR-007 · **Verified by:** HAT-006

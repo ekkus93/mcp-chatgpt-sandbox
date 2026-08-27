@@ -78,9 +78,14 @@ async def test_environment_from_project_config_reaches_the_container(
     docker_client: docker.DockerClient,
     tmp_path: Path,
 ) -> None:
+    # Deliberately NOT `MCP_`-prefixed: that namespace is reserved for the
+    # daemon's own control variables (HR-006, see this file's own
+    # `test_at_hat005_*` tests below) and is rejected at project-config
+    # load time regardless of whether the specific name collides with one
+    # the daemon currently uses.
     repo_path = tmp_path / "work" / "example"
     _init_repo(
-        repo_path, project_config={"version": 1, "environment": {"MCP_TEST_VAR": "hello-s30"}}
+        repo_path, project_config={"version": 1, "environment": {"PROJECT_TEST_VAR": "hello-s30"}}
     )
     config = _configured(minimal_config, default_image_tag, repo_path)
     server = create_server(config)
@@ -88,9 +93,38 @@ async def test_environment_from_project_config_reaches_the_container(
     workspace_id = opened.structured_content["workspace_id"]
 
     result = await server.call_tool(
-        "exec", {"workspace_id": workspace_id, "shell": "echo $MCP_TEST_VAR"}
+        "exec", {"workspace_id": workspace_id, "shell": "echo $PROJECT_TEST_VAR"}
     )
     assert result.structured_content["stdout_tail"].strip() == "hello-s30"
+
+
+# --- HR-006 (docs/HARDENING_SPEC.md §6): environment cannot escalate identity -------
+
+
+async def test_at_hat005_project_environment_cannot_run_the_container_as_root(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """A real regression, reproduced exactly this way during the
+    2026-08-27 review: `.mcp-workspace.yml` setting `environment:
+    {MCP_UID: "0"}` used to reach the container unfiltered and, merged
+    last in `build_workspace_run_kwargs`, silently override the daemon-
+    computed identity — PID 1 ran as root on a daemon with no
+    user-namespace remapping, and a container write to the bind mount
+    produced a root-owned host file. `workspace_open` now fails at
+    project-config load time, before any container is created."""
+    repo_path = tmp_path / "work" / "example"
+    _init_repo(repo_path, project_config={"version": 1, "environment": {"MCP_UID": "0"}})
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+
+    with pytest.raises(ToolError, match="daemon-controlled variable"):
+        await _open(server)
+
+    # no container was created at all for this attempt.
+    assert docker_client.containers.list(all=True, filters={"name": "mcp-dev-ws-example"}) == []
 
 
 async def test_no_project_config_falls_back_to_the_default_image(

@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from dev_workspace_mcp.errors import ContainerCreateFailedError
 
@@ -83,6 +83,29 @@ class ProjectWorkspaceConfig(BaseModel):
     caches: list[ProjectCacheEntry] = Field(default_factory=list)
     github: ProjectGithubConfig | None = None
     validation: ProjectValidationConfig | None = None
+
+    @field_validator("environment")
+    @classmethod
+    def _environment_cannot_shadow_daemon_variables(cls, v: dict[str, str]) -> dict[str, str]:
+        """HR-006 (`docs/HARDENING_SPEC.md` §6): `environment:` is
+        repository-supplied and, via `exec` plus a container-writable
+        `.git/`, effectively client-authorable. `MCP_*` and
+        `SSH_AUTH_SOCK` are the identity/credential variables
+        `build_workspace_run_kwargs` computes for the container (§5.3) —
+        a real regression let `MCP_UID: "0"` here run the container as
+        root on a daemon with no user-namespace remapping, routing
+        straight around the `container.user: root` refusal, which only
+        ever inspects `container_config.user`. This is one of two
+        independent controls (`container_config.py` also merges the
+        daemon's own variables last); this one is deliberately the
+        allowlist-reject side, so a bypass of one does not silently
+        become a bypass of both."""
+        shadowed = sorted(k for k in v if k == "SSH_AUTH_SOCK" or k.startswith("MCP_"))
+        if shadowed:
+            raise ValueError(
+                f"environment may not set daemon-controlled variable(s) {shadowed} (§5.3/HR-006)"
+            )
+        return v
 
 
 def _candidate_path(repo_path: Path) -> Path | None:

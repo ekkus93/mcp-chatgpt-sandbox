@@ -86,6 +86,13 @@ def build_workspace_run_kwargs(
     `MCP_GID` to create a user from). Root-mode SSH configuration is out
     of this task's scope.
     """
+    # HR-006 (`docs/HARDENING_SPEC.md` §6): `extra_env` is merged FIRST in
+    # both branches below, daemon-controlled variables LAST — so even if
+    # the allowlist reject in `ProjectWorkspaceConfig`'s own validator
+    # (the other, independent HR-006 control) were somehow bypassed,
+    # ordering alone still stops a project-supplied `MCP_UID`/`MCP_GID`/
+    # `SSH_AUTH_SOCK`/etc. from overriding the identity the daemon just
+    # computed. Neither control is sufficient alone.
     if container_config.user == "root":
         if not userns_remap_active(docker_client):
             raise ContainerCreateFailedError(
@@ -93,11 +100,12 @@ def build_workspace_run_kwargs(
                 "to be active; without it, container uid 0 is host uid 0 (§5.3)",
                 details={"container_user": "root"},
             )
-        environment = {"MCP_WORKSPACE_PATH": workspace_path, **(extra_env or {})}
+        environment = {**(extra_env or {}), "MCP_WORKSPACE_PATH": workspace_path}
     else:
         uid = os.getuid() if checkout_uid is None else checkout_uid
         gid = os.getgid() if checkout_gid is None else checkout_gid
         environment = {
+            **(extra_env or {}),
             "MCP_UID": str(uid),
             "MCP_GID": str(gid),
             "MCP_SUDO": "true" if container_config.sudo else "false",
@@ -108,7 +116,6 @@ def build_workspace_run_kwargs(
                 if ssh_config.mode == "agent"
                 else {}
             ),
-            **(extra_env or {}),
         }
 
     run_kwargs: dict[str, Any] = {

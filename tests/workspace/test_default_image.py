@@ -54,6 +54,35 @@ def test_entrypoint_drops_to_the_checkout_uid_and_grants_sudo(
     assert lines[2] == "root"  # sudo whoami: passwordless sudo works
 
 
+def test_at_hat005_hostile_extra_env_cannot_make_pid_1_root(
+    docker_client: docker.DockerClient, default_image_tag: str, ssh_config: SSHConfig
+) -> None:
+    """HR-006 (`docs/HARDENING_SPEC.md` §6), proven against a real
+    container rather than only the `run_kwargs` dict: `extra_env`
+    containing `MCP_UID`/`MCP_GID` — simulating the allowlist reject in
+    `ProjectWorkspaceConfig` being bypassed, since it now runs first and
+    would refuse this before `build_workspace_run_kwargs` is ever
+    reached — must still not make PID 1 root, because
+    `build_workspace_run_kwargs` merges `extra_env` first and the
+    daemon's own identity variables last."""
+    config = ContainerConfig(user="host", sudo=False)
+    run_kwargs = build_workspace_run_kwargs(
+        ssh_config=ssh_config,
+        container_config=config,
+        docker_client=docker_client,
+        checkout_uid=1234,
+        checkout_gid=1234,
+        extra_env={"MCP_UID": "0", "MCP_GID": "0"},
+    )
+    output = _run_oneshot(
+        docker_client,
+        default_image_tag,
+        ["sh", "-c", "id -u"],
+        environment=run_kwargs["environment"],
+    )
+    assert output.strip() == "1234"  # not "0"
+
+
 def test_at_014_sudo_apt_get_install_works_as_non_root(
     docker_client: docker.DockerClient, default_image_tag: str, ssh_config: SSHConfig
 ) -> None:

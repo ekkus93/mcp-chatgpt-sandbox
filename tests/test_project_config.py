@@ -93,6 +93,32 @@ def test_missing_required_version_field_is_a_validation_error(tmp_path: Path) ->
         load_project_config(repo_path)
 
 
+@pytest.mark.parametrize(
+    "key", ["MCP_UID", "MCP_GID", "MCP_SUDO", "MCP_WORKSPACE_PATH", "MCP_SSH_MODE", "SSH_AUTH_SOCK"]
+)
+def test_at_hat005_environment_cannot_set_a_daemon_controlled_variable(
+    tmp_path: Path, key: str
+) -> None:
+    """A real regression: `environment: {MCP_UID: "0"}` used to reach
+    `build_workspace_run_kwargs`'s `extra_env` unfiltered and, merged
+    last, silently override the daemon-computed container identity —
+    running the container as root on a daemon with no user-namespace
+    remapping, routing around the `container.user: root` refusal
+    entirely (that refusal only ever inspects `container_config.user`)."""
+    repo_path = tmp_path / "repo"
+    _write(repo_path, {"version": 1, "environment": {key: "0"}})
+    with pytest.raises(ContainerCreateFailedError, match="daemon-controlled variable"):
+        load_project_config(repo_path)
+
+
+def test_at_hat005_an_ordinary_environment_variable_is_still_accepted(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo"
+    _write(repo_path, {"version": 1, "environment": {"RUST_LOG": "debug"}})
+    config = load_project_config(repo_path)
+    assert config is not None
+    assert config.environment == {"RUST_LOG": "debug"}
+
+
 def test_unknown_cache_entry_field_is_a_validation_error(tmp_path: Path) -> None:
     repo_path = tmp_path / "repo"
     _write(

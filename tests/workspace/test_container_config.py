@@ -101,6 +101,63 @@ def test_host_mode_merges_extra_env() -> None:
     assert kwargs["environment"]["MCP_UID"] == "1000"
 
 
+# --- HR-006 (docs/HARDENING_SPEC.md §6): ordering, independent of the reject filter --
+
+
+def test_at_hat005_extra_env_cannot_override_the_daemon_computed_identity_by_ordering() -> None:
+    """The second, independent HR-006 control: even if `extra_env`
+    somehow contains a daemon-controlled key (the allowlist reject in
+    `ProjectWorkspaceConfig` is meant to catch this before it gets this
+    far — this test simulates that control being bypassed), merge
+    ordering alone must still prevent it from winning."""
+    client = _fake_client([])
+    config = ContainerConfig(user="host", sudo=False)
+    kwargs = build_workspace_run_kwargs(
+        container_config=config,
+        docker_client=client,
+        ssh_config=_SSH_CONFIG,
+        checkout_uid=1000,
+        checkout_gid=1000,
+        extra_env={"MCP_UID": "0", "MCP_GID": "0", "MCP_SUDO": "true"},
+    )
+    assert kwargs["environment"]["MCP_UID"] == "1000"
+    assert kwargs["environment"]["MCP_GID"] == "1000"
+    assert kwargs["environment"]["MCP_SUDO"] == "false"
+
+
+def test_at_hat005_extra_env_cannot_override_ssh_auth_sock_by_ordering() -> None:
+    client = _fake_client([])
+    config = ContainerConfig(user="host")
+    ssh_config = SSHConfig(
+        keys_dir=Path("/tmp/mcp-test-keys"),
+        known_hosts=Path("/tmp/mcp-test-known-hosts"),
+        mode="agent",
+    )
+    kwargs = build_workspace_run_kwargs(
+        container_config=config,
+        docker_client=client,
+        ssh_config=ssh_config,
+        checkout_uid=1000,
+        checkout_gid=1000,
+        extra_env={"SSH_AUTH_SOCK": "/tmp/evil.sock"},
+    )
+    assert kwargs["environment"]["SSH_AUTH_SOCK"] != "/tmp/evil.sock"
+
+
+def test_at_hat005_root_mode_extra_env_cannot_override_workspace_path() -> None:
+    """The `container.user: root` branch merges `extra_env` separately —
+    covered on its own, not only the non-root branch above."""
+    client = _fake_client(["name=userns"])  # userns active, root permitted
+    config = ContainerConfig(user="root")
+    kwargs = build_workspace_run_kwargs(
+        container_config=config,
+        docker_client=client,
+        ssh_config=_SSH_CONFIG,
+        extra_env={"MCP_WORKSPACE_PATH": "/evil"},
+    )
+    assert kwargs["environment"]["MCP_WORKSPACE_PATH"] == "/workspace"
+
+
 def test_root_mode_without_userns_remap_is_refused() -> None:
     """§5.3, AT-016: refused before any container is created."""
     client = _fake_client(["name=apparmor"])  # no userns
