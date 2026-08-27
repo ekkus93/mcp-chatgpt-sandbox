@@ -1,5 +1,6 @@
 """S30: `.mcp-workspace.yml` parsing (§9, §10)."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -135,6 +136,33 @@ def test_invalid_yaml_is_a_clear_error(tmp_path: Path) -> None:
     (repo_path / ".mcp-workspace.yml").write_text("not: valid: yaml: [unterminated")
     with pytest.raises(ContainerCreateFailedError, match="not valid YAML"):
         load_project_config(repo_path)
+
+
+def test_at_hat011_a_secret_in_the_malformed_yaml_line_does_not_reach_the_client(
+    tmp_path: Path,
+) -> None:
+    """HR-013 (`docs/HARDENING_SPEC.md` §8): PyYAML's own error message
+    echoes the offending source line verbatim — a real path for a secret
+    accidentally left in a malformed `.mcp-workspace.yml` to leak through
+    `ContainerCreateFailedError`'s `message`, which `to_tool_error`
+    redacts the same way `details` is."""
+    from dev_workspace_mcp.errors import to_tool_error
+
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    # Short enough (24 chars past "ghp_") that PyYAML's own snippet
+    # formatting doesn't split it across two truncated excerpts, which
+    # would hide it before this test's own redaction is ever exercised —
+    # verified empirically: PyYAML keeps a token whole up to ~28 chars
+    # here, splits a 32-char one across "..." on both sides.
+    token = "ghp_" + "B" * 24
+    (repo_path / ".mcp-workspace.yml").write_text(f"x: [{token}")
+
+    with pytest.raises(ContainerCreateFailedError) as excinfo:
+        load_project_config(repo_path)
+
+    payload = json.loads(str(to_tool_error(excinfo.value)))
+    assert token not in payload["message"]
 
 
 def test_non_mapping_top_level_is_a_clear_error(tmp_path: Path) -> None:

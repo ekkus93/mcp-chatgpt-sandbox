@@ -245,17 +245,36 @@ def _looks_like_secret(value: str) -> bool:
     return any(pattern.search(value) for pattern in _SECRET_VALUE_PATTERNS)
 
 
+#: HR-013 (`docs/HARDENING_SPEC.md` §8): `scheme://user:pass@host` embedded
+#: credentials — a GitHub-token-shaped one is already caught by
+#: `_SECRET_VALUE_PATTERNS`'s substring search regardless, but a plain
+#: password (`https://user:hunter2@example.com`) matches none of those.
+#: Only the userinfo segment is replaced, not the whole string: the rest of
+#: a URL (host, path) is often genuinely useful diagnostic context, unlike
+#: the credential itself.
+_URL_USERINFO_RE = re.compile(r"([a-zA-Z][a-zA-Z0-9+.\-]*://)[^/@\s]+@")
+
+
 def _redact(value: Any, *, key: str | None = None) -> Any:
     if isinstance(value, dict):
         return {k: _redact(v, key=k) for k, v in value.items()}
     if isinstance(value, list):
-        return [_redact(v) for v in value]
+        # `key=key` carried through: a list under a sensitive key
+        # (`{"password": ["hunter2"]}`) used to lose that hint entirely,
+        # since a bare recursive call with no `key` only ever caught a
+        # value-pattern match, never the key-based one.
+        return [_redact(v, key=key) for v in value]
+
+    key_flags_secret = key is not None and any(hint in key.lower() for hint in _SECRET_KEY_HINTS)
     if isinstance(value, str):
-        key_flags_secret = key is not None and any(
-            hint in key.lower() for hint in _SECRET_KEY_HINTS
-        )
         if key_flags_secret or _looks_like_secret(value):
             return "[REDACTED]"
+        return _URL_USERINFO_RE.sub(r"\1[REDACTED]@", value)
+    # A non-string scalar (`{"secret": 12345}`) under a sensitive key used
+    # to pass through unredacted, since the original check only ever
+    # looked at `key` inside the `isinstance(value, str)` branch.
+    if key_flags_secret:
+        return "[REDACTED]"
     return value
 
 
@@ -274,9 +293,22 @@ def to_tool_error(exc: WorkspaceError) -> MCPToolError:
     """Convert a domain error into the SDK's `ToolError`, whose message is
     the §31 shape serialized as JSON so the client can parse `code`,
     `recoverable`, and `details` out of it rather than pattern-matching
-    free text."""
+    free text.
+
+    HR-013: `message` is redacted the same way `details` is — a real
+    regression let a raw `ghp_...` token reach the client in cleartext in
+    `message` while `details` was correctly `[REDACTED]`, since only
+    `details` was ever passed through `_redact`. Many raise sites
+    interpolate raw Git/SSH stderr, or a full remote URL, directly into
+    `message`; a malformed `.mcp-workspace.yml`'s YAML parse error
+    (`project_config.py`) echoes the offending source line the same way.
+    Applying this once here, universally, covers every one of those call
+    sites without touching them individually.
+    """
     payload = exc.to_dict()
     payload["details"] = redact_secrets(payload["details"])
+    redacted_message = _redact(payload["message"])
+    payload["message"] = redacted_message if isinstance(redacted_message, str) else "[REDACTED]"
     return MCPToolError(json.dumps(payload, sort_keys=True))
 
 

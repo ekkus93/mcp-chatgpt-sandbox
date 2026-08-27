@@ -9,6 +9,7 @@ import pytest
 from mcp.server.mcpserver.exceptions import ToolError as MCPToolError
 
 from dev_workspace_mcp.errors import (
+    CommandFailedError,
     ErrorCode,
     FileConflictError,
     InternalError,
@@ -113,6 +114,50 @@ def test_redact_secrets_recurses_into_lists_and_nested_dicts() -> None:
     assert redacted["items"][0]["token"] == "[REDACTED]"
     assert redacted["items"][1]["path"] == "ok"
     assert redacted["outer"]["inner"]["password"] == "[REDACTED]"
+
+
+# --- HR-013 (docs/HARDENING_SPEC.md §8): redaction gaps -----------------------------
+
+
+def test_at_hat011_a_list_of_plain_strings_under_a_sensitive_key_is_redacted() -> None:
+    """A real regression: `{"password": ["hunter2"]}` used to reach the
+    client unredacted — the list branch recursed with no `key`, so the
+    parent's "this is a password" hint never reached the string items
+    inside it."""
+    assert redact_secrets({"password": ["hunter2"]}) == {"password": ["[REDACTED]"]}
+    assert redact_secrets({"token": ["abc123def"]}) == {"token": ["[REDACTED]"]}
+
+
+def test_at_hat011_a_non_string_scalar_under_a_sensitive_key_is_redacted() -> None:
+    """A real regression: `{"secret": 12345}` used to pass through
+    unredacted — the key-hint check only ever ran inside the
+    `isinstance(value, str)` branch."""
+    assert redact_secrets({"secret": 12345}) == {"secret": "[REDACTED]"}
+
+
+def test_at_hat011_url_userinfo_is_redacted_even_under_an_unrelated_key() -> None:
+    """`scheme://user:pass@host` embedded credentials — a plain password
+    (not GitHub-token-shaped) matches none of the value patterns and the
+    key (`"url"`) doesn't hint at a secret either, so this needs its own
+    check. Only the credential is masked; the rest of the URL, often
+    genuinely useful diagnostic context, is preserved."""
+    redacted = redact_secrets({"url": "https://user:hunter2@example.com/owner/repo"})
+    assert redacted == {"url": "https://[REDACTED]@example.com/owner/repo"}
+
+
+def test_at_hat011_to_tool_error_redacts_the_message_not_only_details() -> None:
+    """A real regression, reproduced exactly this way during the
+    2026-08-27 review: a `ghp_`-shaped token interpolated into `message`
+    reached the client in cleartext while the same token in `details`
+    was correctly `[REDACTED]`."""
+    token = "ghp_" + "B" * 36
+    exc = CommandFailedError(
+        f"git push failed: remote: use a token: token={token}",
+        details={"url": "https://user:hunter2@github.com/owner/repo.git"},
+    )
+    payload = json.loads(str(to_tool_error(exc)))
+    assert token not in payload["message"]
+    assert payload["details"]["url"] == "https://[REDACTED]@github.com/owner/repo.git"
 
 
 # --- §6.1 mapping to the SDK's ToolError -----------------------------------------

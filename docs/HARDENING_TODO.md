@@ -759,17 +759,71 @@ the escaping symlink rather than crashing or reading through it.
 
 ## Phase 5 — Integrity of reported guarantees
 
-### H11 — Error messages are redacted
+### H11 — Error messages are redacted ✅
 **Satisfies:** HR-013 · **Verified by:** HAT-011
+**Commit:** `5169c6e`
 
-- [ ] Redact `payload["message"]`, not only `details`
-- [ ] Fix redaction of list values (the key hint is currently dropped),
+- [x] Redact `payload["message"]`, not only `details`
+- [x] Fix redaction of list values (the key hint is currently dropped),
       non-string scalars, and `scheme://user:pass@host` userinfo
-- [ ] Cover the YAML-echo path — a malformed `.mcp-workspace.yml` currently
+- [x] Cover the YAML-echo path — a malformed `.mcp-workspace.yml` currently
       echoes the offending source line verbatim
 
 **Defect:** `errors.py:248–259, 273–280`. Reproduced: a `ghp_` token in
 cleartext in `message` while `details.url` was correctly `[REDACTED]`.
+
+**Implementation.** `to_tool_error` now redacts `message` the same way it
+already redacted `details` — applied once, universally, at the interface
+layer, so every one of the many raise sites that interpolate raw Git/SSH
+stderr or a full remote URL into `message` is covered without touching them
+individually. `_redact` itself gained three fixes: the list branch now
+carries `key=key` through its recursive call (a list under a sensitive key —
+`{"password": ["hunter2"]}` — used to lose that hint entirely); the key-hint
+check now runs regardless of the value's type, not only inside the
+`isinstance(value, str)` branch (a non-string scalar under a sensitive key —
+`{"secret": 12345}` — used to pass through unredacted); and every string
+value, not only ones already flagged secret, now passes through a new
+`_URL_USERINFO_RE` substitution that masks just the credential portion of a
+`scheme://user:pass@host` URL, preserving the rest (host, path) as genuinely
+useful diagnostic context rather than nuking the whole string.
+
+**A GitHub-token-shaped credential in a URL was already caught** by the
+existing `gh[pousr]_...` pattern's substring search before this task — the
+userinfo regex specifically closes the gap for a plain, non-token-shaped
+password (`https://user:hunter2@host`), which matched none of the existing
+value patterns and has no key-name hint to catch it either.
+
+**The YAML-echo path needed no separate code change** — `project_config.py`'s
+`ContainerCreateFailedError` already flows through the same
+`to_tool_error`, so making `message` redaction universal there closed this
+path for free. Verified directly rather than assumed, and this surfaced a
+second, genuine finding along the way: **PyYAML's own error formatting
+truncates a long offending line across two separate `"..."`-bounded
+excerpts**, splitting a sufficiently long secret so no single, contiguous
+match ever appears in the raw message at all — independent of this task's
+redaction. My first test used a 36-character token and passed even against
+the *unfixed* code, for the wrong reason (PyYAML's own truncation, not this
+task's redaction, happened to hide it). Caught by checking the *reverted*
+code's raw message directly rather than trusting a passing test; fixed by
+choosing a token short enough (empirically confirmed: whole up to ~28
+characters past `ghp_` here, split across two excerpts at 32) to stay within
+one un-truncated snippet, so the test genuinely exercises this task's fix
+rather than an unrelated formatting accident.
+
+**Verified the fix actually verifies something**, including that near-miss:
+reverted `errors.py` alone and reran every new test — all failed as expected
+(the corrected YAML test with the real token substring visible in the
+un-redacted message; the four `errors.py`-level tests with plain
+`AssertionError`s showing the unredacted values). Restored the fix; reran;
+all pass, and the pre-existing 54 error/audit tests are unaffected.
+
+**New tests:** `tests/test_errors.py` — a list-under-sensitive-key case, a
+non-string-scalar case, a URL-userinfo case, and a `to_tool_error`
+message-redaction case using the literal exploit shape from the review
+(`token=ghp_...` interpolated into `message`, alongside an unrelated userinfo
+URL in `details`, both redacted). `tests/test_project_config.py` — the
+YAML-echo path through the real `load_project_config`/`to_tool_error` pair,
+with the token-length caveat above documented in the test itself.
 
 ### H12 — The validated push destination is the one used
 **Satisfies:** HR-014 · **Verified by:** HAT-012
