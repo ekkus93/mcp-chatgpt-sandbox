@@ -100,6 +100,51 @@ def test_head_without_base_is_rejected(tmp_path: Path) -> None:
         read_git_diff(repo, head=sha)
 
 
+# --- HR-001 (docs/HARDENING_SPEC.md §4): option injection via base/head ----------
+
+
+def test_at_h001_an_option_shaped_base_is_rejected_not_executed(tmp_path: Path) -> None:
+    """A real regression: `base="--output=<path>"` used to reach a
+    host-side `git diff` unguarded and write that file to the host,
+    exit 0, no error. Confirms it is rejected before git ever runs, and
+    that no file is created."""
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "a.txt").write_text("v1\n")
+    _commit_all(repo, "v1")
+    target = tmp_path / "PWNED_VIA_BASE"
+
+    with pytest.raises(InvalidArgumentError):
+        read_git_diff(repo, base=f"--output={target}")
+
+    assert not target.exists()
+
+
+def test_at_h001_an_option_shaped_head_is_rejected_not_executed(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "a.txt").write_text("v1\n")
+    sha = _commit_all(repo, "v1")
+    target = tmp_path / "PWNED_VIA_HEAD"
+
+    with pytest.raises(InvalidArgumentError):
+        read_git_diff(repo, base=sha, head=f"--output={target}")
+
+    assert not target.exists()
+
+
+def test_at_h001_a_legitimate_base_and_head_still_work(tmp_path: Path) -> None:
+    """The fix must not have broken the ordinary commit-to-commit case —
+    validated separately from every other diff test in this file so a
+    regression here is unambiguous."""
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "a.txt").write_text("v1\n")
+    first_sha = _commit_all(repo, "v1")
+    (repo / "a.txt").write_text("v2\n")
+    second_sha = _commit_all(repo, "v2")
+
+    result = read_git_diff(repo, base=first_sha, head=second_sha)
+    assert "+v2" in result.content
+
+
 def test_path_filter_restricts_the_diff(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path / "repo")
     (repo / "a.txt").write_text("one\n")

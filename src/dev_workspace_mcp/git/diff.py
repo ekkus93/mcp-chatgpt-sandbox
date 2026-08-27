@@ -12,7 +12,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dev_workspace_mcp.errors import CommandFailedError, InvalidArgumentError
-from dev_workspace_mcp.git.service import run_git_host_side
+from dev_workspace_mcp.git.service import (
+    END_OF_OPTIONS,
+    run_git_host_side,
+    validate_revision_argument,
+)
 
 #: A diff can legitimately run to megabytes (a large refactor, a
 #: generated file) — §46 requires the *response* stay bounded regardless
@@ -71,7 +75,15 @@ def read_git_diff(
     if stat_only:
         cmd.append("--stat")
     if base is not None:
-        cmd.extend([base, head or "HEAD"])
+        head_value = head or "HEAD"
+        # HR-001: `base`/`head` are client-supplied strings that reach a
+        # host-side `git` invocation — reject anything option-shaped, and
+        # place the real end-of-options marker immediately before them as
+        # a second, load-bearing layer (rejection alone is a denylist).
+        validate_revision_argument(base, param_name="base")
+        validate_revision_argument(head_value, param_name="head")
+        cmd.append(END_OF_OPTIONS)
+        cmd.extend([base, head_value])
     elif staged:
         cmd.append("--cached")
     if paths:

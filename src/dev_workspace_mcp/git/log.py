@@ -14,7 +14,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dev_workspace_mcp.errors import CommandFailedError, InvalidArgumentError
-from dev_workspace_mcp.git.service import run_git_host_side
+from dev_workspace_mcp.git.service import (
+    END_OF_OPTIONS,
+    run_git_host_side,
+    validate_revision_argument,
+)
 
 #: §17.3's "bounded log" — no explicit number given, so this picks a
 #: value in the same spirit as `filesystem.max_listing_entries` (§12.2):
@@ -52,6 +56,13 @@ def read_git_log(
 
     cmd = ["log", f"--max-count={max_entries}", f"--pretty=format:{_LOG_FORMAT}"]
     if ref is not None:
+        # HR-001: `ref` is a client-supplied string that reaches a
+        # host-side `git` invocation — reject anything option-shaped,
+        # and place the real end-of-options marker immediately before it
+        # as a second, load-bearing layer (rejection alone is a
+        # denylist).
+        validate_revision_argument(ref, param_name="ref")
+        cmd.append(END_OF_OPTIONS)
         cmd.append(ref)
     if paths:
         cmd.append("--")

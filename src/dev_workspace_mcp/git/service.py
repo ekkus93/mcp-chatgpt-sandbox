@@ -27,6 +27,29 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+from dev_workspace_mcp.errors import InvalidArgumentError
+
+#: Placed immediately before a client-supplied revision argument in every
+#: host-side read that accepts one (`git_diff`'s `base`/`head`, `git_log`'s
+#: `ref`) — HR-001, `docs/HARDENING_SPEC.md` §4. Verified against git 2.43.0:
+#: everything after this marker is parsed strictly as a positional argument,
+#: never as an option, even one shaped exactly like `--output=<path>`.
+END_OF_OPTIONS = "--end-of-options"
+
+
+def validate_revision_argument(value: str, *, param_name: str) -> None:
+    """HR-001: a client-supplied revision/ref parameter SHALL NOT be
+    interpretable by Git as an option. Rejecting a leading `-` is the
+    first, human-readable layer — `--end-of-options` (placed by each
+    caller immediately before the argument in the actual argv) is the
+    second, load-bearing one; this check alone is a denylist over a
+    syntax Git may extend, so it is deliberately not the only control."""
+    if value.startswith("-"):
+        raise InvalidArgumentError(
+            f"{param_name} may not begin with '-' (§20.1/HR-001): {value!r}",
+            details={param_name: value},
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class GitCommandResult:

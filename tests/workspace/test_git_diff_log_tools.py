@@ -9,6 +9,9 @@ for consistency with how a real client would reach the tools.
 import subprocess
 from pathlib import Path
 
+import pytest
+from mcp.server.mcpserver.exceptions import ToolError
+
 import docker
 from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
 from dev_workspace_mcp.server import create_server
@@ -95,3 +98,57 @@ async def test_git_log_reports_the_initial_commit(
     entries = result.structured_content["result"]
     assert len(entries) == 1
     assert entries[0]["subject"] == "initial"
+
+
+# --- HAT-001 (docs/HARDENING_SPEC.md §15): option injection through the real ----
+# --- MCP tool layer, not just the internal function -----------------------------
+
+
+async def test_at_hat001_git_diff_base_cannot_write_a_host_file(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """A real regression, reproduced exactly this way during the
+    2026-08-27 review: `git_diff(base="--output=<path>")` called through
+    the published MCP tool contract wrote an arbitrary host file and
+    returned success. The published contract is what an attacker holds
+    — validating only the internal function is not enough."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+    opened = await server.call_tool("workspace_open", {"repository_id": "example"})
+    workspace_id = opened.structured_content["workspace_id"]
+    target = tmp_path / "HAT001_DIFF_PWNED"
+
+    with pytest.raises(ToolError, match="INVALID_ARGUMENT"):
+        await server.call_tool(
+            "git_diff", {"workspace_id": workspace_id, "base": f"--output={target}"}
+        )
+
+    assert not target.exists()
+
+
+async def test_at_hat001_git_log_ref_cannot_write_a_host_file(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """Same regression, `git_log`'s `ref` parameter: a real `git_log`
+    call with `ref="--output=<path>"` wrote a host file and returned
+    `{'result': []}` with no error."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+    opened = await server.call_tool("workspace_open", {"repository_id": "example"})
+    workspace_id = opened.structured_content["workspace_id"]
+    target = tmp_path / "HAT001_LOG_PWNED"
+
+    with pytest.raises(ToolError, match="INVALID_ARGUMENT"):
+        await server.call_tool(
+            "git_log", {"workspace_id": workspace_id, "ref": f"--output={target}"}
+        )
+
+    assert not target.exists()

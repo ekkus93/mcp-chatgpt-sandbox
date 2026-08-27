@@ -141,20 +141,65 @@ infrastructure.
 
 ## Phase 1 — Host escape
 
-### H2 — Revision parameters cannot inject Git options
+### H2 — Revision parameters cannot inject Git options ✅
 **Satisfies:** HR-001 · **Verified by:** HAT-001
+**Commit:** `5a7630c`
 
-- [ ] Reject `git_diff`'s `base`/`head` and `git_log`'s `ref` when the value
+- [x] Reject `git_diff`'s `base`/`head` and `git_log`'s `ref` when the value
       begins with `-`, with `INVALID_ARGUMENT`
-- [ ] Additionally place revision arguments after `--end-of-options`, or
+- [x] Additionally place revision arguments after `--end-of-options`, or
       validate through `git rev-parse --verify --quiet --end-of-options`
-- [ ] Audit every other argv built from client input for the same class
-- [ ] Test through the MCP tool layer, not just the internal function — the
+- [x] Audit every other argv built from client input for the same class
+- [x] Test through the MCP tool layer, not just the internal function — the
       published contract is what an attacker holds
 
 **Defect:** `git/diff.py:74`, `git/log.py:55`. Reproduced end-to-end: a real
 `git_log` call with `ref="--output=<path>"` wrote a host file and returned
 `{'result': []}`.
+
+**Implementation.** Added `git/service.py:validate_revision_argument` (rejects
+a leading `-` with `INVALID_ARGUMENT`) and `END_OF_OPTIONS = "--end-of-options"`,
+a real Git marker verified against git 2.43.0 to make everything after it
+parse strictly as a positional argument — even a value shaped exactly like
+`--output=<path>` — with no side effect on options placed *before* it in the
+same argv (`git_log`'s `--max-count`/`--pretty=format:` still parse correctly
+ahead of the marker). `git_diff` places it immediately before `base`/`head`;
+`git_log` places it immediately before `ref`. Both layers are deliberate, not
+redundant: the leading-`-` rejection is the human-readable error a client
+sees; `--end-of-options` is the one that would still hold if a future Git
+release added option syntax that doesn't start with `-`.
+
+**Audited every other client-reachable argv for the same class**, per the
+task's own bullet, and found the rest already safe rather than assuming it:
+- `remote` (`git_pull`/`git_push`'s free-form parameter, default `"origin"`)
+  reaches `git/remote.py`'s `resolve_remote_url`, which runs `git remote
+  get-url <name>` **before** `build_fetch_argv`/`build_push_argv` are ever
+  called. Verified empirically: `git remote get-url --output=/tmp/x` exits
+  `129` with `error: unknown option`, no file created — Git's own arg parser
+  for that subcommand already fails closed on an option-shaped name, and
+  `resolve_remote_url` treats any non-`ok` result as
+  `GitRemoteNotAllowedError`, so an option-shaped `remote` can never reach the
+  fetch/push argv at all.
+- `branch` (`git_push`) was already validated via `git check-ref-format
+  --branch` (S27), independently confirmed by the review to reject a leading
+  `-`.
+- `refspec` is entirely daemon-constructed from validated parameters
+  (`build_refspec`), never a client-supplied string.
+- `paths` (all of `git_diff`/`git_log`/`git_commit`) already sit behind a
+  literal `--`, Git's own canonical "everything after this is a pathspec, not
+  an option" separator — correct and unaffected by this task.
+
+**New tests, both the pure-function level and the real MCP tool layer**:
+`tests/git/test_diff.py`/`test_log.py` add `test_at_h001_*` tests reproducing
+the exact regression (an option-shaped `base`/`head`/`ref` is rejected before
+Git runs, and no file is created) plus a "legitimate value still works" test
+for each, run independently of the file's other diff/log tests so a
+regression here is unambiguous. `tests/workspace/test_git_diff_log_tools.py`
+adds `test_at_hat001_git_diff_base_cannot_write_a_host_file` and
+`test_at_hat001_git_log_ref_cannot_write_a_host_file`, calling the real
+`git_diff`/`git_log` MCP tools with `base`/`ref` set to the literal exploit
+string from the review's own reproduction — the published tool contract is
+what an attacker holds, not the internal function.
 
 ### H3 — Host-side reads execute no repository-supplied code
 **Satisfies:** HR-002 · **Verified by:** HAT-002

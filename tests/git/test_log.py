@@ -84,6 +84,32 @@ def test_log_ref_selects_a_specific_branch(tmp_path: Path) -> None:
     assert [e.subject for e in feature_entries] == ["on feature", "on main"]
 
 
+# --- HR-001 (docs/HARDENING_SPEC.md §4): option injection via ref ----------------
+
+
+def test_at_h001_an_option_shaped_ref_is_rejected_not_executed(tmp_path: Path) -> None:
+    """A real regression: `ref="--output=<path>"` used to reach a
+    host-side `git log` unguarded and write that file to the host, exit
+    0, no error, empty result. Confirms it is rejected before git ever
+    runs, and that no file is created."""
+    repo = _init_repo(tmp_path / "repo")
+    _commit(repo, "a.txt", "initial")
+    target = tmp_path / "PWNED_VIA_REF"
+
+    with pytest.raises(InvalidArgumentError):
+        read_git_log(repo, ref=f"--output={target}")
+
+    assert not target.exists()
+
+
+def test_at_h001_a_legitimate_ref_still_works(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    _commit(repo, "a.txt", "initial")
+
+    entries = read_git_log(repo, ref="HEAD")
+    assert [e.subject for e in entries] == ["initial"]
+
+
 def test_log_subject_with_special_characters_survives_intact(tmp_path: Path) -> None:
     """The chosen field separator (ASCII 0x1f/0x1e) must not collide with
     anything a real commit subject could contain."""
