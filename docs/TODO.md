@@ -18,17 +18,24 @@ These block the tasks that cite them. Decide before starting the task, not durin
 - [x] **D1 — Implementation language.** **Decided: Python** (§54), using the
       official `mcp` SDK, `docker` SDK, `pydantic`, `uv` for dependency
       management. Blocked S1; unblocked 2026-08-26.
-- [ ] **D2 — Read-only GitHub API token.** §19.5. Optional but load-bearing:
-      without it `remote_protection` is `unverified` and `require_remote_protection`
-      degrades to `warn` (§18.5). Blocks S28 (`**Blocked by:** D2` there) from being
-      fully testable.
-- [ ] **D3 — Deploy-key provisioning is manual or automated.** §19.1 requires a
-      per-repository deploy key with write access. The MVP may require the operator
-      to create and register it by hand; automating it needs an API credential with
-      `administration: write`, which D2's token deliberately lacks. Blocks S23
-      (`**Blocked by:** D3` there). *(Corrected 2026-08-26: this note previously said
-      "Blocks S21"/"Blocks S26" — stale against a since-reordered task numbering;
-      the per-task `**Blocked by:**` annotations on S23/S28 were already correct.)*
+- [x] **D2 — Read-only GitHub API token.** §19.5. **Decided 2026-08-26: no
+      token for now.** S28 is built and fully tested against the
+      no-credential path — `remote_protection` reports `unverified` and
+      `require_remote_protection` degrades `deny` to `warn` (§18.5), exactly
+      as §19.5/§18.5 specify for an unconfigured credential. A real
+      read-only PAT can be added later via `github.api_token_path` with no
+      code change; unblocked S28 without needing one now.
+- [x] **D3 — Deploy-key provisioning is manual or automated.** §19.1 requires a
+      per-repository deploy key with write access. **Decided 2026-08-26:
+      manual**, per the MVP allowance this note already named: the operator
+      creates the deploy-key pair and registers the public half on GitHub by
+      hand; S23 builds only the per-workspace `ssh-agent` that loads and
+      serves an already-provisioned private key file. Automated provisioning
+      (needing an `administration: write` credential well beyond D2's
+      deliberately read-only token) remains out of scope. Unblocked S23.
+      *(Corrected 2026-08-26: this note previously said "Blocks S21"/"Blocks
+      S26" — stale against a since-reordered task numbering; the per-task
+      `**Blocked by:**` annotations on S23/S28 were already correct.)*
 
 ---
 
