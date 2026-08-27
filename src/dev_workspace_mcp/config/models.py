@@ -173,6 +173,11 @@ class GithubConfig(BaseModel):
 
     api_auth: Literal["none", "token", "app"] = "none"
     api_token_path: Path | None = None
+    api_base_url: str = "https://api.github.com"
+    """§19.5/§20.4's remote-protection queries go here. Overridable for
+    GitHub Enterprise Server deployments — and, incidentally, for pointing
+    at a real local test server instead of the genuine GitHub API (S28's
+    own tests do exactly that, rather than mocking the HTTP layer)."""
     repositories: list[str] = Field(default_factory=list)
 
     @field_validator("api_token_path")

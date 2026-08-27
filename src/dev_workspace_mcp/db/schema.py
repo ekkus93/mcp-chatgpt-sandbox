@@ -115,6 +115,15 @@ MIGRATIONS: list[list[str]] = [
         )
         """,
     ],
+    # --- version 2 -> 3: cached remote-protection result (§18.5, §20.4, S28) ---
+    [
+        # A JSON blob, not individual columns: `workspace_info` (a read
+        # tool, §25) reports the *last* `workspace_open` verification
+        # rather than re-querying GitHub on every read (§20.4 only
+        # requires verifying on `workspace_open`, and optionally again
+        # before a push) — this is that cache, one row per repository.
+        "ALTER TABLE repository ADD COLUMN remote_protection TEXT",
+    ],
 ]
 
 

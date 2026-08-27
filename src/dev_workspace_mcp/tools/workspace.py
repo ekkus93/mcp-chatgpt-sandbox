@@ -21,15 +21,27 @@ from dev_workspace_mcp.config.models import (
     AuditConfig,
     ContainerConfig,
     DockerConfig,
+    GithubConfig,
+    GitPolicyConfig,
     SSHConfig,
     WorkspaceConfig,
 )
 from dev_workspace_mcp.errors import (
     ContainerRuntimeFailedError,
+    RemoteProtectionMissingError,
     RepositoryNotAllowedError,
     translate_workspace_errors,
 )
+from dev_workspace_mcp.git.commit import detect_default_branch
 from dev_workspace_mcp.git_state import read_basic_git_state
+from dev_workspace_mcp.github_api import (
+    RemoteProtectionReportOutput,
+    RemoteProtectionResult,
+    deserialize_remote_protection,
+    serialize_remote_protection,
+    to_report_output,
+    verify_remote_protection,
+)
 from dev_workspace_mcp.jobs.store import JobState, JobStore
 from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.schema_export import CONTRACT_VERSION
@@ -55,13 +67,6 @@ class GitStateOutput:
 
 
 @dataclass
-class RemoteProtectionOutput:
-    status: str
-    """"verified" | "missing" | "unverified" (§20.4). Always "unverified"
-    until an API credential and the check itself exist (§19.5, S28)."""
-
-
-@dataclass
 class WorkspaceInfoOutput:
     workspace_id: str
     repository_id: str
@@ -70,7 +75,7 @@ class WorkspaceInfoOutput:
     git_dir_mode: str
     ssh_key_mode: str
     ssh_key_scope: str
-    remote_protection: RemoteProtectionOutput
+    remote_protection: RemoteProtectionReportOutput
     git: GitStateOutput
 
 
@@ -96,6 +101,8 @@ def register(
     container_config: ContainerConfig,
     ssh_config: SSHConfig,
     workspace_config: WorkspaceConfig,
+    github_config: GithubConfig,
+    git_policy_config: GitPolicyConfig,
     audit_config: AuditConfig,
     repository_roots: list[Path],
     ssh_agent_runtime_dir: Path,
@@ -130,6 +137,19 @@ def register(
             )
         return manager, docker_client
 
+    def _load_stored_remote_protection(repository_id: str) -> RemoteProtectionResult | None:
+        row = db.execute(
+            "SELECT remote_protection FROM repository WHERE id = ?", (repository_id,)
+        ).fetchone()
+        return deserialize_remote_protection(row["remote_protection"]) if row is not None else None
+
+    def _store_remote_protection(repository_id: str, result: RemoteProtectionResult) -> None:
+        with db:
+            db.execute(
+                "UPDATE repository SET remote_protection = ?, default_branch = ? WHERE id = ?",
+                (serialize_remote_protection(result), result.default_branch, repository_id),
+            )
+
     def _info(
         record_id: str, repository_id: str, state: str, workspace_path: str
     ) -> WorkspaceInfoOutput:
@@ -143,7 +163,7 @@ def register(
             git_dir_mode=container_config.git_dir_mode,
             ssh_key_mode=ssh_config.mode,
             ssh_key_scope=ssh_config.scope,
-            remote_protection=RemoteProtectionOutput(status="unverified"),
+            remote_protection=to_report_output(_load_stored_remote_protection(repository_id)),
             git=GitStateOutput(
                 branch=git_state.branch,
                 head_sha=git_state.head_sha,
@@ -175,6 +195,45 @@ def register(
                 metadata={"repository_id": repository_id},
             )
             raise
+
+        # §18.5/§20.4: verified before any container work, so `deny` can
+        # refuse the whole operation — never provisioning a key — rather
+        # than tearing down a container it already started.
+        default_branch = detect_default_branch(repository.canonical_path)
+        remote_protection = verify_remote_protection(
+            github_config=github_config,
+            owner_repo=repository.github,
+            default_branch=default_branch,
+            checks=git_policy_config.remote_protection_checks,
+        )
+        if (
+            git_policy_config.require_remote_protection == "deny"
+            and remote_protection.status == "missing"
+        ):
+            # §18.5: "SHALL NOT provision a write-capable key... SHALL
+            # NOT have provisioned a key into the container" — enforced
+            # here, before `ensure_workspace` touches Docker at all, not
+            # merely by skipping the ssh-agent step below.
+            write_audit_event(
+                audit_config,
+                operation="workspace_opened",
+                result="denied",
+                repository_id=repository_id,
+                metadata={
+                    "policy_decision": "deny",
+                    "policy": "require_remote_protection",
+                    "remote_protection_status": remote_protection.status,
+                },
+            )
+            raise RemoteProtectionMissingError(
+                f"default branch {remote_protection.default_branch!r} lacks the "
+                f"required remote protections (§18.5): {remote_protection.reason}",
+                details={
+                    "repository_id": repository_id,
+                    "default_branch": remote_protection.default_branch,
+                },
+            )
+
         run_kwargs = build_workspace_run_kwargs(
             container_config=container_config,
             docker_client=active_client,
@@ -211,6 +270,13 @@ def register(
             workspace_path=DEFAULT_WORKSPACE_PATH,
             run_kwargs=run_kwargs,
         )
+        # Persisted only now: `ensure_workspace` is what upserts the
+        # `repository` row this UPDATE targets (§67 — the row may not
+        # have existed a moment ago, for a repository opened for the
+        # first time), and the verification above already happened
+        # in-memory, before any container work, for the `deny` policy
+        # check that needed it early.
+        _store_remote_protection(repository_id, remote_protection)
 
         # §8.1's idle-stop (S17): no scheduler exists in the daemon, so —
         # like S16's job-log retention — this runs opportunistically on a
@@ -230,7 +296,11 @@ def register(
             result="success",
             workspace_id=record.id,
             repository_id=record.repository_id,
-            metadata={"mode": mode, "container_state": record.state.value},
+            metadata={
+                "mode": mode,
+                "container_state": record.state.value,
+                "remote_protection_status": remote_protection.status,
+            },
         )
 
         return _info(record.id, record.repository_id, record.state.value, record.workspace_path)

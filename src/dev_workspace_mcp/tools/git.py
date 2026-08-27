@@ -73,6 +73,12 @@ from dev_workspace_mcp.git.push import (
 from dev_workspace_mcp.git.remote import validate_remote_identity
 from dev_workspace_mcp.git.service import detect_interrupted_operation, run_git_host_side
 from dev_workspace_mcp.git.status import read_git_status
+from dev_workspace_mcp.github_api import (
+    RemoteProtectionReportOutput,
+    RemoteProtectionResult,
+    deserialize_remote_protection,
+    to_report_output,
+)
 from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.workspace.container_config import resolve_exec_user
 from dev_workspace_mcp.workspace.manager import (
@@ -180,6 +186,7 @@ class GitPushOutput:
     pushed_sha: str | None
     deleted: bool
     fast_forward: bool
+    remote_protection: RemoteProtectionReportOutput
 
 
 def register(
@@ -196,6 +203,12 @@ def register(
 ) -> None:
     manager = DockerWorkspaceManager(docker_client, db) if docker_client is not None else None
     execution_service = ExecutionService(docker_client) if docker_client is not None else None
+
+    def _load_stored_remote_protection(repository_id: str) -> RemoteProtectionResult | None:
+        row = db.execute(
+            "SELECT remote_protection FROM repository WHERE id = ?", (repository_id,)
+        ).fetchone()
+        return deserialize_remote_protection(row["remote_protection"]) if row is not None else None
 
     @server.tool(
         name="git_status",
@@ -834,4 +847,11 @@ def register(
             pushed_sha=local_head_sha,
             deleted=delete,
             fast_forward=not force and not force_with_lease and not delete,
+            # §20.4: the *last* `workspace_open` verification, not a fresh
+            # re-query — §20.4 only says a push MAY re-verify, and there is
+            # no live credential to meaningfully re-verify against yet
+            # (D2); reporting the cached value is honest and cheap.
+            remote_protection=to_report_output(
+                _load_stored_remote_protection(record.repository_id)
+            ),
         )

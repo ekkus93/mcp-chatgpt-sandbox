@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.7.0",
+  "contract_version": "0.7.1",
   "tools": [
     {
       "description": "Delete a repository file or directory (\u00a713.5).",
@@ -1008,6 +1008,73 @@
       },
       "name": "git_push",
       "output_schema": {
+        "$defs": {
+          "RemoteProtectionReportOutput": {
+            "description": "\u00a720.4's exact reported `remote_protection` shape \u2014 the MCP\ntool-output form, shared by `workspace_info`/`workspace_open`\n(`tools/workspace.py`) and `git_push` (`tools/git.py`) rather than\neach tool file defining its own copy.",
+            "properties": {
+              "checked_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Checked At"
+              },
+              "default_branch": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Default Branch"
+              },
+              "deletion_blocked": {
+                "default": false,
+                "title": "Deletion Blocked",
+                "type": "boolean"
+              },
+              "force_push_blocked": {
+                "default": false,
+                "title": "Force Push Blocked",
+                "type": "boolean"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
+              },
+              "requires_pull_request": {
+                "default": false,
+                "title": "Requires Pull Request",
+                "type": "boolean"
+              },
+              "status": {
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "title": "RemoteProtectionReportOutput",
+            "type": "object"
+          }
+        },
         "properties": {
           "branch": {
             "title": "Branch",
@@ -1040,6 +1107,9 @@
             "title": "Remote",
             "type": "string"
           },
+          "remote_protection": {
+            "$ref": "#/$defs/RemoteProtectionReportOutput"
+          },
           "remote_repository": {
             "title": "Remote Repository",
             "type": "string"
@@ -1052,7 +1122,8 @@
           "ref_type",
           "pushed_sha",
           "deleted",
-          "fast_forward"
+          "fast_forward",
+          "remote_protection"
         ],
         "title": "GitPushOutput",
         "type": "object"
@@ -1813,8 +1884,60 @@
             "title": "GitStateOutput",
             "type": "object"
           },
-          "RemoteProtectionOutput": {
+          "RemoteProtectionReportOutput": {
+            "description": "\u00a720.4's exact reported `remote_protection` shape \u2014 the MCP\ntool-output form, shared by `workspace_info`/`workspace_open`\n(`tools/workspace.py`) and `git_push` (`tools/git.py`) rather than\neach tool file defining its own copy.",
             "properties": {
+              "checked_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Checked At"
+              },
+              "default_branch": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Default Branch"
+              },
+              "deletion_blocked": {
+                "default": false,
+                "title": "Deletion Blocked",
+                "type": "boolean"
+              },
+              "force_push_blocked": {
+                "default": false,
+                "title": "Force Push Blocked",
+                "type": "boolean"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
+              },
+              "requires_pull_request": {
+                "default": false,
+                "title": "Requires Pull Request",
+                "type": "boolean"
+              },
               "status": {
                 "title": "Status",
                 "type": "string"
@@ -1823,7 +1946,7 @@
             "required": [
               "status"
             ],
-            "title": "RemoteProtectionOutput",
+            "title": "RemoteProtectionReportOutput",
             "type": "object"
           }
         },
@@ -1840,7 +1963,7 @@
             "type": "string"
           },
           "remote_protection": {
-            "$ref": "#/$defs/RemoteProtectionOutput"
+            "$ref": "#/$defs/RemoteProtectionReportOutput"
           },
           "repository_id": {
             "title": "Repository Id",
@@ -1961,8 +2084,60 @@
             "title": "GitStateOutput",
             "type": "object"
           },
-          "RemoteProtectionOutput": {
+          "RemoteProtectionReportOutput": {
+            "description": "\u00a720.4's exact reported `remote_protection` shape \u2014 the MCP\ntool-output form, shared by `workspace_info`/`workspace_open`\n(`tools/workspace.py`) and `git_push` (`tools/git.py`) rather than\neach tool file defining its own copy.",
             "properties": {
+              "checked_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Checked At"
+              },
+              "default_branch": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Default Branch"
+              },
+              "deletion_blocked": {
+                "default": false,
+                "title": "Deletion Blocked",
+                "type": "boolean"
+              },
+              "force_push_blocked": {
+                "default": false,
+                "title": "Force Push Blocked",
+                "type": "boolean"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
+              },
+              "requires_pull_request": {
+                "default": false,
+                "title": "Requires Pull Request",
+                "type": "boolean"
+              },
               "status": {
                 "title": "Status",
                 "type": "string"
@@ -1971,7 +2146,7 @@
             "required": [
               "status"
             ],
-            "title": "RemoteProtectionOutput",
+            "title": "RemoteProtectionReportOutput",
             "type": "object"
           }
         },
@@ -1988,7 +2163,7 @@
             "type": "string"
           },
           "remote_protection": {
-            "$ref": "#/$defs/RemoteProtectionOutput"
+            "$ref": "#/$defs/RemoteProtectionReportOutput"
           },
           "repository_id": {
             "title": "Repository Id",

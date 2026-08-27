@@ -1399,17 +1399,113 @@ bumped `0.6.0` → `0.7.0` (§33.2: new tool, minor).
 S23 (blocked by D3) and S28 (blocked by D2) remain blocked; S29 (Audit
 logging) is the last unblocked Phase 3 task.
 
-### S28 — Remote protection verification
-**Spec:** §18.5, §20.4 · **Satisfies:** FR-032 · **Verified by:** AT-035 · **Blocked by:** D2
+### S28 — Remote protection verification ✅
+**Spec:** §18.5, §20.4 · **Satisfies:** FR-032 · **Verified by:** AT-035
 
-- [ ] Query rulesets and branch protection for the default branch on
+- [x] Query rulesets and branch protection for the default branch on
       `workspace_open` using the read-only credential
-- [ ] Report `remote_protection` in `workspace_info` and the `git_push` response
-- [ ] `require_remote_protection`: `off` / `warn` (default) / `deny`
-- [ ] Under `deny`, do **not** provision a key when protection is missing →
+- [x] Report `remote_protection` in `workspace_info` and the `git_push` response
+- [x] `require_remote_protection`: `off` / `warn` (default) / `deny`
+- [x] Under `deny`, do **not** provision a key when protection is missing →
       `REMOTE_PROTECTION_MISSING`
-- [ ] No credential → `unverified`, and `deny` degrades to `warn` with a reason
-- [ ] AT-035: warn succeeds with `missing`; deny fails and provisions no key
+- [x] No credential → `unverified`, and `deny` degrades to `warn` with a reason
+- [x] AT-035: warn succeeds with `missing`; deny fails and provisions no key
+
+**Commit:** `8628814`
+
+D2 was decided "no live GitHub credential for now" (see Open Decisions
+above): this task is built and fully tested against the no-credential
+(`unverified`) path plus a **real** stand-in for the credentialed path —
+see below — rather than skipped.
+
+New `src/dev_workspace_mcp/github_api.py` — `verify_remote_protection`,
+a real GitHub REST API client (`urllib.request`, stdlib — one GET
+request didn't justify a new HTTP dependency) against `GET
+/repos/{owner}/{repo}/branches/{branch}/protection`, the classic branch-
+protection endpoint (simpler than the newer Rulesets API for a first
+implementation; `GithubConfig.api_base_url` — new, also independently
+useful for GitHub Enterprise Server — makes the endpoint host swappable
+either way). It degrades to `unverified` — never raises — for every
+reason short of a genuine, credentialed "protection confirmed absent"
+answer: no credential configured, no resolvable GitHub identity or
+default branch, `api_auth: app` (not implemented — needs JWT signing and
+an installation-token exchange, real work with no way to verify it
+without a live GitHub App, so it degrades the same honest way an absent
+credential does, rather than being half-built), or the query itself
+failing for any reason. A diagnostic feature SHALL NOT be able to fail
+`workspace_open` by itself — only `require_remote_protection: deny`'s
+own enforcement can, and only for a *confirmed* `missing`, matching
+§18.5's explicit "deny SHALL be treated as warn" rule for the
+no-credential case exactly.
+
+`tools/workspace.py`'s `workspace_open` verifies remote protection
+**before any container work** — resolving `default_branch` via the
+already-existing `detect_default_branch` (git/commit.py, S22) and
+calling `verify_remote_protection`, entirely in-memory — so that `deny`
++ a confirmed `missing` result can raise `RemoteProtectionMissingError`
+before `ensure_workspace` touches Docker at all: AT-035's "SHALL NOT
+have provisioned a key into the container" holds because no container
+is ever created, not merely because the ssh-agent step is skipped. The
+verified result is persisted only *after* `ensure_workspace` succeeds,
+into a new `repository.remote_protection` JSON column (`db/schema.py`
+migration) — `ensure_workspace` is what upserts the `repository` row
+this UPDATE targets, so persisting any earlier would hit the same
+"row doesn't exist yet" ordering problem S23's `ssh_agent` table already
+ran into. `workspace_info` reports this **cached** value rather than
+re-querying GitHub on every read — §20.4 only requires verification on
+`workspace_open` (optionally again before a push) — confirmed by a test
+asserting a real fake-server's request count does not increase across
+two `workspace_info` calls following one `workspace_open`.
+
+The shared reporting shape (`RemoteProtectionReportOutput`,
+`to_report_output`) lives in `github_api.py` itself and is imported by
+both `tools/workspace.py` and `tools/git.py`, rather than each tool file
+defining its own copy of the same §20.4 fields. `git_push`'s
+`GitPushOutput` gained a `remote_protection` field reporting the same
+cached value (§20.4 only says push MAY re-verify; there is no live
+credential to meaningfully re-verify against yet, so re-querying was not
+implemented — reporting the cached value is honest and cheap). This
+field is wired and type-checked (confirmed by mypy and the schema
+export) but **not exercised here via an actual successful structured
+push** — no test in this task's suite, or S26/S27's, achieves a genuine
+successful structured `git_push_tool` call, since that needs a real,
+GitHub-installed credential that does not exist without S23's key
+actually being registered on a real repository. This is the same
+constraint S26/S27 already documented, not a new gap.
+
+**A real stand-in, not a mock, for the credentialed path**:
+`tests/test_github_api.py` (12 tests) and
+`tests/workspace/test_remote_protection.py` (6 tests, real Docker) run
+against a real local `http.server.HTTPServer` in a background thread —
+a real HTTP round-trip, real JSON parsing, real header/auth checking —
+standing in for `api.github.com`, the same substitution
+`github_config.api_base_url` exists to support for GitHub Enterprise
+Server for an unrelated reason, and the same pattern S24's AT-034 test
+used (a real local `sshd` standing in for `github.com`'s). Covers: every
+degrade-to-`unverified` reason, a real `404` → `missing`, a real
+"protected" response → `verified` with `force_push_blocked`/
+`deletion_blocked`/`requires_pull_request` correctly read off the
+response body, `git_policy.remote_protection_checks` narrowing which
+protections actually count toward `verified` (force push allowed but
+only `deletion` is checked → still `verified`), a rejected token →
+`unverified` with the HTTP status in the reason, an unreachable server →
+`unverified`, AT-035's both halves (`warn` succeeds with `missing`;
+`deny` fails with `REMOTE_PROTECTION_MISSING` and — confirmed by listing
+containers with the workspace's own label — no container was ever
+created), `deny` degrading to `warn` without a credential, and
+`workspace_info`'s caching behavior.
+
+`schemas/tools.json` regenerated: `workspace_open`/`workspace_info`'s
+`remote_protection` field gained the full §20.4 shape (previously a bare
+`status` string) and `git_push` gained the field entirely.
+`CONTRACT_VERSION` bumped `0.7.0` → `0.7.1` (§33.2: patch — existing
+tools' output fields changed/added, no new tool).
+
+With S28 done, every task in Phase 3 that is not explicitly blocked is
+now complete. Only S23's automated-provisioning alternative (not chosen —
+D3 was decided manual) and D2's live-credential path (not chosen — no
+token configured) remain unbuilt, both by deliberate decision, not by
+being blocked.
 
 ### S29 — Audit logging ✅ (partial — see below)
 **Spec:** §24, §20.7 · **Satisfies:** FR-027 · **Verified by:** AT-021, AT-037

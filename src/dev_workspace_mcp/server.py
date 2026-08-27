@@ -98,6 +98,8 @@ def _register_tools(
         container_config=config.container,
         ssh_config=config.ssh,
         workspace_config=config.workspace,
+        github_config=config.github,
+        git_policy_config=config.git_policy,
         audit_config=config.audit,
         repository_roots=config.repository_roots,
         ssh_agent_runtime_dir=config.state_db_path.parent / "ssh-agents",

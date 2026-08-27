@@ -26,7 +26,11 @@ from mcp.server import MCPServer
 #: 0.5.0 (S22): minor bump — one new tool, `git_commit`.
 #: 0.6.0 (S26): minor bump — one new tool, `git_pull`.
 #: 0.7.0 (S27): minor bump — one new tool, `git_push`.
-CONTRACT_VERSION = "0.7.0"
+#: 0.7.1 (S28): patch bump — `workspace_open`/`workspace_info`'s
+#: `remote_protection` and `git_push`'s new `remote_protection` field
+#: gained the full §20.4 shape (previously just a bare `status` string);
+#: no new tools.
+CONTRACT_VERSION = "0.7.1"
 
 
 async def collect_tool_schemas(server: MCPServer) -> list[dict[str, Any]]:
