@@ -18,6 +18,7 @@ allowlist, neither of which a workspace_id alone carries.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sqlite3
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -90,9 +91,17 @@ from dev_workspace_mcp.workspace.manager import (
     resolve_repository_root,
 )
 
+#: HR-015 (`docs/HARDENING_SPEC.md` §8): a denial record SHALL carry the
+#: same operation-identifying fields a success record does, "where
+#: applicable" — these are exactly the ones raise sites populate
+#: opportunistically in their own `details` (only when actually known at
+#: that point; e.g. `remote_repository` is absent from every denial raised
+#: before remote validation has run, which is the correct, honest gap).
+_DENIAL_DETAIL_FIELDS = ("policy", "remote", "branch", "remote_repository")
+
 
 def audit_denials(
-    operation: str, *, audit_config: AuditConfig
+    operation: str, *, audit_config: AuditConfig, manager: DockerWorkspaceManager | None
 ) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
     """§20.7 / §24: "denials SHALL be audited with the same fidelity as
     successes." Stacks directly *below* `@translate_workspace_errors` (so
@@ -103,7 +112,20 @@ def audit_denials(
     `git_pull_tool`/`git_push_tool`. `workspace_id` is read from the
     tool's own call kwargs (the MCP framework invokes tool functions with
     validated arguments as keywords, matching every `git_*_tool`
-    signature here) rather than threaded through separately."""
+    signature here) rather than threaded through separately.
+
+    HR-015: a denial record SHALL additionally carry `repository_id` and,
+    where applicable, `remote`/`branch`/`remote_repository` — matching a
+    success record's fidelity (§20.7). `repository_id` is resolved via
+    `manager` (best-effort: a workspace lookup can itself fail, e.g. for
+    an already-nonexistent `workspace_id`, in which case the *original*
+    denial is still reported, just without it) rather than threaded
+    through every raise site. The other three come from whichever of
+    `exc.details` (populated at the raise site when already known there)
+    or the tool's own kwargs (the caller-supplied value, for the common
+    case where the raise happens before that value was ever resolved
+    further) has it.
+    """
 
     def decorator(fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
         @wraps(fn)
@@ -111,17 +133,33 @@ def audit_denials(
             try:
                 return await fn(*args, **kwargs)
             except WorkspaceError as exc:
+                workspace_id = kwargs.get("workspace_id")
+
+                repository_id = exc.details.get("repository_id")
+                if repository_id is None and manager is not None and workspace_id is not None:
+                    # best-effort only — the original denial still gets
+                    # audited even if this secondary lookup itself fails
+                    # (e.g. workspace_id doesn't resolve to anything)
+                    with contextlib.suppress(WorkspaceError):
+                        repository_id = manager.get(workspace_id).repository_id
+
+                metadata: dict[str, Any] = {
+                    "policy_decision": ("deny" if exc.code == ErrorCode.POLICY_DENIED else "n/a"),
+                    "error_code": exc.code.value,
+                }
+                for key in _DENIAL_DETAIL_FIELDS:
+                    if key in exc.details:
+                        metadata[key] = exc.details[key]
+                    elif key in kwargs and kwargs[key] is not None:
+                        metadata[key] = kwargs[key]
+
                 write_audit_event(
                     audit_config,
                     operation=operation,
                     result="denied" if exc.code == ErrorCode.POLICY_DENIED else "failure",
-                    workspace_id=kwargs.get("workspace_id"),
-                    metadata={
-                        "policy_decision": (
-                            "deny" if exc.code == ErrorCode.POLICY_DENIED else "n/a"
-                        ),
-                        "error_code": exc.code.value,
-                    },
+                    workspace_id=workspace_id,
+                    repository_id=repository_id,
+                    metadata=metadata,
                 )
                 raise
 
@@ -296,7 +334,7 @@ def register(
         "and policy checks (§17.4).",
     )
     @translate_workspace_errors
-    @audit_denials("git_commit", audit_config=audit_config)
+    @audit_denials("git_commit", audit_config=audit_config, manager=manager)
     async def git_commit_tool(
         workspace_id: str,
         message: str,
@@ -382,7 +420,11 @@ def register(
             raise PolicyDeniedError(
                 "amend_published policy denies amending a commit already present "
                 "on its upstream branch (§18.9, §65)",
-                details={"policy": "amend_published", "upstream": status.upstream},
+                details={
+                    "policy": "amend_published",
+                    "upstream": status.upstream,
+                    "branch": status.branch,
+                },
             )
 
         user = resolve_exec_user(container_config)
@@ -445,7 +487,7 @@ def register(
         "rather than escalating past a non-fast-forward (§20.5).",
     )
     @translate_workspace_errors
-    @audit_denials("git_pull", audit_config=audit_config)
+    @audit_denials("git_pull", audit_config=audit_config, manager=manager)
     async def git_pull_tool(
         workspace_id: str,
         remote: str = "origin",
@@ -560,7 +602,11 @@ def register(
         if fetch_exit != 0:
             raise CommandFailedError(
                 f"git fetch failed: {fetch_stderr}",
-                details={"workspace_id": workspace_id, "remote": remote},
+                details={
+                    "workspace_id": workspace_id,
+                    "remote": remote,
+                    "remote_repository": remote_repository,
+                },
             )
 
         integrate_exit, integrate_stderr = await exec_git(
@@ -571,7 +617,12 @@ def register(
                 raise GitNonFastForwardError(
                     f"cannot fast-forward {branch!r} onto {remote}/{branch}: "
                     f"{integrate_stderr} (§20.5)",
-                    details={"workspace_id": workspace_id, "remote": remote, "branch": branch},
+                    details={
+                        "workspace_id": workspace_id,
+                        "remote": remote,
+                        "branch": branch,
+                        "remote_repository": remote_repository,
+                    },
                 )
             raise CommandFailedError(
                 f"git {strategy} integration failed: {integrate_stderr}",
@@ -580,6 +631,7 @@ def register(
                     "remote": remote,
                     "branch": branch,
                     "strategy": strategy,
+                    "remote_repository": remote_repository,
                 },
             )
 
@@ -631,7 +683,7 @@ def register(
         "governed by their own git_policy key, refused before Git is invoked.",
     )
     @translate_workspace_errors
-    @audit_denials("git_push", audit_config=audit_config)
+    @audit_denials("git_push", audit_config=audit_config, manager=manager)
     async def git_push_tool(
         workspace_id: str,
         remote: str = "origin",
@@ -713,7 +765,11 @@ def register(
         if _denied(git_policy_config.push):
             raise PolicyDeniedError(
                 "git_policy.push denies git_push entirely (§18.9)",
-                details={"policy": "push", "value": git_policy_config.push},
+                details={
+                    "policy": "push",
+                    "value": git_policy_config.push,
+                    "branch": target_branch,
+                },
             )
 
         default_branch = detect_default_branch(repo_path)
@@ -735,12 +791,20 @@ def register(
         if force and _denied(git_policy_config.force_push):
             raise PolicyDeniedError(
                 "force_push policy denies force: true (§18.9)",
-                details={"policy": "force_push", "value": git_policy_config.force_push},
+                details={
+                    "policy": "force_push",
+                    "value": git_policy_config.force_push,
+                    "branch": target_branch,
+                },
             )
         if force_with_lease and _denied(git_policy_config.force_with_lease):
             raise PolicyDeniedError(
                 "force_with_lease policy denies force_with_lease: true (§18.9)",
-                details={"policy": "force_with_lease", "value": git_policy_config.force_with_lease},
+                details={
+                    "policy": "force_with_lease",
+                    "value": git_policy_config.force_with_lease,
+                    "branch": target_branch,
+                },
             )
         if delete:
             delete_policy = (
@@ -752,7 +816,11 @@ def register(
             if _denied(delete_policy):
                 raise PolicyDeniedError(
                     f"{policy_name} policy denies delete: true (§18.9)",
-                    details={"policy": policy_name, "value": delete_policy},
+                    details={
+                        "policy": policy_name,
+                        "value": delete_policy,
+                        "branch": target_branch,
+                    },
                 )
 
         # §20.3: a force push still carries a state guard — required once
@@ -831,6 +899,7 @@ def register(
                         "workspace_id": workspace_id,
                         "remote": remote,
                         "branch": target_branch,
+                        "remote_repository": remote_repository,
                     },
                 )
             raise CommandFailedError(
@@ -840,8 +909,17 @@ def register(
                     "remote": remote,
                     "branch": target_branch,
                     "delete": delete,
+                    "remote_repository": remote_repository,
                 },
             )
+
+        # §20.4: the *last* `workspace_open` verification, not a fresh
+        # re-query — §20.4 only says a push MAY re-verify, and there is
+        # no live credential to meaningfully re-verify against yet (D2);
+        # reporting the cached value is honest and cheap. Computed once
+        # and reused for both the audit record (HR-015: success records
+        # SHALL carry `remote_protection_status`) and the response.
+        remote_protection = to_report_output(_load_stored_remote_protection(record.repository_id))
 
         write_audit_event(
             audit_config,
@@ -855,10 +933,12 @@ def register(
                 "remote_repository": remote_repository,
                 "branch": target_branch,
                 "ref_type": ref_type,
+                "refspec": refspec,
                 "pushed_sha": local_head_sha,
                 "deleted": delete,
                 "force": force,
                 "force_with_lease": force_with_lease,
+                "remote_protection_status": remote_protection.status,
             },
         )
 
@@ -870,11 +950,5 @@ def register(
             pushed_sha=local_head_sha,
             deleted=delete,
             fast_forward=not force and not force_with_lease and not delete,
-            # §20.4: the *last* `workspace_open` verification, not a fresh
-            # re-query — §20.4 only says a push MAY re-verify, and there is
-            # no live credential to meaningfully re-verify against yet
-            # (D2); reporting the cached value is honest and cheap.
-            remote_protection=to_report_output(
-                _load_stored_remote_protection(record.repository_id)
-            ),
+            remote_protection=remote_protection,
         )

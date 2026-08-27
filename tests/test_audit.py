@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from dev_workspace_mcp.audit import write_audit_event
 from dev_workspace_mcp.config.models import AuditConfig
 
@@ -72,3 +74,25 @@ def test_write_audit_event_defaults_metadata_to_empty_dict(tmp_path: Path) -> No
     write_audit_event(config, operation="op", result="success")
     event = _read_lines(config.path)[0]
     assert event["metadata"] == {}
+
+
+def test_write_audit_event_does_not_crash_when_the_path_is_unwritable(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """HR-015 (`docs/HARDENING_SPEC.md` §8): an unwritable `audit.path`
+    SHALL NOT turn a would-be audit write into an unhandled crash — most
+    importantly when it's `audit_denials` doing the writing from inside
+    its own exception handler for a real denial, where a crash here
+    would replace that denial with an unrelated, opaque `OSError`
+    instead. A file sitting where a parent directory needs to be created
+    is a portable way to force a real `OSError` (`FileExistsError`) out
+    of `Path.mkdir`, independent of the test runner's uid/permission
+    bits."""
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory")
+    config = AuditConfig(enabled=True, path=blocker / "audit.jsonl")
+
+    write_audit_event(config, operation="git_push", result="denied")  # SHALL NOT raise
+
+    assert not (blocker / "audit.jsonl").exists()
+    assert "audit" in capsys.readouterr().err  # the failure is at least reported, not silent

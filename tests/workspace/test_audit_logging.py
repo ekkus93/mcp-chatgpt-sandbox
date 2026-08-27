@@ -203,3 +203,89 @@ async def test_interrupted_operation_denial_is_audited_as_a_failure(
     failures = [e for e in events if e["operation"] == "git_commit" and e["result"] == "failure"]
     assert len(failures) == 1
     assert failures[0]["metadata"]["error_code"] == "GIT_CONFLICT"
+
+
+async def test_at_hr015_policy_denial_carries_the_policy_key(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """HR-015: the denial record SHALL carry the policy key that produced
+    it (`PolicyDeniedError.details["policy"]`), not just `policy_decision`
+    and `error_code` — before this fix, `audit_denials` discarded
+    `details` entirely, so a denial gave no way to tell *which* policy
+    fired without cross-referencing the (also-audited, but separate)
+    error message."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path, github="owner/example")
+    _set_remote(repo_path, "https://github.com/owner/example.git")
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    with pytest.raises(ToolError, match="POLICY_DENIED"):
+        await server.call_tool(
+            "git_push",
+            {"workspace_id": workspace_id, "force": True, "expected_local_head_sha": "0" * 40},
+        )
+
+    events = _read_events(config.audit.path)
+    denials = [e for e in events if e["operation"] == "git_push" and e["result"] == "denied"]
+    assert len(denials) == 1
+    assert denials[0]["metadata"]["policy"] == "force_push"
+
+
+async def test_at_hr015_policy_denial_carries_repository_id_and_branch(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """HR-015: `repository_id` (top-level, matching a success record's
+    shape) and `branch` (where applicable — here, known before the
+    policy check that denies the push) SHALL both be present."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path, github="owner/example")
+    _set_remote(repo_path, "https://github.com/owner/example.git")
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    with pytest.raises(ToolError, match="POLICY_DENIED"):
+        await server.call_tool(
+            "git_push",
+            {"workspace_id": workspace_id, "force": True, "expected_local_head_sha": "0" * 40},
+        )
+
+    events = _read_events(config.audit.path)
+    denials = [e for e in events if e["operation"] == "git_push" and e["result"] == "denied"]
+    assert len(denials) == 1
+    assert denials[0]["repository_id"] == "example"
+    assert denials[0]["metadata"]["branch"] == "main"
+
+
+async def test_at_hr015_remote_rejection_failure_carries_remote_and_repository_id(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """HR-015's "where applicable" for a non-policy denial: `remote`
+    (a tool kwarg, present regardless of where the raise happens) and
+    `repository_id` (resolved via the workspace lookup) SHALL both
+    appear — `remote_repository` correctly does NOT appear here, since
+    `ext::` is rejected before remote identity is ever resolved."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path, github="owner/example")
+    _set_remote(repo_path, "ext::sh -c 'touch /tmp/pwned'")
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    with pytest.raises(ToolError, match="GIT_REMOTE_NOT_ALLOWED"):
+        await server.call_tool("git_pull", {"workspace_id": workspace_id})
+
+    events = _read_events(config.audit.path)
+    failures = [e for e in events if e["operation"] == "git_pull" and e["result"] == "failure"]
+    assert len(failures) == 1
+    assert failures[0]["repository_id"] == "example"
+    assert failures[0]["metadata"]["remote"] == "origin"
+    assert "remote_repository" not in failures[0]["metadata"]

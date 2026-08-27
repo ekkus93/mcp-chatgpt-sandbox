@@ -18,11 +18,22 @@ nothing to read it back, was judged not worth the same invasive
 `db`-threading `audit_denials` (S29, `tools/git.py`) was specifically
 designed to avoid for its own scope. `request_id`/`session_id` are
 always `None`: nothing in the codebase threads either through to a tool
-call yet."""
+call yet.
+
+HR-015 (`docs/HARDENING_SPEC.md` §8): an unwritable audit path (a
+misconfigured `audit.path`, a full disk, a permissions change after
+startup) SHALL NOT turn the write below into an unhandled crash that
+replaces the real result — most importantly a denial, where a failed
+audit write would otherwise mask a correctly-computed `PolicyDeniedError`
+behind an opaque, unrelated `OSError` raised from deep inside
+`audit_denials`'s own exception handler in `tools/git.py`, but just as
+real for an ordinary successful commit/pull/push, where the actual Git
+operation already happened and there is nothing left to roll back."""
 
 from __future__ import annotations
 
 import json
+import sys
 from datetime import UTC, datetime
 from typing import Any
 
@@ -45,6 +56,14 @@ def write_audit_event(
     `metadata` is passed through `redact_secrets` (§24.1) before being
     written, the same second layer `to_tool_error` applies to a client
     response.
+
+    HR-015: an `OSError` from the filesystem operations below (an
+    unwritable `audit.path`, a full disk, a permissions problem) is
+    caught and reported to stderr rather than propagated — the caller's
+    own result (a denial, or an already-completed Git operation) is what
+    matters to the caller; a broken audit log is a real operational
+    problem, but SHALL NOT itself become the response the client sees in
+    place of the one that was actually computed.
     """
     if not config.enabled:
         return
@@ -58,6 +77,12 @@ def write_audit_event(
         "result": result,
         "metadata": redact_secrets(metadata) if metadata else {},
     }
-    config.path.parent.mkdir(parents=True, exist_ok=True)
-    with config.path.open("a") as f:
-        f.write(json.dumps(record, sort_keys=True) + "\n")
+    try:
+        config.path.parent.mkdir(parents=True, exist_ok=True)
+        with config.path.open("a") as f:
+            f.write(json.dumps(record, sort_keys=True) + "\n")
+    except OSError as exc:
+        print(
+            f"audit: failed to write {operation!r}/{result!r} event to {config.path}: {exc}",
+            file=sys.stderr,
+        )

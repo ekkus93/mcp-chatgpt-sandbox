@@ -917,14 +917,101 @@ constraint the file's own module docstring already documents for the
 ordinary authenticated-push case; the unit-level tests cover that path
 directly instead.
 
-### H13 — Denials are audited at §20.7 fidelity
+### H13 — Denials are audited at §20.7 fidelity ✅
 **Satisfies:** HR-015
+**Commit:** `8d55a19`
 
-- [ ] Include the policy key from `PolicyDeniedError.details["policy"]`
-- [ ] Include `repository_id`, and `remote`/`branch`/`remote_repository` where
+- [x] Include the policy key from `PolicyDeniedError.details["policy"]`
+- [x] Include `repository_id`, and `remote`/`branch`/`remote_repository` where
       applicable
-- [ ] Add `refspec` and `remote_protection_status` to `git_push` success records
-- [ ] Do not let an unwritable audit path replace a denial with a crash
+- [x] Add `refspec` and `remote_protection_status` to `git_push` success records
+- [x] Do not let an unwritable audit path replace a denial with a crash
+
+**Defect:** `tools/git.py`'s `audit_denials` recorded only `{policy_decision,
+error_code}` per denial, discarding `PolicyDeniedError.details["policy"]`
+entirely and never including `repository_id` — a denial record could not say
+*which* policy fired or *which* repository it was about, unlike every
+success record alongside it. `write_audit_event` also let a plain `OSError`
+(an unwritable `audit.path`) propagate uncaught, which — raised from inside
+`audit_denials`'s own exception handler — would replace a correctly-computed
+denial with an unrelated crash.
+
+**Implementation.** `audit_denials` now takes a `manager` parameter (the
+three `register()` call sites pass `manager=manager`) and, on catching a
+`WorkspaceError`, resolves `repository_id` via a best-effort
+`manager.get(workspace_id).repository_id` lookup (wrapped in
+`contextlib.suppress(WorkspaceError)` — a lookup failure, e.g. an
+already-nonexistent `workspace_id`, still lets the *original* denial get
+audited, just without a `repository_id`) when the raise site didn't already
+supply one in `details`. `policy`, `remote`, `branch`, and
+`remote_repository` are pulled from `exc.details` first, falling back to
+the tool's own resolved kwargs (`remote`/`branch` are always present as
+call kwargs per the MCP framework's own invocation convention, already
+documented in this decorator's docstring) — `_DENIAL_DETAIL_FIELDS` names
+exactly these four. Several raise sites in `git_commit_tool`/`git_push_tool`
+gained a `"branch": target_branch` (or `status.branch`) entry in their
+`details` where it wasn't already present, and the post-remote-validation
+failure raises in both `git_pull_tool` and `git_push_tool`
+(`CommandFailedError`/`GitNonFastForwardError`, four sites total) gained
+`"remote_repository": remote_repository` — correct "where applicable"
+behavior falls out naturally: a denial raised *before* remote validation
+genuinely has no `remote_repository` to report, and none of the tests below
+expect one there.
+
+`git_push_tool`'s success `write_audit_event` call gained `"refspec":
+refspec` and `"remote_protection_status": remote_protection.status`; the
+latter required hoisting the previously return-statement-only
+`to_report_output(_load_stored_remote_protection(...))` call one step
+earlier into a shared `remote_protection` local, reused for both the audit
+metadata and `GitPushOutput.remote_protection` — the same "single value
+feeds both the audit record and the response" construction H12 used for
+`remote_repository`, so the two SHALL NOT be able to name different values.
+
+`write_audit_event` (`audit.py`) now wraps its `mkdir`/`open`/`write` in
+`try/except OSError`, printing a one-line diagnostic to stderr (the
+conventional channel for an MCP server over stdio — stdout carries the
+JSON-RPC stream) and returning normally instead of propagating. This
+protects every caller, not only `audit_denials`: an already-completed
+`git_commit`/`git_pull`/`git_push` should not turn into a client-visible
+crash just because the audit log itself couldn't be written.
+
+**Verified the new tests actually catch the regression.** Reverted
+`tools/git.py` and `audit.py` to their pre-H13 versions and reran the new
+tests: all 4 new end-to-end tests in `tests/workspace/test_audit_logging.py`
+failed (missing `policy`/`repository_id`/`branch` keys, `AssertionError:
+assert None == 'example'` for the repository_id lookups that don't exist
+yet), and the new unit test in `tests/test_audit.py` failed with an
+unhandled `FileExistsError` propagating straight out of
+`write_audit_event` — exactly the crash this task exists to prevent.
+Restored the fix; all pass again; no regressions across the broader
+191-test run spanning `tests/test_audit.py`,
+`tests/workspace/test_audit_logging.py`, `tests/workspace/test_git_commit_tool.py`,
+`tests/workspace/test_git_push_tool.py`, `tests/workspace/test_git_pull_tool.py`,
+`tests/git/`.
+
+**A genuine, documented gap:** `git_push`'s success path (and therefore its
+success audit record's `refspec`/`remote_protection_status`) has no
+end-to-end test reaching an actual accepted push — the same D3 (SSH key
+provisioning, blocked) limitation `tests/workspace/test_git_push_tool.py`'s
+own module docstring already documents for every other success-path test in
+that file. An `insteadOf`-rewrite attempt to fake an offline success target
+was tried and abandoned: `git remote get-url`/`get-url --push` themselves
+apply `url.<base>.insteadOf` rewriting before returning, so the daemon's own
+`validate_remote_identity_for_push` would see the rewritten (non-GitHub)
+URL and correctly reject it — confirmed empirically rather than assumed.
+Correctness here instead rests on the same "single value feeds both records"
+construction verified directly by reading the code and confirmed by
+`mypy`/`ruff`: `refspec` and `remote_protection` are each computed once and
+passed to both the audit call and the return value, so they cannot diverge.
+
+**New tests:** `tests/test_audit.py` — `write_audit_event` survives a
+real `OSError` (a file sitting where a parent directory needs to be
+created) without raising, and reports it to stderr rather than staying
+silent. `tests/workspace/test_audit_logging.py` — a policy denial's audit
+record carries the firing policy key; carries `repository_id` (top-level)
+and `branch`; a non-policy denial (`GIT_REMOTE_NOT_ALLOWED`, raised before
+remote validation) carries `repository_id` and `remote` but correctly
+omits `remote_repository`.
 
 ### H14 — Authorization is re-checked against live configuration
 **Satisfies:** HR-016 · **Verified by:** HAT-013
