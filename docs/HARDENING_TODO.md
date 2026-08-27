@@ -1709,13 +1709,93 @@ half-staged index behind; a genuine no-op commit request raises
 `GIT_NOTHING_TO_COMMIT` specifically, not the generic `COMMAND_FAILED`
 every other commit failure reports.
 
-### H23 — Cache volumes cannot collide across repositories
+### H23 — Cache volumes cannot collide across repositories ✅
 **Satisfies:** HR-009 · **Verified by:** HAT-008
+**Commit:** `f3467cf`
 
-- [ ] Hash-derive the volume name from `(repository_id, cache_name)`
-- [ ] Provide a migration or documented path for existing volumes
-- [ ] Reclaim volumes on `delete` (currently orphaned, and inherited by a later
+- [x] Hash-derive the volume name from `(repository_id, cache_name)`
+- [x] Provide a migration or documented path for existing volumes
+- [x] Reclaim volumes on `delete` (currently orphaned, and inherited by a later
       repository reusing the id)
+
+**Hash-derived naming closes the ambiguous-concatenation gap.**
+`cache_volume_name` (`workspace/caches.py`) now sha256-hashes
+`f"{repository_id}\x00{cache_name}"` — NUL-separated, not just
+concatenated — and appends the first 8 hex chars as a suffix to the
+existing human-readable slug: `mcp-cache-<slug>-<digest>`. HR-009's own
+literal example is now the regression test
+(`test_at_hat008_ambiguous_concatenation_does_not_collide`): repository
+`my-app` + cache `cargo` and repository `my` + cache `app-cargo` both
+concatenate to the identical `"my-app-cargo"`, which is exactly what the
+pre-H23 implementation hashed (when it hashed at all) — hashing the
+NUL-joined pre-image instead of the ambiguous joined string is what
+actually closes the collision, not the hashing by itself. The slug half is
+kept only for human readability in `docker volume ls`; the digest is what
+uniqueness actually rests on.
+
+**No migration for existing volumes — documented, not silently dropped.**
+Renaming the volume scheme orphans any cache volume created under the old
+plain-concatenation name; there is no live data-loss risk (these are
+disposable build caches, not source of truth), so the decision was to
+document the behavior change rather than write a one-time migration for a
+handful of dev-machine volumes. Recorded in both `cache_volume_name`'s own
+docstring and an "Implementation note (H23)" paragraph appended under
+HR-009 in `docs/HARDENING_SPEC.md`.
+
+**Reclaim on delete.** `DockerWorkspaceManager.delete` gained an optional
+`cache_volume_names` parameter and a new `_remove_cache_volumes` helper
+(tolerant of a volume that was never created — `DockerNotFound` is caught
+and skipped, not an error). Nothing on the Docker side links a volume back
+to the repository that created it, so the CLI's `delete` command computes
+the names itself from that repository's own `.mcp-workspace.yml` (via
+`load_project_config` + `cache_volume_name`) and passes them through —
+otherwise a repository id later reused for a different project would
+silently inherit the old project's cache volumes, exactly the scenario
+HR-009 describes.
+
+**Verified the tests catch the regression:** reverted `workspace/caches.py`,
+`workspace/manager.py`, and `cli.py` to their pre-H23 versions and reran
+the new tests. `test_cache_volume_name_is_repository_scoped` and
+`test_at_hat008_ambiguous_concatenation_does_not_collide` both failed
+exactly as predicted — the reverted code produced the plain
+`mcp-cache-example-cargo` (no digest suffix) and the two ambiguous inputs
+resolved to the identical `mcp-cache-my-app-cargo`. Both `test_manager.py`
+reclamation tests failed with `TypeError: ... unexpected keyword argument
+'cache_volume_names'`. The CLI-level test failed with `DID NOT RAISE
+NotFound` — the reverted `delete` command left the volume in place.
+Restored the fix; all pass again. No Docker leftovers after either the
+revert run or the restore run; no schema drift
+(`export-schemas` against a throwaway config diffs clean against
+`schemas/tools.json`, as expected — no tool output shape changed).
+
+Also fixed the one pre-existing test that assumed the old exact naming
+scheme: `test_build_cache_mounts_are_writable_docker_volumes` now compares
+against `cache_volume_name(...)`'s own output instead of a hardcoded
+string.
+
+**Full `tests/workspace/` suite:** the backgrounded run was interrupted
+twice around the 50–70% mark with zero visible failures (the same
+recurring environmental pattern seen since H19), leaving one orphaned
+container both times (`docker rm -f`'d immediately, confirmed clean
+afterward). Rather than retry a third time, committing on the strength of
+the scoped evidence already gathered: `tests/workspace/test_caches.py`
+(17/17), `tests/workspace/test_manager.py -k hr009` (2/2, real Docker),
+`tests/workspace/test_cli_lifecycle.py -k hr009` (1/1, real Docker),
+revert-verification above, plus clean `ruff check`, `ruff format --check`,
+and `mypy src`.
+
+**New tests:** `tests/workspace/test_caches.py` —
+`test_cache_volume_name_is_deterministic`,
+`test_at_hat008_ambiguous_concatenation_does_not_collide`, and a
+`.startswith(...)` fix to `test_cache_volume_name_is_repository_scoped`
+now that the name carries a digest suffix. `tests/workspace/test_manager.py`
+— `test_at_hr009_delete_reclaims_cache_volumes` (real Docker: mounts a
+named cache volume, deletes the workspace with that name passed through,
+confirms `docker.errors.NotFound` afterward) and
+`test_at_hr009_delete_tolerates_a_cache_volume_that_was_never_created`.
+`tests/workspace/test_cli_lifecycle.py` —
+`test_at_hr009_delete_reclaims_cache_volumes`, a full CLI-level end-to-end
+test with a real `.mcp-workspace.yml` cache declaration.
 
 ### H24 — Assorted Git correctness
 **Satisfies:** HR-022 (partial)

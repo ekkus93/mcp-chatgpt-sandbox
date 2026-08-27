@@ -34,6 +34,7 @@ from dev_workspace_mcp.project_config import load_project_config
 from dev_workspace_mcp.repositories import RepositoryRecord, RepositoryRegistry
 from dev_workspace_mcp.schema_export import export_schemas
 from dev_workspace_mcp.server import Transport, create_server, run_server
+from dev_workspace_mcp.workspace.caches import cache_volume_name
 from dev_workspace_mcp.workspace.container_config import build_workspace_run_kwargs
 from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
 from dev_workspace_mcp.workspace.mounts import build_known_hosts_mount, build_workspace_mounts
@@ -347,9 +348,21 @@ def delete_workspace(config_path: Path, repository_id: str) -> None:
         if config.ssh.mode == "agent"
         else None
     )
+    # HR-009 (`docs/HARDENING_SPEC.md` §4.2): reclaim this repository's
+    # own cache volumes on delete — otherwise a repository id later
+    # reused for a different project would silently inherit them.
+    # Recomputed from the current `.mcp-workspace.yml`, the same way
+    # `workspace_open` itself resolves them — best-effort: a cache
+    # declaration removed or renamed since the workspace was last opened
+    # means that specific volume is missed here, not an error.
+    project_config = load_project_config(repository.canonical_path)
+    cache_volume_names = [
+        cache_volume_name(repository_id=repository.id, cache_name=entry.name)
+        for entry in (project_config.caches if project_config is not None else [])
+    ]
     try:
         DockerWorkspaceManager(docker_client, db, ssh_agent_manager=ssh_agent_manager).delete(
-            workspace_id
+            workspace_id, cache_volume_names=cache_volume_names
         )
     except WorkspaceNotFoundError:
         click.echo(

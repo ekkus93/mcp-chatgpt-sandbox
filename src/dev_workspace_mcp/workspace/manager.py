@@ -582,7 +582,7 @@ class DockerWorkspaceManager:
         record = self._save(replace(record, container_id=None, state=state, last_used_at=_now()))
         return self._run_container(record, image=image, run_kwargs=run_kwargs or {})
 
-    def delete(self, workspace_id: str) -> None:
+    def delete(self, workspace_id: str, *, cache_volume_names: list[str] | None = None) -> None:
         """§8.4: remove workspace/container metadata. SHALL NOT delete the
         host repository — deletion here is Docker resources and the DB
         row only.
@@ -598,15 +598,43 @@ class DockerWorkspaceManager:
         and both deletes commit together in one transaction — so a
         failure at this stage can no longer split "container gone" from
         "row still present" the way the pre-fix code could.
+
+        HR-009 (`docs/HARDENING_SPEC.md` §4.2): `cache_volume_names`,
+        when the caller has them (`cli.py`'s `delete` command, from the
+        repository's `.mcp-workspace.yml`), are removed here too — a
+        cache volume this module itself has no way to discover on its
+        own (nothing links a Docker volume back to the `repository_id`
+        that created it; see `workspace/caches.py`'s own module
+        docstring). Without this, a repository id later reused for a
+        genuinely different project would silently *inherit* the old
+        project's cache volumes by name — caches hold executables, so
+        this is a cross-repository write primitive, not only leftover
+        disk usage.
         """
         record = self._get_or_raise(workspace_id)
         self._save(replace(record, state=WorkspaceState.DELETING, last_used_at=_now()))
         self._remove_container_if_present(record)
+        if cache_volume_names:
+            self._remove_cache_volumes(cache_volume_names)
         if self._ssh_agents is not None:
             self._ssh_agents.terminate(workspace_id)  # §19.2: no agent after delete
         with self._db:
             self._db.execute("DELETE FROM job WHERE workspace_id = ?", (workspace_id,))
             self._db.execute("DELETE FROM workspace WHERE id = ?", (workspace_id,))
+
+    def _remove_cache_volumes(self, cache_volume_names: list[str]) -> None:
+        for name in cache_volume_names:
+            try:
+                volume = self._docker.volumes.get(name)
+            except DockerNotFound:
+                continue  # never created (the cache was declared but never actually used)
+            try:
+                volume.remove(force=True)
+            except DockerException as exc:
+                raise ContainerRuntimeFailedError(
+                    f"failed to remove cache volume {name!r}: {exc}",
+                    details={"volume_name": name},
+                ) from exc
 
     def _remove_container_if_present(self, record: WorkspaceRecord) -> None:
         container = self._find_container(record)

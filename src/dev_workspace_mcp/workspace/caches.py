@@ -18,6 +18,8 @@ caches a project didn't ask for.
 
 from __future__ import annotations
 
+import hashlib
+import re
 from dataclasses import dataclass
 
 from docker.types import Mount
@@ -25,6 +27,8 @@ from docker.types import Mount
 from dev_workspace_mcp.errors import ContainerCreateFailedError
 from dev_workspace_mcp.project_config import ProjectCacheEntry
 from dev_workspace_mcp.workspace.container_config import DEFAULT_CONTAINER_HOME
+
+_SLUG_RUN_RE = re.compile(r"[^a-z0-9]+")
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,8 +83,35 @@ def _home_relative_path(raw_path: str, *, cache_name: str) -> str:
 def cache_volume_name(*, repository_id: str, cache_name: str) -> str:
     """Repository-scoped (see module docstring): every workspace opened
     for `repository_id` resolves to the same Docker volume for a cache of
-    this `name`, independent of `workspace_id`."""
-    return f"mcp-cache-{repository_id}-{cache_name}"
+    this `name`, independent of `workspace_id`.
+
+    HR-009 (`docs/HARDENING_SPEC.md` §4.2): hash-derived from the
+    `(repository_id, cache_name)` *pair* — like `naming.container_name`
+    already does for workspace identity — not plain string concatenation.
+    Both fields are restricted to `[a-z0-9-]` (`project_config.py`'s own
+    validation for `cache_name`; repository ids the same way), so a
+    hyphen-joined string is genuinely ambiguous, not just theoretically:
+    `repository_id="my-app", cache_name="cargo"` and
+    `repository_id="my", cache_name="app-cargo"` both concatenate to the
+    identical `"my-app-cargo"`. A NUL byte between the two fields *before*
+    hashing is what actually closes the gap — it cannot appear in either
+    validated component, so the pre-hash input is unambiguous; hashing an
+    already-concatenated (and already-ambiguous) string would only have
+    hidden the collision, not fixed it.
+
+    Changing this naming scheme means a cache volume created under the
+    old (`mcp-cache-{repository_id}-{cache_name}`) scheme is no longer
+    found or reused — the daemon mounts a fresh, empty volume under the
+    new name instead. Not data loss (the old volume still exists in
+    Docker, just unreferenced from here on — `docker volume ls` finds it,
+    an operator can inspect or `docker volume rm` it manually) and not
+    silently unsafe (a cache is, by §11's own design, disposable and
+    rebuildable — nothing here treats it as a source of truth); still a
+    real, deliberate, documented behavior change on upgrade, not an
+    oversight."""
+    digest = hashlib.sha256(f"{repository_id}\x00{cache_name}".encode()).hexdigest()[:8]
+    slug = _SLUG_RUN_RE.sub("-", f"{repository_id}-{cache_name}".lower()).strip("-")
+    return f"mcp-cache-{slug}-{digest}"
 
 
 def resolve_caches(

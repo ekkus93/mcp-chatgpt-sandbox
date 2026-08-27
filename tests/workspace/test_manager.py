@@ -132,6 +132,54 @@ def test_delete_removes_container_and_db_row(
         docker_client.containers.get(container_id)  # type: ignore[arg-type]
 
 
+def test_at_hr009_delete_reclaims_cache_volumes(
+    manager: DockerWorkspaceManager,
+    docker_client: docker.DockerClient,
+    repository: RepositoryRecord,
+) -> None:
+    """HR-009 (`docs/HARDENING_SPEC.md` §4.2): a cache volume this
+    module has no way to discover on its own (nothing links a Docker
+    volume back to the `repository_id` that created it) is reclaimed
+    when the caller (`cli.py`'s `delete` command) supplies the names it
+    computed from the repository's own `.mcp-workspace.yml` — otherwise
+    a repository id later reused for a different project would silently
+    inherit the old one's cache volumes."""
+    from docker.types import Mount
+
+    from dev_workspace_mcp.workspace.caches import cache_volume_name
+
+    volume_name = cache_volume_name(repository_id=repository.id, cache_name="cargo")
+    mounts = [Mount(target="/root/.cargo", source=volume_name, type="volume", read_only=False)]
+    record = manager.ensure_workspace(
+        repository=repository,
+        image=TEST_IMAGE,
+        run_kwargs={**KEEP_ALIVE_RUN_KWARGS, "mounts": mounts},
+    )
+    docker_client.volumes.get(volume_name)  # sanity: it really was created
+
+    manager.delete(record.id, cache_volume_names=[volume_name])
+
+    with pytest.raises(docker.errors.NotFound):
+        docker_client.volumes.get(volume_name)
+
+
+def test_at_hr009_delete_tolerates_a_cache_volume_that_was_never_created(
+    manager: DockerWorkspaceManager,
+    repository: RepositoryRecord,
+) -> None:
+    """A declared-but-never-actually-mounted cache (or one whose name
+    changed since the workspace was last opened) has no volume to
+    remove — not an error."""
+    from dev_workspace_mcp.workspace.caches import cache_volume_name
+
+    never_created = cache_volume_name(repository_id=repository.id, cache_name="never-used")
+    record = manager.ensure_workspace(
+        repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
+    )
+
+    manager.delete(record.id, cache_volume_names=[never_created])  # SHALL NOT raise
+
+
 def test_delete_does_not_touch_the_host_repository(
     manager: DockerWorkspaceManager, repository: RepositoryRecord
 ) -> None:

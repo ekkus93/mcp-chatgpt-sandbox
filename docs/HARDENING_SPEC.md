@@ -256,6 +256,16 @@ rather than by string concatenation.
 executables, so this is a cross-repository write primitive, not only a
 disclosure.
 
+**Implementation note (H23):** no migration is performed for a volume created
+under the old (`mcp-cache-{repository_id}-{cache_name}`) naming scheme — the
+daemon simply stops finding and reusing it, mounting a fresh, empty volume
+under the new hash-derived name instead. This is a deliberate, documented
+behavior change on upgrade rather than an oversight: caches are disposable
+and rebuildable by design (§11), so nothing is lost that the daemon itself
+treats as durable state. An old volume is not deleted either — it remains a
+real, inspectable Docker volume (`docker volume ls`) an operator can remove
+manually once satisfied it is no longer needed.
+
 ### HR-010 Declared configuration SHALL be enforced or removed
 
 Every declared configuration key SHALL either be read by the code or be deleted

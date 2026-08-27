@@ -180,3 +180,36 @@ async def test_delete_removes_the_workspace_and_preserves_the_repository(
     server = create_server(load_config(config_path))
     with pytest.raises(ToolError, match="WORKSPACE_NOT_FOUND"):
         await server.call_tool("workspace_info", {"workspace_id": workspace_id})
+
+
+async def test_at_hr009_delete_reclaims_cache_volumes(
+    minimal_config_dict: dict[str, Any],
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """HR-009 (`docs/HARDENING_SPEC.md` §4.2): the `delete` CLI command
+    recomputes cache volume names from the repository's own
+    `.mcp-workspace.yml` and reclaims them — otherwise a repository id
+    later reused for a different project would silently inherit the old
+    project's cache volumes."""
+    from dev_workspace_mcp.workspace.caches import cache_volume_name
+
+    repo_path = tmp_path / "work" / "example"
+    _configured_repo(minimal_config_dict, default_image_tag, repo_path)
+    (repo_path / ".mcp-workspace.yml").write_text(
+        yaml.safe_dump({"version": 1, "caches": [{"name": "cargo", "path": "$HOME/.cargo"}]})
+    )
+    config_path = _write_config(tmp_path, minimal_config_dict)
+    await _open(config_path)
+
+    volume_name = cache_volume_name(repository_id="example", cache_name="cargo")
+    docker_client.volumes.get(volume_name)  # sanity: opening the workspace created it
+
+    cli_result = CliRunner().invoke(
+        main, ["delete", "--config", str(config_path), "--repository", "example"]
+    )
+    assert cli_result.exit_code == 0, cli_result.output
+
+    with pytest.raises(docker.errors.NotFound):
+        docker_client.volumes.get(volume_name)
