@@ -1638,11 +1638,76 @@ both the new and old path. `tests/workspace/test_git_commit_tool.py` —
 for a directory-path commit reports the real per-file list, not the
 directory name.
 
-### H22 — A failed commit leaves the index unchanged
+### H22 — A failed commit leaves the index unchanged ✅
 **Satisfies:** HR-025
+**Commit:** `0d34d6e`
 
-- [ ] Roll back `git add` when `git commit` fails (§20.6)
-- [ ] Map "nothing to commit" to a specific code rather than `COMMAND_FAILED`
+- [x] Roll back `git add` when `git commit` fails (§20.6)
+- [x] Map "nothing to commit" to a specific code rather than `COMMAND_FAILED`
+
+**Rollback.** `git_commit_tool`'s two-step `run_git` now inspects each
+command's own result instead of raising internally: `git add`'s failure
+still raises `CommandFailedError` directly (there's nothing to roll back
+yet), but a `git commit` failure now first runs `build_reset_argv(paths)`
+— `git reset -- <same literal pathspecs>` — before raising, undoing exactly
+what this call's own `git add` staged. Verified empirically before trusting
+it: `git reset -- ':(literal)a.txt'` unstages only `a.txt`, leaving any
+*other* already-staged path (e.g. from a prior out-of-band
+`exec('git add ...')`) untouched — a broader `git reset` would have been
+the wrong scope for "roll back what THIS call did." The rollback itself is
+best-effort (`contextlib.suppress`): a failure there doesn't hide the real
+commit failure being raised, and would only happen in an unusual condition
+(the in-container git binary vanishing between the two calls) rarer than
+the rollback failing to help.
+
+**A specific error code for "nothing to commit."** New
+`GitNothingToCommitError`/`GIT_NOTHING_TO_COMMIT` (`errors.py`, and added to
+`docs/SPEC.md` §31's own list alongside every other git-specific code) is
+raised instead of `CommandFailedError` when `git commit`'s own output
+contains "nothing to commit". A genuine finding while implementing this,
+not assumed: confirmed empirically that Git prints this message on
+**stdout**, not stderr — `is_nothing_to_commit_failure` (`git/commit.py`)
+checks both streams defensively, but an implementation that only checked
+`stderr_tail` (the natural first guess, and what the pre-existing
+`run_git`/`CommandFailedError` plumbing already used) would never have
+matched a single real failure. The revert-verification below caught this
+same gap concretely: the reverted code's own error message for this exact
+scenario was `"git commit failed: "` — an empty stderr tail, since the
+actual message was sitting on stdout the whole time.
+
+**A pre-existing meta-test caught the new error class, exactly as
+designed:** `tests/test_errors.py::test_every_spec_31_code_is_covered_by_exactly_one_error_class`
+hardcodes the total count of `WorkspaceError` subclasses (H7's own
+pattern from earlier in this hardening pass) — adding
+`GitNothingToCommitError` correctly failed it (`24 != 25`) until both that
+count and `errors.py`'s own module-docstring claim ("25 typed exceptions",
+was "24") were updated. This is the meta-test doing its job — forcing a
+deliberate acknowledgment of a new error class rather than letting it slip
+in silently — not a regression in anything this task changed.
+
+**Verified the tests catch the regression:** reverted `git/commit.py`,
+`tools/git.py`, and `errors.py` to their pre-H22 versions and reran the new
+tests. `test_commit.py`'s own import failed outright
+(`build_reset_argv`/`is_nothing_to_commit_failure` don't exist on the
+reverted module). Both tool-level tests failed exactly as predicted: the
+hook-rejected commit left `a.txt` still staged afterward, and the
+"nothing to commit" case surfaced as generic `COMMAND_FAILED` with the
+telling empty-stderr message described above. Restored the fix; all pass
+again; the full `tests/git/test_commit.py` (17 tests) and
+`tests/workspace/test_git_commit_tool.py` (18 tests) files, plus the
+broader `tests/git/`/`tests/workspace/`/`tests/test_errors.py` suite, show
+no regressions. No Docker leftovers, no schema drift.
+
+**New tests:** `tests/git/test_commit.py` — `build_reset_argv` uses the
+same literal-pathspec prefixing as `build_add_argv`/`build_commit_argv`;
+`is_nothing_to_commit_failure` detects the message on stdout (the real
+case) and on stderr (defensively), and correctly returns `False` for an
+unrelated failure. `tests/workspace/test_git_commit_tool.py` — a commit
+rejected by a pre-commit hook leaves the working tree exactly as it was
+(nothing staged, the file back to untracked) rather than leaving a
+half-staged index behind; a genuine no-op commit request raises
+`GIT_NOTHING_TO_COMMIT` specifically, not the generic `COMMAND_FAILED`
+every other commit failure reports.
 
 ### H23 — Cache volumes cannot collide across repositories
 **Satisfies:** HR-009 · **Verified by:** HAT-008

@@ -66,6 +66,34 @@ def build_commit_argv(*, message: str, paths: list[str], amend: bool, no_verify:
     return cmd
 
 
+def build_reset_argv(paths: list[str]) -> list[str]:
+    """HR-025 (`docs/HARDENING_SPEC.md` §12): rolls back `build_add_argv`'s
+    staging when the subsequent `git commit` fails, so a failed commit
+    leaves the index unchanged (§20.6) — scoped to exactly the paths this
+    call staged, via the same literal pathspecs, not a broader
+    `git reset` that could unstage something unrelated already staged
+    from before this call (e.g. an out-of-band `exec('git add ...')`).
+    Verified empirically that `git reset -- <pathspec>` only ever
+    touches the index for the named paths, leaving both the working
+    tree and any other already-staged path untouched."""
+    return ["git", "reset", "--", *_literal_pathspecs(paths)]
+
+
+#: HR-025: the exact, stable substring Git's own `git commit` prints when
+#: the given paths matched something real but there is genuinely nothing
+#: to commit — confirmed empirically ("On branch main\nnothing to commit,
+#: working tree clean") — distinct from every other commit failure mode,
+#: which is why it gets its own error code rather than the generic
+#: `COMMAND_FAILED`. Printed on *stdout*, not stderr — confirmed
+#: empirically rather than assumed (an earlier draft checked only
+#: `stderr_tail` and would never have matched a real failure).
+NOTHING_TO_COMMIT_MARKER = "nothing to commit"
+
+
+def is_nothing_to_commit_failure(stdout: str, stderr: str) -> bool:
+    return NOTHING_TO_COMMIT_MARKER in stdout or NOTHING_TO_COMMIT_MARKER in stderr
+
+
 def read_committed_files(repo_path: Path, commit_sha: str) -> list[str]:
     """HR-024: `files_committed` SHALL report what Git actually
     committed, not the request echo — the two can differ (a path that

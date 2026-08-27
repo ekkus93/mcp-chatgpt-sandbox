@@ -6,8 +6,10 @@ from pathlib import Path
 from dev_workspace_mcp.git.commit import (
     build_add_argv,
     build_commit_argv,
+    build_reset_argv,
     detect_default_branch,
     is_head_published,
+    is_nothing_to_commit_failure,
     read_committed_files,
 )
 
@@ -157,3 +159,26 @@ def test_read_committed_files_reports_a_normal_commit(tmp_path: Path) -> None:
 def test_read_committed_files_returns_empty_for_an_unknown_sha(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path / "repo")
     assert read_committed_files(repo, "0" * 40) == []
+
+
+# --- HR-025: rollback on a failed commit; a specific code for "nothing to commit" -
+
+
+def test_build_reset_argv_uses_literal_pathspecs() -> None:
+    argv = build_reset_argv(["a.txt", ":/"])
+    assert argv == ["git", "reset", "--", ":(literal)a.txt", ":(literal):/"]
+
+
+def test_is_nothing_to_commit_failure_detects_the_stdout_message() -> None:
+    """Confirmed empirically that Git prints this on *stdout*, not
+    stderr — checked here explicitly since a caller passing only the
+    wrong stream would never see a match."""
+    assert is_nothing_to_commit_failure("On branch main\nnothing to commit, working tree clean", "")
+    assert not is_nothing_to_commit_failure("", "some other failure")
+    assert not is_nothing_to_commit_failure("", "")
+
+
+def test_is_nothing_to_commit_failure_also_checks_stderr() -> None:
+    """Defensive: checks both streams rather than assuming which one a
+    given Git version or configuration uses."""
+    assert is_nothing_to_commit_failure("", "nothing to commit, working tree clean")

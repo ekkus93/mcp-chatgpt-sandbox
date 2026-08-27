@@ -586,3 +586,58 @@ async def test_at_hr024_files_committed_reports_what_git_actually_committed(
     )
 
     assert sorted(result.structured_content["files_committed"]) == ["dir/a.txt", "dir/b.txt"]
+
+
+async def test_at_hr025_a_failed_commit_leaves_the_index_unchanged(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """HR-025 (`docs/HARDENING_SPEC.md` §12): §20.6 requires a failed
+    operation to leave repository state unmodified — `git add` SHALL be
+    rolled back when the subsequent `git commit` fails. Reproduced via a
+    rejecting pre-commit hook (the same mechanism
+    `test_git_commit_no_verify_skips_hooks` uses to fail a commit for a
+    real reason, not a "nothing changed" no-op)."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    hooks_dir = repo_path / ".git" / "hooks"
+    (hooks_dir / "pre-commit").write_text("#!/bin/sh\nexit 1\n")
+    (hooks_dir / "pre-commit").chmod(0o755)
+    server = create_server(config)
+    workspace_id = await _open(server)
+    await server.call_tool(
+        "write_file", {"workspace_id": workspace_id, "path": "a.txt", "content": "a\n"}
+    )
+
+    with pytest.raises(ToolError, match="COMMAND_FAILED"):
+        await server.call_tool(
+            "git_commit", {"workspace_id": workspace_id, "message": "blocked", "paths": ["a.txt"]}
+        )
+
+    status = await server.call_tool("git_status", {"workspace_id": workspace_id})
+    assert status.structured_content["staged"] == []
+    assert status.structured_content["untracked"] == ["a.txt"]  # git add was rolled back
+
+
+async def test_at_hr025_nothing_to_commit_maps_to_a_specific_error_code(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """The second HR-025 requirement: "nothing to commit" (the paths
+    named are real and already committed, with no actual change) gets
+    its own stable, matchable code rather than the generic
+    `COMMAND_FAILED` every other commit failure reports."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    with pytest.raises(ToolError, match="GIT_NOTHING_TO_COMMIT"):
+        await server.call_tool(
+            "git_commit",
+            {"workspace_id": workspace_id, "message": "no-op", "paths": ["README.md"]},
+        )

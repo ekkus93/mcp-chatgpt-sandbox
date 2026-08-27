@@ -1,6 +1,6 @@
 """The §31 error taxonomy and its mapping to MCP tool errors (§6.1).
 
-Every domain error in the system is one of the 24 typed exceptions below,
+Every domain error in the system is one of the 25 typed exceptions below,
 each carrying the fields §31 requires: a stable code, a concise message, a
 recoverable flag, and structured details. `to_tool_error()` and the
 `@translate_workspace_errors` decorator are the "map internal errors to
@@ -52,6 +52,7 @@ class ErrorCode(StrEnum):
     REMOTE_PROTECTION_MISSING = "REMOTE_PROTECTION_MISSING"
     SSH_KEY_PROVISION_FAILED = "SSH_KEY_PROVISION_FAILED"
     GIT_NON_FAST_FORWARD = "GIT_NON_FAST_FORWARD"
+    GIT_NOTHING_TO_COMMIT = "GIT_NOTHING_TO_COMMIT"
     POLICY_DENIED = "POLICY_DENIED"
     CONTAINER_CREATE_FAILED = "CONTAINER_CREATE_FAILED"
     CONTAINER_RUNTIME_FAILED = "CONTAINER_RUNTIME_FAILED"
@@ -98,7 +99,7 @@ class WorkspaceError(Exception):
         }
 
 
-# --- the 24 typed errors -------------------------------------------------------
+# --- the 25 typed errors -------------------------------------------------------
 
 
 class InvalidArgumentError(WorkspaceError):
@@ -194,6 +195,11 @@ class SSHKeyProvisionFailedError(WorkspaceError):
 class GitNonFastForwardError(WorkspaceError):
     code = ErrorCode.GIT_NON_FAST_FORWARD
     default_recoverable = True  # pull first, then retry (§20.5)
+
+
+class GitNothingToCommitError(WorkspaceError):
+    code = ErrorCode.GIT_NOTHING_TO_COMMIT
+    default_recoverable = False  # the request named no real change; retrying as-is won't help
 
 
 class PolicyDeniedError(WorkspaceError):

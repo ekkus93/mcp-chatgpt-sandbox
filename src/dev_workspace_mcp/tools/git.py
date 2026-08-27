@@ -45,18 +45,21 @@ from dev_workspace_mcp.errors import (
     GitDirtyError,
     GitHeadChangedError,
     GitNonFastForwardError,
+    GitNothingToCommitError,
     InvalidArgumentError,
     PolicyDeniedError,
     WorkspaceError,
     WorkspaceNotRunningError,
     translate_workspace_errors,
 )
-from dev_workspace_mcp.execution.service import ExecutionService
+from dev_workspace_mcp.execution.service import ExecResult, ExecutionService
 from dev_workspace_mcp.git.commit import (
     build_add_argv,
     build_commit_argv,
+    build_reset_argv,
     detect_default_branch,
     is_head_published,
+    is_nothing_to_commit_failure,
     read_committed_files,
 )
 from dev_workspace_mcp.git.diff import read_git_diff
@@ -458,7 +461,7 @@ def register(
 
         user = resolve_exec_user(container_config)
 
-        async def run_git(cmd: list[str], *, failure_prefix: str) -> None:
+        async def run_git(cmd: list[str]) -> ExecResult:
             exec_id = await asyncio.to_thread(
                 execution_service.start,
                 container_id,
@@ -467,25 +470,47 @@ def register(
                 user=user,
                 env=None,
             )
-            result = await asyncio.to_thread(
+            return await asyncio.to_thread(
                 execution_service.consume,
                 exec_id,
                 max_output_bytes=execution_config.max_output_bytes,
                 response_tail_lines=execution_config.response_tail_lines,
             )
-            if result.exit_code != 0:
-                raise CommandFailedError(
-                    f"{failure_prefix}: {result.stderr_tail}",
-                    details={"workspace_id": workspace_id, "paths": paths},
-                )
 
         # Two commands, not one — see git/commit.py's module docstring
         # for why `--only` alone can't stage a genuinely new file.
-        await run_git(build_add_argv(paths), failure_prefix="git add failed")
-        await run_git(
-            build_commit_argv(message=message, paths=paths, amend=amend, no_verify=no_verify),
-            failure_prefix="git commit failed",
+        add_result = await run_git(build_add_argv(paths))
+        if add_result.exit_code != 0:
+            raise CommandFailedError(
+                f"git add failed: {add_result.stderr_tail}",
+                details={"workspace_id": workspace_id, "paths": paths},
+            )
+
+        commit_result = await run_git(
+            build_commit_argv(message=message, paths=paths, amend=amend, no_verify=no_verify)
         )
+        if commit_result.exit_code != 0:
+            # HR-025 (`docs/HARDENING_SPEC.md` §12): a failed commit
+            # SHALL leave the index unchanged (§20.6) — the `git add`
+            # above already ran and needs rolling back, scoped to
+            # exactly the paths this call staged. Best-effort: a failure
+            # here does not hide the *real* commit failure being raised
+            # below, and is itself an unusual-enough condition (the
+            # in-container git binary vanishing between the two calls)
+            # that surfacing the original error is more useful than a
+            # secondary one about the rollback itself.
+            with contextlib.suppress(Exception):
+                await run_git(build_reset_argv(paths))
+
+            if is_nothing_to_commit_failure(commit_result.stdout_tail, commit_result.stderr_tail):
+                raise GitNothingToCommitError(
+                    f"nothing to commit: {commit_result.stdout_tail or commit_result.stderr_tail}",
+                    details={"workspace_id": workspace_id, "paths": paths},
+                )
+            raise CommandFailedError(
+                f"git commit failed: {commit_result.stderr_tail}",
+                details={"workspace_id": workspace_id, "paths": paths},
+            )
 
         new_status = read_git_status(repo_path)
         assert new_status.head_sha is not None  # a commit just succeeded
