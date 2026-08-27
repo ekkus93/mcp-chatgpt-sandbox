@@ -1,18 +1,24 @@
-"""Audit event writing (§24) — the minimal slice S17 needs for "audit the
-[idle] stop"; not the full audit surface.
+"""Audit event writing (§24) — the JSONL log, extended in S29 to cover
+`workspace_opened`, `repository_authorization_failure`, and structured
+Git denials (not only successes) alongside S17's original idle-stop
+event; not the full audit surface.
 
 `AuditConfig.path` (§52) is an append-only JSONL file — one §24-shaped
 record per line, matching the recommended shape (`timestamp`,
 `request_id`, `session_id`, `workspace_id`, `repository_id`, `operation`,
 `result`, plus free-form `metadata`). §67/§68's `audit_event` SQLite
 table (a queryable *index* over the same records, not a second copy of
-the log) is deliberately not written here — building the dual-write and
-a query surface over it is S29's job (§24's full event list, denial
-auditing, etc.), not something to half-build as a side effect of idle
-stop. `request_id`/`session_id` are always `None` for now: nothing in
-the codebase threads either through to a tool call yet, so there is
-nothing honest to put there before S29 adds that plumbing.
-"""
+the log) is deliberately still not written here: this function has no
+`db: sqlite3.Connection` of its own, and every one of its ~10 call sites
+would need one threaded through to add it. S29 (§24's event-list
+coverage, denial auditing) left this specific piece deferred rather than
+half-built, since its only consumer — `audit_recent` — is itself
+deferred to a later phase (§34.3); wiring the write side alone, with
+nothing to read it back, was judged not worth the same invasive
+`db`-threading `audit_denials` (S29, `tools/git.py`) was specifically
+designed to avoid for its own scope. `request_id`/`session_id` are
+always `None`: nothing in the codebase threads either through to a tool
+call yet."""
 
 from __future__ import annotations
 
