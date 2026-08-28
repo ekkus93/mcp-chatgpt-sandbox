@@ -1458,12 +1458,13 @@ real-refused-connection tests).
 
 ## Phase 5 — Redaction, entrypoint, environment
 
-### R18 — Redaction recurses and preserves types
+### R18 — Redaction recurses and preserves types ✅
 **Satisfies:** RR-009 · **Verified by:** RAT-010
+**Commit:** `PLACEHOLDER`
 
-- [ ] Carry the key hint into the dict branch (`errors.py:284`), as the list
+- [x] Carry the key hint into the dict branch (`errors.py:284`), as the list
       branch at `:290` already does
-- [ ] Do not redact a non-string scalar solely on a substring key hint, or
+- [x] Do not redact a non-string scalar solely on a substring key hint, or
       preserve its type when redacting
 
 **Defect (reproduced).** H11 fixed the list branch and left the dict branch one
@@ -1479,6 +1480,59 @@ The first is a real leak of the exact shape H11 was written to stop. The other
 two silently convert booleans and integers to strings in `details` and audit
 `metadata` — latent today, but the first `*_key_*` count or flag anyone adds will
 be mangled.
+
+**Defect reproduced.** All three lines above confirmed directly against
+`_redact`/`redact_secrets` before any change: the first leaked `'hunter2'`
+verbatim; the other two silently turned a `bool`/`int` into the literal
+string `"[REDACTED]"`. `errors.py`'s existing H11 test
+(`test_at_hat011_a_non_string_scalar_under_a_sensitive_key_is_redacted`)
+turned out to directly assert the second half of this same defect
+(`{"secret": 12345} -> {"secret": "[REDACTED]"}`) — RR-009's own text calls
+this out explicitly ("the non-string-scalar fix over-applies"), so fixing
+this task means correcting that test's expectation, not just adding new
+ones.
+
+**Implementation.** `_redact` (`errors.py`) gained an `inherited_secret: bool
+= False` parameter: `key_flags_secret` is now `inherited_secret OR` the
+existing key-substring check, and both the dict and list branches pass
+`inherited_secret=key_flags_secret` down to every child (the dict branch
+*also* still passes each child's own key, so a nested key's own hint is
+still independently caught — the two checks OR together, neither replaces
+the other). This is what makes `{'secret': {'a': 'hunter2'}}` redact
+correctly: `'secret'` flags at the top, and that verdict now survives
+recursing into the dict even though `'a'` flags nothing on its own.
+Separately, the non-string-scalar branch no longer redacts on
+`key_flags_secret` at all — a `bool`/`int`/`float`/`None` carries no
+free-text secret material of its own (only a string literally *can be* a
+secret), so it is left completely untouched, satisfying "preserve its
+type" trivially by never touching it. `test_at_hat011_a_non_string_scalar_
+under_a_sensitive_key_is_redacted` was renamed and its expectation
+corrected to match (`{"secret": 12345}` now stays `12345`).
+
+**Verified the tests catch the regression.** Backed up `errors.py`, reverted
+to `HEAD` (confirmed via `grep -c "inherited_secret"` — `0`), reran the new/
+changed tests: the corrected H11 test and the two dict-recursion tests
+failed for the reproduced reasons (leaked `'hunter2'`, stringified `12345`);
+the two guard tests (nested key's own hint still applies; non-string
+scalars stay untouched even nested) passed on both old and new code, since
+neither exercises inheritance specifically — kept as regression coverage
+for the fixed behavior, not as fresh reproductions. Restored (marker count
+back to `6`); all 57 tests in the file pass again. No Docker leftovers.
+
+**Full relevant suite.** `errors.py` is used across most of the test tree
+(filesystem, git, jobs, workspace, audit logging), so the full unscoped
+suite stood in for a scoped one: 951 passed. No Docker leftovers.
+
+**New tests.** `tests/test_errors.py`:
+`test_rr009_a_secret_hinted_key_s_hint_survives_recursing_into_a_nested_dict`
+(the exact reproduced leak), `test_rr009_a_secret_hint_still_applies_
+several_containers_deep` (the same hint surviving mixed list/dict nesting),
+`test_rr009_a_nested_key_s_own_hint_still_applies_under_an_unrelated_
+ancestor` (the OR, not replace, requirement), and
+`test_rr009_non_string_scalars_keep_their_type_even_nested_under_a_secret_
+hint`; `test_at_hat011_a_non_string_scalar_under_a_sensitive_key_is_
+redacted` renamed to `..._is_not_stringified` with its expectation
+corrected.
 
 ### R19 — The entrypoint rejects malformed cache entries and does not follow symlinks
 **Satisfies:** RR-029, RR-030

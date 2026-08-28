@@ -129,11 +129,59 @@ def test_at_hat011_a_list_of_plain_strings_under_a_sensitive_key_is_redacted() -
     assert redact_secrets({"token": ["abc123def"]}) == {"token": ["[REDACTED]"]}
 
 
-def test_at_hat011_a_non_string_scalar_under_a_sensitive_key_is_redacted() -> None:
-    """A real regression: `{"secret": 12345}` used to pass through
-    unredacted — the key-hint check only ever ran inside the
-    `isinstance(value, str)` branch."""
-    assert redact_secrets({"secret": 12345}) == {"secret": "[REDACTED]"}
+def test_at_hat011_a_non_string_scalar_under_a_sensitive_key_is_not_stringified() -> None:
+    """RR-009 (`docs/REMEDIATION_SPEC.md` §7) corrected H11's own fix
+    here: H11 made `{"secret": 12345}` redact to the *string*
+    `"[REDACTED]"`, which silently mangled `key_count`/`*_present`-style
+    booleans and integers elsewhere in `details`/audit `metadata`
+    whenever their field name happened to contain a `*key*`-family
+    substring. A non-string scalar carries no free-text secret material
+    of its own — only a string can actually *be* a secret — so it is
+    left untouched, type and value both, rather than redacted."""
+    assert redact_secrets({"secret": 12345}) == {"secret": 12345}
+
+
+# --- RR-009 (docs/REMEDIATION_SPEC.md §7): the dict branch's own hint gap ------------
+
+
+def test_rr009_a_secret_hinted_key_s_hint_survives_recursing_into_a_nested_dict() -> None:
+    """The defect exactly as reproduced: H11 fixed the list branch
+    (above) and left the dict branch one line above it unfixed —
+    `{'secret': {'a': 'hunter2'}}` leaked, because recursing into the
+    nested dict passed only `'a'` (which flags nothing) as the key,
+    discarding `'secret'`'s own verdict entirely."""
+    assert redact_secrets({"secret": {"a": "hunter2"}}) == {"secret": {"a": "[REDACTED]"}}
+
+
+def test_rr009_a_secret_hint_still_applies_several_containers_deep() -> None:
+    """The inherited hint survives mixed list/dict nesting, not just one
+    level of dict — the same `password` example H11's own list-branch
+    test uses, one dict layer further in."""
+    details = {"secret": [{"a": "hunter2"}, {"b": "unrelated but still under secret"}]}
+    redacted = redact_secrets(details)
+    assert redacted == {
+        "secret": [{"a": "[REDACTED]"}, {"b": "[REDACTED]"}],
+    }
+
+
+def test_rr009_a_nested_key_s_own_hint_still_applies_under_an_unrelated_ancestor() -> None:
+    """The inherited-hint fix must OR with each level's own key check,
+    not replace it — a `password` two levels under an ancestor with no
+    hint of its own (`outer`) must still be caught."""
+    assert redact_secrets({"outer": {"password": "hunter2"}}) == {
+        "outer": {"password": "[REDACTED]"}
+    }
+
+
+def test_rr009_non_string_scalars_keep_their_type_even_nested_under_a_secret_hint() -> None:
+    """The type-preservation half of the fix also holds once the hint is
+    *inherited* from an ancestor key (`present`/`count` flag nothing on
+    their own — only the inherited `secret` verdict could redact them —
+    and even then a non-string scalar is left untouched, not just at
+    the top level)."""
+    assert redact_secrets({"secret": {"present": True, "count": 3}}) == {
+        "secret": {"present": True, "count": 3}
+    }
 
 
 def test_at_hat011_url_userinfo_is_redacted_even_under_an_unrelated_key() -> None:

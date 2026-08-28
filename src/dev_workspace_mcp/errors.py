@@ -279,26 +279,41 @@ def _looks_like_secret(value: str) -> bool:
 _URL_USERINFO_RE = re.compile(r"([a-zA-Z][a-zA-Z0-9+.\-]*://)[^/@\s]+@")
 
 
-def _redact(value: Any, *, key: str | None = None) -> Any:
+def _redact(value: Any, *, key: str | None = None, inherited_secret: bool = False) -> Any:
+    """RR-009 (`docs/REMEDIATION_SPEC.md` §7): `inherited_secret` carries
+    a secret-hinted ancestor *key*'s verdict down through however many
+    dict/list layers separate it from the leaf that actually gets
+    redacted — the list branch below already threaded a bare `key`
+    through to its items (H11); the dict branch used to overwrite that
+    with each child's own key instead of combining the two, so
+    `{'secret': {'a': 'hunter2'}}` lost the outer hint entirely the
+    moment it recursed one level and leaked (`'a'` flags nothing on its
+    own). Each recursive call still also checks its own `key` — a
+    `password` two levels under an unrelated ancestor is still caught —
+    the two checks are OR'd, not one replacing the other."""
+    key_flags_secret = inherited_secret or (
+        key is not None and any(hint in key.lower() for hint in _SECRET_KEY_HINTS)
+    )
     if isinstance(value, dict):
-        return {k: _redact(v, key=k) for k, v in value.items()}
+        return {k: _redact(v, key=k, inherited_secret=key_flags_secret) for k, v in value.items()}
     if isinstance(value, list):
-        # `key=key` carried through: a list under a sensitive key
-        # (`{"password": ["hunter2"]}`) used to lose that hint entirely,
-        # since a bare recursive call with no `key` only ever caught a
-        # value-pattern match, never the key-based one.
-        return [_redact(v, key=key) for v in value]
+        # No per-item key of its own (`key=key`, not each item's key) —
+        # every item under a sensitive key inherits that key's verdict,
+        # same as `inherited_secret` does for a dict's values.
+        return [_redact(v, key=key, inherited_secret=key_flags_secret) for v in value]
 
-    key_flags_secret = key is not None and any(hint in key.lower() for hint in _SECRET_KEY_HINTS)
     if isinstance(value, str):
         if key_flags_secret or _looks_like_secret(value):
             return "[REDACTED]"
         return _URL_USERINFO_RE.sub(r"\1[REDACTED]@", value)
-    # A non-string scalar (`{"secret": 12345}`) under a sensitive key used
-    # to pass through unredacted, since the original check only ever
-    # looked at `key` inside the `isinstance(value, str)` branch.
-    if key_flags_secret:
-        return "[REDACTED]"
+    # RR-009: a non-string scalar (`{"ssh_key_present": True}`,
+    # `{"key_count": 3}`) carries no free-text secret material of its
+    # own — a real secret is always textual (a token, a password, key
+    # material) — so it is never redacted on a substring key hint alone.
+    # This used to silently turn every `bool`/`int` under any `*key*`-ish
+    # field name into the string `"[REDACTED]"`, corrupting `details`'
+    # and audit `metadata`'s types for no actual secrecy gained; the type
+    # is now always preserved by simply never touching it.
     return value
 
 
