@@ -4,6 +4,13 @@ Working-tree, staged, and commit-to-commit diffs, all through one
 function and one underlying `git diff` invocation — which mode is
 selected is a pure function of which parameters are given, not three
 separate code paths.
+
+RR-018 (`docs/REMEDIATION_SPEC.md` §13): the character-boundary trim
+this module's own `next_offset` pagination needs (RR-016) moved to
+`utf8_boundary.py`, imported here under its original private name —
+`filesystem/service.py`'s `read_file` needs the identical fix for the
+identical reason (a byte window blind to character boundaries), and
+duplicating it risked the two copies silently diverging.
 """
 
 from __future__ import annotations
@@ -16,6 +23,9 @@ from dev_workspace_mcp.git.service import (
     END_OF_OPTIONS,
     run_git_host_side,
     validate_revision_argument,
+)
+from dev_workspace_mcp.utf8_boundary import (
+    trim_incomplete_trailing_char as _trim_incomplete_trailing_char,
 )
 
 #: A diff can legitimately run to megabytes (a large refactor, a
@@ -35,61 +45,6 @@ class GitDiffResult:
     truncated: bool
     total_bytes: int
     next_offset: int
-
-
-def _utf8_lead_sequence_length(lead_byte: int) -> int | None:
-    """How many bytes the UTF-8 sequence starting with `lead_byte` needs
-    in total, or `None` if `lead_byte` isn't a valid lead byte at all (a
-    continuation byte, or one of the values UTF-8 never uses as a lead:
-    0xC0, 0xC1, 0xF5-0xFF)."""
-    if lead_byte & 0x80 == 0x00:
-        return 1
-    if lead_byte & 0xE0 == 0xC0:
-        return 2
-    if lead_byte & 0xF0 == 0xE0:
-        return 3
-    if lead_byte & 0xF8 == 0xF0:
-        return 4
-    return None
-
-
-def _trim_incomplete_trailing_char(window: bytes) -> bytes:
-    """`window` is an arbitrary byte slice of a UTF-8 diff — its end can
-    land in the middle of a multi-byte character. Trim any incomplete
-    trailing sequence off so decoding `window` never corrupts that
-    character (an offset/`max_bytes` byte window historically fed
-    straight to `bytes.decode(..., errors="replace")`, which turns the
-    *whole* split character into U+FFFD instead of reassembling it
-    correctly once the next window supplies the missing bytes).
-
-    Only a *truncated* sequence — one that would be valid if more bytes
-    followed — is trimmed. A genuinely invalid byte is left in place, to
-    be handled by the caller's own lossy `errors="replace"` decode, same
-    as always: this function's job is pagination correctness, not
-    encoding validation.
-
-    RR-016 (`docs/REMEDIATION_SPEC.md` §12): scans backward from the end
-    of `window` for the trailing character's own lead byte, rather than
-    inspecting only the *first* `UnicodeDecodeError` `window.decode`
-    raises — reproduced empirically that an earlier invalid byte (e.g. a
-    lone `0xff`, which `errors="surrogateescape"` deliberately lets
-    survive into a diff, HR-022/H19) makes `decode` fail *there* first,
-    masking a genuinely truncated multi-byte character later in the same
-    window: `b'\\xff\\xe6\\x97'` (an invalid byte, then 2 of 3 bytes of
-    `日`) used to come back unchanged, splitting the character instead of
-    deferring it to the next window. Scanning back (at most 4 bytes,
-    UTF-8's own maximum sequence length) finds the trailing character's
-    lead byte directly, independent of whatever precedes it."""
-    limit = min(len(window), 4)
-    for back in range(1, limit + 1):
-        byte = window[-back]
-        if byte & 0xC0 == 0x80:
-            continue  # a continuation byte — keep scanning backward
-        seq_len = _utf8_lead_sequence_length(byte)
-        if seq_len is not None and back < seq_len:
-            return window[: len(window) - back]
-        break  # a lead byte (valid or not) — nothing earlier to trim
-    return window
 
 
 def read_git_diff(

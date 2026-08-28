@@ -1051,13 +1051,14 @@ left untouched), `max_bytes=0` rejection, `next_offset` clamping for an
 out-of-range offset, and the checklist's own "every `max_bytes` from 1 to
 64" pagination test against a diff containing a genuine invalid byte.
 
-### R13 — `read_file` classifies and bounds correctly
+### R13 — `read_file` classifies and bounds correctly ✅
 **Satisfies:** RR-018, RR-020 · **Verified by:** RAT-016
+**Commit:** `PLACEHOLDER`
 
-- [ ] Decode on a character boundary — a mid-character cut is truncated text, not binary
-- [ ] Set `truncated=True` whenever the read was bounded
-- [ ] `seek`/`read` the requested span for `byte_range` instead of an unbounded `f.read()`
-- [ ] Test with a multi-byte character at the limit boundary
+- [x] Decode on a character boundary — a mid-character cut is truncated text, not binary
+- [x] Set `truncated=True` whenever the read was bounded
+- [x] `seek`/`read` the requested span for `byte_range` instead of an unbounded `f.read()`
+- [x] Test with a multi-byte character at the limit boundary
 
 **Defect (reproduced — regression).** `filesystem/service.py:202,221` reads
 `limit + 1` bytes then `data.decode("utf-8")`:
@@ -1077,6 +1078,82 @@ opposite narrowing.
 decoded to slice at an arbitrary position") is wrong for `byte_range` — the slice
 is applied to raw bytes, so `seek`/`read` is exactly equivalent. Only
 `line_range` genuinely needs scanning.
+
+Both reproduced directly against the real function before implementing
+anything: the exact `max_read_bytes=10` example above returned
+`is_binary=True, content=None, truncated=False`; a 200 MiB file's peak RSS
+grew by 600 MiB (not the requested 5 bytes) serving `byte_range=(0, 5)`.
+
+**Implementation.** The character-boundary trim R12 added for `git_diff`'s
+own pagination (`_trim_incomplete_trailing_char`) is exactly the fix
+`read_file` needs too — extracted into a new shared module,
+`utf8_boundary.py` (`trim_incomplete_trailing_char` +
+`utf8_lead_sequence_length`, both now public), rather than reimplemented a
+second time: the same defect class (a byte window blind to character
+boundaries) risked two copies silently diverging. `git/diff.py` now imports
+from it under its original private name — a behavior-preserving refactor,
+confirmed by rerunning all 26 of R12's own tests unchanged before touching
+`read_file` at all.
+
+`read_file` restructured into three explicit branches (`line_range`,
+`byte_range`, the common bounded case), replacing the old two-way split that
+conflated the "peek 1 extra byte" no-range path with the "read everything"
+ranged path:
+
+- **Common case (no range):** the `limit + 1`-byte peek read is unchanged,
+  but the *content* buffer is now `data[:limit]` — the peek byte is never
+  part of what gets decoded — and, only when the read was actually bounded
+  (`truncated`), trimmed to a clean character boundary via the shared
+  helper before decoding. An *untruncated* buffer is left untrimmed
+  deliberately: that's the genuine end of the file, and a real dangling
+  partial sequence there means the file itself isn't valid UTF-8, which
+  trimming must not hide. `truncated` is now computed *before* the
+  is-it-binary decode and reported on both the `is_binary=True` and
+  `is_binary=False` return paths — the old code hardcoded `False` on the
+  binary path unconditionally.
+- **`byte_range`:** `seek`/`read` the requested span directly, never
+  `f.read()`ing the whole file. `sha256`/`size` still need every byte of
+  the whole file (§13.2) regardless of the requested span — streamed via
+  the same chunked pass the common case already uses, which also resolves
+  `end=None` ("to the end of the file") without a second read. A split
+  character at the client's own chosen `start`/`end` is still tolerated via
+  `errors="replace"`, matching the prior behavior — unlike the common
+  case's `limit` boundary (this daemon's own choice, worth trimming
+  cleanly), an arbitrary client-chosen offset has no "next call" to defer a
+  split character to.
+- **`line_range`:** unchanged in substance — genuinely needs the whole
+  content decoded to slice at an arbitrary line boundary, which byte
+  offsets alone can't locate.
+
+**Verified the tests catch the regression.** Reverted `filesystem/service.py`
+to `HEAD` (the shared `utf8_boundary.py` module and `git/diff.py`'s use of it
+stayed in place, already independently verified against R12's own suite),
+reran the 5 new tests: the exact reproduction, the mid-character-at-the-limit
+variant, and the binary-file-truncated-True test all failed with
+`is_binary`/`truncated` exactly as reproduced; the memory test failed with
+peak RSS growing by **600 MiB** serving a 5-byte range from a 200 MiB file —
+real, measured proof the old code loaded the whole file. The
+genuinely-invalid-trailing-byte-at-true-EOF test passed unchanged, correctly
+— that's the converse case the fix must *not* alter. Restored; all 62 tests
+in the file pass again, including one existing test (`test_at_h029_a_byte_
+range_deep_in_a_large_file_still_works`) whose own docstring had gone stale
+describing the pre-fix "deliberately reads everything" behavior — corrected
+to describe what the code does now.
+
+**Full relevant suite.** `tests/git/test_diff.py tests/filesystem/
+tests/tools/test_filesystem.py`: 153 passed. Full unscoped suite:
+935 passed. No Docker leftovers.
+
+**New tests.** `tests/filesystem/test_service.py`: the exact `max_read_bytes=10`
+reproduction, a `max_read_bytes=11` variant where the *limit itself* (not just
+the peek byte) lands mid-character, a genuinely-binary-file-truncated-True
+test, a genuinely-incomplete-trailing-byte-at-true-EOF test (the fix's
+converse case), and a peak-RSS measurement proving `byte_range` on a 200 MiB
+file stays within 50 MiB of baseline. `utf8_boundary.py`'s own logic is
+covered by both call sites' existing test suites (R12's 4 pure-function
+cases, still exercising the same shared implementation post-extraction, plus
+`read_file`'s own new tests here) rather than a third, duplicate direct test
+file.
 
 ### R14 — `read_log_tail` returns whole lines
 **Satisfies:** RR-019 · **Verified by:** RAT-017

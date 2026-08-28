@@ -20,6 +20,7 @@ from dev_workspace_mcp.errors import (
     PathOutsideRepositoryError,
 )
 from dev_workspace_mcp.filesystem.security import FilesystemSecurity
+from dev_workspace_mcp.utf8_boundary import trim_incomplete_trailing_char
 
 
 def sha256_of(data: bytes) -> str:
@@ -217,68 +218,137 @@ class FilesystemService:
                 )
             with os.fdopen(fd, "rb", closefd=True) as f:
                 fd = -1  # ownership transferred to `f`; nothing left for `finally` to close
-                if byte_range is None and line_range is None:
-                    # H29: the common case — bound the *content* buffer
-                    # by `limit`, known before reading, rather than
-                    # reading the whole file into memory first and
-                    # truncating the response afterward. The remainder
-                    # (if any) is still streamed through the hasher in
-                    # bounded chunks, never held alongside `data`: §13.2
-                    # requires `sha256` to be the *whole* file's hash
-                    # regardless of truncation (`write_file`'s
-                    # `expected_sha256` conflict check depends on this
-                    # being correct), so every byte is still read and
-                    # hashed — just never all held in memory at once.
-                    # `total_size` comes from what was actually counted
-                    # while streaming, the same "size == what was really
-                    # read" semantics as before (and more accurate than a
-                    # pre-read `fstat` under a concurrently-growing file,
-                    # which this daemon does not otherwise guard against
-                    # here — see HR-011's own file-content race, a
-                    # different, already-closed concern).
-                    data = f.read(limit + 1)  # +1: detect "more" without slurping it
-                    hasher = hashlib.sha256(data)
+                if line_range is not None:
+                    # `line_range` genuinely needs the whole content
+                    # decoded, to slice at an arbitrary *line* boundary —
+                    # unlike `byte_range` below, there is no way to know
+                    # where line N starts without scanning (RR-020).
+                    data = f.read()
+                    full_sha = sha256_of(data)
                     total_size = len(data)
+                    try:
+                        text = data.decode("utf-8")
+                    except UnicodeDecodeError:
+                        raise InvalidArgumentError(
+                            f"cannot apply a byte/line range to a binary file: {relative_path!r}",
+                            details={"path": relative_path},
+                        ) from None
+                    start, end = line_range
+                    lines = text.splitlines(keepends=True)
+                    text = "".join(lines[start:end])
+                    encoded = text.encode("utf-8")
+                    truncated = len(encoded) > limit
+                    if truncated:
+                        text = encoded[:limit].decode("utf-8", errors="ignore")
+                    return ReadResult(
+                        content=text,
+                        sha256=full_sha,
+                        size=total_size,
+                        truncated=truncated,
+                        is_binary=False,
+                    )
+
+                if byte_range is not None:
+                    # RR-020 (`docs/REMEDIATION_SPEC.md` §13): `seek`/`read`
+                    # the requested span directly — the H29 rationale for
+                    # reading the whole file ("needs the full content
+                    # decoded to slice at an arbitrary position") does not
+                    # actually apply here: the slice is applied to raw
+                    # bytes, so `seek`/`read` is exactly equivalent, and
+                    # `read_file(path, byte_range=(0, 1))` on a 10 GB file
+                    # used to load all 10 GB just to return one byte.
+                    #
+                    # `sha256`/`size` still need every byte of the *whole*
+                    # file regardless of the requested span (§13.2) —
+                    # streamed first, in bounded chunks, same as the
+                    # common case below (and this pass is what makes
+                    # `end=None`, "to the end of the file", resolvable
+                    # without a second read).
+                    hasher = hashlib.sha256()
+                    total_size = 0
                     while chunk := f.read(_READ_FILE_HASH_CHUNK_BYTES):
                         hasher.update(chunk)
                         total_size += len(chunk)
                     full_sha = hasher.hexdigest()
-                else:
-                    # byte_range/line_range can name a window anywhere in
-                    # the file — needs the full content decoded to slice
-                    # at an arbitrary position, unlike the case above.
-                    data = f.read()
-                    full_sha = sha256_of(data)
-                    total_size = len(data)
+
+                    start, end = byte_range
+                    start = max(start, 0)
+                    effective_end = total_size if end is None else end
+                    span_len = max(effective_end - start, 0)
+                    read_len = min(span_len, limit)
+                    f.seek(start)
+                    span_bytes = f.read(read_len) if read_len > 0 else b""
+                    truncated = span_len > limit
+                    # A split character at the client's own chosen
+                    # start/end is tolerated the same way it always was —
+                    # `errors="replace"`, not a rejection: unlike the
+                    # common case's own `limit` boundary (this daemon's
+                    # own choice, where trimming to a clean character is
+                    # the right thing), an arbitrary client-chosen byte
+                    # offset has no "next call" to defer a split character
+                    # to, and no obligation to land on one at all.
+                    text = span_bytes.decode("utf-8", errors="replace")
+                    return ReadResult(
+                        content=text,
+                        sha256=full_sha,
+                        size=total_size,
+                        truncated=truncated,
+                        is_binary=False,
+                    )
+
+                # H29: the common case — bound the *content* buffer by
+                # `limit`, known before reading, rather than reading the
+                # whole file into memory first and truncating the
+                # response afterward. The remainder (if any) is still
+                # streamed through the hasher in bounded chunks, never
+                # held alongside `data`: §13.2 requires `sha256` to be
+                # the *whole* file's hash regardless of truncation
+                # (`write_file`'s `expected_sha256` conflict check
+                # depends on this being correct), so every byte is still
+                # read and hashed — just never all held in memory at
+                # once. `total_size` comes from what was actually counted
+                # while streaming, the same "size == what was really
+                # read" semantics as before (and more accurate than a
+                # pre-read `fstat` under a concurrently-growing file,
+                # which this daemon does not otherwise guard against here
+                # — see HR-011's own file-content race, a different,
+                # already-closed concern).
+                data = f.read(limit + 1)  # +1: detect "more" without slurping it
+                truncated = len(data) > limit
+                # RR-018 (`docs/REMEDIATION_SPEC.md` §13): the peek byte
+                # is never part of `content` — decoding `data` whole
+                # (including it) used to fail whenever `limit` itself, or
+                # the peek byte, landed mid-character, misreporting an
+                # ordinary text file as binary with `truncated=False`,
+                # denying the client even the signal to retry with a
+                # range. Trimmed to a clean character boundary only when
+                # `truncated` — an *untruncated* `content_bytes` already
+                # is the genuine end of the file, and a real dangling
+                # partial sequence there means the file itself isn't
+                # valid UTF-8, which trimming must not hide.
+                content_bytes = data[:limit]
+                if truncated:
+                    content_bytes = trim_incomplete_trailing_char(content_bytes)
+                hasher = hashlib.sha256(data)
+                total_size = len(data)
+                while chunk := f.read(_READ_FILE_HASH_CHUNK_BYTES):
+                    hasher.update(chunk)
+                    total_size += len(chunk)
+                full_sha = hasher.hexdigest()
         finally:
             if fd != -1:
                 os.close(fd)
 
         try:
-            text = data.decode("utf-8")
+            text = content_bytes.decode("utf-8")
         except UnicodeDecodeError:
-            if byte_range is not None or line_range is not None:
-                raise InvalidArgumentError(
-                    f"cannot apply a byte/line range to a binary file: {relative_path!r}",
-                    details={"path": relative_path},
-                ) from None
+            # RR-018: `truncated` is reported correctly here too — a
+            # genuinely binary file that happens to be larger than
+            # `limit` is still truncated, and the client still deserves
+            # that signal even though there is no text content to bound.
             return ReadResult(
-                content=None, sha256=full_sha, size=total_size, truncated=False, is_binary=True
+                content=None, sha256=full_sha, size=total_size, truncated=truncated, is_binary=True
             )
-
-        if line_range is not None:
-            start, end = line_range
-            lines = text.splitlines(keepends=True)
-            text = "".join(lines[start:end])
-        elif byte_range is not None:
-            start, end = byte_range
-            text = text.encode("utf-8")[start:end].decode("utf-8", errors="replace")
-
-        # `limit` was already computed above, before the read.
-        encoded = text.encode("utf-8")
-        truncated = len(encoded) > limit
-        if truncated:
-            text = encoded[:limit].decode("utf-8", errors="ignore")
 
         return ReadResult(
             content=text, sha256=full_sha, size=total_size, truncated=truncated, is_binary=False
