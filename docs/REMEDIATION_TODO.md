@@ -829,7 +829,7 @@ reproducible the way the volume one is).
 
 ### R10 — A failed termination is never reported as success ✅
 **Satisfies:** RR-013, RR-015 · **Verified by:** RAT-013
-**Commit:** `PLACEHOLDER`
+**Commit:** `fe7ca34`
 
 - [x] Propagate the `DockerException` at `execution/service.py:205-208` instead
       of returning silently
