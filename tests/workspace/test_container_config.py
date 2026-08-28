@@ -158,6 +158,94 @@ def test_at_hat005_root_mode_extra_env_cannot_override_workspace_path() -> None:
     assert kwargs["environment"]["MCP_WORKSPACE_PATH"] == "/workspace"
 
 
+# --- RR-031 (docs/REMEDIATION_SPEC.md §32): MCP_CACHE_PATHS gets the same
+# ordering guarantee as every other daemon-controlled variable above -----------
+
+
+def test_rr031_cache_paths_are_joined_into_mcp_cache_paths() -> None:
+    client = _fake_client([])
+    config = ContainerConfig(user="host", sudo=False)
+    kwargs = build_workspace_run_kwargs(
+        container_config=config,
+        docker_client=client,
+        ssh_config=_SSH_CONFIG,
+        checkout_uid=1000,
+        checkout_gid=1000,
+        cache_paths=[".cargo", ".rustup"],
+    )
+    assert kwargs["environment"]["MCP_CACHE_PATHS"] == ".cargo:.rustup"
+
+
+def test_rr031_no_cache_paths_sets_an_empty_string_not_a_missing_key() -> None:
+    """Entrypoint.sh treats an empty `MCP_CACHE_PATHS` identically to an
+    unset one, and an always-present key is what lets the ordering
+    guarantee below hold even when a project has no caches configured at
+    all — a key merged in only when `cache_paths` is truthy would leave
+    nothing to override a hostile `extra_env` entry with in that case."""
+    client = _fake_client([])
+    config = ContainerConfig(user="host", sudo=False)
+    kwargs = build_workspace_run_kwargs(
+        container_config=config,
+        docker_client=client,
+        ssh_config=_SSH_CONFIG,
+        checkout_uid=1000,
+        checkout_gid=1000,
+    )
+    assert kwargs["environment"]["MCP_CACHE_PATHS"] == ""
+
+
+def test_rr031_extra_env_cannot_override_mcp_cache_paths_by_ordering() -> None:
+    """RR-031: `MCP_CACHE_PATHS` used to reach `environment` only through
+    the caller's own `extra_env`, which this function merges FIRST —
+    ordering gave it none of the protection `MCP_UID`/`MCP_GID`/
+    `SSH_AUTH_SOCK` get from `test_at_hat005_*` above. Simulates the same
+    "allowlist reject bypassed" scenario those tests do."""
+    client = _fake_client([])
+    config = ContainerConfig(user="host", sudo=False)
+    kwargs = build_workspace_run_kwargs(
+        container_config=config,
+        docker_client=client,
+        ssh_config=_SSH_CONFIG,
+        checkout_uid=1000,
+        checkout_gid=1000,
+        extra_env={"MCP_CACHE_PATHS": "../../etc"},
+        cache_paths=[".cargo"],
+    )
+    assert kwargs["environment"]["MCP_CACHE_PATHS"] == ".cargo"
+
+
+def test_rr031_extra_env_cannot_inject_mcp_cache_paths_when_none_are_configured() -> None:
+    """The same bypass scenario, but with the daemon itself resolving no
+    caches at all — the hostile `extra_env` entry must still lose, not
+    survive because there was nothing to override it with."""
+    client = _fake_client([])
+    config = ContainerConfig(user="host", sudo=False)
+    kwargs = build_workspace_run_kwargs(
+        container_config=config,
+        docker_client=client,
+        ssh_config=_SSH_CONFIG,
+        checkout_uid=1000,
+        checkout_gid=1000,
+        extra_env={"MCP_CACHE_PATHS": "../../etc"},
+    )
+    assert kwargs["environment"]["MCP_CACHE_PATHS"] == ""
+
+
+def test_rr031_root_mode_extra_env_cannot_override_mcp_cache_paths() -> None:
+    """The `container.user: root` branch merges `extra_env` separately —
+    covered on its own, same as `test_at_hat005_root_mode_*` above."""
+    client = _fake_client(["name=userns"])  # userns active, root permitted
+    config = ContainerConfig(user="root")
+    kwargs = build_workspace_run_kwargs(
+        container_config=config,
+        docker_client=client,
+        ssh_config=_SSH_CONFIG,
+        extra_env={"MCP_CACHE_PATHS": "../../etc"},
+        cache_paths=[".cargo"],
+    )
+    assert kwargs["environment"]["MCP_CACHE_PATHS"] == ".cargo"
+
+
 def test_root_mode_without_userns_remap_is_refused() -> None:
     """§5.3, AT-016: refused before any container is created."""
     client = _fake_client(["name=apparmor"])  # no userns

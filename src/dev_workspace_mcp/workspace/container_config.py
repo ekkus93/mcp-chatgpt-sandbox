@@ -64,6 +64,7 @@ def build_workspace_run_kwargs(
     checkout_gid: int | None = None,
     extra_env: dict[str, str] | None = None,
     resources_config: ResourcesConfig | None = None,
+    cache_paths: list[str] | None = None,
 ) -> dict[str, Any]:
     """Build the `run_kwargs` passed to `DockerWorkspaceManager.ensure_workspace`
     (and on to `docker.containers.run`) that give the container the
@@ -85,14 +86,30 @@ def build_workspace_run_kwargs(
     written) never runs at all for `container.user: root` (no `MCP_UID`/
     `MCP_GID` to create a user from). Root-mode SSH configuration is out
     of this task's scope.
+
+    `cache_paths` (§11, S30) is the caller's already-resolved cache
+    entries' `$HOME`-relative paths (`caches.py`'s `ResolvedCache.
+    home_relative_path`) — not accepted through `extra_env` even though
+    it, like `environment:`, is a per-project value, because RR-031
+    (`docs/REMEDIATION_SPEC.md` §32) requires it get the same
+    ordering guarantee `MCP_UID`/`MCP_GID`/etc. get below.
     """
-    # HR-006 (`docs/HARDENING_SPEC.md` §6): `extra_env` is merged FIRST in
-    # both branches below, daemon-controlled variables LAST — so even if
-    # the allowlist reject in `ProjectWorkspaceConfig`'s own validator
-    # (the other, independent HR-006 control) were somehow bypassed,
-    # ordering alone still stops a project-supplied `MCP_UID`/`MCP_GID`/
-    # `SSH_AUTH_SOCK`/etc. from overriding the identity the daemon just
-    # computed. Neither control is sufficient alone.
+    # HR-006 (`docs/HARDENING_SPEC.md` §6) / RR-031: `extra_env` is merged
+    # FIRST in both branches below, every daemon-controlled variable
+    # LAST — so even if the allowlist reject in `ProjectWorkspaceConfig`'s
+    # own validator (the other, independent HR-006 control) were somehow
+    # bypassed, ordering alone still stops a project-supplied `MCP_UID`/
+    # `MCP_GID`/`SSH_AUTH_SOCK`/`MCP_CACHE_PATHS`/etc. from overriding the
+    # values the daemon just computed. Neither control is sufficient
+    # alone. `MCP_CACHE_PATHS` is *always* set here (`""` when there are
+    # no caches, matching what leaving it unset means to `entrypoint.sh`)
+    # rather than only when `cache_paths` is non-empty — an unconditional
+    # override is what actually gives it the same guarantee as
+    # `MCP_UID`/`MCP_GID`, which are never conditionally omitted either;
+    # merging it in only when truthy would leave a project with no caches
+    # configured today with no override at all if `extra_env` carried a
+    # value regardless.
+    cache_env = {"MCP_CACHE_PATHS": ":".join(cache_paths) if cache_paths else ""}
     if container_config.user == "root":
         if not userns_remap_active(docker_client):
             raise ContainerCreateFailedError(
@@ -100,7 +117,11 @@ def build_workspace_run_kwargs(
                 "to be active; without it, container uid 0 is host uid 0 (§5.3)",
                 details={"container_user": "root"},
             )
-        environment = {**(extra_env or {}), "MCP_WORKSPACE_PATH": workspace_path}
+        environment = {
+            **(extra_env or {}),
+            "MCP_WORKSPACE_PATH": workspace_path,
+            **cache_env,
+        }
     else:
         uid = os.getuid() if checkout_uid is None else checkout_uid
         gid = os.getgid() if checkout_gid is None else checkout_gid
@@ -116,6 +137,7 @@ def build_workspace_run_kwargs(
                 if ssh_config.mode == "agent"
                 else {}
             ),
+            **cache_env,
         }
 
     run_kwargs: dict[str, Any] = {

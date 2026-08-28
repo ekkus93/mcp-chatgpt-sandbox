@@ -268,14 +268,13 @@ def _recreated_run_kwargs(
         project_caches=project_config.caches if project_config is not None else [],
     )
     extra_env = dict(project_config.environment) if project_config is not None else {}
-    if resolved_caches:
-        extra_env["MCP_CACHE_PATHS"] = ":".join(c.home_relative_path for c in resolved_caches)
     run_kwargs = build_workspace_run_kwargs(
         container_config=config.container,
         docker_client=docker_client,
         ssh_config=config.ssh,
         extra_env=extra_env,
         resources_config=config.resources,
+        cache_paths=[c.home_relative_path for c in resolved_caches],
     )
     mounts = build_workspace_mounts(
         host_repository_path=repository.canonical_path,

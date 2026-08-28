@@ -1613,10 +1613,11 @@ real container runs sharing one real named volume), matching this file's
 existing `test_at_hat007_*`'s "prove the entrypoint's own defense holds"
 pattern rather than unit-testing the script in isolation.
 
-### R20 — Every daemon-controlled variable is merged last
+### R20 — Every daemon-controlled variable is merged last ✅
 **Satisfies:** RR-031
+**Commit:** `PLACEHOLDER`
 
-- [ ] Compute `MCP_CACHE_PATHS` inside `build_workspace_run_kwargs` and merge it
+- [x] Compute `MCP_CACHE_PATHS` inside `build_workspace_run_kwargs` and merge it
       with the other `MCP_*` variables, not through `extra_env`
 
 **Defect.** `MCP_CACHE_PATHS` is daemon-computed but injected through
@@ -1627,6 +1628,68 @@ property — "ordering alone cannot produce an override even if the filter is
 bypassed" — does not hold for it. Not exploitable today only because H6's filter
 and H8's re-validation both stand; that is defense-in-depth working, not the
 property being met.
+
+**Defect reproduced.** Confirmed directly against `build_workspace_run_kwargs`
+before any change: `extra_env={"MCP_CACHE_PATHS": "../../etc"}` with no
+`resolved_caches` at all reached `environment["MCP_CACHE_PATHS"]` completely
+unmodified — `'../../etc'`, not overridden by anything, since the function had
+no explicit `MCP_CACHE_PATHS` key of its own in either branch's LAST-merged
+dict literal (unlike `MCP_UID`/`MCP_GID`/`SSH_AUTH_SOCK`, which do).
+
+**Implementation.** `build_workspace_run_kwargs` gained a `cache_paths: list[str]
+| None = None` parameter (plain strings — `ResolvedCache.home_relative_path`
+values — not a `ResolvedCache` import, to avoid a cycle with `caches.py`,
+which already imports `DEFAULT_CONTAINER_HOME` from this module). A
+`cache_env = {"MCP_CACHE_PATHS": ":".join(cache_paths) if cache_paths else
+""}` is computed once and merged LAST in both the root and non-root branches,
+alongside the existing `MCP_*` keys. Deliberately *always* present (`""` when
+there are no caches, which `entrypoint.sh` already treats identically to
+unset) rather than merged in only when `cache_paths` is truthy — an
+unconditional override is what actually gives it the same "ordering alone
+stops it" guarantee `MCP_UID`/`MCP_GID` get, since conditionally omitting the
+key would leave nothing to override a hostile `extra_env` entry with for a
+project that has no caches configured at all. `tools/workspace.py` and
+`cli.py` no longer write `extra_env["MCP_CACHE_PATHS"]` themselves; both now
+pass `cache_paths=[c.home_relative_path for c in resolved_caches]` directly.
+
+This also meant updating `tests/workspace/test_default_image.py`'s existing
+`test_at_hat007_*` and R19's three new tests, all of which constructed their
+hostile/malformed `MCP_CACHE_PATHS` values via `extra_env` — the exact channel
+this task closes. Discovered when the broader relevant suite (not the new
+unit tests, which construct `run_kwargs` directly and so never exercised the
+now-closed channel) caught it: all four failed for the *right* reason once
+the fix was in — the `cache_paths` parameter didn't exist yet on the code
+those tests were written against, so `extra_env`'s value was silently
+overridden by the new unconditional `""`. Updated to pass `cache_paths=[...]`
+instead, matching the new, correct channel; their docstrings note the change.
+
+**Verified the tests catch the regression.** Backed up `container_config.py`,
+`cli.py`, `tools/workspace.py`, reverted to `HEAD` (confirmed via `grep -c
+"cache_paths"` — `0`), reran the 5 new `test_container_config.py` tests: 3
+raised `TypeError` (the parameter didn't exist) and 2 asserted directly —
+`test_rr031_extra_env_cannot_inject_mcp_cache_paths_when_none_are_configured`
+failed with `'../../etc' == ''`, the exact reproduced defect. Also reran
+`test_default_image.py` against the same revert: all 4 updated/new tests
+failed with the same `TypeError`, confirming they now depend on this task's
+fix rather than accidentally passing regardless. Restored (marker count back
+to `4`); all 28 tests across both files pass again. No Docker leftovers.
+
+**Full relevant suite.** `tests/workspace/ tests/test_cli.py`: first pass, 356
+passed / 4 failed — the `test_default_image.py` interaction described above,
+caught here rather than in the new unit tests; fixed, reran: 360 passed. Full
+unscoped suite: 959 passed. No Docker leftovers.
+
+**New tests.** `tests/workspace/test_container_config.py`:
+`test_rr031_cache_paths_are_joined_into_mcp_cache_paths`,
+`test_rr031_no_cache_paths_sets_an_empty_string_not_a_missing_key`,
+`test_rr031_extra_env_cannot_override_mcp_cache_paths_by_ordering`,
+`test_rr031_extra_env_cannot_inject_mcp_cache_paths_when_none_are_configured`
+(the exact reproduced defect), and
+`test_rr031_root_mode_extra_env_cannot_override_mcp_cache_paths` — mirroring
+the existing `test_at_hat005_*` ordering tests' pattern for `MCP_UID`/
+`SSH_AUTH_SOCK`. `tests/workspace/test_default_image.py`: `test_at_hat007_*`
+and R19's three new tests updated to inject `MCP_CACHE_PATHS` via the new
+`cache_paths` parameter instead of `extra_env`, which no longer carries it.
 
 ---
 
