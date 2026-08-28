@@ -88,16 +88,52 @@ chown "$MCP_UID:$MCP_GID" "$HOME_DIR" 2>/dev/null || true
 # whatever a previous container run already left inside it.
 #
 # HR-008 (docs/HARDENING_SPEC.md §6): this daemon-side validation is
-# necessary but not sufficient on its own. `workspace/caches.py`
-# validates `caches[].path` from `.mcp-workspace.yml`, but
-# `MCP_CACHE_PATHS` can also be set directly through a project's own
-# `environment:` when it declares no caches at all — reaching this
-# script unvalidated. Since this runs as root, before the identity drop
-# below, an unsafe entry here means an arbitrary `mkdir`/`chown` as root:
-# reproduced with `MCP_CACHE_PATHS='../../etc:../../usr/bin'` leaving
-# `/etc` and `/usr/bin` owned by the container user.
+# necessary but not sufficient on its own — it is deliberately kept as
+# an independent, defense-in-depth control alongside H6's own
+# `environment:`-key allowlist-reject at project-config load time
+# (`project_config.py`'s `_environment_cannot_shadow_daemon_variables`,
+# HR-006), not because that control is bypassable: H6 already rejects
+# any project `environment:` entry starting with `MCP_` outright, so
+# `MCP_CACHE_PATHS` cannot reach this script through that path today.
+# The point of keeping this validation anyway is the same one RR-031
+# makes for merge ordering — a regression in one control should not
+# silently become a bypass of both. Since this runs as root, before the
+# identity drop below, an unsafe entry here means an arbitrary
+# `mkdir`/`chown` as root: reproduced with
+# `MCP_CACHE_PATHS='../../etc:../../usr/bin'` leaving `/etc` and
+# `/usr/bin` owned by the container user.
 if [ -n "$MCP_CACHE_PATHS" ]; then
-    IFS=':' read -ra CACHE_PATHS <<< "$MCP_CACHE_PATHS"
+    # RR-029 (docs/REMEDIATION_SPEC.md §26): `IFS=':' read -ra ... <<<
+    # "$MCP_CACHE_PATHS"` used to do this splitting in one `read` call,
+    # which has two failure modes verified empirically. First, `read`
+    # stops at the first newline in its input — a value containing one
+    # (`$'.cargo\n../../etc'`) silently dropped everything after it,
+    # with no rejection and no mount, contradicting this section's own
+    # claim (corrected above) of exiting non-zero on a bad entry.
+    # Rejected outright here, before any splitting, rather than folded
+    # into the loop below.
+    case "$MCP_CACHE_PATHS" in
+        *$'\n'*)
+            echo "entrypoint: MCP_CACHE_PATHS may not contain a newline" >&2
+            exit 1
+            ;;
+    esac
+    # Second, `read`'s field splitting silently drops a *trailing*
+    # empty field (`.cargo:` produced one field, not the two a leading
+    # or middle empty correctly produced) — `read` treats a trailing
+    # delimiter the way it treats trailing whitespace with the default
+    # IFS, absorbing it rather than producing an empty final field.
+    # Split manually instead: pure string slicing, position-independent,
+    # so a leading, middle, or trailing empty field all land in
+    # `CACHE_PATHS` identically and the `-z "$cache_path"` check below
+    # catches all three the same way.
+    CACHE_PATHS=()
+    _remaining="$MCP_CACHE_PATHS"
+    while [[ "$_remaining" == *:* ]]; do
+        CACHE_PATHS+=("${_remaining%%:*}")
+        _remaining="${_remaining#*:}"
+    done
+    CACHE_PATHS+=("$_remaining")
     for cache_path in "${CACHE_PATHS[@]}"; do
         if [ -z "$cache_path" ]; then
             echo "entrypoint: MCP_CACHE_PATHS contains an empty entry" >&2
@@ -116,8 +152,38 @@ if [ -n "$MCP_CACHE_PATHS" ]; then
                 exit 1
             fi
         done
-        mkdir -p "$HOME_DIR/$cache_path"
-        chown "$MCP_UID:$MCP_GID" "$HOME_DIR/$cache_path"
+        # RR-030: `mkdir -p "$HOME_DIR/$cache_path"` then a plain
+        # `chown` (no `-h`) both follow symlinks, as root, before the
+        # identity drop below. A cache volume persists across runs and
+        # is container-writable, so a symlink planted inside one
+        # cache's own tree in an earlier run — nothing above rejects a
+        # symlink, only `..` — can redirect a later, `..`-free cache
+        # path outside `$HOME` entirely, silently `mkdir`/`chown`ing
+        # whatever it points at instead. Walked per-component instead
+        # of `mkdir -p`: an existing component that is a symlink is
+        # refused outright rather than followed; a component that does
+        # not exist yet is created fresh with a plain `mkdir` (not
+        # `-p`), so it can never itself be a symlink. `chown -h` on the
+        # final component is defense in depth on top of that, not a
+        # substitute for it (`-h` alone still lets `mkdir -p` create
+        # the too-deep, symlink-crossed directory it would chown).
+        _current="$HOME_DIR"
+        IFS='/' read -ra _cache_path_components <<< "$cache_path"
+        for _component in "${_cache_path_components[@]}"; do
+            [ -z "$_component" ] && continue
+            _current="$_current/$_component"
+            if [ -L "$_current" ]; then
+                echo "entrypoint: MCP_CACHE_PATHS entry '$cache_path' passes through a symlink at '$_current'" >&2
+                exit 1
+            fi
+            if [ ! -e "$_current" ]; then
+                mkdir "$_current"
+            elif [ ! -d "$_current" ]; then
+                echo "entrypoint: MCP_CACHE_PATHS entry '$cache_path' passes through a non-directory at '$_current'" >&2
+                exit 1
+            fi
+        done
+        chown -h "$MCP_UID:$MCP_GID" "$_current"
     done
 fi
 

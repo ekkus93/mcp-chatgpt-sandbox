@@ -10,8 +10,10 @@ entrypoint's identity-drop — which is the thing under test here. Which
 user a later `exec` call should run as is S12's problem, not S7's.
 """
 
+import uuid
 from pathlib import Path
 
+import docker.types
 import pytest
 
 import docker
@@ -115,6 +117,115 @@ def test_at_hat007_a_traversal_in_mcp_cache_paths_is_rejected_by_the_entrypoint(
             remove=True,
             labels={LABEL_MANAGED: "true"},
             environment=run_kwargs["environment"],
+        )
+
+
+def test_rr029_a_newline_in_mcp_cache_paths_is_rejected_not_silently_truncated(
+    docker_client: docker.DockerClient, default_image_tag: str, ssh_config: SSHConfig
+) -> None:
+    """RR-029 (`docs/REMEDIATION_SPEC.md` §26): `IFS=':' read -ra ... <<<
+    "$MCP_CACHE_PATHS"` stops at the first newline, so
+    `$'.cargo\\n../../etc'` used to silently drop `../../etc` — no
+    rejection, no mount — while the entrypoint's own comment (corrected
+    by this task) claimed it "exits non-zero rather than silently
+    skipping the bad entry". It must actually exit non-zero here."""
+    config = ContainerConfig(user="host", sudo=False)
+    run_kwargs = build_workspace_run_kwargs(
+        ssh_config=ssh_config,
+        container_config=config,
+        docker_client=docker_client,
+        checkout_uid=1234,
+        checkout_gid=1234,
+        extra_env={"MCP_CACHE_PATHS": ".cargo\n../../etc"},
+    )
+    with pytest.raises(docker.errors.ContainerError, match="newline"):
+        docker_client.containers.run(
+            default_image_tag,
+            ["sh", "-c", "id -u"],
+            remove=True,
+            labels={LABEL_MANAGED: "true"},
+            environment=run_kwargs["environment"],
+        )
+
+
+def test_rr029_a_trailing_empty_entry_is_rejected_the_same_as_a_leading_one(
+    docker_client: docker.DockerClient, default_image_tag: str, ssh_config: SSHConfig
+) -> None:
+    """RR-029: `read -ra`'s field splitting silently absorbed a
+    *trailing* empty field (`.cargo:` used to produce one field, not the
+    two elements a leading or middle empty correctly produced) — a
+    position-dependent inconsistency in what's supposed to be a uniform
+    rejection rule."""
+    config = ContainerConfig(user="host", sudo=False)
+    run_kwargs = build_workspace_run_kwargs(
+        ssh_config=ssh_config,
+        container_config=config,
+        docker_client=docker_client,
+        checkout_uid=1234,
+        checkout_gid=1234,
+        extra_env={"MCP_CACHE_PATHS": ".cargo:"},
+    )
+    with pytest.raises(docker.errors.ContainerError, match="empty entry"):
+        docker_client.containers.run(
+            default_image_tag,
+            ["sh", "-c", "id -u"],
+            remove=True,
+            labels={LABEL_MANAGED: "true"},
+            environment=run_kwargs["environment"],
+        )
+
+
+def test_rr030_a_symlink_planted_in_a_cache_volume_is_not_followed(
+    docker_client: docker.DockerClient, default_image_tag: str, ssh_config: SSHConfig
+) -> None:
+    """RR-030: `mkdir -p`/`chown` (no `-h`) both follow symlinks, as
+    root, before the identity drop. Reproduced across two real container
+    runs sharing one real, persisted named volume — exactly the
+    mechanism §11 cache persistence relies on: the first run's
+    (unprivileged, post-identity-drop) command plants a symlink pointing
+    outside `$HOME` inside the mounted cache, the same way a real build
+    tool's cache directory could end up with one; the second run names a
+    cache path that reaches through it and must be refused, not
+    silently followed into chowning whatever the symlink points at."""
+    volume_name = f"mcp-test-r19-{uuid.uuid4().hex[:12]}"
+    mount = docker.types.Mount(
+        target="/home/mcpuser/.cargo", source=volume_name, type="volume", read_only=False
+    )
+    config = ContainerConfig(user="host", sudo=False)
+
+    plant_kwargs = build_workspace_run_kwargs(
+        ssh_config=ssh_config,
+        container_config=config,
+        docker_client=docker_client,
+        checkout_uid=1234,
+        checkout_gid=1234,
+        extra_env={"MCP_CACHE_PATHS": ".cargo"},
+    )
+    docker_client.containers.run(
+        default_image_tag,
+        ["sh", "-c", "ln -s /etc /home/mcpuser/.cargo/registry"],
+        remove=True,
+        labels={LABEL_MANAGED: "true"},
+        environment=plant_kwargs["environment"],
+        mounts=[mount],
+    )
+
+    reach_kwargs = build_workspace_run_kwargs(
+        ssh_config=ssh_config,
+        container_config=config,
+        docker_client=docker_client,
+        checkout_uid=1234,
+        checkout_gid=1234,
+        extra_env={"MCP_CACHE_PATHS": ".cargo/registry"},
+    )
+    with pytest.raises(docker.errors.ContainerError, match="symlink"):
+        docker_client.containers.run(
+            default_image_tag,
+            ["sh", "-c", "id -u"],
+            remove=True,
+            labels={LABEL_MANAGED: "true"},
+            environment=reach_kwargs["environment"],
+            mounts=[mount],
         )
 
 

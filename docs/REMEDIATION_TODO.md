@@ -1534,15 +1534,16 @@ hint`; `test_at_hat011_a_non_string_scalar_under_a_sensitive_key_is_
 redacted` renamed to `..._is_not_stringified` with its expectation
 corrected.
 
-### R19 — The entrypoint rejects malformed cache entries and does not follow symlinks
+### R19 — The entrypoint rejects malformed cache entries and does not follow symlinks ✅
 **Satisfies:** RR-029, RR-030
+**Commit:** `PLACEHOLDER`
 
-- [ ] Reject any entry containing a newline (`IFS=':' read -ra` consumes only the
+- [x] Reject any entry containing a newline (`IFS=':' read -ra` consumes only the
       first line and silently drops the rest)
-- [ ] Treat leading, middle, and trailing empty fields identically
-- [ ] Do not `mkdir -p`/`chown` through a symlink as root — resolve under `$HOME`
+- [x] Treat leading, middle, and trailing empty fields identically
+- [x] Do not `mkdir -p`/`chown` through a symlink as root — resolve under `$HOME`
       or operate per-component with `-h`
-- [ ] Correct `entrypoint.sh:90-98`'s comment, which contradicts H6's validator
+- [x] Correct `entrypoint.sh:90-98`'s comment, which contradicts H6's validator
 
 **Defect (verified in bash).** `MCP_CACHE_PATHS=$'.cargo\n../../etc'` silently
 drops `../../etc` — no rejection, no mount — while the write-up claims the script
@@ -1552,6 +1553,65 @@ likewise dropped, while leading/middle empties are correctly rejected.
 `entrypoint.sh:119-120` follows symlinks as root before the identity drop. Cache
 volumes persist across runs and are container-writable, so a symlink planted in
 one cache's volume redirects a later, `..`-free cache path outside `$HOME`.
+
+**Defect reproduced.** The newline-drop and trailing-colon-drop both confirmed
+directly in bash (see the exact `read -ra` output above, produced before any
+change). The symlink case reproduced against two real container runs sharing
+one real, persisted named volume — the first (unprivileged, post-identity-drop)
+plants `ln -s /etc /home/mcpuser/.cargo/registry` inside the mounted cache, the
+second names `.cargo/registry` as its own `MCP_CACHE_PATHS` entry; on the
+unfixed script this silently `chown`s `/etc` inside the second container
+instead of refusing.
+
+**Implementation.**
+- Newline rejection: `MCP_CACHE_PATHS` is checked against `*$'\n'*` and refused
+  outright, before any splitting, rather than relying on the splitting itself
+  to (fail to) catch it.
+- Uniform empty-field handling: the single `IFS=':' read -ra ... <<<
+  "$MCP_CACHE_PATHS"` call — which silently absorbs a *trailing* empty field
+  the way it absorbs trailing whitespace with the default `IFS`, while
+  correctly producing one for a leading or middle empty — is replaced with a
+  manual `while [[ "$remaining" == *:* ]]` slice-and-strip loop, which is
+  purely positional and treats all three identically.
+- Symlink safety: `mkdir -p "$HOME_DIR/$cache_path"` followed by a plain
+  `chown` is replaced with a per-component walk (`IFS='/' read -ra` over
+  `$cache_path`) that refuses outright the moment any existing component —
+  intermediate or final — is a symlink (`[ -L ]`), and creates a
+  not-yet-existing component with a plain `mkdir` (never `-p`, so it can never
+  itself come into existence as a symlink). The final `chown` gained `-h` as
+  defense in depth on top of that, not a substitute for it.
+- Comment correction: `entrypoint.sh:90-98`'s comment claimed `MCP_CACHE_PATHS`
+  "can also be set directly through a project's own `environment:` ...
+  reaching this script unvalidated." `project_config.py`'s
+  `_environment_cannot_shadow_daemon_variables` (HR-006) now rejects any
+  `environment:` key starting with `MCP_` at config-load time, so that
+  specific path is closed. The comment now says this script's own validation
+  is kept anyway as an independent, defense-in-depth control — the same
+  "a bypass of one control should not silently become a bypass of both"
+  reasoning RR-031/R20 applies to merge ordering — not because the vector it
+  originally described is still open.
+
+**Verified the tests catch the regression.** Backed up `entrypoint.sh`,
+reverted to `HEAD` (confirmed via `grep -c "RR-029\|RR-030"` — `0`), reran the
+3 new tests against a freshly rebuilt image: all three failed with `DID NOT
+RAISE ContainerError` — the newline case, the trailing-empty case, and the
+symlink case all silently succeeded on the unfixed script. Restored (marker
+count back to `2`), image rebuilt again; all 10 tests in the file pass.
+
+**Full relevant suite.** `tests/workspace/`: 346 passed (first attempt was
+killed by this task's own Monitor timeout being set too short for the whole
+directory, with one leftover exited container; cleaned up and retried once
+with a longer timeout, per this project's established fallback — cleanly).
+Full unscoped suite: 954 passed. No Docker leftovers.
+
+**New tests.** `tests/workspace/test_default_image.py`:
+`test_rr029_a_newline_in_mcp_cache_paths_is_rejected_not_silently_truncated`,
+`test_rr029_a_trailing_empty_entry_is_rejected_the_same_as_a_leading_one`, and
+`test_rr030_a_symlink_planted_in_a_cache_volume_is_not_followed` — all three
+against the real built image and a real Docker daemon (the last across two
+real container runs sharing one real named volume), matching this file's
+existing `test_at_hat007_*`'s "prove the entrypoint's own defense holds"
+pattern rather than unit-testing the script in isolation.
 
 ### R20 — Every daemon-controlled variable is merged last
 **Satisfies:** RR-031
