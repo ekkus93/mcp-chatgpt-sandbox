@@ -380,6 +380,65 @@ def test_reconcile_adopts_an_unrecorded_labeled_container(
     assert reconciled.state == WorkspaceState.RUNNING
 
 
+def test_rr014_reset_never_adopts_the_container_it_replaces(
+    manager: DockerWorkspaceManager,
+    docker_client: docker.DockerClient,
+    db: sqlite3.Connection,
+    repository: RepositoryRecord,
+) -> None:
+    """RR-014 (`docs/REMEDIATION_SPEC.md` §11): H15 scenario #2 — the row
+    loses track of `container_id` while a correctly-labeled container
+    still occupies the deterministic name — reproduced empirically that
+    `_recreate` used to reach this the same way `_create` legitimately
+    does, and `_adopt_or_remove_by_name` couldn't tell the two apart:
+    `reset` silently returned the *same* stale container instead of
+    discarding its environment state, defeating the one thing `reset`
+    promises to do."""
+    record = manager.ensure_workspace(
+        repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
+    )
+    old_container_id = record.container_id
+    db.execute("UPDATE workspace SET container_id = NULL WHERE id = ?", (record.id,))
+    db.commit()
+
+    result = manager.reset(record.id, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS)
+
+    assert result.container_id != old_container_id
+    assert result.state == WorkspaceState.RUNNING
+    with pytest.raises(docker.errors.NotFound):
+        docker_client.containers.get(old_container_id)  # type: ignore[arg-type]
+
+
+def test_rr014_ensure_workspace_starts_a_stopped_adopted_container(
+    manager: DockerWorkspaceManager,
+    docker_client: docker.DockerClient,
+    db: sqlite3.Connection,
+    repository: RepositoryRecord,
+) -> None:
+    """The other half of RR-014: adoption propagated a non-running state
+    straight out of `ensure_workspace` with no `start()` — reproduced
+    empirically that the first `workspace_open` after adopting a
+    *stopped* orphan reported `stopped`, self-healing only on a second
+    call. Reached through the fresh-create path (the row deleted, not
+    merely losing its `container_id` — `reconcile()`'s own separate
+    adoption logic, exercised by the sibling test above, already handles
+    the "row still exists" case correctly; this is `_create`'s adoption
+    path, taken when the row doesn't exist at all yet)."""
+    record = manager.ensure_workspace(
+        repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
+    )
+    docker_client.containers.get(record.container_id).stop()  # type: ignore[arg-type]
+    db.execute("DELETE FROM workspace WHERE id = ?", (record.id,))
+    db.commit()
+
+    result = manager.ensure_workspace(
+        repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
+    )
+
+    assert result.container_id == record.container_id  # genuinely adopted, not recreated
+    assert result.state == WorkspaceState.RUNNING
+
+
 def test_reconcile_fails_closed_on_multiple_labeled_containers(
     manager: DockerWorkspaceManager,
     docker_client: docker.DockerClient,

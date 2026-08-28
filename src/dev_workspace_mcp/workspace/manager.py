@@ -396,7 +396,9 @@ class DockerWorkspaceManager:
                 details={"container_name": name},
             ) from exc
 
-    def _adopt_or_remove_by_name(self, record: WorkspaceRecord) -> WorkspaceRecord | None:
+    def _adopt_or_remove_by_name(
+        self, record: WorkspaceRecord, *, allow_adopt: bool
+    ) -> WorkspaceRecord | None:
         """HR-017 (`docs/HARDENING_SPEC.md` §9): before creating a
         container at `record`'s deterministic name (§51), check whether
         one already exists there. `containers.run`'s own 409 on a name
@@ -413,12 +415,26 @@ class DockerWorkspaceManager:
         *previous* incarnation of this same logical workspace, since the
         name is deterministic per `workspace_id` — removed to free the
         name for the create below. Returns the adopted record, or `None`
-        if it's safe to proceed to `containers.run`."""
+        if it's safe to proceed to `containers.run`.
+
+        RR-014 (`docs/REMEDIATION_SPEC.md` §11): `allow_adopt=False` for
+        `_recreate` (`rebuild`/`reset`) — adoption is HR-017's crash-
+        recovery mechanism for `_create`/`ensure_workspace`'s own "no
+        container to start" case, and is never appropriate for
+        `rebuild`/`reset`, whose entire point is guaranteeing a genuinely
+        new container regardless of what's already there. `record.container_id`
+        being `None` when `_recreate` runs (H15 scenario #2: a labeled
+        container survives at the deterministic name even though the row
+        lost track of it) used to reach this method with adoption still
+        enabled, silently returning the stale container instead of
+        rebuilding/resetting it — reproduced empirically. `allow_adopt=False`
+        routes that same labeled container into the removal branch below
+        instead, exactly like any other occupant of the name."""
         assert record.container_name is not None
         existing = self._find_container_by_name(record.container_name)
         if existing is None:
             return None
-        if existing.labels.get(LABEL_WORKSPACE_ID) == record.id:
+        if allow_adopt and existing.labels.get(LABEL_WORKSPACE_ID) == record.id:
             return self._save(
                 replace(
                     record,
@@ -433,14 +449,33 @@ class DockerWorkspaceManager:
         return None
 
     def _run_container(
-        self, record: WorkspaceRecord, *, image: str, run_kwargs: dict[str, Any]
+        self,
+        record: WorkspaceRecord,
+        *,
+        image: str,
+        run_kwargs: dict[str, Any],
+        allow_adopt: bool = True,
     ) -> WorkspaceRecord:
         """Run a new container for `record` (whose row already exists) and
-        persist the result. Shared by `_create` and `_recreate`."""
+        persist the result. Shared by `_create` and `_recreate` —
+        `allow_adopt=False` for the latter (RR-014, see
+        `_adopt_or_remove_by_name`'s own docstring)."""
         assert record.container_name is not None
-        adopted = self._adopt_or_remove_by_name(record)
+        adopted = self._adopt_or_remove_by_name(record, allow_adopt=allow_adopt)
         if adopted is not None:
-            return adopted
+            # RR-014: an adopted container is not necessarily running —
+            # returning it as-is used to propagate a non-running state
+            # straight out of `ensure_workspace` with no `start()`, so
+            # the first `workspace_open` after adopting a stopped orphan
+            # reported `STOPPED` and the very next tool call raised
+            # `WORKSPACE_NOT_RUNNING`; it self-healed only on a *second*
+            # `workspace_open` (`ensure_workspace`'s own reconcile branch
+            # calls `start()` once `container_id` is populated). Started
+            # here instead, so a caller always gets back a record that is
+            # actually ready to use on the first call.
+            if adopted.state == WorkspaceState.RUNNING:
+                return adopted
+            return self.start(adopted.id)
         try:
             container = self._docker.containers.run(
                 image,
@@ -618,7 +653,12 @@ class DockerWorkspaceManager:
         record = self._get_or_raise(workspace_id)
         self._remove_container_if_present(record)
         record = self._save(replace(record, container_id=None, state=state, last_used_at=_now()))
-        return self._run_container(record, image=image, run_kwargs=run_kwargs or {})
+        # RR-014: adoption disabled — `rebuild`/`reset` SHALL always
+        # produce a genuinely new container, never silently return
+        # whatever happens to already occupy the deterministic name.
+        return self._run_container(
+            record, image=image, run_kwargs=run_kwargs or {}, allow_adopt=False
+        )
 
     def delete(self, workspace_id: str, *, cache_volume_names: list[str] | None = None) -> None:
         """§8.4: remove workspace/container metadata. SHALL NOT delete the

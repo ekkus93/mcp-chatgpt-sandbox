@@ -904,13 +904,14 @@ state rather than a hang), but forcing the failure at the *other* point in
 `kill` (`exec_inspect` itself, via a genuinely removed container) the
 checklist specifically asked for real, not monkeypatched, coverage of.
 
-### R11 — `rebuild`/`reset` never adopt the container they replace
+### R11 — `rebuild`/`reset` never adopt the container they replace ✅
 **Satisfies:** RR-014
+**Commit:** `PLACEHOLDER`
 
-- [ ] Disable adoption on the `_recreate` path
-- [ ] Start an adopted container before returning it as ready, or return a state
+- [x] Disable adoption on the `_recreate` path
+- [x] Start an adopted container before returning it as ready, or return a state
       the caller must act on
-- [ ] Test `reset` against a row whose `container_id` is `None` while a labeled
+- [x] Test `reset` against a row whose `container_id` is `None` while a labeled
       container still holds the deterministic name
 
 **Defect.** `_recreate` resolves the container to remove by `container_id`, so
@@ -924,6 +925,50 @@ with no `start()`, so the first `workspace_open` after adopting a stopped orphan
 returns `STOPPED` and the next tool call raises `WORKSPACE_NOT_RUNNING`. It
 self-heals on the second call; the first is wrong. The adopt test uses a
 *running* container.
+
+Reproduced both defects directly against a real Docker daemon before
+implementing anything: `reset` against a row with `container_id` cleared but
+a still-running labeled container at the name returned the *same*
+container_id, and the old container was confirmed still present afterward.
+Separately, adopting a genuinely *stopped* orphan (via the fresh-`_create`
+path, not `reconcile()`'s own distinct adoption logic, which already starts
+correctly — `ensure_workspace` with the row deleted, not merely
+`container_id`-cleared) returned `state: stopped` on the very first call. A
+first attempt at this second reproduction accidentally exercised the
+already-correct `reconcile()` path and showed no bug; re-derived the actual
+reachable path from `ensure_workspace`'s own code before writing the real
+test — confirmed cleanly reproduced only once the row was deleted outright.
+
+**Implementation.** `_adopt_or_remove_by_name` and `_run_container` both
+gained `allow_adopt: bool` (default `True`, unchanged for `_create`/
+`ensure_workspace`'s own HR-017 recovery branch — both are legitimate
+crash-recovery adoption, not this defect's concern). `_recreate`
+(`rebuild`/`reset`) now calls `_run_container(..., allow_adopt=False)` — any
+container occupying the deterministic name, labeled or not, is routed into
+the existing removal branch instead, guaranteeing a genuinely new container
+every time. Separately, `_run_container` now checks the adopted record's
+state: if it isn't already `RUNNING`, it calls `self.start(...)` before
+returning, rather than propagating whatever state Docker happened to report.
+
+**Verified the tests catch the regression.** Reverted `workspace/manager.py`
+to `HEAD` (confirmed genuinely reverted via `grep -c allow_adopt` returning
+`0`, after an initial revert attempt silently no-op'd), reran the 2 new
+tests: the reset one failed with the identical container_id surviving; the
+adoption one failed with `state == stopped` instead of `running` — both
+exactly the reproduced defects. Restored; all 26 tests in the file pass
+again. No Docker leftovers.
+
+**Full relevant suite.** `tests/workspace/`: 337 passed. Full unscoped
+suite: 923 passed. No Docker leftovers.
+
+**New tests.** `tests/workspace/test_manager.py`:
+`test_rr014_reset_never_adopts_the_container_it_replaces` (the exact H15
+scenario #2, using a running orphan — `reset` must produce a different
+container_id, the new container must be `RUNNING`, and the old container_id
+must no longer exist) and `test_rr014_ensure_workspace_starts_a_stopped_adopted_container`
+(a genuinely stopped orphan adopted via the fresh-create path — the same
+container_id is correctly adopted, but its state must be `RUNNING`, not
+`STOPPED`, on the very first call).
 
 ---
 
