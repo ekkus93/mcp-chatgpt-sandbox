@@ -3247,8 +3247,9 @@ changed. Full unscoped `tests/` background run completed cleanly, same
 there is no new behavior to test — only existing structural checks
 re-confirmed).
 
-### H35 — Reconcile the checkboxes
+### H35 — Reconcile the checkboxes ✅
 **Satisfies:** HR-033
+**Commit:** `d4dda22`
 
 Untick or qualify these in `docs/TODO.md`, each with a pointer to the H-task
 that closes it. The review's finding was not that tasks were unbuilt — most were
@@ -3274,6 +3275,67 @@ the claim back.
 S32's deferral was verified as accurate against §22.1, §22.2, §20.6 and §34.3 —
 no correction needed.
 
+For every row above, added a `**Correction (H35, ...HR-033):**` paragraph to
+`docs/TODO.md` directly under the relevant task — no checkbox was unticked,
+since in every case the underlying work described by the box was genuinely
+done and the correction is about a defect *found later*, closed by a
+specific, cited H-task, not about the original task's claim being false at
+the time it shipped. This follows the exact precedent H26 already set in the
+same file (its own `**Correction (H26, ...HR-028):**` paragraph on S33),
+rather than introducing a new convention.
+
+**Not a transcription exercise — every citation was re-verified against the
+current code before being written**, and three did not survive that check
+unchanged:
+
+- **S9/S10's own listed defect ("§12.1 rule 3 fails open") had no H-task
+  citation in the table above**, unlike every other row — checked why, by
+  reproducing it directly (a real linked worktree, `authorized_roots=[]`).
+  **The empirical result contradicts "fails open":** the request is still
+  correctly refused, via the always-active plain containment check, since
+  the resolved target is by construction outside the workspace root. What
+  is actually lost is the specific `PATH_GIT_METADATA` classification (a
+  generic `PATH_OUTSIDE_REPOSITORY` instead) — a real, still-open, and
+  still-unscheduled gap, but a narrower one than the table's own wording
+  implies, and one no H-task closes. Documented precisely as found (not
+  as the more alarming "fails open" phrasing) and tracked as new **H37**
+  in this file's own Deferred section, rather than silently left as an
+  implication with no owner.
+- **S15's "no race" claim was re-checked against the current code and
+  found accurate today** — `AsyncJobRunner.start_job` calls `job_store.
+  mark_running(job_id, pid=pid)` exactly once, with the real pid already
+  obtained; it is the only call site in the codebase, and none passes
+  `pid=None`. Whatever version the review evaluated had this race; the
+  shipped one does not. Documented as re-verified-and-accurate rather
+  than corrected, since there is nothing left to correct.
+- **S31's table citation of H32 for "pid exhaustion has no daemon-side
+  detection" is itself inaccurate** — checked against H32's actual nine
+  items (`docs/HARDENING_TODO.md`, this file), none of which address pid
+  exhaustion. Confirmed still genuinely unimplemented by grepping the
+  manager/tool modules directly. Documented as still open and uncredited
+  to any H-task, matching disk exhaustion's own already-honest "not
+  implemented" framing, rather than repeating the table's own
+  mis-citation into `docs/TODO.md`.
+
+**Revert-verification:** not applicable — a docs-only task, same as H34;
+verified instead by `tests/test_acceptance_test_coverage.py` and `tests/
+test_docs_tools.py` continuing to pass unmodified after the edits (neither
+`### AT-nnn` headings this task's prose references nor `docs/TOOLS.md`'s own
+table were disturbed).
+
+No Docker leftovers (checked per the established discipline; this task
+touched no Docker-adjacent code). `ruff check`, `ruff format --check`,
+`mypy src` clean — unaffected, no `src/` file changed. Full unscoped
+`tests/` background run completed cleanly: 876 passed, same as H33/H34
+left it (this task adds no new tests, since there is no new behavior to
+test — only existing documentation).
+
+**New tracked item:** **H37** (this file's own Deferred section) — the
+§12.1 rule-3 classification gap found above, with its fix already scoped
+(extend `authorized_roots` to include every individually configured
+`repositories[].path`, not only `repository_roots`, at all four call
+sites) for whoever picks it up.
+
 ---
 
 ## Deferred
@@ -3286,6 +3348,26 @@ by maintaining §4.1's control surface. Costs: contradicts §20.1's stated
 exception, removes Docker-free `workspace_info`/`git_status` and part of §73's
 degraded start, and adds container-exec latency to every read. Revisit if §4.1
 proves burdensome to maintain, or if a knob is discovered that it cannot cover.
+
+### H37 — §12.1 rule 3 classification gap when only `repositories[]` is configured
+
+Not scheduled — found during H35's checkbox reconciliation, empirically verified
+(`docs/TODO.md`'s S9/S10 correction has the full finding), and never assigned an
+H-task of its own in this plan. `FilesystemSecurity`'s rule-3 gitfile-target
+exclusion (a linked worktree's or submodule's real `.git` outside the checkout)
+goes inert — `_external_git_dir` returns `None` — whenever a repository is
+authorized only through an individually configured `repositories[].path`, with
+no `repository_roots:` set, since `resolve_git_dir`'s `authorized_roots` is
+`config.repository_roots` alone.
+
+**Confirmed not an access-control bypass**, only an error-classification gap: the
+resolved external Git directory is, by rule 3's own construction, always outside
+`self._root`, so the always-active plain containment check (`PATH_OUTSIDE_
+REPOSITORY`) still refuses the request — a client only loses the more specific
+`PATH_GIT_METADATA` classification, not access. Fix: extend the `authorized_roots`
+passed to `resolve_git_dir`/`FilesystemSecurity` (in each of `tools/filesystem.py`'s
+two call sites, `cli.py`, and `tools/workspace.py`) to include every individually
+configured `repositories[].path`, not only `repository_roots`.
 
 ---
 

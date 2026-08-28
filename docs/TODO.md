@@ -66,6 +66,31 @@ These block the tasks that cite them. Decide before starting the task, not durin
       (steps 1-2 and 8 implemented; steps 3-4 land with S3/S14, step 5 stays
       lazy per S6, steps 6-7 land with S23/already folded into step 1)
 
+**Correction (H35, `docs/HARDENING_TODO.md` HR-033):** three defects the
+hardening review found in this task's own work, each now fixed:
+
+- the §19.1 key-file invariant above only ever checked
+  `repositories[].ssh_key` — `ssh.shared_key` (`scope: shared`) named a key
+  file exactly as directly and was unguarded, so `"../fakehome/.ssh/id_ed25519"`
+  there resolved straight to the host user's personal key. Fixed by H7.
+- §73 step 7 ("validate repository roots") was never actually implemented as
+  its own check — repository roots that didn't exist on disk were silently
+  accepted at config-load time. Fixed by H30 (`_check_repository_roots_exist`).
+- a malformed value shaped like `workspace: 5` (a scalar, not a mapping)
+  reached `dict(raw)` and raised a bare `TypeError` straight out of
+  `load_config`, past §73 step 1's "refuse to serve on invalid config" and
+  into an unhandled crash instead of a clean `error: ...` message. Fixed by
+  H30 (`load_config`'s outer `except Exception` safety net).
+
+The `security` block in the config-model list above no longer exists — H30
+found it declared and validated but never enforced anywhere
+(`allow_docker_socket`, `allow_privileged`, `additional_mounts` all read
+nowhere in the codebase) and deleted it rather than leave a config block
+that silently does nothing. `git_policy.validate_remote` was deleted for the
+same reason. Neither is a correction to what S2 built — the deletion is a
+separate, later change (H30) — but this list otherwise names a `security:`
+block that a reader would look for and not find.
+
 ### S3 — State database ✅
 **Spec:** §67, §68, §69 · **Commit:** 720e4f2
 
@@ -75,6 +100,20 @@ These block the tasks that cite them. Decide before starting the task, not durin
 - [x] Container identity never depends solely on SQLite — Docker labels are
       authoritative for reconstruction (§69). The reconciler itself is S6/S18;
       this task only avoids treating `workspace.container_id` as ground truth.
+
+**Correction (H35, `docs/HARDENING_TODO.md` HR-033):** "idempotent" above
+did not mean atomic — `with connection:` looks like it wraps each migration
+in a transaction, but Python's `sqlite3` module only issues an *implicit*
+`BEGIN` ahead of the first DML statement under the default legacy
+transaction control; DDL (`CREATE TABLE`/`ALTER TABLE`) and `PRAGMA
+user_version` never trigger it. Reproduced: a migration whose second
+statement failed left the first statement's table created but
+`user_version` unchanged, so the next start re-applied the same migration
+and failed again on "table already exists" — permanently, not just once.
+Also: no `busy_timeout` was configured, and this daemon and its own CLI
+operator commands (`reset`/`rebuild`/`delete`) can open the same SQLite file
+concurrently. Both fixed by H17 — explicit `BEGIN`/`COMMIT` around every
+migration, and `busy_timeout` configured on every connection.
 
 ### S4 — Error model ✅
 **Spec:** §31 · **Commit:** df90018
@@ -128,6 +167,15 @@ Also fixed: `workspace.repository_id` is a foreign key into `repository`
 `RepositoryRegistry` (S5) is in-memory only. The manager now upserts the
 repository row when creating a workspace, since it is the first thing that
 needs it to exist.
+
+**Correction (H35, `docs/HARDENING_TODO.md` HR-033):** the "reconcile
+unexpected Docker state" bullet above reached `absent` for a container
+removed out of band, but a workspace that reached `absent` (or `failed`
+from a create attempt that never got as far as a container) had no path
+back to `running` — `ensure_workspace`'s existing-row branch unconditionally
+called `start()`, which only ever starts an *already-existing* container,
+never creates one. A transient Docker failure wedged the workspace
+permanently, even after Docker itself recovered. Fixed by H15.
 
 ### S7 — Container identity and default image ✅
 **Spec:** §5.3, §9.1, §41 · **Satisfies:** FR-036 · **Verified by:** AT-014, AT-015, AT-016 · **Commit:** a51adfa
@@ -199,6 +247,22 @@ client-supplied `path="/etc/passwd"` would have silently discarded the
 repository root and resolved straight to the real host file. Fixed by stripping
 a leading `/` before joining; a client-supplied path is always
 repository-relative, never absolute, regardless of what it looks like.
+
+**Correction (H35, `docs/HARDENING_TODO.md` HR-033):** §12.1 rule 3 (the
+gitfile-target exclusion, for a linked worktree or submodule whose real
+`.git` lives outside the checkout) is inert — `_external_git_dir` returns
+`None` — for a repository authorized only through an individually
+configured `repositories[].path`, with no `repository_roots:` set, since
+`resolve_git_dir`'s `authorized_roots` check is `config.repository_roots`
+alone. **Verified empirically before writing this down** (a real linked
+worktree, `authorized_roots=[]`): the request is still correctly refused —
+the resolved target is, by rule 3's own construction, always outside
+`self._root`, so the always-active plain containment check catches it
+regardless. What is actually lost is the specific `PATH_GIT_METADATA`
+classification (a generic `PATH_OUTSIDE_REPOSITORY` is returned instead) —
+a client-visible error-code precision gap, not an access-control bypass.
+No H-task addresses this; tracked as a new item in `docs/HARDENING_TODO.md`'s
+Deferred section rather than left implicit.
 
 ### S10 — Filesystem tools ✅
 **Spec:** §13, §12.2, §46, §47, §48 · **Satisfies:** FR-007, FR-008, FR-009, FR-010 · **Verified by:** AT-003, AT-018 · **Commit:** f7d4679
@@ -309,6 +373,23 @@ gone (`ps aux | grep '[s]leep 60'` — not `pgrep -f`, which matched its own
 checking command's argv, and not `pgrep -x sleep`, which matched the
 container's own PID 1 `sleep infinity`; both were caught as test bugs while
 getting this one right).
+
+**Correction (H35, `docs/HARDENING_TODO.md` HR-033):** three defects the
+hardening review found in this task's own work, each now fixed:
+
+- the "constrained to allowed container paths" `cwd` check above was a plain
+  string-prefix test (`cwd.startswith(workspace_path + "/")`), which accepts
+  `/workspace/../etc` outright — it textually starts with `/workspace/` even
+  though it resolves entirely outside the workspace. Fixed by H30
+  (`_validate_cwd`, normalizing before comparing).
+- a client-supplied `timeout_seconds` was honored unbounded rather than
+  clamped to `execution.sync_timeout_seconds` — the configured value acted
+  only as a default for an omitted parameter, not as a real ceiling. Fixed
+  by H30 (`_resolve_timeout`).
+- `docker.errors.DockerException` from `service.start`/`service.consume`
+  could escape uncaught, past `@translate_workspace_errors`, reaching the
+  client as an unstructured crash instead of a clean `CONTAINER_RUNTIME_
+  FAILED`. Fixed by H19.
 
 ### S13 — Tool contract export ✅
 **Spec:** §33.1, §33.2, §71
@@ -473,6 +554,27 @@ same `ps aux | grep '[s]leep 60'` idiom as S12), a real timeout marking
 `timed_out`, the degraded-mode error, and AT-006 itself (query a job by
 id alone, discarding the `exec_start` response, as a reconnecting client
 would).
+
+**Correction (H35, `docs/HARDENING_TODO.md` HR-033):** the hardening
+review flagged two findings against this task's own work — re-checked
+against the *current* code, not accepted from the review's summary alone:
+
+- "no race between running and having a pid" was called false ~95% of the
+  time. **Re-verified directly and found accurate as things stand today:**
+  `AsyncJobRunner.start_job` calls `job_store.mark_running(job_id,
+  pid=pid)` exactly once, with the real pid `start_and_open_stream`
+  already returned — `mark_running` is the only call site in the codebase,
+  and no path calls it with `pid=None`. Whatever version of the code the
+  review evaluated, the shipped one does not have this race; not
+  corrected here because there is nothing left to correct.
+- `JobStore.update_output_counts` (`jobs/store.py`) is genuinely dead code
+  — it has its own direct unit test (`test_store.py`) but zero production
+  call sites; `AsyncJobRunner` tracks live output progress in-memory
+  (`LiveJob`/`StreamCapture`) instead. Still true today, not fixed by any
+  H-task; left as a real, minor cleanup opportunity (remove the method and
+  its test, or wire it up) rather than corrected here, since removing a
+  tested public method is a separate, deliberate decision this
+  reconciliation pass does not make on its own.
 
 ### S16 — Job log storage ✅
 **Spec:** §15.5, §15.6, §46 · **Verified by:** AT-007 · **Commit:** `bb2ddba`
@@ -829,6 +931,24 @@ staged one.
 `schemas/tools.json` re-exported (two new tools); `CONTRACT_VERSION`
 bumped `0.3.0` → `0.4.0` per §33.2 (minor).
 
+**Correction (H35, `docs/HARDENING_TODO.md` HR-033):** two defects the
+hardening review found in this task's own work, each now fixed:
+
+- `git_diff`'s `base`/`head` and `git_log`'s `ref` reached a real Git
+  argv unvalidated — a client-supplied value beginning with `-` could be
+  interpreted by Git as an option rather than a revision. Reproduced
+  end-to-end: a real `git_log` call with `ref="--output=<path>"` wrote a
+  host file and returned `{'result': []}`. Fixed by H2 (reject any such
+  value starting with `-`, and additionally place revision arguments
+  after `--end-of-options`).
+- the bounded-diff `offset`/follow-up-retrieval scheme above assumed a
+  byte offset always lands on a character boundary — a multi-byte UTF-8
+  character split across a chunk boundary decoded incorrectly (or
+  crashed) on reassembly. Fixed by H24 (`_trim_incomplete_trailing_char`,
+  detecting and trimming a truncated trailing UTF-8 sequence before
+  returning that chunk, with a `next_offset` field so a follow-up request
+  resumes from the trimmed boundary, not the naive one).
+
 ### S22 — `git_commit` ✅
 **Spec:** §17.4, §20.6, §45, §65, §18.9 · **Satisfies:** FR-020, FR-024 · **Verified by:** AT-008, AT-019 · **Commit:** `43abc8c`
 
@@ -908,6 +1028,28 @@ conflict (the same scenario AT-020 uses for `git_status`) triggering
 
 `schemas/tools.json` re-exported (one new tool); `CONTRACT_VERSION`
 bumped `0.4.0` → `0.5.0` per §33.2 (minor).
+
+**Correction (H35, `docs/HARDENING_TODO.md` HR-033):** three defects the
+hardening review found in this task's own work, each now fixed:
+
+- `git_commit` checked `detect_interrupted_operation`'s marker files but not
+  `git status`'s own conflict listing — a conflict left by `git stash pop`
+  (which leaves no marker file at all) went undetected: status showed `UU`,
+  the guard returned `None`, and the commit succeeded through it. Fixed by
+  H20 (also check `status.conflicted`, alongside the marker-file check, not
+  instead of it — the two catch genuinely different situations).
+- client-supplied `paths` reached `git add`/`git commit --only` unescaped,
+  so Git's own pathspec magic (`:/`-anchoring, glob, icase) applied — a
+  path like `:/` or `:(glob)**` could stage far more than the literal paths
+  named, defeating strict mode's own "no path outside `paths` is staged"
+  guarantee. Fixed by H21 (`:(literal)` prefix on every client-supplied
+  path, disabling all pathspec magic).
+- a failed `git commit` (after a successful `git add`) left the paths this
+  call itself staged sitting in the index — HR-025's "leave repository
+  state unmodified" precondition. Fixed by H22 (roll back via `git reset --
+  <same literal pathspecs>` before raising, undoing exactly what this
+  call's own `git add` staged, leaving any other already-staged path
+  untouched).
 
 ---
 
@@ -1141,6 +1283,19 @@ mount never appears anywhere under `/workspace`, the `insteadOf` rewrite,
 AT-034 itself, and `file`-mode's `IdentityFile` line. No new tools or
 output fields were added, so `schemas/tools.json` needed no regeneration
 (confirmed by re-running `export-schemas` and diffing — no drift).
+
+**Correction (H35, `docs/HARDENING_TODO.md` HR-033):** "host-key pinning" in
+this task's own title overstated what shipped — `ensure_known_hosts_file_
+exists` (`config/loader.py`) created an *empty* file, so `StrictHostKeyChecking
+yes` against it trusted nothing at all, and a fresh install's first
+structured Git operation failed host verification before ever reaching the
+(absent) credential. Fixed by H32: `GITHUB_SSH_HOST_KEYS`, GitHub's real
+RSA/ECDSA/Ed25519 host keys, verified two independent ways (a live
+`ssh-keyscan` against the real internet, byte-for-byte matching GitHub's own
+published fingerprint documentation), seeded whenever the file is genuinely
+empty — a fresh install, or an existing install from before this fix, which
+only ever `touch`ed an empty file. A file with any existing content is never
+overwritten.
 
 ### S25 — Remote identity validation ✅
 **Spec:** §20.2, §7.3 · **Satisfies:** FR-023 · **Verified by:** AT-009, AT-026, AT-027, AT-028, AT-030
@@ -1507,6 +1662,20 @@ D3 was decided manual) and D2's live-credential path (not chosen — no
 token configured) remain unbuilt, both by deliberate decision, not by
 being blocked.
 
+**Correction (H35, `docs/HARDENING_TODO.md` HR-033):** this task's title is
+"Remote protection verification," but it only ever queried `GET
+/repos/{owner}/{repo}/branches/{branch}/protection` — the classic
+branch-protection-only endpoint, which 404s unconditionally on a GitHub
+Free private repository regardless of whether protection actually exists —
+never GitHub's rulesets, the sole mechanism available there. The old code
+treated that 404 as "confirmed missing" with no actual evidence of absence.
+Fixed by H32: replaced with the unified `GET /repos/{owner}/{repo}/rules/
+branches/{branch}` endpoint, and a `404` now degrades to `unverified` ("not
+visible to this token") rather than asserting `missing`. This also makes
+the test-coverage description above stale in one specific detail — "a real
+`404` → `missing`" described the pre-fix behavior; the current, correct
+behavior for a `404` is `unverified`, re-covered by H32's own new tests.
+
 ### S29 — Audit logging ✅ (partial — see below)
 **Spec:** §24, §20.7 · **Satisfies:** FR-027 · **Verified by:** AT-021, AT-037
 
@@ -1598,6 +1767,40 @@ drift).
 This completes every currently-unblocked Phase 3 task. S23 (blocked by
 D3) and S28 (blocked by D2) — and `ssh_auth`/AT-037 within this task —
 remain blocked pending those credential decisions.
+
+**Correction (H35, `docs/HARDENING_TODO.md` HR-033):** three findings,
+two fixed and one superseding this section's own "blocked" claim:
+
+- redaction (§24.1, and the `[x]` box above) covered `write_audit_event`'s
+  `details`/`metadata` but not a `WorkspaceError`'s client-facing `message`
+  string — a raw Git/SSH stderr or a full remote URL interpolated into
+  `message` reached the client (and, via `_logger.warning` on a denial,
+  the operational log) in cleartext even when the same value in `details`
+  was correctly `[REDACTED]`. Reproduced: a `ghp_` token in cleartext in
+  `message` while `details.url` was redacted. Fixed by H11 (`to_tool_error`
+  now redacts `message` the same way, universally, at the interface layer).
+- a denial record (`audit_denials`, `tools/git.py`) carried only
+  `{policy_decision, error_code}` — discarding `PolicyDeniedError.details
+  ["policy"]` and never including `repository_id` — below §20.7's own
+  fidelity requirement that a denial record match a success record's
+  detail. Fixed by H13 (policy key, `repository_id`, and
+  `remote`/`branch`/`remote_repository` where applicable, all included;
+  also closed a real crash risk where an unwritable `audit.path` could
+  replace a correctly-computed denial with an unrelated `OSError`).
+- **the "`ssh_auth` is genuinely blocked" claim above is superseded, not
+  merely corrected** — S23 (SSH key provisioning) was blocked on D3 at the
+  time this task ran, but D3 was later decided (manual provisioning), S23
+  shipped, and H26 implemented `ssh_auth` for real against the actual
+  `ssh-agent` module S23 built (`ssh_key_fingerprint` +
+  `_audit_ssh_auth_if_applicable`), closing AT-037. H26 also implemented
+  `exec`'s "command started" event, closing AT-021 the same way. Both
+  `[ ]`/blocked markers above are now stale in the direction of
+  under-claiming, not over-claiming — this section's "(partial — see
+  below)" header qualifier can be read as "partial, for the reasons H26
+  later closed," not as a still-open gap. `file_written`/`file_deleted`/
+  `command_canceled`/container-lifecycle events remain genuinely unwired
+  (H34's own `docs/SPEC.md` §24 amendment states this plainly) — that part
+  of "deliberately scoped down" above is still accurate.
 
 ---
 
@@ -1803,6 +2006,24 @@ code from whatever write attempt hit `ENOSPC`, already visible through
 substantial enough to defer as its own follow-up rather than fold into
 an already-large task.
 
+**Correction (H35, `docs/HARDENING_TODO.md` HR-033):** "OOM detection is
+only partial" above is resolved — H32 gave OOM its real reporting surface
+(`WorkspaceRecord.oom_killed`, surfaced as a new `oom_killed` field on
+`workspace_open`/`workspace_info`, reflecting the *current* container's
+Docker-reported `OOMKilled` state, distinct from the generic `failed`
+`container_state` any other crash also produces), with a real cgroup OOM
+kill (16 MiB limit, 128 MiB allocated) as its test, closing the "slow and
+flaky... not worth reproducing" gap S18/this task both left open. **Pid
+exhaustion detection remains genuinely unimplemented** — `pids_limit`
+configuration reaches Docker (verified above against real kernel
+enforcement), but nothing observes or reports a workspace having actually
+hit it, the same "not implemented" state disk exhaustion is already
+honestly marked with above. H32 did not add this — its own nine items
+(`docs/HARDENING_TODO.md`) do not include pid-exhaustion detection, so a
+prior citation of H32 for this specific defect would have been
+inaccurate; left unfixed and untracked by any H-task, the same open state
+as disk exhaustion.
+
 §8.4's operator path (`reset`/`rebuild`/`delete` — "None is exposed as
 an MCP tool in the MVP... reached as operator actions — a CLI
 subcommand on the host") is now real: three new `dev-workspace-mcp`
@@ -2002,6 +2223,27 @@ future spec edit that adds, removes, or renumbers an AT fail loudly here
 instead of silently drifting out of sync with the suite — it does not
 judge whether a citing test's assertions are adequate, only that one
 exists.
+
+**Correction (H35, `docs/HARDENING_TODO.md` HR-033):** three defects the
+hardening review found in this task's own audit, each now fixed:
+
+- **AT-037 had no test at all** — the `ssh_auth` audit event it covers was
+  blocked on S23/D3 at the time this task ran (see S29's own correction
+  above). Fixed by H26, once S23 shipped: `_audit_ssh_auth_if_applicable`
+  + `ssh_key_fingerprint`, with a real test.
+- **AT-021's scenario was unreachable** — "run a command containing a
+  configured secret and verify audit output does not expose the secret
+  value" had no audit output to inspect at all, since `exec` produced no
+  audit record. Fixed by H26: the `exec` "command started" audit event
+  (§24), redacted through the existing `redact_secrets` pass.
+- **the coverage audit satisfied itself** — `tests/test_acceptance_test_
+  coverage.py`'s own scan of `tests/` included its own source file, so
+  removing every *real* citation for AT-010/AT-011 still left the audit
+  passing, because its own error-message text and a code comment
+  happened to contain the string. Fixed by H25 (`_all_test_source()`
+  excludes `__file__`) — with a permanent regression guard added in the
+  same fix: a meta-test proving that removing every real citation for an
+  AT now genuinely makes the audit fail for it.
 
 **New: `tests/workspace/test_e2e_workflow.py`.** One continuous test
 driving every §78 "definition of done" workflow step reachable without a
