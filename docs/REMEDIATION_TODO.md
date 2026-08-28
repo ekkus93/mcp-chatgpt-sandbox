@@ -2066,7 +2066,7 @@ not simulated.
 
 ### R26 — Apply the `REMEDIATION_SPEC.md` §16 amendments ✅
 **Satisfies:** RR-032, RR-033
-**Commit:** `PLACEHOLDER`
+**Commit:** `22bb0db`
 
 - [x] `SPEC.md` §24 — state that only container lifecycle, job reconciliation,
       ssh-agent lifecycle, and policy denials are logged; list the rest as
