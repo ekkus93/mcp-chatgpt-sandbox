@@ -3455,7 +3455,7 @@ either run. Full unscoped `tests/` background run: **974 passed, 0 failed**
 
 ### H36 — Move Git reads into the container ✅
 **Supersedes:** HD1
-**Commit:** `PLACEHOLDER`
+**Commit:** `b6fe8ce`
 
 Reverses HD1's original decision, on explicit request — the reasons HD1 gave
 (§20.1's speed exception, §73's degraded start, `git_dir_mode: none` keeping
@@ -3543,7 +3543,7 @@ part of it.
       historical record — this document's own convention throughout this
       file's history, matching H3's own TODO entry above); HR-001 unaffected
       (still governs, independent of execution location). **Commit:**
-      `PLACEHOLDER`
+      `b6fe8ce`
 
       Real gap found via this task's own discipline, empirically, not
       assumed: amending §18.7 and deleting the old `test_host_side_
