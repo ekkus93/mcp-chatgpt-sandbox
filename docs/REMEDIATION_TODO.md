@@ -2346,7 +2346,7 @@ constructs `run_patch_file`'s dependencies directly (a real
 cheapest of the four modules' new tests to prove, since this tool body is
 host-side and needs no Docker at all.
 
-**Commit:** `PLACEHOLDER`
+**Commit:** `2a5bcdf`
 
 **R27 complete.** All four modules identified as having tool bodies
 substantial enough to matter (`tools/workspace.py`, `tools/git.py`,
