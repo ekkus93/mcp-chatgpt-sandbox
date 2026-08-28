@@ -35,15 +35,16 @@ review's findings make necessary:
 
 Both are ticked checkboxes in `docs/HARDENING_TODO.md`. Do these first.
 
-### R1 — Configuration discovery expands includes
+### R1 — Configuration discovery expands includes ✅
 **Satisfies:** RR-001 · **Verified by:** RAT-001, RAT-002
+**Commit:** `c469a12`
 
-- [ ] Add `--includes` to both `git config --list` probes (`--local`, `--worktree`)
-- [ ] Add `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_VALUE_<n>`,
+- [x] Add `--includes` to both `git config --list` probes (`--local`, `--worktree`)
+- [x] Add `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_VALUE_<n>`,
       `GIT_CONFIG_PARAMETERS` to the environment scrub
-- [ ] Correct `git/service.py:103-111`'s "complete with respect to what can
+- [x] Correct `git/service.py:103-111`'s "complete with respect to what can
       actually run" docstring — it is only complete *given* include expansion
-- [ ] Test both `include.path` and `includeIf.*.path`
+- [x] Test both `include.path` and `includeIf.*.path`
 
 **Defect (reproduced end-to-end).** `git/service.py:126-128` runs
 `git config --list -z --local`, which does not expand includes. With
@@ -63,6 +64,45 @@ property does not hold.
 reproduction (no working-tree change staged at that moment); `read_git_diff` did.
 Do not conclude `git status` is safe — HR-002's own §4.2 records that
 `git status` executes `filter.*.clean`. Test both.
+
+**Implementation.** `--includes` added to both `_discover_code_executing_overrides`
+scope-flag invocations (`--local`, `--worktree`) — verified this does not change
+the function's existing fallback semantics (non-zero exit on "not a repository",
+zero exit + normal listing otherwise; confirmed with real git 2.43.0 against a
+non-repo directory and an empty repo before trusting it). `_ENV_VARS_TO_SCRUB`
+gained `GIT_CONFIG_COUNT`/`GIT_CONFIG_PARAMETERS`; `GIT_CONFIG_KEY_<n>`/
+`GIT_CONFIG_VALUE_<n>` are an unbounded per-index family, scrubbed by prefix
+(`_ENV_VAR_PREFIXES_TO_SCRUB`) rather than a fixed tuple. Verified empirically
+that this injection channel is real and independent of `--local`/`--worktree`
+scope: `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=filter.x.clean
+GIT_CONFIG_VALUE_0=... git config --list --includes` reports the injected key
+regardless of the daemon's own `.git/config`.
+
+**Verified the tests catch the regression:** reverted `git/service.py` to
+`git show HEAD^` and reran the four new tests — all four failed, three with
+"filter.sneaky(2).clean" absent from `_discover_code_executing_overrides`'s
+return / the marker file existing after `run_git_host_side`, one (the
+env-injection test) with the marker existing after `run_git_host_side` despite
+the pre-fix scrub tuple not covering `GIT_CONFIG_KEY_0`. Restored; all 26 tests
+in the file pass again. No Docker leftovers.
+
+**Full relevant suite:** `tests/git/` + `tests/workspace/test_host_side_execution_safety.py`
++ `tests/workspace/test_git_diff_log_tools.py` (185 passed, includes real Docker) —
+clean. `ruff check`, `ruff format --check`, `mypy src` clean across the whole
+tree. No schema drift (no tool output shape changed). Full unscoped `tests/`
+background run: 880 passed (876 before this task's 4 new tests), no
+interruption, no Docker leftovers.
+
+**New tests:** `tests/git/test_service.py` — `_discover_code_executing_overrides`
+(direct, white-box) discovers a driver defined only through `include.path` and
+through `includeIf.onbranch:<current-branch>.path`; `run_git_host_side` end to
+end neutralizes a `filter.*.clean` driver bound via `.gitattributes` and defined
+only through `include.path`, forced by a real `git diff` (the exact reproduction
+that found the defect); `run_git_host_side` scrubs a `GIT_CONFIG_COUNT`/
+`GIT_CONFIG_KEY_0`/`GIT_CONFIG_VALUE_0`-injected filter driver from a simulated
+tainted daemon environment (`monkeypatch.setenv`), proven against a real
+baseline subprocess call that confirms the injection mechanism itself works
+before asserting the mediated call suppresses it.
 
 ### R2 — The push goes to the validated URL
 **Satisfies:** RR-002, RR-003 · **Verified by:** RAT-003, RAT-004

@@ -72,6 +72,16 @@ _CODE_EXECUTING_CONFIG_KEY_RE = re.compile(
 #: own (`GIT_SSH`/`GIT_SSH_COMMAND` in particular: an unrelated read
 #: shouldn't be able to run an arbitrary "ssh" replacement even though no
 #: host-side read ever legitimately touches the network).
+#:
+#: RR-001 (`docs/REMEDIATION_SPEC.md` §4): `GIT_CONFIG_COUNT`/
+#: `GIT_CONFIG_PARAMETERS` inject configuration directly, bypassing
+#: `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM=/dev/null` entirely — if the
+#: daemon's own environment were ever tainted (a compromised parent
+#: process, a misconfigured supervisor), either would let a code-executing
+#: key reach Git without ever touching a config *file* this module reads
+#: back. `GIT_CONFIG_KEY_<n>`/`GIT_CONFIG_VALUE_<n>` are the per-index
+#: form `GIT_CONFIG_COUNT` governs and are scrubbed by prefix below, since
+#: `<n>` is unbounded.
 _ENV_VARS_TO_SCRUB = (
     "GIT_EXTERNAL_DIFF",
     "GIT_PAGER",
@@ -82,7 +92,14 @@ _ENV_VARS_TO_SCRUB = (
     "GIT_ASKPASS",
     "GIT_PROXY_COMMAND",
     "GIT_TEMPLATE_DIR",
+    "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_PARAMETERS",
 )
+
+#: Prefix form of the scrub above — `GIT_CONFIG_COUNT=3` names
+#: `GIT_CONFIG_KEY_0`.."_2"/`GIT_CONFIG_VALUE_0`.."_2", an unbounded family
+#: no fixed tuple of exact names can cover.
+_ENV_VAR_PREFIXES_TO_SCRUB = ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
 
 
 def _host_side_git_env() -> dict[str, str]:
@@ -93,7 +110,11 @@ def _host_side_git_env() -> dict[str, str]:
     read performed on the client's behalf is never influenced by the
     *host's* global Git configuration — only the repository's own,
     already neutralized by `_discover_code_executing_overrides`."""
-    env = {k: v for k, v in os.environ.items() if k not in _ENV_VARS_TO_SCRUB}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in _ENV_VARS_TO_SCRUB and not k.startswith(_ENV_VAR_PREFIXES_TO_SCRUB)
+    }
     env["GIT_CONFIG_GLOBAL"] = "/dev/null"
     env["GIT_CONFIG_SYSTEM"] = "/dev/null"
     return env
@@ -110,6 +131,22 @@ def _discover_code_executing_overrides(repo_path: Path) -> list[str]:
     reading the configured keys back is the only approach that covers an
     arbitrary driver name.
 
+    RR-001 (`docs/REMEDIATION_SPEC.md` §4): `--includes` is required on
+    both calls below. `git config --list --local` (no `--includes`) does
+    NOT expand `include.path`/`includeIf.*.path` — verified empirically
+    against git 2.43.0 — so a driver defined in a file `.git/config`
+    merely *points at* (itself container-writable, since `.git/config` is)
+    was invisible to this probe and reached Git unneutralized. Reproduced
+    end-to-end: `.git/config` with `[include] path = evil.cfg`,
+    `evil.cfg` with `[filter "sneaky"] clean = touch <marker>`, and
+    `.gitattributes` with `* filter=sneaky` — the probe returned `[]` and
+    a real `read_git_diff` executed the marker command as the daemon uid.
+    `--includes` makes `git config --list` resolve and report the
+    included key exactly as if it had been written directly into the
+    scope being read, which is what lets the neutralization below still
+    depend only on "what does this repository's configuration actually
+    define", not on which file within it defines it.
+
     This probe never invokes a hook, filter, or external diff/merge
     driver — `git config --list` only ever reads and prints configuration
     — but still runs with the same scrubbed environment as every other
@@ -125,7 +162,7 @@ def _discover_code_executing_overrides(repo_path: Path) -> list[str]:
     overrides: list[str] = []
     for scope_flag in ("--local", "--worktree"):
         result = subprocess.run(  # noqa: S603
-            ["git", "-C", str(repo_path), "config", "--list", "-z", scope_flag],
+            ["git", "-C", str(repo_path), "config", "--list", "-z", "--includes", scope_flag],
             capture_output=True,
             text=True,
             errors="surrogateescape",

@@ -9,6 +9,7 @@ import pytest
 from dev_workspace_mcp.git.service import (
     GitCommandResult,
     InterruptedOperation,
+    _discover_code_executing_overrides,
     detect_interrupted_operation,
     run_git_host_side,
     sanitize_for_client,
@@ -224,6 +225,74 @@ def test_run_git_host_side_neutralizes_an_arbitrary_unlisted_driver_name(
     assert not marker.exists()
 
 
+def test_discover_code_executing_overrides_expands_include_path(tmp_path: Path) -> None:
+    """RR-001/RAT-002 (`docs/REMEDIATION_SPEC.md` §4): a driver defined in
+    a file `.git/config` merely *points at* via `include.path` — itself
+    container-writable, since `.git/config` is — SHALL be discovered the
+    same as one written directly into `.git/config`. `git config --list
+    --local` (no `--includes`) does not expand includes at all; this is a
+    direct, white-box check of the discovery function itself, distinct
+    from the end-to-end RCE-closure proof below."""
+    repo = _init_repo(tmp_path / "repo")
+    (repo / ".git" / "evil.cfg").write_text(
+        '[filter "sneaky"]\n\tclean = touch /should-never-run\n'
+    )
+    (repo / ".git" / "config").open("a").write("[include]\n\tpath = evil.cfg\n")
+
+    overrides = _discover_code_executing_overrides(repo)
+
+    assert "-c" in overrides
+    assert "filter.sneaky.clean=" in overrides
+
+
+def test_discover_code_executing_overrides_expands_include_if_path(tmp_path: Path) -> None:
+    """The conditional form (`includeIf.<condition>.path`) is a distinct
+    Git mechanism from a bare `include.path` and SHALL be expanded too —
+    `--includes` covers both, but only if the condition it depends on
+    (here, the current branch) is genuinely satisfied for this repo."""
+    repo = _init_repo(tmp_path / "repo")
+    (repo / ".git" / "evil.cfg").write_text(
+        '[filter "sneaky2"]\n\tclean = touch /should-never-run\n'
+    )
+    branch = subprocess.run(
+        ["git", "branch", "--show-current"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    (repo / ".git" / "config").open("a").write(
+        f'[includeIf "onbranch:{branch}"]\n\tpath = evil.cfg\n'
+    )
+
+    overrides = _discover_code_executing_overrides(repo)
+
+    assert "filter.sneaky2.clean=" in overrides
+
+
+def test_run_git_host_side_neutralizes_a_filter_driver_defined_through_include_path(
+    tmp_path: Path,
+) -> None:
+    """RAT-001, end-to-end: the exact reproduction that found the defect —
+    a `filter.<name>.clean` driver defined only through `include.path`,
+    bound via `.gitattributes`, forced by a real `git diff` through the
+    real `run_git_host_side` entry point every host-side read uses.
+    Before RR-001, `_discover_code_executing_overrides` returned `[]` for
+    this repo and the marker command executed as the daemon uid."""
+    repo = _init_repo(tmp_path / "repo")
+    marker = tmp_path / "include-path-filter-ran.marker"
+    script = marker.parent / f"{marker.name}.sh"
+    script.write_text(f"#!/bin/sh\ntouch {marker}\ncat\n")
+    script.chmod(0o755)
+    (repo / ".git" / "evil.cfg").write_text(f'[filter "sneaky"]\n\tclean = {script}\n')
+    (repo / ".git" / "config").open("a").write("[include]\n\tpath = evil.cfg\n")
+    (repo / ".gitattributes").write_text("README.md filter=sneaky\n")
+    (repo / "README.md").write_text("changed\n")
+
+    run_git_host_side(repo, ["diff"])
+    assert not marker.exists(), "filter.clean defined via include.path ran unneutralized"
+
+    # sanity: the driver is real and would have run without mediation
+    subprocess.run(["git", "-C", str(repo), "diff"], check=True)
+    assert marker.exists(), "filter.clean mechanism itself is not actually being tested"
+
+
 def test_run_git_host_side_neutralizes_diff_external(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path / "repo")
     marker = tmp_path / "diff-external-ran.marker"
@@ -264,6 +333,40 @@ def test_run_git_host_side_ignores_global_config(
 
     run_git_host_side(repo, ["diff"])
     assert not marker.exists(), "run_git_host_side honored host global config"
+
+
+def test_run_git_host_side_scrubs_env_injected_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RR-001 (`docs/REMEDIATION_SPEC.md` §4): `GIT_CONFIG_COUNT`/
+    `GIT_CONFIG_KEY_<n>`/`GIT_CONFIG_VALUE_<n>` inject configuration
+    directly into every `git` invocation that inherits them, bypassing
+    `GIT_CONFIG_GLOBAL=/dev/null` entirely — verified empirically that
+    Git honors them regardless of `--local`/`--worktree` scope. If the
+    daemon's own environment were ever tainted (a compromised parent
+    process, a misconfigured supervisor), this is a second path to the
+    exact same outcome `GIT_CONFIG_GLOBAL` exists to close, and one
+    `_discover_code_executing_overrides`'s file-scoped probe cannot see
+    at all — the scrub has to happen in the environment itself."""
+    repo = _init_repo(tmp_path / "repo")
+    marker = tmp_path / "env-injected-filter-ran.marker"
+    script = tmp_path / "env-injected-driver.sh"
+    script.write_text(f"#!/bin/sh\ntouch {marker}\ncat\n")
+    script.chmod(0o755)
+    (repo / ".gitattributes").write_text("README.md filter=envsneaky\n")
+    (repo / "README.md").write_text("changed\n")
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "filter.envsneaky.clean")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", str(script))
+
+    # baseline: the same env, direct subprocess — confirms the injection
+    # mechanism genuinely would be honored without the scrub.
+    subprocess.run(["git", "-C", str(repo), "diff"], check=True)
+    assert marker.exists(), "the env-injection mechanism itself is not actually being tested"
+    marker.unlink()
+
+    run_git_host_side(repo, ["diff"])
+    assert not marker.exists(), "run_git_host_side honored env-injected config"
 
 
 # --- detect_interrupted_operation (§44.4) --------------------------------------------
