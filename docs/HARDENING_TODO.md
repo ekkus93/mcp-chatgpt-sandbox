@@ -3443,16 +3443,61 @@ either run. Full unscoped `tests/` background run: **974 passed, 0 failed**
 
 ---
 
-## Deferred
+## In progress
 
-### H36 — Move Git reads into the container
+### H36 — Move Git reads into the container 🚧
 **Supersedes:** HD1
 
-Not scheduled. Eliminates the host-side execution class structurally rather than
-by maintaining §4.1's control surface. Costs: contradicts §20.1's stated
-exception, removes Docker-free `workspace_info`/`git_status` and part of §73's
-degraded start, and adds container-exec latency to every read. Revisit if §4.1
-proves burdensome to maintain, or if a knob is discovered that it cannot cover.
+Reverses HD1's original decision, on explicit request — the reasons HD1 gave
+(§20.1's speed exception, §73's degraded start, `git_dir_mode: none` keeping
+`git_status`/`git_diff`/`git_log` working) are real, accepted costs, not
+oversights; see this task's own commits for the full before/after and the
+`git_dir_mode: none` consequence specifically (previously undocumented even in
+HD1/H36's own deferred note).
+
+Scope, settled before implementation started: **full migration**, not only the
+five tool-reachable reads (`git_status`, `git_diff`, `git_log`,
+`workspace_open`, `workspace_info`) — `run_git_host_side` is also used
+*internally* by `git_commit`/`git_pull`/`git_push`'s own precondition checks
+(default-branch detection, fast-forward checks, remote-URL resolution,
+tracking-branch checks), which are just as client-reachable (HR-000's own
+framing) and need to migrate too for `run_git_host_side`/HR-002's control
+surface to actually be deletable, matching this task's own "eliminates the
+host-side execution class structurally" rationale rather than only relocating
+part of it.
+
+- [x] (1/8) `ExecutionService.capture` + `git/service.py`'s
+      `run_git_in_container` — the shared in-container primitive every other
+      step reuses. **Commit:** `e89fdc0`
+- [ ] (2/8) `git/status.py` (`read_git_status`) + its five internal call sites
+      in `run_git_commit`/`run_git_pull`/`run_git_push` + `git_status_tool`
+      (now requires a running workspace, matching `git_commit`/`git_pull`/
+      `git_push`)
+- [ ] (3/8) `git/diff.py` (`read_git_diff`) + `git_diff_tool`
+- [ ] (4/8) `git/log.py` (`read_git_log`) + `git_log_tool`
+- [ ] (5/8) `git_state.py` (`read_basic_git_state`) + `tools/workspace.py`'s
+      `build_workspace_info`/`open_workspace`/`workspace_info_tool` (git block
+      empty when the workspace is not currently running, not only when the
+      repository is unborn/invalid)
+- [ ] (6/8) `git/commit.py`'s `read_committed_files`/`detect_default_branch`/
+      `is_head_published`
+- [ ] (7/8) `git/remote.py`'s `resolve_remote_url`/`resolve_remote_push_url`/
+      `validate_remote_identity`/`validate_remote_identity_for_push`
+      (preserving RR-002's two-read TOCTOU timing — validate early, re-verify
+      immediately before the push, refuse on disagreement — now with both
+      reads in-container instead of one host-side and one in-container),
+      `git/push.py`'s `build_force_with_lease_arg`, `tools/git.py`'s own two
+      remaining inline calls
+- [ ] (8/8) Delete `run_git_host_side` and the HR-002 control surface
+      (`_CODE_EXECUTING_CONFIG_KEY_RE`, `_discover_code_executing_overrides`,
+      `_host_side_git_env`, the env-scrub tuples) once no caller remains;
+      amend `docs/SPEC.md` §20.1 (drop the read-only host-side exception),
+      §73 (degraded start no longer covers `workspace_info`/Git reads), the
+      `git_dir_mode` table (`read-only`/`none` rows — all six structured Git
+      tools now run in-container, so `none` masks Git from them too); amend
+      `docs/HARDENING_SPEC.md` §4/§4.1 (HR-002 superseded — nothing left for
+      it to govern; HR-001's option-injection protection stays, reframed as
+      in-container rather than host-side)
 
 ---
 
