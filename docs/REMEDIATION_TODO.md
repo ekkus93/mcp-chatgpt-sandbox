@@ -200,7 +200,7 @@ construction. Tracked as genuinely open, not silently dropped.
 
 ### R3 — `git_commit` refuses a path that is not a path ✅
 **Satisfies:** RR-004 · **Verified by:** RAT-005
-**Commit:** `PLACEHOLDER`
+**Commit:** `37286c5`
 
 - [x] Reject an empty-string entry, and any entry normalizing to the repository
       root (`""`, `"."`, `"./"`), with `INVALID_ARGUMENT`
