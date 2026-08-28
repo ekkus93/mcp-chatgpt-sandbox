@@ -134,8 +134,30 @@ def _query_branch_rules(
     asserting `missing` ("confirmed absent") without evidence — exactly
     the distinction §18.5's amendment row requires. A genuinely
     rule-free branch is reported as `200` with an empty array, which
-    *is* real evidence of absence and is handled by the caller."""
-    url = f"{api_base_url}/repos/{owner_repo}/rules/branches/{branch}"
+    *is* real evidence of absence and is handled by the caller.
+
+    RR-008 (`docs/REMEDIATION_SPEC.md` §5): `?per_page=100` — GitHub's
+    documented maximum page size — rather than its default of 30.
+    Not a partial mitigation: the response is the combined, deduplicated
+    set of *rule types* that apply to the branch (this docstring's own
+    23-type ceiling above), never one entry per contributing ruleset, so
+    a single page of 100 is unconditionally enough; this isn't paginating
+    around a growing collection, it's sizing the one page to exceed a
+    fixed, documented upper bound.
+
+    `json.loads(body)` — and this function's own return type — assume
+    the parsed body is a JSON array of objects, per GitHub's documented
+    shape. Reproduced empirically that this assumption silently held
+    even when wrong: a `200` response body that is a JSON *object*
+    (e.g. a misconfigured `api_base_url` pointing at a different API
+    entirely) iterates as its string *keys* rather than raising here, so
+    the `AttributeError` this raises instead is deliberately immediate
+    and specific, not deferred to whatever the caller happens to do with
+    each "rule" next. A non-JSON body (`json.loads` itself raising
+    `json.JSONDecodeError`, a `ValueError` subclass) is a related,
+    equally real crash reproduced the same way and caught by the same
+    `except ValueError` the caller already needs for this."""
+    url = f"{api_base_url}/repos/{owner_repo}/rules/branches/{branch}?per_page=100"
     request = urllib.request.Request(  # noqa: S310
         url,
         headers={
@@ -146,7 +168,13 @@ def _query_branch_rules(
     )
     with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:  # noqa: S310
         body = response.read()
-    return json.loads(body)  # type: ignore[no-any-return]
+    parsed = json.loads(body)
+    if not isinstance(parsed, list) or not all(isinstance(item, dict) for item in parsed):
+        raise ValueError(
+            f"expected a JSON array of rule objects from {url!r}, got "
+            f"{type(parsed).__name__} instead"
+        )
+    return parsed
 
 
 def verify_remote_protection(
@@ -198,6 +226,16 @@ def verify_remote_protection(
         return _unverified(default_branch, f"GitHub API returned HTTP {exc.code}")
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         return _unverified(default_branch, f"GitHub API request failed: {exc}")
+    except ValueError as exc:
+        # RR-008 (`docs/REMEDIATION_SPEC.md` §5): `_query_branch_rules`
+        # raises `ValueError` for a `200` response whose body isn't the
+        # documented JSON-array-of-objects shape — including, since
+        # `json.JSONDecodeError` is itself a `ValueError`, a body that
+        # isn't JSON at all. Reproduced empirically that either used to
+        # propagate uncaught (`AttributeError`/`JSONDecodeError`),
+        # violating this function's own "never raises" contract exactly
+        # the way an `HTTPError`/`URLError` already can't.
+        return _unverified(default_branch, f"GitHub API returned an unexpected response: {exc}")
 
     checked_at = datetime.now(UTC).isoformat()
     rule_types = {rule.get("type") for rule in rules}

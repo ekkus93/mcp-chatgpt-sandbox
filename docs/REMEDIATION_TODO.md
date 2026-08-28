@@ -569,12 +569,13 @@ directory itself is still listed; its contents are not).
 match in the shared `_repo` fixture's other files can't produce a false
 pass.
 
-### R7 — A diagnostic cannot fail the operation it annotates
+### R7 — A diagnostic cannot fail the operation it annotates ✅
 **Satisfies:** RR-008 · **Verified by:** RAT-009
+**Commit:** `PLACEHOLDER`
 
-- [ ] Guard the response type in `_query_branch_rules` / `verify_remote_protection`
-- [ ] Degrade to `unverified` with a reason for any unexpected shape
-- [ ] Test a `200` returning a JSON object rather than an array
+- [x] Guard the response type in `_query_branch_rules` / `verify_remote_protection`
+- [x] Degrade to `unverified` with a reason for any unexpected shape
+- [x] Test a `200` returning a JSON object rather than an array
 
 **Defect (reproduced — introduced by H32).** The rewrite iterates the parsed body
 without a type guard:
@@ -588,9 +589,84 @@ passes `translate_workspace_errors` uncaught — violating the function's own
 "never raises" docstring, §18.5's "a diagnostic SHALL NOT fail `workspace_open`
 by itself", and HR-022. Reachable through a misconfigured `api_base_url`.
 
+Reproduced directly first, against a real local HTTP server (this suite's own
+established substitute for `api.github.com`, not a mock): a `200` response
+whose body is `{"message": "not an array"}` raised exactly the predicted
+`AttributeError`, uncaught. A closely-related second crash, found while
+reproducing the first rather than assumed: a genuinely non-JSON body (e.g. an
+HTML error page from a misconfigured `api_base_url` pointing at a different
+server entirely) raised `json.JSONDecodeError` uncaught too — `json.loads`
+itself has no shape guard at all.
+
 **Also here:** `_query_branch_rules` does not paginate. A branch with more than
 one page of rules under-reports, which with `require_remote_protection: deny`
 blocks legitimate work. Either paginate or set `per_page` and document the bound.
+
+**Implementation.** `_query_branch_rules` now validates the parsed body is a
+`list` of `dict`s before returning it, raising `ValueError` with a clear
+message otherwise (naming the offending type). `verify_remote_protection`
+gained `except ValueError` alongside its existing `HTTPError`/`URLError`
+handlers, degrading to `unverified` with the reason — and since
+`json.JSONDecodeError` is itself a `ValueError` subclass, this same new
+handler closes the non-JSON-body crash too, for free, as a natural
+consequence rather than a second special case. The request URL also gained
+`?per_page=100` (GitHub's documented maximum, not its default of 30): the
+endpoint's response is the combined, deduplicated set of rule *types* that
+apply to the branch, which the docstring's own ~23-type ceiling makes
+unconditionally boundable by a single 100-item page — this is sizing one
+page past a fixed, documented upper bound, not a partial substitute for
+real pagination.
+
+**A real, pre-existing test-fixture bug found and fixed along the way.**
+Adding the shape guard broke 3 previously-passing tests in
+`tests/workspace/test_remote_protection.py` — its own separate
+`_FakeGitHubHandler.do_GET` wrote `json.dumps(self.response_body or {})`,
+and `or {}` silently turns a deliberately empty *list*
+(`response_body = []`, used by exactly the tests that broke, to simulate
+"no rules apply") into an empty JSON *object* on the wire, since `[]` is
+falsy in Python. This bug already existed on `HEAD`, sending `{}` instead of
+the intended `[]` the whole time — it had no observable effect before this
+task only because the pre-fix `_query_branch_rules` performed no shape
+validation at all, and an empty dict and an empty list both iterate to zero
+rule types regardless. RR-008's new validation correctly rejected the `{}`
+shape once it could tell the difference, which is what turned this latent
+fixture bug into a visible test failure rather than introducing a new one —
+confirmed by reverting only the production code and rerunning: the fixed
+fixture (now genuinely sending `[]`) still failed against `HEAD` in exactly
+the way that reveals `HEAD`'s own missing `?per_page=100`, which is the
+correct, expected result. Fixed the fixture to match
+`tests/test_github_api.py`'s own already-correct `if ... is not None else
+{}` pattern; updated the one exact-path assertion the new query string
+affects.
+
+**Verified the tests catch the regression.** Reverted `github_api.py` to
+`HEAD`, reran `tests/test_github_api.py` + `tests/workspace/
+test_remote_protection.py`: 6 failed — the 5 new/updated
+`tests/test_github_api.py` cases (the two shape-guard reproductions, the
+`?per_page=100` assertion, and the object-vs-list variants) plus the one
+`test_remote_protection.py` test whose fixture bug this task's validation
+now surfaces — all for the reasons above, none unexpected. Restored; all 24
+tests across the two files pass again.
+
+**Full relevant suite.** `tests/test_github_api.py tests/config/
+tests/db/test_schema.py tests/workspace/test_remote_protection.py`: 73
+passed. Full unscoped suite: 912 passed, 1 failed
+(`test_ssh_client_config.py::test_at_034_substituted_host_key_fails_closed_no_prompt`,
+`COMMAND_TIMEOUT` on an unrelated `ssh-keyscan` call — this task touches only
+`github_api.py`, nothing SSH/exec/timeout-related). Reran that one test alone
+twice: failed once more with the same timeout, then passed cleanly
+(21.89s) — a transient environmental flake, not a regression, consistent
+with this test's contention-sensitivity already observed earlier in this
+session. No Docker leftovers.
+
+**New tests.** `tests/test_github_api.py`: `test_rr008_requests_per_page_
+100_not_githubs_default_of_30`, `test_rr008_unverified_when_the_response_
+body_is_a_json_object_not_an_array`, `test_rr008_unverified_when_a_list_
+item_is_not_an_object`, `test_rr008_unverified_when_the_response_body_is_
+not_json_at_all` (the fixture gained a `raw_response_body` override for
+this last one, since the existing `response_body` field is always run
+through `json.dumps` and can't produce malformed JSON on its own). One
+existing test's exact-path assertion updated for the new query string.
 
 ---
 

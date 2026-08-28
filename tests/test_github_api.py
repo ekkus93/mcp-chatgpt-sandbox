@@ -25,7 +25,12 @@ from dev_workspace_mcp.github_api import verify_remote_protection
 class _FakeGitHubHandler(BaseHTTPRequestHandler):
     #: set per-test via subclassing/attributes below
     response_status: int = 200
-    response_body: dict | None = None
+    response_body: object = None
+    #: RR-008: overrides `response_body` when set, for a body that isn't
+    #: JSON at all (a misconfigured `api_base_url` pointing at a
+    #: different, non-API server) — `response_body` is always run through
+    #: `json.dumps`, which can't produce malformed JSON.
+    raw_response_body: bytes | None = None
     require_token: str | None = None
     requested_paths: list[str] = []  # noqa: RUF012 - test double, shared deliberately
 
@@ -41,6 +46,9 @@ class _FakeGitHubHandler(BaseHTTPRequestHandler):
         self.send_response(self.response_status)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
+        if self.raw_response_body is not None:
+            self.wfile.write(self.raw_response_body)
+            return
         body = self.response_body if self.response_body is not None else {}
         self.wfile.write(json.dumps(body).encode())
 
@@ -138,7 +146,102 @@ def test_unverified_when_the_server_returns_404(tmp_path: Path, fake_github) -> 
     assert result.status == "unverified"
     assert "404" in result.reason
     assert result.default_branch == "main"
-    assert handler_cls.requested_paths == ["/repos/owner/repo/rules/branches/main"]
+    assert handler_cls.requested_paths == ["/repos/owner/repo/rules/branches/main?per_page=100"]
+
+
+def test_rr008_requests_per_page_100_not_githubs_default_of_30(tmp_path: Path, fake_github) -> None:
+    """RR-008 (`docs/REMEDIATION_SPEC.md` §5): the combined, deduplicated
+    rule-type set this endpoint returns is bounded by GitHub's own
+    documented ~23 rule types, comfortably inside a single 100-item
+    page — 30 (GitHub's default) is not guaranteed to be."""
+    base_url, handler_cls = fake_github
+    handler_cls.response_body = []
+    token_path = tmp_path / "token"
+    token_path.write_text("ghp_faketoken\n")
+
+    verify_remote_protection(
+        github_config=_github_config(base_url, token_path),
+        owner_repo="owner/repo",
+        default_branch="main",
+        checks=[],
+    )
+
+    assert handler_cls.requested_paths == ["/repos/owner/repo/rules/branches/main?per_page=100"]
+
+
+def test_rr008_unverified_when_the_response_body_is_a_json_object_not_an_array(
+    tmp_path: Path, fake_github
+) -> None:
+    """Reproduced empirically before this fix: a `200` whose body is a
+    JSON *object* (e.g. a misconfigured `api_base_url` pointing at a
+    different API entirely, or a future GitHub response-shape change)
+    iterated as its string keys rather than rule objects, crashing with
+    `AttributeError: 'str' object has no attribute 'get'` — escaping
+    `verify_remote_protection`, `workspace_open`, and
+    `translate_workspace_errors` uncaught, violating this function's own
+    "never raises" contract."""
+    base_url, handler_cls = fake_github
+    handler_cls.response_status = 200
+    handler_cls.response_body = {"message": "not an array at all"}
+    token_path = tmp_path / "token"
+    token_path.write_text("ghp_faketoken\n")
+
+    result = verify_remote_protection(
+        github_config=_github_config(base_url, token_path),
+        owner_repo="owner/repo",
+        default_branch="main",
+        checks=["force_push", "deletion"],
+    )
+
+    assert result.status == "unverified"
+    assert "unexpected response" in result.reason
+    assert result.default_branch == "main"
+
+
+def test_rr008_unverified_when_a_list_item_is_not_an_object(tmp_path: Path, fake_github) -> None:
+    """The array-of-*objects* half of the same shape guard: a list whose
+    entries aren't dicts would crash `rule.get("type")` in the caller
+    identically to the whole-body-is-an-object case above."""
+    base_url, handler_cls = fake_github
+    handler_cls.response_status = 200
+    handler_cls.response_body = ["not", "objects"]
+    token_path = tmp_path / "token"
+    token_path.write_text("ghp_faketoken\n")
+
+    result = verify_remote_protection(
+        github_config=_github_config(base_url, token_path),
+        owner_repo="owner/repo",
+        default_branch="main",
+        checks=["force_push", "deletion"],
+    )
+
+    assert result.status == "unverified"
+    assert "unexpected response" in result.reason
+
+
+def test_rr008_unverified_when_the_response_body_is_not_json_at_all(
+    tmp_path: Path, fake_github
+) -> None:
+    """The related crash this fix closes for free: `json.loads` itself
+    raises `json.JSONDecodeError` (a `ValueError` subclass) for a
+    genuinely non-JSON body — reproduced empirically against a real
+    HTML response before this fix, uncaught for the same reason as the
+    JSON-object case above."""
+    base_url, handler_cls = fake_github
+    handler_cls.response_status = 200
+    handler_cls.raw_response_body = b"<html>not json</html>"
+    token_path = tmp_path / "token"
+    token_path.write_text("ghp_faketoken\n")
+
+    result = verify_remote_protection(
+        github_config=_github_config(base_url, token_path),
+        owner_repo="owner/repo",
+        default_branch="main",
+        checks=["force_push", "deletion"],
+    )
+
+    assert result.status == "unverified"
+    assert "unexpected response" in result.reason
 
 
 def test_missing_when_the_rules_array_is_genuinely_empty(tmp_path: Path, fake_github) -> None:

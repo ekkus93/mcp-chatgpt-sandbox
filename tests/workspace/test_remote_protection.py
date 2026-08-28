@@ -40,7 +40,21 @@ class _FakeGitHubHandler(BaseHTTPRequestHandler):
         self.send_response(self.response_status)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
-        self.wfile.write(json.dumps(self.response_body or {}).encode())
+        # RR-008 (`docs/REMEDIATION_SPEC.md` §5): `or {}`, not `if ... is
+        # not None else {}`, silently turned a deliberately empty *list*
+        # (`response_body = []`, this file's own "no rules apply"
+        # fixture, `or` short-circuiting since `[]` is falsy) into an
+        # empty JSON *object* on the wire — always wrong, but with no
+        # observable effect pre-RR-008: `_query_branch_rules` performed
+        # no shape validation at all, and an empty dict and an empty
+        # list both iterate to zero rule types either way. RR-008's new
+        # validation correctly rejects the object shape once it can tell
+        # the difference, which is what turned this latent fixture bug
+        # into a real test failure — confirmed by reproducing against
+        # `HEAD` (pre-RR-008) first: these tests passed there despite
+        # actually exercising `{}`, not the `[]` they intended.
+        body = self.response_body if self.response_body is not None else {}
+        self.wfile.write(json.dumps(body).encode())
 
     def log_message(self, *args: object) -> None:
         pass
@@ -173,7 +187,7 @@ async def test_at_035_warn_succeeds_with_missing_status(
     protection = result.structured_content["remote_protection"]
     assert protection["status"] == "missing"
     assert protection["default_branch"] == "main"
-    assert handler_cls.requested_paths == ["/repos/owner/example/rules/branches/main"]
+    assert handler_cls.requested_paths == ["/repos/owner/example/rules/branches/main?per_page=100"]
 
 
 async def test_at_h032_a_404_from_the_rules_endpoint_is_unverified_not_missing(
