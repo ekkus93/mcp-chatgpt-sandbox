@@ -1784,12 +1784,13 @@ resources` with its content intact; the tracked container itself is still
 removed, confirming the fix is selective rather than simply disabling volume
 cleanup altogether.
 
-### R22 — Replace assertions that restate their subject's postcondition
+### R22 — Replace assertions that restate their subject's postcondition ✅
 **Satisfies:** RR-025
+**Commit:** `PLACEHOLDER`
 
-- [ ] `tests/execution/test_log_capture.py:205-218` — assert the returned bytes
+- [x] `tests/execution/test_log_capture.py:205-218` — assert the returned bytes
       are the correct last N lines, not `count(b"\n") >= N`
-- [ ] `tests/git/test_service.py:227-238` — assert the read *succeeded* and
+- [x] `tests/git/test_service.py:227-238` — assert the read *succeeded* and
       returned correct content, not merely that a marker is absent
 
 **Defect (reproduced).** The log-capture test's sole assertion is literally the
@@ -1801,6 +1802,57 @@ H3's own subtask forbids.
 
 This is HR-027's anti-pattern recurring two tasks after the task that fixed it,
 which is why RR-025 is a standing requirement rather than a one-time correction.
+
+**Defect reproduced.** `git -c diff.external= diff` (the exact argv shape
+`test_run_git_host_side_neutralizes_diff_external` used) confirmed directly:
+exit 128, `fatal: external diff died, stopping at README.md`, the marker
+correctly absent — a genuinely *failed* read, indistinguishable by
+`assert not marker.exists()` alone from one that succeeded safely. Separately
+confirmed the log-capture test's blind spot directly: a deliberately wrong
+`tail` (the file's *first* five lines instead of the last five) still
+satisfies `tail.count(b"\n") >= 5` — the old assertion passes on data that is
+simply wrong.
+
+**Implementation.**
+- `tests/execution/test_log_capture.py`'s
+  `test_read_log_tail_grows_its_read_window_when_lines_are_long`: the file's
+  ten wide lines were previously identical (`"x" * 20_000 + "\n"`, repeated),
+  so even a correct-shaped-but-wrong-window bug had nothing to distinguish —
+  any five identical lines look the same. Made distinct (`f"{i:04d}-" + "x" *
+  20_000 + "\n"`), and added the same `reconstructed[-5:] == [...]` assertion
+  the sibling test above it already uses.
+- `tests/git/test_service.py`'s `test_run_git_host_side_neutralizes_diff_external`:
+  the call now passes `--no-ext-diff --no-textconv` — exactly what
+  `git/diff.py`'s `read_git_diff` actually sends for every diff-producing
+  read (H3's item 1) — instead of bare `["diff"]`, so the read succeeds
+  rather than merely failing safely. Asserts `result.ok` and that the
+  returned diff contains the real, correct content (`-hello`/`+changed`),
+  plus a "sanity" check (matching this file's own existing pattern in the
+  filter-driver test just above it) that the same repo *without* mediation
+  genuinely does run the external script — proving the driver is real, not
+  that it silently never ran for an unrelated reason.
+
+**Verified the tests catch the regression** (this task strengthens existing
+tests rather than fixing production code, so verification means proving the
+*new* assertions have real discriminating power the old ones lacked, not the
+usual revert-a-fix step):
+- Log-capture: directly confirmed (see "Defect reproduced" above) that a
+  wrong five-line window still satisfies the old `count(b"\n") >= 5` check,
+  while the new `reconstructed[-5:] == [...]` check correctly rejects it and
+  correctly accepts the genuinely correct window.
+- `diff.external`: temporarily reverted the test's own call back to bare
+  `["diff"]` (the old shape) and reran — `assert not marker.exists()` still
+  passed trivially, while the new `assert result.ok` failed with the exact
+  reproduced `fatal: external diff died` message, confirming the old
+  assertion really was blind to this failure mode. Restored; all 26 tests in
+  the file pass again.
+
+**Full relevant suite.** `tests/execution/ tests/git/`: 215 passed. Full
+unscoped suite: 960 passed (unchanged from before this task — no new tests,
+only strengthened existing assertions). No Docker leftovers.
+
+**New tests.** None — both changes strengthen existing tests' assertions
+rather than adding new ones, per the checklist's own framing.
 
 ### R23 — Coverage is selected adversarially
 **Satisfies:** RR-026

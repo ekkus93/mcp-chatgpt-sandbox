@@ -207,14 +207,25 @@ def test_read_log_tail_grows_its_read_window_when_lines_are_long(tmp_path: Path)
     `_TAIL_INITIAL_CHUNK_BYTES`'s single-chunk window needs a second,
     doubled read to find enough newlines — reproduced with lines wide
     enough that the initial 64 KiB chunk holds fewer than the requested
-    line count."""
+    line count.
+
+    RR-025 (`docs/REMEDIATION_SPEC.md` §26): the sole assertion here used
+    to be `tail.count(b"\n") >= 5` — literally `read_log_tail`'s own loop
+    exit condition (`log_capture.py`'s `data.count(b"\n") > max_lines`).
+    It cannot fail while the loop terminates, and never checked the
+    returned bytes were the *correct* last five lines — indistinguishable
+    from any five, since every line held identical content. Lines are now
+    distinct, so a bug returning the wrong window (an off-by-one, a stale
+    earlier chunk) would actually be caught."""
     path = tmp_path / "out.log"
-    wide_line = ("x" * 20_000 + "\n").encode()  # ~20 KB per line
-    path.write_bytes(wide_line * 10)  # ~200 KB total, > one 64 KiB chunk
+    lines = [f"{i:04d}-".encode() + b"x" * 20_000 + b"\n" for i in range(10)]  # ~20 KB per line
+    path.write_bytes(b"".join(lines))  # ~200 KB total, > one 64 KiB chunk
 
     tail = read_log_tail(str(path), max_lines=5)
 
     assert tail.count(b"\n") >= 5
+    reconstructed = tail.decode().splitlines(keepends=True)
+    assert reconstructed[-5:] == [line.decode() for line in lines[-5:]]
 
 
 def test_read_log_tail_returns_the_whole_file_when_shorter_than_requested(

@@ -294,6 +294,22 @@ def test_run_git_host_side_neutralizes_a_filter_driver_defined_through_include_p
 
 
 def test_run_git_host_side_neutralizes_diff_external(tmp_path: Path) -> None:
+    """RR-025 (`docs/REMEDIATION_SPEC.md` §26): the sole assertion here
+    used to be `assert not marker.exists()` — true, but also true of a
+    read that simply failed for an unrelated reason, which is exactly
+    what a bare `-c diff.external=` (with no `--no-ext-diff`) does:
+    reproduced empirically, `git -c diff.external= diff` exits 128 with
+    `fatal: external diff died`, indistinguishable by this assertion
+    alone from a safely-neutralized-but-successful read. H3's own
+    checklist already required "assert each read still returns correct
+    results; a read that fails is not a pass" — this test just wasn't
+    holding to it. `--no-ext-diff --no-textconv` (what `git/diff.py`'s
+    `read_git_diff` actually passes for every diff-producing read, H3's
+    item 1) is what makes the read itself succeed rather than merely
+    fail safely, so it's included here too — `run_git_host_side` is
+    generic and would accept either shape; this test exists specifically
+    to prove the *diff* read's real argv neutralizes the driver without
+    breaking the read, not just that some argv shape avoids the marker."""
     repo = _init_repo(tmp_path / "repo")
     marker = tmp_path / "diff-external-ran.marker"
     script = tmp_path / "diff-external.sh"
@@ -302,8 +318,16 @@ def test_run_git_host_side_neutralizes_diff_external(tmp_path: Path) -> None:
     subprocess.run(["git", "config", "diff.external", str(script)], cwd=repo, check=True)
     (repo / "README.md").write_text("changed\n")
 
-    run_git_host_side(repo, ["diff"])
+    result = run_git_host_side(repo, ["diff", "--no-ext-diff", "--no-textconv"])
+
     assert not marker.exists()
+    assert result.ok, result.stderr
+    assert "-hello" in result.stdout and "+changed" in result.stdout
+
+    # sanity: the driver is real and would have run (and the marker
+    # would exist) without mediation.
+    subprocess.run(["git", "-C", str(repo), "diff"], check=True)
+    assert marker.exists(), "diff.external mechanism itself is not actually being tested"
 
 
 def test_run_git_host_side_ignores_global_config(
