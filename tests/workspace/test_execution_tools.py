@@ -12,6 +12,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 import docker
 from dev_workspace_mcp.config.models import ExecutionConfig, RepositoryConfig, ServerConfig
 from dev_workspace_mcp.db import open_db
+from dev_workspace_mcp.execution.service import ExecutionService
 from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.server import create_server
 from dev_workspace_mcp.tools import execution as execution_tools
@@ -57,6 +58,48 @@ async def test_exec_argv_runs_and_returns_exit_code_and_output(
     )
     assert result.structured_content["exit_code"] == 0
     assert "hello" in result.structured_content["stdout_tail"]
+
+
+async def test_rr027_run_exec_is_directly_callable_without_a_server(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """R27 (`docs/REMEDIATION_TODO.md`): `run_exec` — the module-level
+    extraction of `exec_tool`'s body — called directly, with no
+    `server.call_tool("exec", ...)` anywhere in the chain, only its real
+    dependencies constructed directly (still uses `create_server`/
+    `workspace_open` to get a real running container — this test is
+    about the exec tool body's own testability, not workspace creation)."""
+    config = _configured(minimal_config, default_image_tag, tmp_path / "work" / "example")
+    server = create_server(config)
+    workspace_id = await _open_workspace(server)
+
+    db = open_db(config.state_db_path)
+    registry = RepositoryRegistry(config)
+    manager = DockerWorkspaceManager(docker_client, db)
+    service = ExecutionService(docker_client)
+
+    result = await execution_tools.run_exec(
+        workspace_id,
+        ["echo", "hello"],
+        None,
+        "/workspace",
+        None,
+        None,
+        manager=manager,
+        service=service,
+        registry=registry,
+        db=db,
+        container_config=config.container,
+        execution_config=config.execution,
+        audit_config=config.audit,
+        ssh_config=config.ssh,
+    )
+
+    assert result.exit_code == 0
+    assert "hello" in result.stdout_tail
 
 
 async def test_exec_shell_form_runs(

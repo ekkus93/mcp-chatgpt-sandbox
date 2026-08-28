@@ -2182,7 +2182,7 @@ tested service method gains nothing from the extra ceremony).
 - [x] `tools/git.py` — `git_push_tool` (306 lines), `git_pull_tool` (~213 lines),
       `git_commit_tool` (~264 lines); `git_status_tool`/`git_diff_tool`/
       `git_log_tool` are thin enough to leave as-is
-- [ ] `tools/execution.py` — `exec_tool`, `exec_start_tool`; `exec_status_tool`/
+- [x] `tools/execution.py` — `exec_tool`, `exec_start_tool`; `exec_status_tool`/
       `exec_output_tool`/`exec_cancel_tool` are small enough to assess case by case
 - [ ] `tools/filesystem.py` — `patch_file` (the one tool body here with real
       inline logic; the rest delegate directly to `FilesystemService`, already
@@ -2275,6 +2275,44 @@ tool body's own testability, not about reproducing workspace creation
 too, mirroring `tools/workspace.py`'s own new test's scope discipline).
 
 **Commit:** `ad083f2`
+
+**`tools/execution.py` (done).** This module was already substantially in the
+target shape — `_build_cmd`/`_validate_cwd`/`_resolve_timeout`/
+`_audit_command_started`/`_audit_ssh_auth_if_applicable` were already
+module-level helpers, not `register()` closures, from earlier work. Extracted
+the remaining five: `reauthorized_job` (was `_reauthorized_job`, the RR-010/
+RR-011 job-scoped re-authorization check shared by `exec_status`/
+`exec_output`/`exec_cancel`), `status_output` (was `_status_output`, shared by
+`exec_status`), and the three tool bodies themselves — `run_exec`
+(`exec_tool`'s ~105-line body), `run_exec_start` (`exec_start_tool`'s
+~85-line body), `run_exec_output` (`exec_output_tool`'s ~100-line body,
+byte/line-range windowing over on-disk log files) — all to module level,
+dependencies as explicit parameters. `exec_status_tool`/`exec_cancel_tool`
+were already small enough that extracting them further would only rename,
+not simplify — left as direct calls to the now-module-level
+`reauthorized_job`/`status_output` instead. Pure refactor — no behavior
+change.
+
+**Verification.** Full unscoped suite: 968 passed (967 baseline + `tools/
+git.py`'s own new test, finally collected — that module's test was written
+while the *previous* full-suite run was already in progress, same timing
+gap `tools/git.py`'s own write-up above documents, confirmed by the
+passed-count arithmetic). This task's own new test was, in turn, written
+while *this* run was in progress — verified separately:
+`tests/workspace/test_execution_tools.py` alone, 18 passed. Broader relevant
+suite (`tests/workspace/test_execution_tools.py tests/workspace/
+test_async_execution_tools.py tests/workspace/test_host_side_execution_
+safety.py tests/execution/ tests/workspace/test_audit_logging.py`): 88
+passed. No Docker leftovers. `ruff check`, `ruff format --check` (one pass
+needed, same module-level-indentation line-length shift as `tools/git.py`),
+`mypy src` clean.
+
+**New test.** `tests/workspace/test_execution_tools.py`:
+`test_rr027_run_exec_is_directly_callable_without_a_server` — constructs
+`run_exec`'s dependencies directly and calls it with no
+`server.call_tool("exec", ...)` anywhere in the chain.
+
+**Commit:** `PLACEHOLDER`
 
 ---
 
