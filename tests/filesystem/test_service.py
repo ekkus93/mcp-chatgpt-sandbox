@@ -630,3 +630,125 @@ def test_at_h028_write_file_never_mkdirs_through_an_intermediate_symlink(
             service.write_file("d/nested/pwned.txt", "written by the container\n")
         assert not (outside / "nested").exists()
         assert not (outside / "nested" / "pwned.txt").exists()
+
+
+# --- RR-006 (`docs/REMEDIATION_SPEC.md` §5): typed errors, not crashes -------------
+
+
+def test_rr006_write_file_onto_a_directory_raises_invalid_argument(tmp_path: Path) -> None:
+    """Reproduced empirically that this used to propagate a raw,
+    untranslated `IsADirectoryError` all the way out of `write_file` —
+    `translate_workspace_errors` only catches `WorkspaceError`, so the
+    tool call crashed instead of failing cleanly. Also confirms the
+    `stat.S_ISDIR` check this replaces really was dead code: opening an
+    existing directory with `O_RDWR` already raises `IsADirectoryError`
+    before that check could ever run against it."""
+    root = _repo(tmp_path)
+    svc = _service(root)
+    with pytest.raises(InvalidArgumentError):
+        svc.write_file("src", "hello")
+
+
+def test_rr006_write_file_permission_denied_raises_invalid_argument(tmp_path: Path) -> None:
+    root = _repo(tmp_path)
+    svc = _service(root)
+    target = root / "locked.txt"
+    target.write_text("original")
+    target.chmod(0o000)
+    try:
+        with pytest.raises(InvalidArgumentError):
+            svc.write_file("locked.txt", "new content")
+    finally:
+        target.chmod(0o644)  # restore so tmp_path cleanup can remove it
+
+
+def test_rr006_delete_file_missing_parent_raises_invalid_argument(tmp_path: Path) -> None:
+    """The exact `delete_file(missing parent)` reproduction: a raw
+    `FileNotFoundError` from `open_parent_validated` used to crash the
+    tool call instead of failing cleanly."""
+    root = _repo(tmp_path)
+    svc = _service(root)
+    with pytest.raises(InvalidArgumentError):
+        svc.delete_file("nosuchdir/file.txt")
+
+
+def test_rr006_delete_file_on_a_symlink_deletes_the_link_not_the_target(
+    tmp_path: Path,
+) -> None:
+    """The root-cause bug: `open_parent_validated` used to resolve the
+    *whole* path (symlink-following) rather than just the parent,
+    silently substituting the target's own parent+name for the link's —
+    so deleting an in-repo symlink deleted the file it pointed to and
+    left the link dangling, the opposite of `os.unlink`'s (never follows
+    a symlink to delete) actual semantics. Reproduced empirically before
+    this fix: `target.txt` was the one that disappeared."""
+    root = _repo(tmp_path)
+    svc = _service(root)
+    target = root / "target.txt"
+    target.write_text("real target content")
+    link = root / "link.txt"
+    link.symlink_to(target)
+
+    svc.delete_file("link.txt")
+
+    assert target.exists()
+    assert target.read_text() == "real target content"
+    assert not link.exists()  # the link itself is gone
+    assert not os.path.lexists(link)  # not merely dangling — the directory entry too
+
+
+def test_rr006_ensure_parent_directories_plain_file_blocking_via_write_file(
+    tmp_path: Path,
+) -> None:
+    """The same distinction as `test_security.py`'s direct test, exercised
+    through the actual `write_file` client-facing entry point: a plain
+    file blocking an intermediate component is a benign mistake, not
+    reported as an escape."""
+    root = _repo(tmp_path)
+    svc = _service(root)
+    (root / "notadir.txt").write_text("hi")
+    with pytest.raises(InvalidArgumentError):
+        svc.write_file("notadir.txt/nested/thing.txt", "content")
+
+
+def test_rr006_hash_pread_loops_across_multiple_chunks(tmp_path: Path) -> None:
+    """`os.pread` can transfer fewer bytes than requested in a single
+    call — confirmed the kernel caps one call at `0x7ffff000` bytes (just
+    under 2 GiB) — so a real file that size can't be used as a test
+    fixture. `chunk_size` lets this test force the same multi-call path
+    with an ordinary small file instead: the looped, chunked result must
+    equal a plain whole-file hash."""
+    from dev_workspace_mcp.filesystem.service import _hash_pread
+
+    content = os.urandom(10_000)
+    path = tmp_path / "data.bin"
+    path.write_bytes(content)
+
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        looped = _hash_pread(fd, len(content), chunk_size=777)  # forces ~13 iterations
+    finally:
+        os.close(fd)
+
+    assert looped == sha256_of(content)
+
+
+def test_rr006_write_file_expected_sha_matches_across_a_multi_chunk_hash(
+    tmp_path: Path,
+) -> None:
+    """End-to-end version of the same fix, through `write_file`'s own
+    `expected_sha256` conflict check — using the real (large, default)
+    chunk size, so this specifically guards against a future regression
+    that reintroduces a single unbounded `os.pread` call."""
+    root = _repo(tmp_path)
+    svc = _service(root)
+    original = "x" * 50_000
+    svc.write_file("big.txt", original)
+    correct_sha = sha256_of(original.encode("utf-8"))
+
+    # Matching expected_sha256 succeeds...
+    svc.write_file("big.txt", "replaced", expected_sha256=correct_sha)
+    # ...and a stale one is correctly rejected as a real conflict, not
+    # masked by a mis-hashed "current" value.
+    with pytest.raises(FileConflictError):
+        svc.write_file("big.txt", "again", expected_sha256=correct_sha)

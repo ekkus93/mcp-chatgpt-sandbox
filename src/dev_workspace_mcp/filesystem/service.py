@@ -33,6 +33,29 @@ def sha256_of(data: bytes) -> str:
 _READ_FILE_HASH_CHUNK_BYTES = 1024 * 1024
 
 
+def _hash_pread(fd: int, total_size: int, *, chunk_size: int = _READ_FILE_HASH_CHUNK_BYTES) -> str:
+    """RR-006 (`docs/REMEDIATION_SPEC.md` §5): `write_file`'s
+    `expected_sha256` check used a single `os.pread(fd, total_size, 0)` —
+    but a single `pread(2)` can transfer fewer bytes than requested for
+    any reason, and the Linux kernel caps one call at `0x7ffff000` bytes
+    (just under 2 GiB) regardless. A file over that size silently hashed
+    a truncated prefix, reporting the wrong "current" hash and raising a
+    spurious `FileConflictError` against a client's correct
+    `expected_sha256` for a large but genuinely unchanged file. Looped
+    the same way `read_file`'s own hash pass already is (`chunk_size`
+    exposed only so a test can force multiple iterations without an
+    actual multi-gigabyte fixture)."""
+    hasher = hashlib.sha256()
+    offset = 0
+    while offset < total_size:
+        chunk = os.pread(fd, min(chunk_size, total_size - offset), offset)
+        if not chunk:
+            break  # file shrank concurrently underneath us; hash what was actually read
+        hasher.update(chunk)
+        offset += len(chunk)
+    return hasher.hexdigest()
+
+
 @dataclass(frozen=True, slots=True)
 class ListEntry:
     path: str
@@ -278,32 +301,54 @@ class FilesystemService:
         # single `O_CREAT` open) because `expected_sha256=None` and
         # "file exists but is empty" (`sha256_of(b"")`) are genuinely
         # different states the original `path.is_file()` check preserved.
+        # RR-006 (`docs/REMEDIATION_SPEC.md` §5): both raw `os.open`
+        # calls are classified — an untranslated `IsADirectoryError`/
+        # `PermissionError` used to crash the tool call outright rather
+        # than reach the client as a typed error.
         try:
             fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o644)
             existed_before = False
         except FileExistsError:
-            fd = os.open(path, os.O_RDWR)
+            try:
+                fd = os.open(path, os.O_RDWR)
+            except IsADirectoryError as exc:
+                raise InvalidArgumentError(
+                    f"is a directory: {relative_path!r}", details={"path": relative_path}
+                ) from exc
+            except PermissionError as exc:
+                raise InvalidArgumentError(
+                    f"permission denied: {relative_path!r}", details={"path": relative_path}
+                ) from exc
             existed_before = True
+        except PermissionError as exc:
+            raise InvalidArgumentError(
+                f"permission denied: {relative_path!r}", details={"path": relative_path}
+            ) from exc
 
-        # Checked with the raw fd (not `verify_fd_within_root`, which
-        # would close `fd` and raise immediately): a write that escaped
-        # may have just *created* a file at that escaped location, and
-        # cleaning it up needs the kernel-reported real path, not the
-        # racy `path` string again — the `except` block below does that
-        # before raising the client-facing error.
-        actual = self._security.resolve_open_fd(fd)
-        escaped = not self._security.is_within_root(actual)
-
+        actual: Path | None = None
         try:
-            if escaped:
+            # Checked with the raw fd (not `verify_fd_within_root`, which
+            # would close `fd` and raise immediately): a write that
+            # escaped may have just *created* a file at that escaped
+            # location, and cleaning it up needs the kernel-reported real
+            # path, not the racy `path` string again — the `except` block
+            # below does that before raising the client-facing error.
+            # RR-006: this read (and the `is_within_root` check depending
+            # on it) now runs *inside* the `try`, not before it — `fd` is
+            # a real, just-opened descriptor, so `resolve_open_fd`
+            # reading `/proc/self/fd/<fd>` cannot fail in practice, but
+            # leaving it outside the `try` meant an OSError from it would
+            # leak `fd` uncaught rather than reach the `except` below.
+            # (`stat.S_ISDIR` used to be checked here too — genuinely
+            # dead code: opening an existing directory with `O_RDWR`
+            # above already raises `IsADirectoryError`, now classified,
+            # before this line could ever run against a directory's fd.)
+            actual = self._security.resolve_open_fd(fd)
+            if not self._security.is_within_root(actual):
                 raise PathOutsideRepositoryError(
                     f"path escaped the repository root between validation and open: "
                     f"{relative_path!r}",
                     details={"path": relative_path},
-                )
-            if stat.S_ISDIR(os.fstat(fd).st_mode):
-                raise InvalidArgumentError(
-                    f"is a directory: {relative_path!r}", details={"path": relative_path}
                 )
 
             if expected_sha256 is not None:
@@ -313,9 +358,11 @@ class FilesystemService:
                     # `ReadResult.sha256`'s own invariant (always the hash
                     # of the whole file, regardless of any read/write size
                     # limit) so a `expected_sha256` from a prior real
-                    # `read_file` call compares correctly.
+                    # `read_file` call compares correctly. `_hash_pread`,
+                    # not a single `os.pread` (RR-006): a lone call can
+                    # under-read a large file, hashing a truncated prefix.
                     existing_size = os.fstat(fd).st_size
-                    current = sha256_of(os.pread(fd, existing_size, 0))
+                    current = _hash_pread(fd, existing_size)
                 if current != expected_sha256:
                     raise FileConflictError(
                         f"file changed since it was read: {relative_path!r}",
@@ -330,22 +377,35 @@ class FilesystemService:
             os.pwrite(fd, data, 0)
         except BaseException:
             os.close(fd)
-            if not existed_before:
+            if not existed_before and actual is not None:
                 # We created this file above (either at `path`, or — if
-                # `escaped` — at `actual`, the kernel-reported real
+                # it escaped — at `actual`, the kernel-reported real
                 # location a race redirected the create to) and the
                 # write never committed — remove it so a rejected write
                 # has no side effect, matching the original behavior
                 # (which never touched disk before this same check).
-                # Unlinking `actual` rather than `path` again is what
-                # makes this correct even when they differ: cleaning up
-                # via the racy string a second time can silently miss
-                # the file a race already moved elsewhere — confirmed
-                # empirically (a stray file was left behind outside the
-                # repository on early versions of this fix that unlinked
-                # `path` here instead).
+                # Using `actual`'s parent as a `dir_fd` (RR-006), not
+                # `actual.unlink()`'s own fresh path-string resolution of
+                # every component: unlinking `actual` rather than `path`
+                # again is what makes this correct even when they differ
+                # (cleaning up via the racy string a second time can
+                # silently miss the file a race already moved elsewhere —
+                # confirmed empirically on an early version of the
+                # original H9 fix that unlinked `path` here instead), and
+                # resolving only the immediate parent by `dir_fd` rather
+                # than the whole string again narrows that same class of
+                # re-resolution race by one more component.
+                # `actual is None` only when `resolve_open_fd` itself
+                # failed above — genuinely can't happen for a freshly
+                # opened fd on Linux, but if it somehow did, guessing at
+                # a path to clean up would reopen exactly the race this
+                # closes, so it is deliberately left unattempted instead.
                 with contextlib.suppress(OSError):
-                    actual.unlink()
+                    parent_fd = os.open(actual.parent, os.O_RDONLY | os.O_DIRECTORY)
+                    try:
+                        os.unlink(actual.name, dir_fd=parent_fd)
+                    finally:
+                        os.close(parent_fd)
             raise
         else:
             os.close(fd)

@@ -340,15 +340,16 @@ not by a forced-failure integration test — legitimately triggering a
 corrupting the repository out from under the rest of the suite, wasn't
 found. Tracked honestly rather than left silently unverified.
 
-### R5 — Every filesystem error is a typed `WorkspaceError`
+### R5 — Every filesystem error is a typed `WorkspaceError` ✅
 **Satisfies:** RR-006 · **Verified by:** RAT-007
+**Commit:** `PLACEHOLDER`
 
-- [ ] Classify `FileNotFoundError`/`IsADirectoryError`/`PermissionError` from the
+- [x] Classify `FileNotFoundError`/`IsADirectoryError`/`PermissionError` from the
       raw `os.open` calls at `security.py:97` and `security.py:111`
-- [ ] Remove or reach the now-dead `S_ISDIR` check at `service.py:304-307`
-- [ ] Stop mapping every `OSError` from the `ensure_parent_directories` walk to
+- [x] Remove or reach the now-dead `S_ISDIR` check at `service.py:304-307`
+- [x] Stop mapping every `OSError` from the `ensure_parent_directories` walk to
       `PathOutsideRepositoryError` (`security.py:155-159`) — `ENOTDIR` is not an escape
-- [ ] Move `resolve_open_fd` at `service.py:294` inside the `try` (the one fd in
+- [x] Move `resolve_open_fd` at `service.py:294` inside the `try` (the one fd in
       the file not covered by a handler)
 
 **Defect (reproduced).** H9's fd rewrite regressed three previously-typed paths:
@@ -363,15 +364,122 @@ All three returned `InvalidArgumentError` before H9 (`git show 4bfff54`).
 `translate_workspace_errors` catches only `WorkspaceError`, so these reach the
 client with no `code`, no `recoverable`, no `details`.
 
+Reproduced directly first, calling `FilesystemService` methods against real
+temp directories before writing any fix: `read_file("nope.txt")` raised
+`builtins.FileNotFoundError` untranslated; `write_file("adir", ...)` where
+`adir` already exists raised `builtins.IsADirectoryError`; `delete_file(
+"nosuchdir/file.txt")` raised `builtins.FileNotFoundError` — all three exactly
+as the write-up predicted.
+
 **Also here (same file, same rewrite):**
-- [ ] `service.py:317-318`'s `os.pread(fd, existing_size, 0)` transfers at most
+- [x] `service.py:317-318`'s `os.pread(fd, existing_size, 0)` transfers at most
       `0x7ffff000` bytes, so a file over 2 GiB hashes short → spurious
       `FILE_CONFLICT`. Loop, or stream.
-- [ ] `service.py:347-348`'s `actual.unlink()` deletes by path string at a
+- [x] `service.py:347-348`'s `actual.unlink()` deletes by path string at a
       location outside the root after the fd is closed. Use
       `os.unlink(name, dir_fd=…)`.
-- [ ] Pre-existing but rewritten by H9: `delete_file("link")` on an in-repo
+- [x] Pre-existing but rewritten by H9: `delete_file("link")` on an in-repo
       symlink deletes the **target** and leaves the dangling link.
+
+**Implementation.**
+
+*Typed errors, not crashes.* A new `_open_classified` helper in
+`security.py` wraps every raw `os.open` this module makes, translating
+`FileNotFoundError`/`IsADirectoryError`/`NotADirectoryError`/`PermissionError`
+into `InvalidArgumentError` — used by `open_validated` and the new
+`open_parent_validated` (below). `write_file`'s own two `os.open` calls
+(create-or-open, not routed through `FilesystemSecurity` at all) are
+classified the same way inline.
+
+*The dead `S_ISDIR` check.* Confirmed empirically before removing it:
+`os.open(existing_directory, os.O_RDWR)` already raises `IsADirectoryError`
+on Linux — the `stat.S_ISDIR(os.fstat(fd).st_mode)` check after it could
+never actually run against a directory's fd. Removed; the now-classified
+`IsADirectoryError` from the `os.open` call itself is what raises
+`InvalidArgumentError` instead.
+
+*`ensure_parent_directories`'s `ENOTDIR`.* Verified empirically that a
+plain non-directory file blocking an intermediate component and a symlink
+`O_NOFOLLOW` refuses to enter raise the *identical* `NotADirectoryError`/
+`ENOTDIR` at the same call site — indistinguishable by exception type alone.
+Fixed by checking directly (`os.lstat(part, dir_fd=dir_fd)`) which one
+actually happened: a symlink is still reported as `PathOutsideRepositoryError`
+(HR-011's actual concern); a plain file is `InvalidArgumentError` instead.
+Either way the walk still refuses to proceed — this only changes which error
+the client sees, never the fail-closed behavior itself — so an `lstat` that
+itself fails defaults to the more serious "escape" wording.
+
+*`resolve_open_fd` inside the `try`.* Moved so a (currently unreachable in
+practice — an `os.readlink` on `/proc/self/fd/<fd>` for a descriptor this
+same call just opened) failure no longer leaks `fd` uncaught. `actual: Path
+| None = None` is initialized first; the cleanup branch only attempts to
+unlink when `actual is not None`, and deliberately does *not* fall back to
+guessing at a path string when it's `None` — that would reopen exactly the
+race H9 exists to close.
+
+*`os.pread`'s 2 GiB cap.* New `_hash_pread(fd, total_size, chunk_size=...)`
+loops in `_READ_FILE_HASH_CHUNK_BYTES` pieces, the same way `read_file`'s own
+hash pass already does, replacing the single unbounded `os.pread` call.
+`chunk_size` is exposed only so a test can force multiple iterations without
+an actual multi-gigabyte fixture.
+
+*`actual.unlink()` → `dir_fd`-relative.* The cleanup-on-rejected-write path
+now opens `actual.parent` and calls `os.unlink(actual.name, dir_fd=parent_fd)`,
+narrowing the re-resolution race by one component compared to `Path.unlink()`'s
+own fresh top-to-bottom walk of the whole string.
+
+*The symlink-delete bug — the deepest finding in this task.* Traced to its
+actual root cause, not just the symptom: `open_parent_validated` called
+`self.resolve(relative_path)` on the **whole** path, and `resolve()` follows
+symlinks (`Path.resolve()`) by design (that's what makes an escaping symlink
+detectable at all). For a symlink final component, this silently returned
+the **target**'s own parent and name, not the **link**'s — confirmed
+empirically: for `link.txt -> target.txt`, `open_parent_validated("link.txt")`
+returned `name == "target.txt"`. `delete_file`'s subsequent
+`os.unlink(name, dir_fd=parent_fd)` is itself correctly symlink-safe (never
+follows a symlink to delete), but with the wrong `name` handed to it, it
+faithfully deleted the wrong thing. Fixed by resolving *only the parent*
+through `self.resolve()` (symlink-following still correct and necessary
+there — every intermediate component's containment must still hold) and
+taking the final component **literally** from the client's own
+`relative_path`, never through symlink-following resolution. Added a direct
+`.git`-as-final-component rejection too, since `open_parent_validated` no
+longer inherits that check from a full-path `resolve()` the way it used to
+(its one current caller, `delete_file`, already gets this from its own
+separate up-front `resolve()` call, but a future caller that skipped it
+would otherwise silently regain access).
+
+**Verified the tests catch the regression.** Reverted `security.py` and
+`service.py` to `HEAD`, reran the 13 new tests: 10 failed for the expected
+reasons (2 with `ImportError`/`AttributeError`-shaped failures, 8 with the
+raw untranslated exceptions or the `target.txt`-instead-of-`link.txt`
+substitution the reproductions predicted); 3 passed unchanged (the `.git`
+final-component rejection, the symlink-blocks-`ensure_parent_directories`
+case, and the small-file `expected_sha256` round trip — none of which this
+task's fixes were meant to change the behavior of). Restored; all 89 tests
+in the two files plus `tests/tools/test_filesystem.py` pass again.
+
+**Full relevant suite.** `tests/filesystem/ tests/tools/
+tests/workspace/test_host_side_execution_safety.py`: 125 passed (host-side
+filesystem code — no Docker needed, no timeout risk). Full unscoped suite:
+905 passed. No Docker leftovers.
+
+**New tests.** `tests/filesystem/test_security.py`: `open_validated`/
+`open_parent_validated` missing-path classification, the symlink-name
+substitution bug (`open_parent_validated` on a symlink now returns the
+link's own literal name), the `.git`-final-component rejection, and both
+halves of the `ensure_parent_directories` `ENOTDIR` distinction (plain file
+→ `InvalidArgumentError`, symlink → `PathOutsideRepositoryError`).
+`tests/filesystem/test_service.py`: `write_file` onto a directory and
+permission-denied (a real `chmod 0o000`, not mocked), `delete_file` missing
+parent, `delete_file` on a symlink (asserts the target survives and the
+link itself — via `os.path.lexists`, not just `.exists()` — is gone),
+`ensure_parent_directories`'s plain-file case through the real `write_file`
+entry point, `_hash_pread`'s chunking (an ordinary 10 KB file with
+`chunk_size=777` forcing ~13 iterations, checked against a plain whole-file
+hash), and an end-to-end `expected_sha256` round trip through `write_file`
+using the real default chunk size, guarding against a future regression
+back to a single unbounded `os.pread`.
 
 ### R6 — Enumeration survives any unreadable entry
 **Satisfies:** RR-007 · **Verified by:** RAT-008

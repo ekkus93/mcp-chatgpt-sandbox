@@ -1,11 +1,16 @@
 """S9: filesystem path validation and Git-metadata exclusion
 (§12, §12.1, AT-001, AT-002, AT-033)."""
 
+import os
 from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.errors import PathGitMetadataError, PathOutsideRepositoryError
+from dev_workspace_mcp.errors import (
+    InvalidArgumentError,
+    PathGitMetadataError,
+    PathOutsideRepositoryError,
+)
 from dev_workspace_mcp.filesystem.security import FilesystemSecurity
 
 
@@ -174,3 +179,100 @@ def test_gitfile_resolution_failure_does_not_break_unrelated_requests(
     # The literal ".git" path is still excluded by rule 1/2 regardless.
     with pytest.raises(PathGitMetadataError):
         fs.resolve(".git")
+
+
+# --- RR-006 (`docs/REMEDIATION_SPEC.md` §5): typed errors, not crashes -------------
+
+
+def test_rr006_open_validated_missing_file_raises_invalid_argument(tmp_path: Path) -> None:
+    """Reproduced empirically that this used to propagate a raw, untranslated
+    `FileNotFoundError` — `translate_workspace_errors` only catches
+    `WorkspaceError`, so the tool call crashed instead of failing cleanly."""
+    root = _repo(tmp_path)
+    fs = FilesystemSecurity(root, authorized_roots=[tmp_path / "work"])
+    with pytest.raises(InvalidArgumentError):
+        fs.open_validated("nope.txt", os.O_RDONLY)
+
+
+def test_rr006_open_parent_validated_missing_parent_raises_invalid_argument(
+    tmp_path: Path,
+) -> None:
+    """The exact `delete_file(missing parent)` reproduction: a raw
+    `FileNotFoundError` from opening a nonexistent parent directory used
+    to crash the tool call instead of failing cleanly."""
+    root = _repo(tmp_path)
+    fs = FilesystemSecurity(root, authorized_roots=[tmp_path / "work"])
+    with pytest.raises(InvalidArgumentError):
+        fs.open_parent_validated("nosuchdir/file.txt")
+
+
+def test_rr006_open_parent_validated_returns_the_symlinks_own_literal_name(
+    tmp_path: Path,
+) -> None:
+    """The root cause of `delete_file` on a symlink deleting its *target*:
+    the old implementation ran the whole path (including the final
+    component) through `self.resolve()`, which follows symlinks — so for
+    `relative_path="link.txt"` it silently returned the *target*'s own
+    parent and name, not the link's. Reproduced empirically before this
+    fix; the returned name here must be the client's literal final
+    component regardless of what it points to."""
+    root = _repo(tmp_path)
+    target = root / "target.txt"
+    target.write_text("real target content")
+    link = root / "link.txt"
+    link.symlink_to(target)
+
+    fs = FilesystemSecurity(root, authorized_roots=[tmp_path / "work"])
+    parent_fd, name = fs.open_parent_validated("link.txt")
+    try:
+        assert name == "link.txt"
+    finally:
+        os.close(parent_fd)
+
+
+def test_rr006_open_parent_validated_rejects_git_as_the_final_component(
+    tmp_path: Path,
+) -> None:
+    """Defense in depth: `delete_file` (this method's one current caller)
+    already runs the full `resolve()` first, which independently rejects
+    `.git`, but `open_parent_validated` no longer runs the final
+    component through that same check (that is the whole point of this
+    method) — a future caller that skips the up-front `resolve()` should
+    not silently regain access to `.git` through this path."""
+    root = _repo(tmp_path)
+    fs = FilesystemSecurity(root, authorized_roots=[tmp_path / "work"])
+    with pytest.raises(PathGitMetadataError):
+        fs.open_parent_validated(".git")
+
+
+def test_rr006_ensure_parent_directories_a_plain_file_blocking_is_invalid_argument(
+    tmp_path: Path,
+) -> None:
+    """`ENOTDIR` from a plain file already sitting where a directory
+    component is needed is a benign client mistake, not an escape —
+    reproduced empirically that the old code reported this identically
+    to a real symlink-substitution attack (`PathOutsideRepositoryError`,
+    "path escapes the repository root"), which is misleading."""
+    root = _repo(tmp_path)
+    (root / "notadir.txt").write_text("hi")
+    fs = FilesystemSecurity(root, authorized_roots=[tmp_path / "work"])
+    with pytest.raises(InvalidArgumentError):
+        fs.ensure_parent_directories("notadir.txt/nested/thing.txt")
+
+
+def test_rr006_ensure_parent_directories_a_symlink_blocking_is_still_an_escape(
+    tmp_path: Path,
+) -> None:
+    """The other half of the same distinction: a symlink at an
+    intermediate component — real attack or benign pre-existing layout,
+    HR-011 doesn't try to tell those apart — is still reported as
+    `PathOutsideRepositoryError`, not downgraded to `InvalidArgumentError`
+    just because both raise the identical `NotADirectoryError`/`ENOTDIR`
+    at the `O_NOFOLLOW` open."""
+    root = _repo(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (root / "d").symlink_to(outside, target_is_directory=True)
+    fs = FilesystemSecurity(root, authorized_roots=[tmp_path / "work"])
+    with pytest.raises(PathOutsideRepositoryError):
+        fs.ensure_parent_directories("d/nested/thing.txt")

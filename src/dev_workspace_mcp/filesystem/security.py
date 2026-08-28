@@ -10,12 +10,52 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import stat
 from pathlib import Path, PurePosixPath
 
-from dev_workspace_mcp.errors import PathGitMetadataError, PathOutsideRepositoryError
+from dev_workspace_mcp.errors import (
+    InvalidArgumentError,
+    PathGitMetadataError,
+    PathOutsideRepositoryError,
+)
 from dev_workspace_mcp.workspace.mounts import resolve_git_dir
 
 _logger = logging.getLogger(__name__)
+
+
+def _open_classified(path: Path, flags: int, mode: int, *, relative_path: str) -> int:
+    """Every raw `os.open` this module makes against a resolved `Path`
+    lands here. RR-006 (`docs/REMEDIATION_SPEC.md` §5): classifies the
+    handful of `OSError` subclasses a client-supplied path can
+    legitimately trigger (`FileNotFoundError`/`IsADirectoryError`/
+    `NotADirectoryError`/`PermissionError`) into a typed
+    `InvalidArgumentError`, instead of letting them propagate as raw
+    `OSError` subclasses — `translate_workspace_errors` only catches
+    `WorkspaceError`, so an untranslated one crashes the tool call
+    instead of reaching the client as a clean typed error. Reproduced
+    empirically: `read_file(missing)` / `write_file(onto a directory)` /
+    `delete_file(missing parent)` all crashed before this fix; all three
+    returned `InvalidArgumentError` before H9's fd rewrite regressed
+    them (`git show 4bfff54`)."""
+    try:
+        return os.open(path, flags, mode)
+    except FileNotFoundError as exc:
+        raise InvalidArgumentError(
+            f"does not exist: {relative_path!r}", details={"path": relative_path}
+        ) from exc
+    except IsADirectoryError as exc:
+        raise InvalidArgumentError(
+            f"is a directory: {relative_path!r}", details={"path": relative_path}
+        ) from exc
+    except NotADirectoryError as exc:
+        raise InvalidArgumentError(
+            f"a path component is not a directory: {relative_path!r}",
+            details={"path": relative_path},
+        ) from exc
+    except PermissionError as exc:
+        raise InvalidArgumentError(
+            f"permission denied: {relative_path!r}", details={"path": relative_path}
+        ) from exc
 
 
 class FilesystemSecurity:
@@ -94,7 +134,7 @@ class FilesystemSecurity:
         `setpriv`/`useradd`).
         """
         resolved = self.resolve(relative_path)
-        fd = os.open(resolved, flags, mode)
+        fd = _open_classified(resolved, flags, mode, relative_path=relative_path)
         self.verify_fd_within_root(fd, relative_path)
         return fd
 
@@ -106,11 +146,55 @@ class FilesystemSecurity:
         path-string re-resolution at all, closing the race for the
         delete itself, not only the validation step. Returns `(parent_fd,
         final_component_name)`; the caller is responsible for closing
-        `parent_fd`."""
-        resolved = self.resolve(relative_path)
-        parent_fd = os.open(resolved.parent, os.O_RDONLY | os.O_DIRECTORY)
+        `parent_fd`.
+
+        RR-006 (`docs/REMEDIATION_SPEC.md` §5): only the *parent* is
+        resolved through `self.resolve()` (which follows symlinks, as it
+        must — every intermediate component's own containment still has
+        to hold). `final_component_name` is the client's literal final
+        path segment, never run through symlink-following resolution.
+        Reproduced empirically that the old version — which resolved the
+        *whole* path, including the final component — silently
+        substituted a symlink's *target*'s parent+name for the *link*'s
+        own: `delete_file` on an in-repo symlink deleted the target and
+        left the link dangling, the opposite of `os.unlink`'s (and
+        `os.stat(..., follow_symlinks=False)`'s) own never-follow-the-
+        final-symlink semantics, which the rest of this call already
+        depends on and which this bug silently defeated."""
+        normalized = relative_path.replace("\\", "/").lstrip("/")
+        pure = PurePosixPath(normalized)
+        final_name = pure.name
+        if not final_name or final_name in (".", ".."):
+            raise PathOutsideRepositoryError(
+                f"path escapes the repository root: {relative_path!r}",
+                details={"path": relative_path},
+            )
+        if final_name == ".git":
+            # Defense in depth: `delete_file` (this method's one current
+            # caller) already runs the full `self.resolve(relative_path)`
+            # first, whose `_reject_in_tree_git_metadata` covers this —
+            # but that full resolve is this class's documented contract
+            # for *every* caller (`Every filesystem tool ... resolves a
+            # client-supplied path through FilesystemSecurity.resolve
+            # before it ever touches disk`), which the final component
+            # here deliberately does *not* go through (that is the whole
+            # point of this method, per RR-006 above). A future caller
+            # that skips the up-front `resolve()` should not silently
+            # regain access to `.git` through this path.
+            raise PathGitMetadataError(
+                f"path is repository Git metadata, not a project file: {relative_path!r}",
+                details={"path": relative_path},
+            )
+        parent_relative = pure.parent.as_posix()
+        resolved_parent = self.resolve("" if parent_relative == "." else parent_relative)
+        parent_fd = _open_classified(
+            resolved_parent,
+            os.O_RDONLY | os.O_DIRECTORY,
+            0,
+            relative_path=relative_path,
+        )
         self.verify_fd_within_root(parent_fd, relative_path)
-        return parent_fd, resolved.name
+        return parent_fd, final_name
 
     def ensure_parent_directories(self, relative_path: str) -> None:
         """HR-011 (`docs/HARDENING_SPEC.md` §7): closes `write_file`'s
@@ -153,6 +237,31 @@ class FilesystemSecurity:
                         part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd
                     )
                 except OSError as exc:
+                    # RR-006 (`docs/REMEDIATION_SPEC.md` §5): a symlink at
+                    # this component — real or just swapped in by a racing
+                    # attacker — is what `O_NOFOLLOW` refuses to enter,
+                    # HR-011's actual concern, correctly reported as an
+                    # escape. A plain non-directory *file* already at this
+                    # name is a different, benign condition — a client
+                    # path with a stray file blocking it, nothing escaped.
+                    # Verified empirically that both raise the identical
+                    # `NotADirectoryError`/`ENOTDIR` here, so which one
+                    # actually happened is checked directly (`lstat`)
+                    # rather than guessed at from the exception alone.
+                    # Either way the walk still refuses to proceed — this
+                    # only affects which error the client sees, never
+                    # whether the mkdir/descend is allowed to continue —
+                    # so an `lstat` that itself fails defaults to the more
+                    # serious "escape" wording rather than the benign one.
+                    is_symlink = True
+                    if isinstance(exc, NotADirectoryError):
+                        with contextlib.suppress(OSError):
+                            is_symlink = stat.S_ISLNK(os.lstat(part, dir_fd=dir_fd).st_mode)
+                    if not is_symlink:
+                        raise InvalidArgumentError(
+                            f"a path component is not a directory: {relative_path!r}",
+                            details={"path": relative_path},
+                        ) from exc
                     raise PathOutsideRepositoryError(
                         f"path escapes the repository root: {relative_path!r}",
                         details={"path": relative_path},
