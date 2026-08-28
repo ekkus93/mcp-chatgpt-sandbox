@@ -3475,7 +3475,8 @@ part of it.
       `git_push`). **Commit:** `fab8b1e`
 - [x] (3/8) `git/diff.py` (`read_git_diff`) + `git_diff_tool`. **Commit:**
       `dbde877`
-- [ ] (4/8) `git/log.py` (`read_git_log`) + `git_log_tool`
+- [x] (4/8) `git/log.py` (`read_git_log`) + `git_log_tool`. **Commit:**
+      `9a67350`
 - [ ] (5/8) `git_state.py` (`read_basic_git_state`) + `tools/workspace.py`'s
       `build_workspace_info`/`open_workspace`/`workspace_info_tool` (git block
       empty when the workspace is not currently running, not only when the
