@@ -1854,19 +1854,45 @@ only strengthened existing assertions). No Docker leftovers.
 **New tests.** None — both changes strengthen existing tests' assertions
 rather than adding new ones, per the checklist's own framing.
 
-### R23 — Coverage is selected adversarially
+### R23 — Coverage is selected adversarially ✅
 **Satisfies:** RR-026
+**Commit:** `PLACEHOLDER`
 
 Strengthen each test to exercise the input class that motivated its requirement.
 Most are folded into R3–R17; this task is the sweep that confirms none was missed:
 
-- [ ] Character-safe pagination — invalid bytes present (R12)
-- [ ] Index rollback — a path with prior staged content (R4)
-- [ ] Pathspec literalization — `""`, `"."`, `"./"` (R3)
-- [ ] Failed termination — unreachable Docker daemon (R10)
-- [ ] Enumeration resilience — symlink loop, permission error (R6)
-- [ ] Tail correctness — nonzero backward offset (R14)
-- [ ] Text/binary — multi-byte character at the limit boundary (R13)
+- [x] Character-safe pagination — invalid bytes present (R12)
+- [x] Index rollback — a path with prior staged content (R4)
+- [x] Pathspec literalization — `""`, `"."`, `"./"` (R3)
+- [x] Failed termination — unreachable Docker daemon (R10)
+- [x] Enumeration resilience — symlink loop, permission error (R6)
+- [x] Tail correctness — nonzero backward offset (R14)
+- [x] Text/binary — multi-byte character at the limit boundary (R13)
+
+**Swept, not re-implemented.** Checked each of the 7 rows against
+`docs/REMEDIATION_SPEC.md` §26's own "Test uses / SHALL use" table by reading
+the actual test in question, not assuming R3–R14 already closed it — all
+seven were already exercising the exact adversarial input class the table
+demands, done as part of the R-task named alongside each row (R12/R13/R14 in
+this session; R3/R4/R6/R10 in an earlier one):
+
+| Property | Test | Location |
+|---|---|---|
+| Character-safe pagination, invalid bytes | `test_rr016_pagination_with_an_invalid_byte_for_every_max_bytes_from_1_to_64` | `tests/git/test_diff.py:364` |
+| Index rollback, prior staged content | `test_rr005_a_failed_commit_restores_prior_staged_content_not_head` | `tests/workspace/test_git_commit_tool.py:779` |
+| Pathspec literalization, `""`/`"."`/`"./"` | `test_rr004_an_empty_or_root_normalizing_path_is_rejected_before_staging` (parametrized over exactly `["", ".", "./"]`) | `tests/workspace/test_git_commit_tool.py:651` |
+| Failed termination, unreachable Docker daemon | `test_rr013_failed_termination_via_a_real_exec_inspect_failure` | `tests/workspace/test_async_execution_tools.py:635` |
+| Enumeration resilience, symlink loop / permission error | `test_rr007_search_files_survives_a_symlink_loop`, `test_rr007_search_files_survives_an_unreadable_subdirectory` | `tests/filesystem/test_search.py:145,160` |
+| Enumeration resilience (list variant) | `test_rr007_list_files_survives_a_symlink_loop`, `test_rr007_list_files_survives_an_unreadable_subdirectory` | `tests/filesystem/test_service.py:876,893` |
+| Tail correctness, nonzero backward offset | `test_rr019_read_log_tail_composed_with_tail_text_at_a_nonzero_backward_offset` | `tests/execution/test_log_capture.py:255` |
+| Text/binary, multi-byte character at the limit boundary | `test_rr018_a_multibyte_character_at_the_limit_boundary_is_truncated_text` | `tests/filesystem/test_service.py:266` |
+
+All 8 tests (one row has two variants) run and pass:
+`uv run pytest tests/ -k "<the 8 names>"` → 12 passed (`test_rr007_*` and
+`test_rr004_*`/`test_rr005_*` cover more than one scenario each). No source
+or test changes were needed — this task closes as a verification sweep, per
+its own framing ("most are folded into R3–R17; this task is the sweep that
+confirms none was missed"), not a one-time correction.
 
 ### R24 — Reverting a fix fails a test
 **Satisfies:** RR-027
