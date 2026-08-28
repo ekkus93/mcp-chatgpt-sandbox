@@ -243,13 +243,14 @@ Full unscoped suite: 886 passed. No Docker leftovers
 untracked and nothing is staged afterward) and
 `test_rr004_a_root_normalizing_path_mixed_with_a_real_path_is_still_rejected`.
 
-### R4 — A failed commit restores the index
+### R4 — A failed commit restores the index ✅
 **Satisfies:** RR-005 · **Verified by:** RAT-006
+**Commit:** `PLACEHOLDER`
 
-- [ ] Restore each path's **prior index state**, not `HEAD`
-- [ ] Where the prior state cannot be restored faithfully, do not perform a
+- [x] Restore each path's **prior index state**, not `HEAD`
+- [x] Where the prior state cannot be restored faithfully, do not perform a
       destructive rollback — report the index as left dirty instead
-- [ ] Test with a path holding prior staged content distinct from HEAD
+- [x] Test with a path holding prior staged content distinct from HEAD
 
 **Defect (reproduced — data loss).** `git/commit.py:69-79` runs
 `git reset -- <paths>`, which resets to HEAD:
@@ -263,10 +264,81 @@ The write-up's empirical check confirmed other *paths* survive; it did not check
 the same path's prior *content*. The test used a previously-untracked file, where
 reset-to-HEAD is coincidentally correct.
 
-**Implementation note.** Capturing the pre-`add` index for the named paths
-(`git stash create`, or reading the index entries) is the faithful approach.
-Failing that, the honest fallback is to skip the reset and report the index
-dirty — a leaked stage is recoverable; destroyed staged work is not.
+Reproduced directly first: staged `v2-staged` over a tracked file's HEAD
+content `v1`, then `git reset -- f.txt` — the index blob sha changed from
+`v2-staged`'s to `v1`'s, exactly the destroyed-staged-work this task exists
+to fix.
+
+**Implementation.** `build_reset_argv` is gone, replaced by three pure
+functions in `git/commit.py`: `build_capture_index_argv` (`git ls-files -z
+--stage -- <pathspecs>`, run *before* `git add`, to snapshot exactly the
+index entries this call is about to touch), `parse_index_entries` (parses
+the `-z`-delimited `mode sha stage\tpath` triples), and
+`build_restore_index_argv` (`git update-index --add --cacheinfo
+mode,sha,path`, one flag per captured entry — verified empirically that
+multiple `--cacheinfo` flags in one invocation each apply independently,
+and that `--add` correctly restores a path whether it was merely modified
+or fully unstaged by a staged deletion in between). `--cacheinfo`'s path
+argument is a literal index path, not a pathspec — deliberately *not*
+wrapped in `:(literal)`, since wrapping it would corrupt the path rather
+than protect it, and it is never client-supplied here (only ever a path
+`git ls-files` itself already resolved). `build_unstage_new_argv` (`git rm
+--cached --ignore-unmatch`) handles the complementary case: a path present
+in the post-`add` index but absent from the pre-`add` capture was not
+staged before this call at all, so "restoring prior state" for it means
+removing it from the index, not re-adding anything.
+
+`git_commit_tool` captures before `git add` runs; on a commit failure, it
+re-captures the post-`add` state, computes which paths are newly present
+(unstage those) and restores every captured prior entry (`--cacheinfo`) —
+covering the modified, newly-staged, and staged-deletion cases in one pass.
+This is best-effort but never destructive on failure: if the pre-`add`
+capture itself failed, or came back truncated
+(`ExecResult.stdout_truncated` — checked, not assumed false, since a
+truncated snapshot is not a faithful one), rollback is skipped entirely
+and `index_left_dirty: true` is added to the raised error's `details`
+instead of guessing. The same flag is `false` on a normal successful
+restore. `git ls-files -z`'s NUL-delimited output also sidesteps a subtler
+risk: `ExecResult`'s tail-based truncation (`response_tail_lines`, default
+200) operates on newline-delimited lines, and a NUL-separated listing has
+no newlines to split on, so a large listing is truncated only by the (10
+MiB default) byte cap, never silently by line count.
+
+**Verified the tests catch the regression.** Reverted `git/commit.py` and
+`tools/git.py` to `HEAD`. The pure-function tests failed with
+`ImportError: cannot import name 'build_capture_index_argv'` (an API-shape
+failure, confirming the new functions don't exist pre-fix). The workspace
+adversarial test — staging `v2-prior-staged` over a HEAD of `v1`, then
+overwriting the worktree with a third value the failed commit's own `git
+add` would stage — failed with `assert 'v1\n' == 'v2-prior-staged\n'`:
+the pre-fix code reset all the way to HEAD, destroying the prior staged
+content exactly as the reproduction predicted. Restored; all 48 tests
+pass again.
+
+**Full relevant suite.** `tests/workspace/ tests/git/`: 508 passed (first
+attempt was killed with no output — a leftover container from the prior
+run was still present; removed it and retried once, cleanly, per this
+project's established fallback). Full unscoped suite: 892 passed.
+No Docker leftovers.
+
+**New tests.** `tests/git/test_commit.py`: pure-function tests for
+`build_capture_index_argv`/`build_unstage_new_argv` (literal-pathspec
+wrapping), `build_restore_index_argv` (one `--cacheinfo` flag per entry,
+and — explicitly — that its path is *not* pathspec-escaped), and
+`parse_index_entries` (parses real `-z --stage` output; empty input is
+an empty list). `tests/workspace/test_git_commit_tool.py`:
+`test_rr005_a_failed_commit_restores_prior_staged_content_not_head`
+distinguishes HEAD's content, the content staged before the call (which
+must survive), and the content the call's own `git add` staged over it
+(which must not).
+
+**Known gap.** The "cannot be restored faithfully → report dirty, don't
+destroy" fallback path (`prior_entries is None`, or a truncated/failed
+re-capture) is exercised by code review and the `None`-checks' own logic,
+not by a forced-failure integration test — legitimately triggering a
+`git ls-files` failure or truncation from black-box MCP calls, without
+corrupting the repository out from under the rest of the suite, wasn't
+found. Tracked honestly rather than left silently unverified.
 
 ### R5 — Every filesystem error is a typed `WorkspaceError`
 **Satisfies:** RR-006 · **Verified by:** RAT-007

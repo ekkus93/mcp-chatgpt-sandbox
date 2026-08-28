@@ -66,17 +66,71 @@ def build_commit_argv(*, message: str, paths: list[str], amend: bool, no_verify:
     return cmd
 
 
-def build_reset_argv(paths: list[str]) -> list[str]:
-    """HR-025 (`docs/HARDENING_SPEC.md` §12): rolls back `build_add_argv`'s
-    staging when the subsequent `git commit` fails, so a failed commit
-    leaves the index unchanged (§20.6) — scoped to exactly the paths this
-    call staged, via the same literal pathspecs, not a broader
-    `git reset` that could unstage something unrelated already staged
-    from before this call (e.g. an out-of-band `exec('git add ...')`).
-    Verified empirically that `git reset -- <pathspec>` only ever
-    touches the index for the named paths, leaving both the working
-    tree and any other already-staged path untouched."""
-    return ["git", "reset", "--", *_literal_pathspecs(paths)]
+def build_capture_index_argv(paths: list[str]) -> list[str]:
+    """RR-005 (`docs/REMEDIATION_SPEC.md` §5): the pre-`add` snapshot a
+    failed commit needs in order to restore what `build_add_argv` is
+    about to stage, rather than resetting to HEAD (the old
+    `build_reset_argv`'s defect — HEAD and "what was staged before this
+    call ran" are different states whenever a caller's paths already
+    held prior staged content distinct from HEAD; reproduced empirically
+    that a plain `git reset -- <paths>` silently destroys it). `-z`
+    matches the NUL-delimited convention `read_committed_files` already
+    uses — unlike a newline, a NUL cannot appear in a real path, and
+    `tail_text`'s line-based truncation only ever sees this whole
+    listing as a single "line" as a result, so a large listing is
+    truncated only by the (10 MiB default) byte cap, never silently by
+    line count."""
+    return ["git", "ls-files", "-z", "--stage", "--", *_literal_pathspecs(paths)]
+
+
+def parse_index_entries(raw: str) -> list[tuple[str, str, str]]:
+    """Parses `-z --stage` output (`<mode> <sha> <stage>\\t<path>`,
+    NUL-terminated entries) into `(mode, sha, path)` triples. The stage
+    number itself is discarded, not asserted to be `0`: a real
+    merge-conflict entry (stage 1/2/3) never actually reaches this
+    parser in practice, because `git_commit_tool`'s own
+    `status.conflicted` check (HR-023) already fails the commit closed
+    before any of this runs — discarding the field is honest about what
+    this parser does and doesn't guarantee, rather than silently
+    assuming a conflict can't happen."""
+    entries = []
+    for chunk in raw.split("\0"):
+        if not chunk:
+            continue
+        meta, _, path = chunk.partition("\t")
+        mode, sha, _stage = meta.split(" ")
+        entries.append((mode, sha, path))
+    return entries
+
+
+def build_restore_index_argv(entries: list[tuple[str, str, str]]) -> list[str]:
+    """Restores exactly the `(mode, sha, path)` triples `parse_index_entries`
+    captured — the faithful counterpart to the old destructive
+    `build_reset_argv`. `--cacheinfo`'s `path` is a literal index path,
+    not a pathspec (unlike every other argv this module builds): it is
+    never client-supplied here, only ever an entry `git ls-files` itself
+    already resolved, so wrapping it in `:(literal)` would corrupt it
+    rather than protect it. `--add` makes one call correct whether the
+    path was merely modified (an existing entry gets overwritten) or
+    fully unstaged in between (a staged deletion; verified empirically
+    that `--cacheinfo --add` re-creates the entry in that case too, with
+    the working tree left untouched either way). Multiple `--cacheinfo`
+    flags in one invocation each apply independently — verified against
+    real git 2.43 with two distinct paths before trusting it."""
+    cmd = ["git", "update-index", "--add"]
+    for mode, sha, path in entries:
+        cmd.extend(["--cacheinfo", f"{mode},{sha},{path}"])
+    return cmd
+
+
+def build_unstage_new_argv(paths: list[str]) -> list[str]:
+    """The other half of the faithful restore: a path present in the
+    post-`add` index but absent from the pre-`add` capture was not
+    tracked or staged before this call, so restoring "prior state" for
+    it means removing it from the index entirely, not re-adding
+    anything. `--ignore-unmatch` keeps this a no-op rather than an error
+    if a path is somehow already gone by the time this runs."""
+    return ["git", "rm", "--cached", "--ignore-unmatch", "--", *_literal_pathspecs(paths)]
 
 
 #: HR-025: the exact, stable substring Git's own `git commit` prints when

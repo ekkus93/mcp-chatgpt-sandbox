@@ -776,6 +776,72 @@ async def test_at_hr025_a_failed_commit_leaves_the_index_unchanged(
     assert status.structured_content["untracked"] == ["a.txt"]  # git add was rolled back
 
 
+async def test_rr005_a_failed_commit_restores_prior_staged_content_not_head(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """RR-005 (`docs/REMEDIATION_SPEC.md` §5): the old HR-025 rollback
+    (`git reset -- <paths>`) resets to HEAD — reproduced empirically that
+    this silently destroys any content staged *before* this call ran,
+    whenever that differs from HEAD. This test distinguishes all three
+    states a naive rollback could land on: HEAD's original content, the
+    content staged before this call (what the restore SHALL recover),
+    and the content this call's own `git add` staged over top of it
+    (what the restore SHALL discard)."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    # HEAD: "v1" — committed *before* the rejecting hook exists, or this
+    # setup commit would be blocked by it too.
+    await server.call_tool(
+        "write_file", {"workspace_id": workspace_id, "path": "a.txt", "content": "v1\n"}
+    )
+    add_v1 = await server.call_tool(
+        "exec", {"workspace_id": workspace_id, "argv": ["git", "add", "a.txt"]}
+    )
+    assert add_v1.structured_content["exit_code"] == 0
+    commit_v1 = await server.call_tool(
+        "exec", {"workspace_id": workspace_id, "argv": ["git", "commit", "-m", "v1"]}
+    )
+    assert commit_v1.structured_content["exit_code"] == 0
+
+    hooks_dir = repo_path / ".git" / "hooks"
+    (hooks_dir / "pre-commit").write_text("#!/bin/sh\nexit 1\n")
+    (hooks_dir / "pre-commit").chmod(0o755)
+
+    # Staged before git_commit_tool ever runs — distinct from HEAD. This
+    # is the state the restore SHALL recover.
+    await server.call_tool(
+        "write_file",
+        {"workspace_id": workspace_id, "path": "a.txt", "content": "v2-prior-staged\n"},
+    )
+    add_v2 = await server.call_tool(
+        "exec", {"workspace_id": workspace_id, "argv": ["git", "add", "a.txt"]}
+    )
+    assert add_v2.structured_content["exit_code"] == 0
+
+    # Not yet staged — git_commit_tool's own `git add` is what stages
+    # this. The restore SHALL discard it, not leave it staged.
+    await server.call_tool(
+        "write_file",
+        {"workspace_id": workspace_id, "path": "a.txt", "content": "v3-this-calls-own-add\n"},
+    )
+
+    with pytest.raises(ToolError, match="COMMAND_FAILED"):
+        await server.call_tool(
+            "git_commit", {"workspace_id": workspace_id, "message": "blocked", "paths": ["a.txt"]}
+        )
+
+    staged = await server.call_tool(
+        "exec", {"workspace_id": workspace_id, "shell": "git show :a.txt"}
+    )
+    assert staged.structured_content["stdout_tail"] == "v2-prior-staged\n"
+
+
 async def test_at_hr025_nothing_to_commit_maps_to_a_specific_error_code(
     minimal_config: ServerConfig,
     default_image_tag: str,

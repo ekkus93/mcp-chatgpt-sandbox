@@ -5,11 +5,14 @@ from pathlib import Path
 
 from dev_workspace_mcp.git.commit import (
     build_add_argv,
+    build_capture_index_argv,
     build_commit_argv,
-    build_reset_argv,
+    build_restore_index_argv,
+    build_unstage_new_argv,
     detect_default_branch,
     is_head_published,
     is_nothing_to_commit_failure,
+    parse_index_entries,
     read_committed_files,
 )
 
@@ -184,9 +187,59 @@ def test_read_committed_files_returns_empty_for_an_unknown_sha(tmp_path: Path) -
 # --- HR-025: rollback on a failed commit; a specific code for "nothing to commit" -
 
 
-def test_build_reset_argv_uses_literal_pathspecs() -> None:
-    argv = build_reset_argv(["a.txt", ":/"])
-    assert argv == ["git", "reset", "--", ":(literal)a.txt", ":(literal):/"]
+def test_build_capture_index_argv_uses_literal_pathspecs() -> None:
+    argv = build_capture_index_argv(["a.txt", ":/"])
+    assert argv == ["git", "ls-files", "-z", "--stage", "--", ":(literal)a.txt", ":(literal):/"]
+
+
+def test_build_unstage_new_argv_uses_literal_pathspecs() -> None:
+    argv = build_unstage_new_argv(["a.txt", ":/"])
+    assert argv == [
+        "git",
+        "rm",
+        "--cached",
+        "--ignore-unmatch",
+        "--",
+        ":(literal)a.txt",
+        ":(literal):/",
+    ]
+
+
+def test_build_restore_index_argv_one_cacheinfo_flag_per_entry() -> None:
+    argv = build_restore_index_argv(
+        [("100644", "f531e07edd848253b8d61160ac743ae4e3d09888", "a.txt")]
+    )
+    assert argv == [
+        "git",
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        "100644,f531e07edd848253b8d61160ac743ae4e3d09888,a.txt",
+    ]
+
+
+def test_build_restore_index_argv_path_is_not_pathspec_escaped() -> None:
+    """Unlike every other argv this module builds, `--cacheinfo`'s path is
+    a literal index path, not a pathspec — `:(literal)` would corrupt it,
+    not protect it, and it is never client-supplied here (only ever a
+    path `git ls-files` already resolved)."""
+    argv = build_restore_index_argv([("100644", "f" * 40, ":/")])
+    assert argv == ["git", "update-index", "--add", "--cacheinfo", f"100644,{'f' * 40},:/"]
+
+
+def test_parse_index_entries_parses_z_delimited_ls_files_stage_output() -> None:
+    raw = (
+        "100644 ef99f41d819e681155d1a58eca788e6999e82397 0\tf.txt\0"
+        "100644 3050cb23f67f67fb30a04419f3581db3241128a0 0\tg.txt\0"
+    )
+    assert parse_index_entries(raw) == [
+        ("100644", "ef99f41d819e681155d1a58eca788e6999e82397", "f.txt"),
+        ("100644", "3050cb23f67f67fb30a04419f3581db3241128a0", "g.txt"),
+    ]
+
+
+def test_parse_index_entries_empty_output_is_empty_list() -> None:
+    assert parse_index_entries("") == []
 
 
 def test_is_nothing_to_commit_failure_detects_the_stdout_message() -> None:

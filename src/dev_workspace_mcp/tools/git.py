@@ -59,11 +59,14 @@ from dev_workspace_mcp.errors import (
 from dev_workspace_mcp.execution.service import ExecResult, ExecutionService
 from dev_workspace_mcp.git.commit import (
     build_add_argv,
+    build_capture_index_argv,
     build_commit_argv,
-    build_reset_argv,
+    build_restore_index_argv,
+    build_unstage_new_argv,
     detect_default_branch,
     is_head_published,
     is_nothing_to_commit_failure,
+    parse_index_entries,
     read_committed_files,
 )
 from dev_workspace_mcp.git.diff import read_git_diff
@@ -528,6 +531,22 @@ def register(
                 response_tail_lines=execution_config.response_tail_lines,
             )
 
+        # RR-005 (`docs/REMEDIATION_SPEC.md` §5): the pre-`add` snapshot a
+        # failed commit needs in order to restore what's about to be
+        # staged, rather than resetting to HEAD — those are different
+        # states whenever these paths already held prior staged content
+        # distinct from HEAD (reproduced empirically: the old
+        # `build_reset_argv` silently destroyed it). `stdout_truncated` is
+        # checked, not assumed false — a truncated capture is not a
+        # faithful snapshot and must not be trusted for a
+        # destructive-adjacent restore.
+        capture_result = await run_git(build_capture_index_argv(paths))
+        prior_entries: list[tuple[str, str, str]] | None = (
+            parse_index_entries(capture_result.stdout_tail)
+            if capture_result.exit_code == 0 and not capture_result.stdout_truncated
+            else None
+        )
+
         # Two commands, not one — see git/commit.py's module docstring
         # for why `--only` alone can't stage a genuinely new file.
         add_result = await run_git(build_add_argv(paths))
@@ -541,26 +560,51 @@ def register(
             build_commit_argv(message=message, paths=paths, amend=amend, no_verify=no_verify)
         )
         if commit_result.exit_code != 0:
-            # HR-025 (`docs/HARDENING_SPEC.md` §12): a failed commit
-            # SHALL leave the index unchanged (§20.6) — the `git add`
-            # above already ran and needs rolling back, scoped to
-            # exactly the paths this call staged. Best-effort: a failure
-            # here does not hide the *real* commit failure being raised
-            # below, and is itself an unusual-enough condition (the
-            # in-container git binary vanishing between the two calls)
-            # that surfacing the original error is more useful than a
-            # secondary one about the rollback itself.
-            with contextlib.suppress(Exception):
-                await run_git(build_reset_argv(paths))
+            # HR-025 (`docs/HARDENING_SPEC.md` §12) / RR-005: a failed
+            # commit SHALL leave the index restored to what it held
+            # *before* this call's own `git add`, not reset to HEAD.
+            # Best-effort, and only ever additive-then-corrective, never a
+            # blind reset: if the pre-add snapshot is unavailable, or the
+            # post-add snapshot needed to know what's newly staged fails,
+            # this does *not* fall back to a destructive reset — it
+            # leaves the index as `git add`/`git commit` left it and
+            # reports that honestly via `index_left_dirty` instead. A
+            # leaked stage is recoverable; guessing wrong about what to
+            # destroy is not.
+            index_left_dirty = True
+            if prior_entries is not None:
+                with contextlib.suppress(Exception):
+                    current_result = await run_git(build_capture_index_argv(paths))
+                    if current_result.exit_code == 0 and not current_result.stdout_truncated:
+                        current_entries = parse_index_entries(current_result.stdout_tail)
+                        prior_paths = {path for _, _, path in prior_entries}
+                        extra_paths = sorted({path for _, _, path in current_entries} - prior_paths)
+                        unstage_ok = True
+                        if extra_paths:
+                            unstage_result = await run_git(build_unstage_new_argv(extra_paths))
+                            unstage_ok = unstage_result.exit_code == 0
+                        restore_ok = True
+                        if prior_entries:
+                            restore_result = await run_git(build_restore_index_argv(prior_entries))
+                            restore_ok = restore_result.exit_code == 0
+                        index_left_dirty = not (unstage_ok and restore_ok)
 
             if is_nothing_to_commit_failure(commit_result.stdout_tail, commit_result.stderr_tail):
                 raise GitNothingToCommitError(
                     f"nothing to commit: {commit_result.stdout_tail or commit_result.stderr_tail}",
-                    details={"workspace_id": workspace_id, "paths": paths},
+                    details={
+                        "workspace_id": workspace_id,
+                        "paths": paths,
+                        "index_left_dirty": index_left_dirty,
+                    },
                 )
             raise CommandFailedError(
                 f"git commit failed: {commit_result.stderr_tail}",
-                details={"workspace_id": workspace_id, "paths": paths},
+                details={
+                    "workspace_id": workspace_id,
+                    "paths": paths,
+                    "index_left_dirty": index_left_dirty,
+                },
             )
 
         new_status = read_git_status(repo_path)
