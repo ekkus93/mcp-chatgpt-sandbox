@@ -280,7 +280,7 @@ def _recreated_run_kwargs(
         host_repository_path=repository.canonical_path,
         workspace_path="/workspace",
         git_dir_mode=config.container.git_dir_mode,
-        authorized_roots=config.repository_roots,
+        authorized_roots=config.authorized_git_dir_roots,
     )
     mounts.append(build_known_hosts_mount(config.ssh.known_hosts))
     mounts.extend(build_cache_mounts(resolved_caches))

@@ -3,9 +3,11 @@ built from `git_dir_mode` (§5.1, §5.4, §18.2). Pure filesystem logic, no
 Docker needed."""
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from dev_workspace_mcp.config.models import ServerConfig
 from dev_workspace_mcp.errors import PathOutsideRepositoryError
 from dev_workspace_mcp.workspace.container_config import SSH_KNOWN_HOSTS_CONTAINER_PATH
 from dev_workspace_mcp.workspace.mounts import (
@@ -146,6 +148,65 @@ def test_read_write_gitfile_repo_needs_a_second_readwrite_mount(tmp_path: Path) 
     git_mount = mounts[1]
     assert git_mount["Target"] == str(main_git.resolve())
     assert git_mount["ReadOnly"] is False
+
+
+# --- H37 (`docs/HARDENING_TODO.md`): repositories[]-only authorization -------------
+
+
+def test_h37_linked_worktree_authorized_only_via_repositories_fails_workspace_open_without_the_fix(
+    tmp_path: Path, minimal_config_dict: dict[str, Any]
+) -> None:
+    """Reproduces H37 empirically: a linked worktree and its main repo,
+    both authorized only through `repositories:` (no `repository_roots:`
+    configured at all) — the real-world shape of two entries an operator
+    would add so the MCP tools can work in both checkouts.
+
+    Confirmed the more severe of H37's two consequences here:
+    `build_workspace_mounts` (`tools/workspace.py`'s `open_workspace`
+    path, and `cli.py`'s reset/rebuild) has no `try`/`except` around
+    `resolve_git_dir` the way `filesystem/security.py`'s
+    `_external_git_dir` does — so with the old, unfixed
+    `config.repository_roots` as `authorized_roots`, workspace creation
+    does not just mis-classify an error, it fails outright."""
+    root = tmp_path / "host"
+    main_repo = root / "main-repo"
+    main_git = main_repo / ".git"
+    main_git.mkdir(parents=True)
+    worktree = root / "worktree"
+    worktree.mkdir(parents=True)
+    (worktree / ".git").write_text(f"gitdir: {main_git / 'worktrees' / 'feature'}\n")
+    (main_git / "worktrees" / "feature").mkdir(parents=True)
+
+    minimal_config_dict["repositories"] = [
+        {"id": "main", "path": str(main_repo), "github": "owner/main"},
+        {"id": "worktree", "path": str(worktree), "github": "owner/main"},
+    ]
+    config = ServerConfig.model_validate(minimal_config_dict)
+    assert config.repository_roots == []  # the defect's precondition
+
+    # The pre-fix behavior: `authorized_roots=config.repository_roots`
+    # (empty) makes the worktree's real Git directory look unauthorized,
+    # and `build_workspace_mounts` raises rather than degrading quietly.
+    with pytest.raises(PathOutsideRepositoryError):
+        build_workspace_mounts(
+            host_repository_path=worktree,
+            workspace_path="/workspace",
+            git_dir_mode="read-write",
+            authorized_roots=config.repository_roots,
+        )
+
+    # The fix: `authorized_git_dir_roots` includes every configured
+    # `repositories[].path`, including the main repo's — under which the
+    # worktree's real Git directory (`main-repo/.git/worktrees/feature`)
+    # genuinely lives — so workspace creation succeeds.
+    mounts = build_workspace_mounts(
+        host_repository_path=worktree,
+        workspace_path="/workspace",
+        git_dir_mode="read-write",
+        authorized_roots=config.authorized_git_dir_roots,
+    )
+    assert len(mounts) == 2
+    assert mounts[1]["Target"] == str((main_git / "worktrees" / "feature").resolve())
 
 
 def test_read_only_mode_adds_a_readonly_git_mount(tmp_path: Path) -> None:

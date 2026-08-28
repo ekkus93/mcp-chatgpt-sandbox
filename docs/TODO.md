@@ -262,7 +262,12 @@ regardless. What is actually lost is the specific `PATH_GIT_METADATA`
 classification (a generic `PATH_OUTSIDE_REPOSITORY` is returned instead) —
 a client-visible error-code precision gap, not an access-control bypass.
 No H-task addresses this; tracked as a new item in `docs/HARDENING_TODO.md`'s
-Deferred section rather than left implicit.
+Deferred section rather than left implicit. **Closed by H37**
+(`docs/HARDENING_TODO.md`), which also found a second, more severe
+consequence of the same root cause at a different call site: `workspace_
+open`/`build_workspace_mounts` has no equivalent swallowing `try`/`except`,
+so the same missing-authorized-root condition made it fail workspace
+creation outright for such a repository, not merely misclassify an error.
 
 ### S10 — Filesystem tools ✅
 **Spec:** §13, §12.2, §46, §47, §48 · **Satisfies:** FR-007, FR-008, FR-009, FR-010 · **Verified by:** AT-003, AT-018 · **Commit:** f7d4679

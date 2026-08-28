@@ -427,3 +427,30 @@ class ServerConfig(BaseModel):
                 raise ValueError(f"duplicate repositories[].id: {repo.id!r}")
             seen.add(repo.id)
         return v
+
+    @property
+    def authorized_git_dir_roots(self) -> list[Path]:
+        """Every root under which a resolved *external* Git directory
+        (§12.1 rule 3 — a linked worktree's or submodule's real `.git`,
+        which lives outside its own checkout) is authorized:
+        `repository_roots` (§7.1) plus each individually configured
+        `repositories[].path` (§7) — the same two sources
+        `RepositoryRegistry` itself already treats as authorized
+        (`repositories.py`'s own module docstring).
+
+        H37 (`docs/HARDENING_TODO.md`): `resolve_git_dir`
+        (`workspace/mounts.py`) and `FilesystemSecurity`
+        (`filesystem/security.py`) both take an `authorized_roots`
+        list and previously received `repository_roots` alone. For a
+        repository authorized only through `repositories:` — no
+        `repository_roots:` configured — the containment check then
+        always failed for a linked worktree or submodule:
+        `filesystem/security.py`'s `_external_git_dir` silently
+        downgrades that into a coarser error classification, but
+        `workspace/mounts.py`'s `build_workspace_mounts` has no such
+        swallowing `try`/`except` and lets it propagate as an outright
+        `PathOutsideRepositoryError` — failing `workspace_open` (and
+        the CLI's `reset`/`rebuild`) entirely for such a repository.
+        Every caller that used to pass `config.repository_roots` as
+        `authorized_roots` should pass this property instead."""
+        return [*self.repository_roots, *(repo.path for repo in self.repositories)]

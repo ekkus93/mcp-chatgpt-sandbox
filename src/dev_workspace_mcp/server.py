@@ -88,7 +88,7 @@ def _register_tools(
         db=db,
         registry=registry,
         filesystem_config=config.filesystem,
-        repository_roots=config.repository_roots,
+        repository_roots=config.authorized_git_dir_roots,
     )
     workspace_tools.register(
         server,
@@ -104,7 +104,7 @@ def _register_tools(
         github_config=config.github,
         git_policy_config=config.git_policy,
         audit_config=config.audit,
-        repository_roots=config.repository_roots,
+        repository_roots=config.authorized_git_dir_roots,
         ssh_agent_runtime_dir=config.state_db_path.parent / "ssh-agents",
     )
     execution_tools.register(

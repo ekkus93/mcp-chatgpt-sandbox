@@ -181,6 +181,48 @@ def test_gitfile_resolution_failure_does_not_break_unrelated_requests(
         fs.resolve(".git")
 
 
+def test_h37_repositories_only_authorization_downgrades_rule_3_to_plain_containment(
+    tmp_path: Path,
+) -> None:
+    """H37 (`docs/HARDENING_TODO.md`): a linked worktree and its main
+    repo, both authorized only through `repositories:` (no
+    `repository_roots:`). With the pre-fix `authorized_roots` (just
+    `repository_roots`, empty here), `_external_git_dir` silently
+    resolves to `None` and rule 3 goes inert — but the escaping symlink
+    is still refused, just downgraded from `PathGitMetadataError` to the
+    generic `PathOutsideRepositoryError`, confirming this is a
+    classification gap, not an access-control bypass. With the fix
+    (`ServerConfig.authorized_git_dir_roots`, including the main repo's
+    own configured path — under which the worktree's real Git directory
+    lives), rule 3 correctly fires again."""
+    root_dir = tmp_path / "host"
+    main_repo = root_dir / "main-repo"
+    main_git = main_repo / ".git"
+    main_git.mkdir(parents=True)
+    (main_git / "some-internal-file").write_text("internal")
+
+    checkout = root_dir / "worktree"
+    checkout.mkdir(parents=True)
+    (checkout / ".git").write_text(f"gitdir: {main_git}\n")
+    (checkout / "innocuous").symlink_to(main_git, target_is_directory=True)
+
+    # Pre-fix: `repository_roots` alone (empty) does not authorize
+    # `main_git` as an external Git-directory target — rule 3 goes
+    # inert, but the symlink still escapes `checkout`'s own root, so the
+    # plain containment check still refuses it.
+    fs_unfixed = FilesystemSecurity(checkout, authorized_roots=[])
+    with pytest.raises(PathOutsideRepositoryError):
+        fs_unfixed.resolve("innocuous/some-internal-file")
+
+    # Fixed: with the main repo's own path included in `authorized_roots`
+    # (as `ServerConfig.authorized_git_dir_roots` now ensures), rule 3
+    # recognizes the target as Git metadata and reports the more
+    # specific classification.
+    fs_fixed = FilesystemSecurity(checkout, authorized_roots=[main_repo])
+    with pytest.raises(PathGitMetadataError):
+        fs_fixed.resolve("innocuous/some-internal-file")
+
+
 # --- RR-006 (`docs/REMEDIATION_SPEC.md` §5): typed errors, not crashes -------------
 
 

@@ -111,6 +111,36 @@ def test_duplicate_repository_ids_rejected(minimal_config_dict: dict[str, Any]) 
         ServerConfig.model_validate(minimal_config_dict)
 
 
+def test_h37_authorized_git_dir_roots_combines_both_sources(
+    minimal_config_dict: dict[str, Any],
+) -> None:
+    """H37 (`docs/HARDENING_TODO.md`): before this property existed, every
+    caller of `resolve_git_dir`/`FilesystemSecurity` was passed
+    `config.repository_roots` alone — a repository authorized only
+    through `repositories:` (no `repository_roots:` configured) was
+    never in its own `authorized_roots`, and §12.1 rule 3's gitfile-
+    target exclusion went inert for it (see `test_mounts.py`'s
+    `test_h37_*` tests for the concrete failure this caused)."""
+    minimal_config_dict["repository_roots"] = ["/abs/roots/one", "/abs/roots/two"]
+    minimal_config_dict["repositories"] = [
+        {"id": "example", "path": "/abs/repos/example", "github": "owner/example"},
+        {"id": "other", "path": "/abs/repos/other", "github": "owner/other"},
+    ]
+    config = ServerConfig.model_validate(minimal_config_dict)
+    assert config.authorized_git_dir_roots == [
+        Path("/abs/roots/one"),
+        Path("/abs/roots/two"),
+        Path("/abs/repos/example"),
+        Path("/abs/repos/other"),
+    ]
+
+
+def test_h37_authorized_git_dir_roots_is_empty_when_neither_source_is_configured(
+    minimal_config: ServerConfig,
+) -> None:
+    assert minimal_config.authorized_git_dir_roots == []
+
+
 @pytest.mark.parametrize(
     ("raw", "expected_seconds"),
     [

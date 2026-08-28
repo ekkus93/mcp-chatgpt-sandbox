@@ -3336,6 +3336,111 @@ test — only existing documentation).
 `repositories[].path`, not only `repository_roots`, at all four call
 sites) for whoever picks it up.
 
+### H37 — §12.1 rule 3 classification gap when only `repositories[]` is configured ✅
+**Commit:** `PLACEHOLDER`
+
+- [x] `config/models.py`: add `ServerConfig.authorized_git_dir_roots`, the union
+      of `repository_roots` and every configured `repositories[].path`
+- [x] `server.py`: pass it, not raw `config.repository_roots`, into both
+      `filesystem_tools.register(...)` and `workspace_tools.register(...)`
+- [x] `cli.py`: same, in `_recreated_run_kwargs`'s `build_workspace_mounts` call
+- [x] `tools/filesystem.py`'s two call sites and `tools/workspace.py`'s: no
+      change needed — both already receive `authorized_roots`/`repository_roots`
+      as a parameter from `register()`, so `server.py`'s fix reaches them
+      transitively
+
+`RepositoryRegistry` (`repositories.py`, own module docstring) has always
+treated `repositories:` and `repository_roots:` as the two equally-authorized
+sources of a repository. `resolve_git_dir`/`FilesystemSecurity`'s
+`authorized_roots` — a different, narrower list gating whether a *resolved
+external Git directory* (§12.1 rule 3: a linked worktree's or submodule's real
+`.git`, which lives outside its own checkout) is trusted — never reflected
+that: every one of the four call sites this file's own Deferred entry named
+was passed `config.repository_roots` alone. A repository authorized only
+through `repositories:`, with no `repository_roots:` configured, was never in
+its own `authorized_roots` — and since `_is_under_any`'s check is "is the
+resolved directory under *some* authorized root," this only recovers when a
+*second* `repositories[]` entry's path happens to be an ancestor of the
+target (e.g. a linked worktree's main repo, also individually configured) —
+plausible, ordinary configurations.
+
+**Empirically verified this is two distinct defects of different severity,
+not one — H37's own Deferred write-up (and `docs/TODO.md`'s S9/S10
+correction it cites) only characterized the milder of the two:**
+
+- **`tools/filesystem.py`'s two call sites** (`FilesystemSecurity`
+  construction): as already documented, a classification-only gap.
+  `filesystem/security.py`'s `_external_git_dir` wraps `resolve_git_dir` in a
+  broad `except Exception: return None` (deliberately best-effort — its own
+  docstring), so the unauthorized-root failure is swallowed; rule 3 goes
+  inert, but the always-active plain containment check still refuses an
+  escaping request, just as `PathOutsideRepositoryError`
+  (`PATH_OUTSIDE_REPOSITORY`) instead of the more specific
+  `PathGitMetadataError` (`PATH_GIT_METADATA`). Reproduced directly: a
+  worktree checkout with a symlink resolving into its main repo's real
+  `.git`, `authorized_roots=[]` — `fs.resolve(...)` still raises, just the
+  coarser error.
+- **`tools/workspace.py`'s call site (`open_workspace` → `build_workspace_
+  mounts`) and `cli.py`'s `_recreated_run_kwargs` (the same function) — a
+  genuine functional bug, not merely a classification gap.**
+  `workspace/mounts.py`'s `build_workspace_mounts` calls `resolve_git_dir`
+  with **no** `try`/`except` around it — nothing swallows the
+  `PathOutsideRepositoryError` `resolve_git_dir` raises when the resolved
+  common directory isn't under any authorized root. Reproduced directly: the
+  identical worktree/main-repo fixture, `authorized_roots=config.
+  repository_roots` (empty, no `repository_roots:` configured) —
+  `build_workspace_mounts` raised outright. Concretely: `workspace_open` (and
+  the CLI's `reset`/`rebuild`, which shares this same mount-building call)
+  could not open a workspace **at all** for a linked-worktree or submodule
+  repository authorized only via `repositories:` — not a coarser error code,
+  a hard failure. This is worse than either this file's Deferred entry or
+  `docs/TODO.md`'s S9/S10 correction described; both were written from the
+  `tools/filesystem.py` call path alone.
+
+Fix: `ServerConfig.authorized_git_dir_roots`, a new read-only property
+computing `[*repository_roots, *(repo.path for repo in repositories)]` once,
+threaded through the existing `repository_roots`/`authorized_roots` parameter
+names at every call site — no downstream signature changes needed, since
+`tools/filesystem.py` and `tools/workspace.py` already receive this value as
+a parameter from `register()`, not by reading `ServerConfig` directly.
+
+**Revert-verification:** reverted `config/models.py`, `server.py`, `cli.py`
+to `HEAD` (backed up first), reran the four new tests below — 3 failed with
+`AttributeError: 'ServerConfig' object has no attribute
+'authorized_git_dir_roots'`, the exact right-reason failure (the fourth,
+`test_h37_repositories_only_authorization_downgrades_rule_3_to_plain_
+containment`, exercises `FilesystemSecurity` directly with hand-built
+`authorized_roots` lists rather than the new property, so it correctly
+stayed green — it proves the underlying mechanism, not the `ServerConfig`
+wiring). Restored from backup; all four passed again.
+
+Broader-relevant suite (`tests/config/`, `tests/workspace/`,
+`tests/filesystem/`, `tests/test_cli.py`) run via a background task: 549
+passed, 0 failed. `ruff check`, `ruff format --check`, `mypy` clean on every
+changed file (one pre-existing, unrelated `unused-ignore` mypy note in
+`tests/workspace/test_mounts.py`, confirmed present before this task's edits
+too via `git stash`). No Docker leftovers (`docker ps -a --filter
+"name=mcp-dev-"` and `docker volume ls` both empty of test artifacts) after
+either run. Full unscoped `tests/` background run: **974 passed, 0 failed**
+(970 before this task's 4 new tests).
+
+**New tests:**
+- `tests/config/test_models.py::test_h37_authorized_git_dir_roots_combines_
+  both_sources` / `..._is_empty_when_neither_source_is_configured` — the
+  property itself, pure `ServerConfig` construction, no filesystem needed.
+- `tests/workspace/test_mounts.py::test_h37_linked_worktree_authorized_only_
+  via_repositories_fails_workspace_open_without_the_fix` — the more severe
+  finding: a real `ServerConfig` with two `repositories:` entries (main repo
+  + linked worktree) and no `repository_roots:`; `build_workspace_mounts`
+  raises with `config.repository_roots`, succeeds and returns the correct
+  two mounts with `config.authorized_git_dir_roots`.
+- `tests/filesystem/test_security.py::test_h37_repositories_only_
+  authorization_downgrades_rule_3_to_plain_containment` — the milder
+  finding: the same worktree/main-repo shape, proving `authorized_roots=[]`
+  downgrades `PathGitMetadataError` to `PathOutsideRepositoryError` (not a
+  bypass) while `authorized_roots=[main_repo]` restores the specific
+  classification.
+
 ---
 
 ## Deferred
@@ -3348,26 +3453,6 @@ by maintaining §4.1's control surface. Costs: contradicts §20.1's stated
 exception, removes Docker-free `workspace_info`/`git_status` and part of §73's
 degraded start, and adds container-exec latency to every read. Revisit if §4.1
 proves burdensome to maintain, or if a knob is discovered that it cannot cover.
-
-### H37 — §12.1 rule 3 classification gap when only `repositories[]` is configured
-
-Not scheduled — found during H35's checkbox reconciliation, empirically verified
-(`docs/TODO.md`'s S9/S10 correction has the full finding), and never assigned an
-H-task of its own in this plan. `FilesystemSecurity`'s rule-3 gitfile-target
-exclusion (a linked worktree's or submodule's real `.git` outside the checkout)
-goes inert — `_external_git_dir` returns `None` — whenever a repository is
-authorized only through an individually configured `repositories[].path`, with
-no `repository_roots:` set, since `resolve_git_dir`'s `authorized_roots` is
-`config.repository_roots` alone.
-
-**Confirmed not an access-control bypass**, only an error-classification gap: the
-resolved external Git directory is, by rule 3's own construction, always outside
-`self._root`, so the always-active plain containment check (`PATH_OUTSIDE_
-REPOSITORY`) still refuses the request — a client only loses the more specific
-`PATH_GIT_METADATA` classification, not access. Fix: extend the `authorized_roots`
-passed to `resolve_git_dir`/`FilesystemSecurity` (in each of `tools/filesystem.py`'s
-two call sites, `cli.py`, and `tools/workspace.py`) to include every individually
-configured `repositories[].path`, not only `repository_roots`.
 
 ---
 
