@@ -1391,7 +1391,7 @@ one.
 
 ### R17 — Transport classification separates auth from local failure ✅
 **Satisfies:** RR-023 · **Verified by:** RAT-019
-**Commit:** `PLACEHOLDER`
+**Commit:** `20e4d62`
 
 - [x] Anchor `is_auth_failure` on wording that genuinely indicates a rejected
       credential — OpenSSH's parenthetical (`Permission denied (publickey)`), or
