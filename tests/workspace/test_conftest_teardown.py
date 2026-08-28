@@ -21,9 +21,11 @@ import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
+import docker.types
 import pytest
 
 import docker
+from dev_workspace_mcp.workspace.caches import cache_volume_name
 from dev_workspace_mcp.workspace.naming import LABEL_MANAGED
 
 from .conftest import remove_tracked_docker_resources
@@ -157,3 +159,82 @@ def test_a_full_suite_run_leaves_a_foreign_sentinel_intact(
         nested_test_path.unlink(missing_ok=True)
         subprocess.run(["docker", "rm", "-f", sentinel_container_name], capture_output=True)
         subprocess.run(["docker", "volume", "rm", "-f", sentinel_volume_name], capture_output=True)
+
+
+def test_rr024_a_production_shaped_volume_survives_being_referenced_by_a_tracked_run(
+    docker_client: docker.DockerClient, real_docker_client: docker.DockerClient
+) -> None:
+    """RAT-020 (`docs/REMEDIATION_SPEC.md` §18), and RR-024's own exact
+    reproduction: this suite's `repository` fixture always uses
+    `repository_id="example"`, so `cache_volume_name(repository_id=
+    "example", cache_name="cargo")` is *the* deterministic name a real
+    deployment serving a repository actually configured with that id and
+    a `cargo` cache would use too. A pre-existing volume under that exact
+    name is created here directly (standing in for that real deployment's
+    volume, with real content in it), then *referenced* — mounted, the
+    same way a real cache-volume workspace open does — by a container run
+    through the tracked `docker_client`. Before RR-024, being referenced
+    was enough to get it queued for removal regardless of who created it;
+    teardown SHALL leave both the volume and its content alone."""
+    production_volume_name = cache_volume_name(repository_id="example", cache_name="cargo")
+    subprocess.run(
+        ["docker", "volume", "create", production_volume_name], check=True, capture_output=True
+    )
+    try:
+        subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "-v",
+                f"{production_volume_name}:/data",
+                "alpine:3.20",
+                "sh",
+                "-c",
+                "echo production-data > /data/marker",
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+        mount = docker.types.Mount(target="/cargo", source=production_volume_name, type="volume")
+        tracked = docker_client.containers.run(
+            "alpine:3.20",
+            ["sleep", "3600"],
+            labels={LABEL_MANAGED: "true"},
+            mounts=[mount],
+            detach=True,
+        )
+        assert tracked.id is not None
+
+        remove_tracked_docker_resources(docker_client)
+
+        # The volume survived teardown at all...
+        assert real_docker_client.volumes.get(production_volume_name) is not None
+        # ...with its real content still intact, not just re-created empty.
+        readback = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "-v",
+                f"{production_volume_name}:/data",
+                "alpine:3.20",
+                "cat",
+                "/data/marker",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert readback.stdout.strip() == "production-data"
+
+        # The container itself, genuinely created by the tracked call,
+        # was still removed — this test isn't proving teardown does
+        # nothing, only that it is now selective about volumes.
+        with pytest.raises(docker.errors.NotFound):
+            real_docker_client.containers.get(tracked.id)
+    finally:
+        subprocess.run(
+            ["docker", "volume", "rm", "-f", production_volume_name], capture_output=True
+        )

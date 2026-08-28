@@ -1695,13 +1695,14 @@ and R19's three new tests updated to inject `MCP_CACHE_PATHS` via the new
 
 ## Phase 6 — Test and build integrity
 
-### R21 — Teardown removes only what the suite created
+### R21 — Teardown removes only what the suite created ✅
 **Satisfies:** RR-024 · **Verified by:** RAT-020
+**Commit:** `PLACEHOLDER`
 
-- [ ] Track volume *creation*, not reference (`conftest.py:78-80`)
-- [ ] Until then, give each run a unique repository id so the deterministic
+- [x] Track volume *creation*, not reference (`conftest.py:78-80`)
+- [x] Until then, give each run a unique repository id so the deterministic
       volume name cannot collide with production
-- [ ] Test that a volume matching the production name for a repository the suite
+- [x] Test that a volume matching the production name for a repository the suite
       also uses survives a full run
 
 **Defect.** `conftest.py:78-80` records every volume-type mount `Source` from
@@ -1714,6 +1715,74 @@ identity this process itself watched get created."
 
 This is H1's own still-open concurrency item, but the destructive half is
 reachable without concurrency.
+
+**Defect reproduced.** Created a real volume under the exact deterministic
+name `cache_volume_name(repository_id="example", cache_name="cargo")` would
+produce, wrote real content into it, then mounted it (referenced, not
+created) from a container run through the tracked `docker_client` — standing
+in for a real `example`/`cargo` cache-volume workspace open, since the
+suite's own `repository` fixture always uses that exact id. Calling
+`remove_tracked_docker_resources` afterward, on the unfixed tracking logic,
+removed it: `docker.errors.NotFound` on the very next lookup — the volume
+and its content both gone, exactly as described.
+
+**Implementation.**
+- `conftest.py`'s `_tracking_run`: a volume-type mount's `Source` is now
+  checked for existence (`self.client.volumes.get(source)`, catching
+  `docker.errors.NotFound`) *before* `original_run` is called, not after —
+  a volume that already exists at that instant can only ever be *referenced*
+  by this call, never created by it, regardless of what the call goes on to
+  do with it. Only a source that did not exist beforehand is added to
+  `_created_volume_names` once the call succeeds. Container tracking needed
+  no equivalent change: every `run()` call creates a genuinely new container
+  (there is no "reference an existing container" mode the way a volume
+  mount has), so `result.id` was already creation-tracking, not
+  reference-tracking.
+- The module docstring gained a paragraph explaining the defect this closes,
+  replacing H1's now-corrected claim that "every removal targets an identity
+  this process itself watched get created" — true for containers, was not
+  true for volumes until this task.
+- The second checklist item ("until then, give each run a unique repository
+  id") is a stopgap explicitly framed as bridging the gap only *until* the
+  tracking fix above lands — which it now has. RAT-020's own acceptance
+  criterion ("a volume matching the deterministic production name for a
+  repository the suite also uses SHALL survive a full suite run") is fully
+  satisfied by creation-tracking alone, independent of what repository id
+  any test happens to use: a pre-existing volume is now never tracked for
+  removal in the first place, so nothing depends on the id being unlikely
+  to collide. A global rename of the ~27 test files that hard-code
+  repository id `"example"` was considered and deliberately not done: most
+  of them (git/audit/tool tests) never create a real Docker volume at all
+  and are unrelated to this defect, and container/workspace naming is
+  derived from the same id (`naming.container_name` — a real, currently
+  running leftover container named `mcp-dev-ws-example-<hash>` was observed
+  during this same session), so renaming it broadly risks far more
+  collateral test breakage than the now-closed gap justifies. The new
+  adversarial test below exercises the exact `"example"`/`"cargo"` identity
+  the real suite uses, which is the actually load-bearing verification of
+  RAT-020, not a synthetic unique one.
+
+**Verified the tests catch the regression.** Backed up `conftest.py`,
+reverted to `HEAD` (confirmed via `grep -c "preexisting_volumes"` — `0`),
+reran the new test: failed exactly as reproduced above —
+`docker.errors.NotFound` on the volume lookup after teardown, the pre-existing
+volume destroyed. The test's own `finally` block still cleaned up regardless
+of outcome (confirmed no leftover volume after the failing run). Restored
+(marker count back to `3`); all 3 tests in `test_conftest_teardown.py` pass
+again. No Docker leftovers.
+
+**Full relevant suite.** `tests/workspace/` (shared `conftest.py` affects the
+whole directory): 352 passed. Full unscoped suite: 960 passed. No Docker
+leftovers.
+
+**New tests.** `tests/workspace/test_conftest_teardown.py`:
+`test_rr024_a_production_shaped_volume_survives_being_referenced_by_a_tracked_run`
+— a real, pre-existing volume under the suite's own exact `"example"`/
+`"cargo"` deterministic name, with real content written into it, referenced
+(not created) by a tracked container run, survives `remove_tracked_docker_
+resources` with its content intact; the tracked container itself is still
+removed, confirming the fix is selective rather than simply disabling volume
+cleanup altogether.
 
 ### R22 — Replace assertions that restate their subject's postcondition
 **Satisfies:** RR-025

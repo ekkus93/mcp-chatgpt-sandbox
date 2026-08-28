@@ -20,6 +20,23 @@ Cache volumes (S30) are never created through an explicit
 as a side effect of the first container that mounts a not-yet-existing
 named volume — so they are tracked the same way: read out of that same
 `run()` call's `mounts` kwarg.
+
+RR-024 (`docs/REMEDIATION_SPEC.md` §17): reading a volume-type mount's
+`Source` out of `run()`'s own kwargs, unconditionally, tracks every volume
+this call *references* — including one that already existed before this
+call ever ran, which a container legitimately mounts (that's what reusing
+a cache volume across workspace opens *means*) without having created it.
+`cache_volume_name` is deterministic, so a real deployment on the same
+host serving a repository this suite also happens to use an id for (the
+tests' own `repository` fixture uses `"example"`, a name plausible enough
+to collide with a real operator's own config) would have that repository's
+real cache volume — and its contents — silently destroyed by a suite run,
+the exact class of incident the label/name-filter rewrite above already
+fixed for containers, recurring one layer down for volumes specifically.
+Closed by checking each mount's volume for existence *before* `run()` is
+called: a volume Docker already reports at that instant is never tracked
+for removal, no matter how this call goes on to reference it — only a
+volume this call actually brings into existence is.
 """
 
 import contextlib
@@ -65,6 +82,23 @@ def _track_created_docker_resources() -> Iterator[None]:
     def _tracking_run(
         self: docker.models.containers.ContainerCollection, *args: Any, **kwargs: Any
     ) -> Any:
+        # RR-024: recorded *before* the call, not after — a volume that
+        # already exists at this instant is one this call can only ever
+        # reference, never create, regardless of what it goes on to do
+        # with it.
+        volume_sources = [
+            mount["Source"]
+            for mount in (kwargs.get("mounts") or [])
+            if mount.get("Type") == "volume"
+        ]
+        preexisting_volumes = set()
+        for source in volume_sources:
+            try:
+                self.client.volumes.get(source)
+            except docker.errors.NotFound:
+                continue
+            preexisting_volumes.add(source)
+
         result = original_run(self, *args, **kwargs)
         with _tracking_lock:
             # `detach=True` returns a `Container` to track; the
@@ -72,12 +106,15 @@ def _track_created_docker_resources() -> Iterator[None]:
             # `remove=True` calls in this suite) returns the captured
             # output as `bytes` instead, for a container Docker has
             # already removed itself by the time `run()` returns —
-            # nothing to track.
+            # nothing to track. Every `run()` call creates a genuinely
+            # new container regardless (there is no "reference an
+            # existing container" mode), so no equivalent pre-check is
+            # needed here the way there is for volumes below.
             if isinstance(result, docker.models.containers.Container) and result.id is not None:
                 _created_container_ids.append(result.id)
-            for mount in kwargs.get("mounts") or []:
-                if mount.get("Type") == "volume":
-                    _created_volume_names.append(mount["Source"])
+            for source in volume_sources:
+                if source not in preexisting_volumes:
+                    _created_volume_names.append(source)
         return result
 
     docker.models.containers.ContainerCollection.run = _tracking_run  # type: ignore[method-assign]
