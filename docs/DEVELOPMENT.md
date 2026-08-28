@@ -24,8 +24,10 @@ All four SHALL pass before a commit, per `docs/TODO.md`'s task loop and
 uv run dev-workspace-mcp serve --config <path>
 ```
 
-`--config` currently only checks the file exists; full validation lands with
-S2 (`docs/TODO.md`).
+`--config` fully validates the file against `docs/SPEC.md` §52's schema
+(S2, `docs/TODO.md`) before the server starts — a malformed or invalid
+config prints a clear `error: ...` message and exits nonzero rather than
+serving on bad configuration (§73 step 1).
 
 ## Project layout
 

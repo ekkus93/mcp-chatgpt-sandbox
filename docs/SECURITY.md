@@ -1,13 +1,19 @@
 # Security
 
-Placeholder. The authoritative security design lives in `docs/SPEC.md`:
+`docs/SPEC.md` is the only security reference this project maintains:
 
 - Trust model — §4
 - Threat model — §39
 - Credential model — §19
 - Security defaults — §74
-- Reporting a vulnerability — TODO once this project has a public issue tracker
 
-This file will grow into deployment-facing security guidance (hardening
-checklist, what to review before exposing the MCP transport beyond a private
-network) as the corresponding phases in `docs/TODO.md` land.
+`docs/HARDENING_SPEC.md` supplements it with the specific hardening
+requirements (HR-001..HR-033) a later review found and this project's
+`docs/HARDENING_TODO.md` closed against.
+
+Reporting a vulnerability: this project has no public issue tracker or
+disclosure address yet — contact the repository owner directly.
+
+This file exists so a reader who lands on it directly is pointed
+somewhere real, not left with a 404 — it is not a second copy of the
+reference kept in parallel with `docs/SPEC.md`/`docs/HARDENING_SPEC.md`.

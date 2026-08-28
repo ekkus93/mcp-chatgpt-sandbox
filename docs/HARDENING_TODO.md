@@ -3050,16 +3050,96 @@ clear CLI error, not a crash; `RUST_BACKTRACE` and a cache-volume write both
 survive `reset`, with the volume confirmed to be the *same* one (not
 recreated).
 
-### H33 — Documentation matches the shipped system
+### H33 — Documentation matches the shipped system ✅
 **Satisfies:** HR-032
+**Commit:** `32e8831`
 
-- [ ] `docs/TOOLS.md`: list all 21 tools (six structured Git tools are missing),
+- [x] `docs/TOOLS.md`: list all 21 tools (six structured Git tools are missing),
       drop "the six future structured Git tools", fill in `contract_version`
       0.7.2
-- [ ] `docs/CONFIGURATION.md`, `SECURITY.md`, `THREAT_MODEL.md`: write them or
+- [x] `docs/CONFIGURATION.md`, `SECURITY.md`, `THREAT_MODEL.md`: write them or
       state plainly that `docs/SPEC.md` is the only reference
-- [ ] `docs/DEVELOPMENT.md`: `--config` no longer merely checks existence
-- [ ] Add a docs check to CI so the tool table cannot drift again
+- [x] `docs/DEVELOPMENT.md`: `--config` no longer merely checks existence
+- [x] Add a docs check to CI so the tool table cannot drift again
+
+`docs/TOOLS.md` was missing all six structured Git tools (`git_status`,
+`git_diff`, `git_log`, `git_commit`, `git_pull`, `git_push` — S19-S27's own
+entire deliverable) and still called them "future," even though `docs/
+SPEC.md` §34.1 itself already says "21 tools." Rewrote it to list the full,
+current 21-tool surface, grouped by area (repositories, filesystem,
+workspace/server state, execution, structured Git) rather than one flat
+table — with 21 entries and six of them added in one pass since this
+task, grouping is what keeps the table itself scannable. Dropped the
+`contract_version` bullet's literal "0.7.2" in favor of pointing at
+`schemas/tools.json`'s own field as the authoritative current value: the
+file already avoided hardcoding it once (`docs/TOOLS.md`'s own prior
+version deliberately said "`contract_version` in `schemas/tools.json`"
+rather than a number) — hardcoding it now would just recreate the same
+staleness this task exists to fix, since H24/H29/H32 alone bumped it three
+times past whatever number would have been written down today.
+
+`docs/DEVELOPMENT.md` claimed `--config` "currently only checks the file
+exists; full validation lands with S2" — S2 landed long before H1, and
+`load_config` (`config/loader.py`) has done full Pydantic validation
+against §52's schema, plus the HR-006/HR-007/HR-010 invariant checks, this
+entire session. Corrected to describe what actually happens: a malformed
+or invalid config prints a clear `error: ...` message and exits nonzero
+(§73 step 1), not a bare existence check.
+
+`docs/CONFIGURATION.md`/`SECURITY.md`/`THREAT_MODEL.md` already took the
+"state plainly `docs/SPEC.md` is the only reference" option this task's
+own bullet allows — but each said so as a *temporary* placeholder ("will
+become a field-by-field reference... once S2 lands," "will grow into
+deployment-facing security guidance... once the corresponding phases
+land"), promises that were never fulfilled even though S2 and every phase
+they gestured at have long since landed. Rewrote all three to state the
+same thing as a settled, permanent design decision instead of a stale
+IOU — `docs/SPEC.md` (and `docs/HARDENING_SPEC.md`, where relevant) *is*
+the reference this project maintains, not a placeholder waiting to be
+promoted into a second copy of it. `CONFIGURATION.md` and `SECURITY.md`'s
+own section pointers were re-checked against the current `docs/SPEC.md`
+section numbers (§7/§9/§11/§18.9/§19/§26/§39/§53/§74) rather than assumed
+still correct; `SECURITY.md` gained an explicit pointer to
+`docs/HARDENING_SPEC.md`'s HR-001..HR-033, which post-dates the original
+placeholder text.
+
+New CI step, `docs/TOOLS.md drift check (HR-032)`: extracts every
+backtick-quoted tool name from `docs/TOOLS.md`'s markdown table rows via
+`grep -oP` and diffs it, both directions, against `jq -r '.tools[].name'
+schemas/tools.json` — a tool present in one list but not the other fails
+the build. Bidirectional deliberately: the actual historical defect this
+task fixes was tools *missing* from the docs, but a stale row left behind
+after a future rename/removal is the same class of drift and deserves the
+same guard, not a narrower one that only prevents recurrence of the exact
+failure already found.
+
+**Revert-verification:** removed one row (`git_push`) from `docs/TOOLS.md`
+and reran `tests/test_docs_tools.py` — `test_every_registered_tool_is_
+documented` failed with `tool(s) registered but not in docs/TOOLS.md:
+['git_push']`, the exact right-reason failure; restored, all 3 pass again.
+The CI step's own `grep -oP` pattern was verified directly against both
+the real `docs/TOOLS.md` (21 names, matching `jq`'s 21 names byte-for-byte)
+and against the row-removed version (20 vs 21, diff exits nonzero) before
+being trusted, not merely assumed to parse correctly from reading the
+regex.
+
+No Docker leftovers. `ruff check`, `ruff format --check`, `mypy src` clean
+across the whole tree — this task touched no `src/` behavior, only `docs/`,
+`.github/workflows/ci.yml`, and one new test file, so the blast radius was
+narrow, but the full unscoped `tests/` background run was still run in
+full per this loop's own established discipline: 876 passed (873 before
+this task's 3 new tests), no interruption, no leftovers.
+
+**New tests:** `tests/test_docs_tools.py` — every tool the real, live
+server actually registers (via `create_server(...).list_tools()`, not the
+committed `schemas/tools.json`, so this catches the docs drifting from the
+*source* even in the hypothetical where the schema export itself were
+also stale) has a row in `docs/TOOLS.md`; every row in `docs/TOOLS.md`
+corresponds to an actually-registered tool (the reverse direction); a
+meta-test (HR-027's "coverage checks SHALL NOT satisfy themselves" lesson,
+applied here) that the extraction regex found at least 20 names at all,
+so a broken pattern matching zero rows can't make the other two tests
+pass vacuously.
 
 ### H34 — Apply the `docs/SPEC.md` amendments
 **Satisfies:** HD2, `HARDENING_SPEC.md` §9
