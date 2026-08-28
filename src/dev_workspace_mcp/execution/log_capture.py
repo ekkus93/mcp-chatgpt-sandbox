@@ -142,7 +142,19 @@ def read_log_tail(path: str | None, *, max_lines: int) -> bytes:
     `max_lines` lines after splitting — a possibly-garbled leading
     fragment is exactly what gets discarded, as long as at least
     `max_lines` real newlines were found after it, which the count
-    check below guarantees before returning."""
+    check below guarantees before returning.
+
+    RR-019 (`docs/REMEDIATION_SPEC.md` §14): `>`, not `>=`. The leading
+    fragment's own terminating newline is itself one of the newlines
+    `count()` sees — it is not one of the `max_lines` *complete* lines
+    that follow the fragment, and `>=` counted it as if it were.
+    Reproduced empirically: a chunk containing exactly `max_lines`
+    newlines has only `max_lines - 1` complete lines after the fragment,
+    so `tail_text`'s `lines[-max_lines:]` pulls the fragment itself in
+    to fill the last slot, presenting it as a genuine line rather than
+    discarding it. `>` requires one more newline than that — the
+    fragment's own, plus a genuine one for each of the `max_lines` lines
+    that must follow it."""
     if path is None or max_lines <= 0:
         return b""
     size = stat_log_bytes(path)
@@ -156,7 +168,7 @@ def read_log_tail(path: str | None, *, max_lines: int) -> bytes:
                 read_from = max(0, size - chunk_size)
                 f.seek(read_from)
                 data = f.read()
-                if data.count(b"\n") >= max_lines or read_from == 0:
+                if data.count(b"\n") > max_lines or read_from == 0:
                     return data
                 chunk_size *= 2
     except FileNotFoundError:

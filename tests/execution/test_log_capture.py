@@ -236,3 +236,48 @@ def test_read_log_tail_is_empty_for_zero_or_negative_max_lines(tmp_path: Path) -
     path.write_bytes(b"some content\n")
     assert read_log_tail(str(path), max_lines=0) == b""
     assert read_log_tail(str(path), max_lines=-1) == b""
+
+
+# --- RR-019 (`docs/REMEDIATION_SPEC.md` §14): `read_log_tail` returns whole lines ---
+
+
+def test_rr019_read_log_tail_composed_with_tail_text_at_a_nonzero_backward_offset(
+    tmp_path: Path,
+) -> None:
+    """The checklist's own reproduction, composed exactly the way
+    `exec_status` actually uses these two functions together —
+    `tail_text` is what a caller sees, not `read_log_tail`'s raw bytes
+    alone. Constructed precisely so the *first* backward chunk
+    (`_TAIL_INITIAL_CHUNK_BYTES`) contains exactly `max_lines` newlines:
+    the leading fragment's own terminating newline used to be counted
+    as one of the `max_lines` *complete* lines that follow it, so
+    `>= max_lines` accepted a chunk with only `max_lines - 1` genuine
+    complete lines — and `tail_text`'s `lines[-max_lines:]` pulled the
+    fragment itself in to fill the last slot, presented as though it
+    were a real line. Uniform lines throughout (not a single giant
+    unrelated prefix) so the fix's second, doubled read converges at a
+    genuinely *nonzero* backward offset, not by falling all the way
+    back to the whole file — the file is deliberately large enough
+    (~5x the initial chunk) that reaching `read_from == 0` would itself
+    indicate the fix failed to converge properly."""
+    from dev_workspace_mcp.execution.log_capture import _TAIL_INITIAL_CHUNK_BYTES
+    from dev_workspace_mcp.execution.service import tail_text
+
+    max_lines = 200
+    line_body = "x" * 327  # chosen so the last _TAIL_INITIAL_CHUNK_BYTES
+    line = (line_body + "\n").encode()  # bytes hold exactly `max_lines` newlines
+    path = tmp_path / "out.log"
+    path.write_bytes(line * 1000)  # ~5x _TAIL_INITIAL_CHUNK_BYTES total
+
+    # Sanity: confirms the construction actually hits the exact boundary
+    # this test exists to exercise, rather than passing vacuously.
+    size = path.stat().st_size
+    first_chunk = path.read_bytes()[max(0, size - _TAIL_INITIAL_CHUNK_BYTES) :]
+    assert first_chunk.count(b"\n") == max_lines
+
+    raw = read_log_tail(str(path), max_lines=max_lines)
+    text = tail_text(raw, max_lines)
+    result_lines = text.splitlines()
+
+    assert len(result_lines) == max_lines
+    assert all(result_line == line_body for result_line in result_lines)

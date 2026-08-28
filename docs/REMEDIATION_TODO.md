@@ -1155,11 +1155,12 @@ cases, still exercising the same shared implementation post-extraction, plus
 `read_file`'s own new tests here) rather than a third, duplicate direct test
 file.
 
-### R14 — `read_log_tail` returns whole lines
+### R14 — `read_log_tail` returns whole lines ✅
 **Satisfies:** RR-019 · **Verified by:** RAT-017
+**Commit:** `PLACEHOLDER`
 
-- [ ] Change `>=` to `>` at `execution/log_capture.py:159`
-- [ ] Test `read_log_tail` composed with `tail_text` — the composition
+- [x] Change `>=` to `>` at `execution/log_capture.py:159`
+- [x] Test `read_log_tail` composed with `tail_text` — the composition
       `exec_status` actually uses — at a **nonzero** backward offset
 
 **Defect (reproduced).** `count()` includes the newline terminating the leading
@@ -1171,6 +1172,44 @@ a complete log line — on **every poll** of a running job.
 Existing coverage cannot catch it: one test writes a 10 KB file so `read_from == 0`
 and the backward arithmetic never runs; the other is the vacuous assertion R22
 removes.
+
+Reproduced directly by precisely constructing the exact boundary condition
+(not by chance): 200 uniform 328-byte lines positioned so the first
+64 KiB (`_TAIL_INITIAL_CHUNK_BYTES`) backward chunk contains exactly
+`max_lines=200` newlines — `read_log_tail` + `tail_text`, composed exactly
+as `exec_status` uses them, returned a garbled 327-`x` fragment as the
+*first* of the 200 "lines" instead of a genuine complete line.
+
+**Implementation.** One-character fix: `data.count(b"\n") >= max_lines` →
+`> max_lines`. The leading fragment's own terminating newline is one of the
+newlines `count()` sees but is not one of the `max_lines` *complete* lines
+that must follow the fragment — `>=` counted it as if it were one of them.
+`>` requires the fragment's own newline *plus* a genuine one for each of
+the `max_lines` complete lines, so the loop correctly keeps doubling
+`chunk_size` (bounded by the existing `read_from == 0` fallback, so this
+can't loop forever) until that actually holds.
+
+**Verified the tests catch the regression.** Reverted
+`execution/log_capture.py` to `HEAD`, reran the new test: failed with the
+first of 200 returned "lines" being the garbled 327-`x` fragment, not a
+complete line — the exact reproduced defect. Restored; all 23 tests in the
+file pass again.
+
+**Full relevant suite.** `tests/execution/ tests/workspace/
+test_async_execution_tools.py tests/workspace/test_execution_tools.py`: 68
+passed. Full unscoped suite: 936 passed. No Docker leftovers.
+
+**New tests.** `tests/execution/test_log_capture.py`:
+`test_rr019_read_log_tail_composed_with_tail_text_at_a_nonzero_backward_offset`
+— the checklist's own ask, composing `read_log_tail` with `tail_text` (not
+`read_log_tail`'s raw bytes alone, which is not what a client ever actually
+sees) via a construction precisely engineered to hit the exact `count ==
+max_lines` boundary at the *first* backward chunk, with the file large
+enough (~5x the initial chunk) that the fix's second, doubled read
+converges at a genuinely nonzero `read_from` rather than by luck falling
+back to reading the whole file (which a self-check assertion in the test
+would itself have caught, since that would mean the construction didn't
+actually exercise the intended boundary).
 
 ---
 
