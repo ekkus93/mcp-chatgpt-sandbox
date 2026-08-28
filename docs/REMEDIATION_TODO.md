@@ -906,7 +906,7 @@ checklist specifically asked for real, not monkeypatched, coverage of.
 
 ### R11 — `rebuild`/`reset` never adopt the container they replace ✅
 **Satisfies:** RR-014
-**Commit:** `PLACEHOLDER`
+**Commit:** `970c483`
 
 - [x] Disable adoption on the `_recreate` path
 - [x] Start an adopted container before returning it as ready, or return a state
