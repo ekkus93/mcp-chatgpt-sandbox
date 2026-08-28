@@ -1786,7 +1786,7 @@ cleanup altogether.
 
 ### R22 — Replace assertions that restate their subject's postcondition ✅
 **Satisfies:** RR-025
-**Commit:** `PLACEHOLDER`
+**Commit:** `e288136`
 
 - [x] `tests/execution/test_log_capture.py:205-218` — assert the returned bytes
       are the correct last N lines, not `count(b"\n") >= N`
