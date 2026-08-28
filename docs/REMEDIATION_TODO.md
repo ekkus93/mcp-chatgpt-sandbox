@@ -1996,7 +1996,7 @@ removed by hand.
 
 ### R25 — The contract check is order-insensitive and monotonic ✅
 **Satisfies:** RR-028
-**Commit:** `PLACEHOLDER`
+**Commit:** `3d6f9cd`
 
 - [x] Sort the tool array by name before diffing (`jq -S` sorts object keys only,
       so a pure reordering falsely demands a bump)
