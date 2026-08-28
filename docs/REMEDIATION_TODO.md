@@ -342,7 +342,7 @@ found. Tracked honestly rather than left silently unverified.
 
 ### R5 — Every filesystem error is a typed `WorkspaceError` ✅
 **Satisfies:** RR-006 · **Verified by:** RAT-007
-**Commit:** `PLACEHOLDER`
+**Commit:** `2aeff82`
 
 - [x] Classify `FileNotFoundError`/`IsADirectoryError`/`PermissionError` from the
       raw `os.open` calls at `security.py:97` and `security.py:111`
