@@ -1053,7 +1053,7 @@ out-of-range offset, and the checklist's own "every `max_bytes` from 1 to
 
 ### R13 — `read_file` classifies and bounds correctly ✅
 **Satisfies:** RR-018, RR-020 · **Verified by:** RAT-016
-**Commit:** `PLACEHOLDER`
+**Commit:** `9daa910`
 
 - [x] Decode on a character boundary — a mid-character cut is truncated text, not binary
 - [x] Set `truncated=True` whenever the read was bounded
