@@ -502,13 +502,42 @@ def register(
             job_id=job_id, state=started.state.value, started_at=started.started_at
         )
 
+    def _reauthorized_job(job_id: str) -> JobRecord:
+        """RR-010/RR-011 (`docs/REMEDIATION_SPEC.md` §5): `exec`/
+        `exec_start` both call `get_authorized`, but every job-*scoped*
+        tool below (`exec_status`/`exec_output`/`exec_cancel`) took only
+        `job_id` and never touched the registry at all — a client
+        holding a `job_id` from before deauthorization kept reading (or
+        cancelling) that job indefinitely. Reproduced empirically:
+        `exec_status` on a job started before removing its repository
+        from configuration still returned the job's live state.
+        `job_store.get` already returns `workspace_id`, so the re-check
+        itself is the same one line `exec`/`exec_start` already use.
+
+        `DockerWorkspaceManager.get` is a side-effect-free DB read (no
+        live Docker call needed) — but `manager` is only ever
+        constructed, above, when `docker_client is not None`, so a
+        degraded daemon (§73) has no instance to call it on at all.
+        Fails closed with `ContainerRuntimeFailedError`, matching
+        `exec`/`exec_start`'s own degraded-mode behavior, rather than a
+        raw `AttributeError` on `None.get(...)` or silently skipping the
+        re-check."""
+        record = job_store.get(job_id)
+        if manager is None:
+            raise ContainerRuntimeFailedError(
+                "Docker is not reachable; the server is running in a "
+                "degraded state (§73) and cannot verify job authorization"
+            )
+        get_authorized(manager, record.workspace_id, registry)
+        return record
+
     @server.tool(
         name="exec_status",
         description="Report a job's current state and recent output (§15.3, §64).",
     )
     @translate_workspace_errors
     async def exec_status_tool(job_id: str) -> ExecStatusOutput:
-        return _status_output(job_store.get(job_id))
+        return _status_output(_reauthorized_job(job_id))
 
     @server.tool(
         name="exec_output",
@@ -551,7 +580,7 @@ def register(
                     f"{name} must be >= 0, not {value}", details={name: value}
                 )
 
-        record = job_store.get(job_id)  # existence check; raises JobNotFoundError
+        record = _reauthorized_job(job_id)  # existence + RR-010 authorization check
         live = runner.live_job(job_id) if runner is not None else None
         if live is not None:
             stream_total_bytes = (
@@ -624,7 +653,7 @@ def register(
     @server.tool(name="exec_cancel", description="Request cancellation of a running job (§15.3).")
     @translate_workspace_errors
     async def exec_cancel_tool(job_id: str) -> ExecCancelOutput:
-        job_store.get(job_id)  # existence check; raises JobNotFoundError
+        _reauthorized_job(job_id)  # existence + RR-011 authorization check
         if runner is not None:
             await runner.cancel_job(job_id)
         record = job_store.get(job_id)

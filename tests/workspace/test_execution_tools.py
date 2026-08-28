@@ -367,3 +367,55 @@ async def test_exec_fails_clearly_when_docker_unreachable(minimal_config: Server
     )
     with pytest.raises(ToolError, match="Docker is not reachable"):
         await server.call_tool("exec", {"workspace_id": "ws_example", "argv": ["true"]})
+
+
+async def test_rr010_exec_status_fails_clearly_when_docker_unreachable(
+    minimal_config: ServerConfig,
+) -> None:
+    """RR-010 (`docs/REMEDIATION_SPEC.md` §5): `exec_status`'s new
+    authorization re-check needs `manager` (`DockerWorkspaceManager.get`
+    is a side-effect-free DB read, but there is no *instance* to call it
+    on at all when Docker is unreachable — `manager` is only ever
+    constructed when `docker_client is not None`). Fails closed the same
+    way `exec`/`exec_start` already do, rather than a raw `AttributeError`
+    on `None.get(...)` or silently skipping the check. A job row (and its
+    `repository`/`workspace` foreign-key parents — `tests/jobs/conftest.py`'s
+    own established pattern) is inserted directly into the store —
+    `exec_start` itself requires Docker, so it can't be used to create
+    one here."""
+    from dev_workspace_mcp.jobs.store import JobStore
+
+    server = MCPServer(name="t")
+    db = open_db(minimal_config.state_db_path)
+    db.execute("INSERT INTO repository (id, canonical_path) VALUES ('example', '/repo')")
+    db.execute(
+        """
+        INSERT INTO workspace
+            (id, repository_id, mode, workspace_path, state, created_at, last_used_at)
+        VALUES ('ws_example', 'example', 'persistent', '/workspace', 'running',
+                '2026-01-01', '2026-01-01')
+        """
+    )
+    db.commit()
+    execution_tools.register(
+        server,
+        db=db,
+        docker_client=None,
+        registry=RepositoryRegistry(minimal_config),
+        container_config=minimal_config.container,
+        execution_config=minimal_config.execution,
+        state_dir=minimal_config.state_db_path.parent,
+        audit_config=minimal_config.audit,
+        ssh_config=minimal_config.ssh,
+    )
+    JobStore(db).create(
+        job_id="job_example",
+        workspace_id="ws_example",
+        command="true",
+        cwd="/workspace",
+        stdout_log_path="/tmp/does-not-matter-stdout.log",
+        stderr_log_path="/tmp/does-not-matter-stderr.log",
+    )
+
+    with pytest.raises(ToolError, match="Docker is not reachable"):
+        await server.call_tool("exec_status", {"job_id": "job_example"})

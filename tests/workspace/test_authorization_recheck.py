@@ -205,3 +205,114 @@ async def test_at_hat013_a_still_configured_repository_is_unaffected(
 
     result = await server_after_removal.call_tool("workspace_info", {"workspace_id": workspace_id})
     assert result.structured_content["workspace_id"] == workspace_id
+
+
+# --- RR-010 (`docs/REMEDIATION_SPEC.md` §5): job-scoped tools re-check too ---------
+
+
+async def test_rr010_exec_status_fails_after_repository_removed(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """Reproduced empirically before this fix: a `job_id` started before
+    deauthorization kept returning that job's live status indefinitely —
+    `exec_status_tool` took only `job_id` and never touched the registry,
+    unlike `exec`/`exec_start`, which both call `get_authorized`."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+    workspace_id = await _open(server)
+    started = await server.call_tool(
+        "exec_start", {"workspace_id": workspace_id, "argv": ["sleep", "0.2"]}
+    )
+    job_id = started.structured_content["job_id"]
+
+    deconfigured = config.model_copy(update={"repositories": []})
+    server_after_removal = create_server(deconfigured)
+
+    with pytest.raises(ToolError, match="REPOSITORY_NOT_ALLOWED"):
+        await server_after_removal.call_tool("exec_status", {"job_id": job_id})
+
+
+async def test_rr010_exec_output_fails_after_repository_removed(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+    workspace_id = await _open(server)
+    started = await server.call_tool(
+        "exec_start", {"workspace_id": workspace_id, "argv": ["echo", "hi"]}
+    )
+    job_id = started.structured_content["job_id"]
+
+    deconfigured = config.model_copy(update={"repositories": []})
+    server_after_removal = create_server(deconfigured)
+
+    with pytest.raises(ToolError, match="REPOSITORY_NOT_ALLOWED"):
+        await server_after_removal.call_tool("exec_output", {"job_id": job_id})
+
+
+async def test_rr011_exec_cancel_fails_after_repository_removed(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+    workspace_id = await _open(server)
+    started = await server.call_tool(
+        "exec_start", {"workspace_id": workspace_id, "argv": ["sleep", "5"]}
+    )
+    job_id = started.structured_content["job_id"]
+
+    deconfigured = config.model_copy(update={"repositories": []})
+    server_after_removal = create_server(deconfigured)
+
+    with pytest.raises(ToolError, match="REPOSITORY_NOT_ALLOWED"):
+        await server_after_removal.call_tool("exec_cancel", {"job_id": job_id})
+
+
+async def test_rr010_job_scoped_tools_still_work_for_a_still_configured_repository(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """The re-check SHALL NOT be overzealous here either — removing an
+    unrelated repository leaves a still-configured one's jobs fully
+    reachable through the same live-as-of-restart registry."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    other_repo_path = tmp_path / "work" / "other"
+    other_repo_path.mkdir(parents=True)
+    (other_repo_path / ".git").mkdir()
+    config = config.model_copy(
+        update={
+            "repositories": [
+                *config.repositories,
+                RepositoryConfig(id="other", path=other_repo_path, github="owner/other"),
+            ]
+        }
+    )
+    server = create_server(config)
+    workspace_id = await _open(server, repository_id="example")
+    started = await server.call_tool(
+        "exec_start", {"workspace_id": workspace_id, "argv": ["echo", "hi"]}
+    )
+    job_id = started.structured_content["job_id"]
+
+    survives = config.model_copy(
+        update={"repositories": [r for r in config.repositories if r.id != "other"]}
+    )
+    server_after_removal = create_server(survives)
+
+    result = await server_after_removal.call_tool("exec_status", {"job_id": job_id})
+    assert result.structured_content["job_id"] == job_id

@@ -672,12 +672,13 @@ existing test's exact-path assertion updated for the new query string.
 
 ## Phase 2 — High: authorization and lifecycle
 
-### R8 — Job-scoped tools re-check authorization
+### R8 — Job-scoped tools re-check authorization ✅
 **Satisfies:** RR-010, RR-011 · **Verified by:** RAT-011
+**Commit:** `PLACEHOLDER`
 
-- [ ] Re-check in `exec_status_tool`, `exec_output_tool`, `exec_cancel_tool` —
+- [x] Re-check in `exec_status_tool`, `exec_output_tool`, `exec_cancel_tool` —
       resolve `job_id` → `workspace_id` → `get_authorized`
-- [ ] Either reload `RepositoryRegistry` on config change, or restate HR-016's
+- [x] Either reload `RepositoryRegistry` on config change, or restate HR-016's
       "immediately revokes access" / "live configuration" as restart-scoped
 
 **Defect (reproduced).** `tools/execution.py:510`, `:518`, `:626` take only
@@ -689,6 +690,77 @@ stale `job_id` still reads that job's captured stdout/stderr and can cancel it.
 `RepositoryRegistry` is constructed once at `server.py:55` and never reloaded, so
 "live" means "as of last restart". The test file says so honestly; the checkbox
 and HR-016 do not.
+
+Reproduced directly first: opened a workspace, started a job via `exec_start`,
+removed the repository from configuration (a fresh `create_server` over the
+same `state_db_path`, this suite's own established "simulated restart"
+pattern), then called `exec_status` with the still-live `job_id` — it
+returned the job's live state instead of `REPOSITORY_NOT_ALLOWED`, exactly as
+predicted.
+
+**Implementation.** A new `_reauthorized_job(job_id)` helper resolves
+`job_store.get(job_id) → record.workspace_id`, then calls `get_authorized`
+(the same one-line re-check `exec`/`exec_start` already perform) before
+returning the record; `exec_status_tool`/`exec_output_tool`/`exec_cancel_tool`
+all route their existing `job_store.get(job_id)` calls through it instead
+(`exec_cancel_tool`'s *second* `job_store.get` — re-reading state immediately
+after its own cancellation, not a fresh client-facing request — is
+deliberately left as a plain lookup, not re-authorized a second time).
+`DockerWorkspaceManager.get` is a side-effect-free DB read, but `manager` the
+*instance* only exists when `docker_client is not None` — `_reauthorized_job`
+fails closed with `ContainerRuntimeFailedError` when it's `None`, matching
+`exec`/`exec_start`'s own degraded-mode behavior, rather than a raw
+`AttributeError` on `None.get(...)` or silently skipping the check.
+
+HR-016 (`docs/HARDENING_SPEC.md`) restated rather than implementing live
+config reload — RR-011 offered both as valid — to name what the code actually
+does: deauthorization takes effect on the daemon's *next restart*, not
+against an already-running process. Also folded in RR-010's own scope
+correction (job-scoped tools are covered by the same property, not only
+`workspace_id`-scoped ones).
+
+**A real bug in my own first implementation, caught before it shipped.**
+The first draft defined `_reauthorized_job` *between* `exec_status_tool`'s
+`@server.tool(...)`/`@translate_workspace_errors` decorators and the
+`async def exec_status_tool` line they were meant to wrap — Python decorators
+apply to whatever function immediately follows them, so both decorators
+silently wrapped `_reauthorized_job` instead, registering *it* (a plain sync
+function) as the `"exec_status"` tool, while the real `exec_status_tool`
+became dead, unregistered code. Every test using two independent
+`create_server` calls against the same `state_db_path` failed with
+`sqlite3.ProgrammingError: SQLite objects created in a thread can only be
+used in that same thread` — the MCP framework offloads a *sync*-detected
+tool to a worker thread (`anyio.to_thread.run_sync`), and that worker thread
+differs from the one that opened the event-loop-thread-affine `sqlite3.Connection`
+used to seed the job/workspace rows. Diagnosed by directly inspecting the
+registered `Tool` object (`server._tool_manager._tools["exec_status"].fn`),
+which was `_reauthorized_job`, not `exec_status_tool` — confirming the
+decorator misplacement rather than a genuine threading issue in the
+framework or in `sqlite3` itself. Fixed by moving `_reauthorized_job`'s
+definition above the decorated block.
+
+**Verified the tests catch the regression.** Reverted `tools/execution.py` to
+`HEAD`, reran the 4 new defect-reproduction tests: all failed with `DID NOT
+RAISE ToolError`, exactly the pre-fix behavior the reproduction predicted (a
+5th, "still-configured repository is unaffected" test correctly passed
+unchanged, since that behavior isn't what this task's fix touches). Restored;
+all 27 tests across the two files pass again.
+
+**Full relevant suite.** `tests/workspace/ tests/jobs/`: 367 passed. Full
+unscoped suite: 918 passed. No Docker leftovers.
+
+**New tests.** `tests/workspace/test_authorization_recheck.py`:
+`test_rr010_exec_status_fails_after_repository_removed`,
+`test_rr010_exec_output_fails_after_repository_removed`,
+`test_rr011_exec_cancel_fails_after_repository_removed` (all three following
+this file's own established two-server "simulated restart" pattern), and
+`test_rr010_job_scoped_tools_still_work_for_a_still_configured_repository`
+(the re-check SHALL NOT be overzealous). `tests/workspace/
+test_execution_tools.py`: `test_rr010_exec_status_fails_clearly_when_docker_unreachable`,
+seeding a job row's `repository`/`workspace` foreign-key parents directly via
+SQL (`tests/jobs/conftest.py`'s own established pattern) since `exec_start`
+itself requires Docker and so can't be used to create one in a degraded-mode
+test.
 
 ### R9 — `delete` cannot wedge a workspace
 **Satisfies:** RR-012 · **Verified by:** RAT-012

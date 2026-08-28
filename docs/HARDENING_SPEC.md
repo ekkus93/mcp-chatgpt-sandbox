@@ -351,10 +351,21 @@ carry `refspec` and `remote_protection_status`.
 *Defect:* `tools/git.py:107–123` records only `{policy_decision, error_code}`
 and discards `PolicyDeniedError.details["policy"]`.
 
-### HR-016 Authorization SHALL be re-checked against live configuration
+### HR-016 Authorization SHALL be re-checked against the running daemon's configuration
 
 Every workspace-scoped tool call SHALL validate the resolved repository against
-the live `RepositoryRegistry`, not against persisted state alone.
+the `RepositoryRegistry`, not against persisted state alone. This SHALL also
+cover every tool scoped by `job_id` — a `job_id` resolves to a `workspace_id`,
+which resolves to a `repository_id`, the same chain a `workspace_id`-scoped
+tool re-checks (`docs/REMEDIATION_SPEC.md` RR-010).
+
+RR-011 (`docs/REMEDIATION_SPEC.md` §9): `RepositoryRegistry` is constructed
+once at daemon startup and never reloaded, so deauthorizing a repository (by
+editing `repositories:` in configuration) takes effect only on the daemon's
+*next restart* — not, as this section previously implied, immediately against
+an already-running daemon. This is a restart-scoped snapshot, not a live
+watch of the configuration file; an operator who needs deauthorization to take
+effect sooner SHALL restart the daemon.
 
 *Defect:* `workspace/manager.py:99–123` resolves `workspace_id → canonical_path`
 from the database with no registry consultation, so a repository removed from
