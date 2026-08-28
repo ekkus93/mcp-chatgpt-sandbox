@@ -2274,7 +2274,7 @@ container with real content to commit — this test is about the commit
 tool body's own testability, not about reproducing workspace creation
 too, mirroring `tools/workspace.py`'s own new test's scope discipline).
 
-**Commit:** `PLACEHOLDER`
+**Commit:** `ad083f2`
 
 ---
 
