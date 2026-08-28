@@ -417,7 +417,17 @@ async def run_git_commit(
     # "deny" and "require_approval" alike; §42: `require_approval`
     # is a hard denial in this release, no interactive-approval
     # mechanism exists yet.
-    if amend and git_policy_config.amend_published != "allow" and is_head_published(repo_path):
+    if (
+        amend
+        and git_policy_config.amend_published != "allow"
+        and await is_head_published(
+            container_id=container_id,
+            workspace_path=record.workspace_path,
+            execution_service=execution_service,
+            container_config=container_config,
+            execution_config=execution_config,
+        )
+    ):
         raise PolicyDeniedError(
             "amend_published policy denies amending a commit already present "
             "on its upstream branch (§18.9, §65)",
@@ -536,7 +546,14 @@ async def run_git_commit(
     # committed, not the request echo — a directory path legitimately
     # expands to many files, and `paths` itself is never a reliable
     # stand-in for "what actually changed" in general.
-    files_committed = read_committed_files(repo_path, new_status.head_sha)
+    files_committed = await read_committed_files(
+        new_status.head_sha,
+        container_id=container_id,
+        workspace_path=record.workspace_path,
+        execution_service=execution_service,
+        container_config=container_config,
+        execution_config=execution_config,
+    )
 
     write_audit_event(
         audit_config,

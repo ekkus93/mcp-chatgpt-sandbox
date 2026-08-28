@@ -1,11 +1,26 @@
 """`git_commit` (§17.4, §20.6, §45, §65, §18.9) — S22.
 
 Commit creation itself runs in-container (§20.1), through the execution
-service `tools/git.py` shares with `exec` — this module only owns the
-host-side-checkable pieces: building the argv, and the two policy
-detections (`default_branch_commit`, `amend_published`) that need to be
-evaluated *before* the container is asked to do anything, per §20.6's
-"evaluate preconditions immediately before acting, and fail closed."
+service `tools/git.py` shares with `exec` — this module owns the argv
+building, and the two policy detections (`default_branch_commit`,
+`amend_published`) §20.6's "evaluate preconditions immediately before
+acting, and fail closed" governs.
+
+H36 (`docs/HARDENING_TODO.md`, 6/8): `read_committed_files`/
+`is_head_published` run in-container now, through `run_git_in_container`
+— `async`, matching HR-000's framing that a client calling `git_commit`
+makes these just as client-reachable as the tools that were always
+in-container. `detect_default_branch` is the one exception: it is also
+called by `open_workspace`'s §18.5 remote-protection check, *before* any
+container exists — see `git/service.py`'s `run_git_metadata_read`
+docstring for why that call site cannot move in-container, and why
+`symbolic-ref` specifically was safe to leave host-side rather than a
+compromise. Each function is split into a trivial pure parser
+(`parse_committed_files_output`/`parse_default_branch_output`) plus its
+own glue, matching `git/status.py`/`git/diff.py`/`git/log.py`'s own H36
+split — kept, even though these three have far less parsing logic than a
+diff or a status snapshot, for the same reason: it keeps this module's
+own test suite fast and Docker-free.
 
 Two commands, not one: `git add -- <paths>` then `git commit --only -m
 <message> -- <paths>`. "No separate `git_add`" (§17.4) means the *client*
@@ -37,7 +52,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from dev_workspace_mcp.git.service import run_git_host_side, sanitize_for_client
+from dev_workspace_mcp.config.models import ContainerConfig, ExecutionConfig
+from dev_workspace_mcp.execution.service import ExecutionService
+from dev_workspace_mcp.git.service import (
+    run_git_in_container,
+    run_git_metadata_read,
+    sanitize_for_client,
+)
 
 
 def _literal_pathspecs(paths: list[str]) -> list[str]:
@@ -148,60 +169,100 @@ def is_nothing_to_commit_failure(stdout: str, stderr: str) -> bool:
     return NOTHING_TO_COMMIT_MARKER in stdout or NOTHING_TO_COMMIT_MARKER in stderr
 
 
-def read_committed_files(repo_path: Path, commit_sha: str) -> list[str]:
+def build_committed_files_argv(commit_sha: str) -> list[str]:
+    """`--root` is required, not decorative: verified empirically that
+    `git diff-tree` without it reports *no* files at all for a commit
+    with no parent (nothing to diff against) — `--root` makes it diff
+    against the empty tree instead, and has no effect on an ordinary,
+    non-root commit's own result."""
+    return ["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "--root", commit_sha]
+
+
+def parse_committed_files_output(stdout: str) -> list[str]:
+    return [sanitize_for_client(name) for name in stdout.split("\0") if name]
+
+
+async def read_committed_files(
+    commit_sha: str,
+    *,
+    container_id: str,
+    workspace_path: str,
+    execution_service: ExecutionService,
+    container_config: ContainerConfig,
+    execution_config: ExecutionConfig,
+) -> list[str]:
     """HR-024: `files_committed` SHALL report what Git actually
     committed, not the request echo — the two can differ (a path that
     matched nothing would have already failed `build_add_argv`'s `git
     add` before reaching here, but a directory path legitimately expands
     to many files, and a case-insensitive filesystem can resolve a path
-    to different literal casing than what was requested). Read host-side,
-    same as every other post-commit status check in this module's
-    caller — a single commit's own file list needs no container.
-
-    `--root` is required, not decorative: verified empirically that
-    `git diff-tree` without it reports *no* files at all for a commit
-    with no parent (nothing to diff against) — `--root` makes it diff
-    against the empty tree instead, and has no effect on an ordinary,
-    non-root commit's own result."""
-    result = run_git_host_side(
-        repo_path,
-        ["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "--root", commit_sha],
+    to different literal casing than what was requested)."""
+    result = await run_git_in_container(
+        build_committed_files_argv(commit_sha),
+        container_id=container_id,
+        workspace_path=workspace_path,
+        execution_service=execution_service,
+        container_config=container_config,
+        execution_config=execution_config,
     )
     if not result.ok:
         return []
-    return [sanitize_for_client(name) for name in result.stdout.split("\0") if name]
+    return parse_committed_files_output(result.stdout)
 
 
-def detect_default_branch(repo_path: Path) -> str | None:
-    """The repository's default branch, if determinable without any
-    network access or credential — which the host-side daemon has
-    neither of (§19's whole point). `origin/HEAD` is a *local* ref git
-    itself sets up during a normal `git clone` (or `git remote set-head
-    origin --auto`); reading it needs no network round trip. `None` when
-    it was never set (e.g. a repository the daemon didn't clone itself),
-    in which case `default_branch_commit` enforcement is skipped rather
-    than guessed at (§18.9's policy governs a parameter a tool actually
-    evaluates — guessing "main"/"master" would make it evaluate a guess,
-    not the repository's real default branch)."""
-    result = run_git_host_side(repo_path, ["symbolic-ref", "refs/remotes/origin/HEAD"])
-    if not result.ok:
-        return None
+#: `detect_default_branch`'s fixed argv — `origin/HEAD` is a *local* ref
+#: git itself sets up during a normal `git clone` (or `git remote
+#: set-head origin --auto`); reading it needs no network round trip.
+DEFAULT_BRANCH_ARGV = ["symbolic-ref", "refs/remotes/origin/HEAD"]
+
+
+def parse_default_branch_output(stdout: str) -> str | None:
     # "refs/remotes/origin/main" -> "main". `removeprefix`, not
     # `rsplit("/", 1)[-1]` (HR-022) — a branch name containing its own
     # slash (e.g. "release/v1") would otherwise be mangled down to just
     # "v1".
-    ref = result.stdout.strip()
+    ref = stdout.strip()
     if not ref:
         return None
     return ref.removeprefix("refs/remotes/origin/")
 
 
-def is_head_published(repo_path: Path) -> bool:
+def detect_default_branch(repo_path: Path) -> str | None:
+    """Host-side, deliberately, unlike this module's other two migrated
+    functions — see `git/service.py`'s `run_git_metadata_read` docstring
+    for the full reasoning (`open_workspace`'s §18.5 remote-protection
+    check, this function's other caller alongside `run_git_commit`/
+    `run_git_push`, needs this *before* any container exists, and
+    `symbolic-ref` invokes no repository-configured code for HR-002 to
+    have ever needed to neutralize here). `None` when the ref was never
+    set (e.g. a repository the daemon didn't clone itself), in which
+    case `default_branch_commit`/`default_branch_push` enforcement is
+    skipped rather than guessed at (§18.9's policy governs a parameter a
+    tool actually evaluates — guessing "main"/"master" would make it
+    evaluate a guess, not the repository's real default branch)."""
+    result = run_git_metadata_read(repo_path, DEFAULT_BRANCH_ARGV)
+    if not result.ok:
+        return None
+    return parse_default_branch_output(result.stdout)
+
+
+#: `is_head_published`'s fixed argv — exits 0 when HEAD is reachable
+#: from (or equal to) its upstream tracking branch, i.e. already pushed
+#: there.
+IS_HEAD_PUBLISHED_ARGV = ["merge-base", "--is-ancestor", "HEAD", "@{upstream}"]
+
+
+async def is_head_published(
+    *,
+    container_id: str,
+    workspace_path: str,
+    execution_service: ExecutionService,
+    container_config: ContainerConfig,
+    execution_config: ExecutionConfig,
+) -> bool:
     """Whether the *current* HEAD (before any amend) is already present
     on its upstream tracking branch — §18.9's `amend_published` policy
-    exists to stop rewriting exactly this. `git merge-base --is-ancestor
-    HEAD @{upstream}` exits 0 when HEAD is reachable from (or equal to)
-    upstream, i.e. already pushed there.
+    exists to stop rewriting exactly this.
 
     No upstream configured at all is treated as "not published", not
     "unknown, block to be safe": with no upstream branch, there is
@@ -210,5 +271,12 @@ def is_head_published(repo_path: Path) -> bool:
     configured" error, not ambiguously with a not-an-ancestor result) —
     so amending is genuinely safe here, not just permitted by default.
     """
-    result = run_git_host_side(repo_path, ["merge-base", "--is-ancestor", "HEAD", "@{upstream}"])
+    result = await run_git_in_container(
+        IS_HEAD_PUBLISHED_ARGV,
+        container_id=container_id,
+        workspace_path=workspace_path,
+        execution_service=execution_service,
+        container_config=container_config,
+        execution_config=execution_config,
+    )
     return result.ok

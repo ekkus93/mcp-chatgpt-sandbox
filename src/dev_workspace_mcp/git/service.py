@@ -1,25 +1,34 @@
 """Git execution plumbing (§20.1, §18.7, §44.4) — S19.
 
-**H36 (`docs/HARDENING_TODO.md`): every structured Git invocation now
-runs in-container**, through `run_git_in_container` — the *same*
+**H36 (`docs/HARDENING_TODO.md`): almost every structured Git invocation
+now runs in-container**, through `run_git_in_container` — the *same*
 execution service `exec` already uses (S12/S15), not a second execution
 path with a second credential (§20.1's rationale). This applies uniformly
 to the read tools (`git_status`/`git_diff`/`git_log`, S20/S21) and the
-mutating ones (`git_commit`/`git_pull`/`git_push`, S22/S26/S27) alike —
-there is no longer a host-side/in-container split. `run_git_host_side`,
-this module's pre-H36 host-side path (hook-/fsmonitor-neutralized so a
-read could not execute repository-supplied code under the *daemon's*
-identity, §18.7/HR-002), is retired: in-container execution accepts
-repository-code execution as an already-scoped risk (`exec` already gives
-the client arbitrary shell in the container by design, §19.7/§20.1), so
-there is nothing that four-part neutralization protected against that
-`exec` doesn't already expose. See H36's own write-up for the full
-before/after.
+mutating ones (`git_commit`/`git_pull`/`git_push`, S22/S26/S27) alike.
+`run_git_host_side`, this module's pre-H36 host-side path (hook-/
+fsmonitor-neutralized so a read could not execute repository-supplied
+code under the *daemon's* identity, §18.7/HR-002), is retired:
+in-container execution accepts repository-code execution as an
+already-scoped risk (`exec` already gives the client arbitrary shell in
+the container by design, §19.7/§20.1), so there is nothing that
+four-part neutralization protected against that `exec` doesn't already
+expose. See H36's own write-up for the full before/after.
 
-`detect_interrupted_operation` stays host-side (§44.4) — it only reads
-marker files Git itself already maintains, the same ones `git status`
-reports on, directly off the bind-mounted working tree; it never runs a
-Git process at all, in or out of a container.
+Two functions stay host-side regardless, for two different reasons:
+
+- `detect_interrupted_operation` (§44.4) — it only reads marker files
+  Git itself already maintains, the same ones `git status` reports on,
+  directly off the bind-mounted working tree; it never runs a Git
+  process at all, in or out of a container.
+- `run_git_metadata_read` — a narrow, **permanent** exception, found
+  while migrating `detect_default_branch` (`git/commit.py`):
+  `open_workspace`'s §18.5 remote-protection check needs it *before* any
+  container exists, and is restricted to Git plumbing commands that
+  provably invoke no repository-configured code, so HR-002's
+  neutralization was never actually protecting anything for this one
+  case. See its own docstring for the full reasoning — it is not a
+  general host-side escape hatch for anything else.
 """
 
 from __future__ import annotations
@@ -42,8 +51,10 @@ from dev_workspace_mcp.workspace.container_config import resolve_exec_user
 #: (and everything it depends on — `_discover_code_executing_overrides`,
 #: `_host_side_git_env`, the two scrub tuples) is retired module by
 #: module as each of its callers migrates to `run_git_in_container`; it
-#: is deleted, along with `os`/`subprocess`/`tempfile` above, once none
-#: remain.
+#: is deleted, along with `tempfile` above (only ever needed for its own
+#: hooks-dir neutralization), once none remain. `os`/`subprocess` stay:
+#: `run_git_metadata_read` (below) is a permanent, narrower host-side
+#: exception with its own, different justification — see its docstring.
 
 #: HR-002 (`docs/HARDENING_SPEC.md` §4.1): repository configuration keys
 #: that make Git execute an external command as a side effect of an
@@ -374,6 +385,43 @@ def run_git_host_side(repo_path: Path, args: list[str]) -> GitCommandResult:
             errors="surrogateescape",
             env=env,
         )
+    return GitCommandResult(
+        returncode=result.returncode, stdout=result.stdout, stderr=result.stderr
+    )
+
+
+def run_git_metadata_read(repo_path: Path, args: list[str]) -> GitCommandResult:
+    """A narrow, **permanent** host-side exception to H36's "every
+    structured Git invocation moved in-container" migration — found
+    while migrating `detect_default_branch` (`git/commit.py`), which
+    `open_workspace`'s §18.5 remote-protection check calls *before* any
+    container is created or any key is provisioned into one: "SHALL NOT
+    provision a write-capable key... SHALL NOT have provisioned a key
+    into the container" is enforced at that point precisely so it runs
+    before Docker is touched at all. There is no container yet for that
+    call to read from — moving it in-container isn't a smaller version
+    of the same migration, it's structurally impossible without either
+    violating §18.5's own ordering or starting a container speculatively
+    only to possibly tear it down immediately, which is exactly what the
+    existing code comment there says this ordering avoids.
+
+    Restricted to Git plumbing commands that provably never invoke
+    repository-configured code — no hook, filter, textconv, or driver of
+    any kind — so HR-002's four-part neutralization genuinely does not
+    apply here, rather than being skipped for convenience. `git
+    symbolic-ref` (this function's only caller, `detect_default_branch`)
+    resolves a single ref; it touches neither the working tree nor the
+    index, and no hook exists for it (checked against Git's own hook
+    list, `githooks(5)`). Do not add a new caller here without the same
+    verification for whatever command it wants to run — this is not a
+    general-purpose host-side escape hatch, and every new use has to
+    independently justify its own safety, not inherit this one's."""
+    result = subprocess.run(  # noqa: S603
+        ["git", "-C", str(repo_path), *args],
+        capture_output=True,
+        text=True,
+        errors="surrogateescape",
+    )
     return GitCommandResult(
         returncode=result.returncode, stdout=result.stdout, stderr=result.stderr
     )

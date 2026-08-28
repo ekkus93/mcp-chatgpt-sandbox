@@ -1,20 +1,52 @@
-"""S22: `git_commit`'s host-side-checkable pieces (§17.4, §18.9)."""
+"""S22: `git_commit`'s host-side-checkable pieces (§17.4, §18.9).
+
+H36 (`docs/HARDENING_TODO.md`, 6/8): `is_head_published`/
+`read_committed_files` themselves now need a running workspace's
+container context (§18.9's amend-published check and the post-commit
+file list both run in-container). `_is_head_published_of`/
+`_committed_files_of` below exercise the real, unchanged
+`IS_HEAD_PUBLISHED_ARGV`/`build_committed_files_argv`/
+`parse_committed_files_output` against a real host-side `git`, the same
+split production's own functions use, keeping this whole suite fast and
+Docker-free. `detect_default_branch` needs no such helper — see
+`git/service.py`'s `run_git_metadata_read` docstring for why it stays
+host-side (and its own tests unchanged) rather than migrating.
+"""
 
 import subprocess
 from pathlib import Path
 
 from dev_workspace_mcp.git.commit import (
+    IS_HEAD_PUBLISHED_ARGV,
     build_add_argv,
     build_capture_index_argv,
     build_commit_argv,
+    build_committed_files_argv,
     build_restore_index_argv,
     build_unstage_new_argv,
     detect_default_branch,
-    is_head_published,
     is_nothing_to_commit_failure,
+    parse_committed_files_output,
     parse_index_entries,
-    read_committed_files,
 )
+
+
+def _is_head_published_of(repo: Path) -> bool:
+    result = subprocess.run(["git", *IS_HEAD_PUBLISHED_ARGV], cwd=repo, capture_output=True)
+    return result.returncode == 0
+
+
+def _committed_files_of(repo: Path, commit_sha: str) -> list[str]:
+    result = subprocess.run(
+        ["git", *build_committed_files_argv(commit_sha)],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        errors="replace",
+    )
+    if result.returncode != 0:
+        return []
+    return parse_committed_files_output(result.stdout)
 
 
 def _init_repo(path: Path) -> Path:
@@ -127,7 +159,7 @@ def test_is_head_published_true_for_a_pushed_commit(tmp_path: Path) -> None:
     subprocess.run(["git", "remote", "add", "origin", str(remote)], cwd=seed, check=True)
     subprocess.run(["git", "push", "-q", "-u", "origin", "main"], cwd=seed, check=True)
 
-    assert is_head_published(seed) is True
+    assert _is_head_published_of(seed) is True
 
 
 def test_is_head_published_false_for_an_unpushed_commit(tmp_path: Path) -> None:
@@ -140,14 +172,14 @@ def test_is_head_published_false_for_an_unpushed_commit(tmp_path: Path) -> None:
     (seed / "a.txt").write_text("a\nmore\n")
     subprocess.run(["git", "commit", "-q", "-am", "unpushed"], cwd=seed, check=True)
 
-    assert is_head_published(seed) is False
+    assert _is_head_published_of(seed) is False
 
 
 def test_is_head_published_false_without_any_upstream(tmp_path: Path) -> None:
     """No upstream at all means categorically nothing to have been
     published to — not "unknown, assume published"."""
     repo = _init_repo(tmp_path / "repo")
-    assert is_head_published(repo) is False
+    assert _is_head_published_of(repo) is False
 
 
 # --- read_committed_files -----------------------------------------------------------
@@ -163,7 +195,7 @@ def test_read_committed_files_reports_the_root_commit(tmp_path: Path) -> None:
         ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
     ).stdout.strip()
 
-    assert read_committed_files(repo, head_sha) == ["a.txt"]
+    assert _committed_files_of(repo, head_sha) == ["a.txt"]
 
 
 def test_read_committed_files_reports_a_normal_commit(tmp_path: Path) -> None:
@@ -176,12 +208,12 @@ def test_read_committed_files_reports_a_normal_commit(tmp_path: Path) -> None:
         ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
     ).stdout.strip()
 
-    assert read_committed_files(repo, head_sha) == ["b.txt", "c.txt"]
+    assert _committed_files_of(repo, head_sha) == ["b.txt", "c.txt"]
 
 
 def test_read_committed_files_returns_empty_for_an_unknown_sha(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path / "repo")
-    assert read_committed_files(repo, "0" * 40) == []
+    assert _committed_files_of(repo, "0" * 40) == []
 
 
 # --- HR-025: rollback on a failed commit; a specific code for "nothing to commit" -

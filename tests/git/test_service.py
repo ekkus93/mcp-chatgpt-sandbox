@@ -12,6 +12,7 @@ from dev_workspace_mcp.git.service import (
     _discover_code_executing_overrides,
     detect_interrupted_operation,
     run_git_host_side,
+    run_git_metadata_read,
     sanitize_for_client,
 )
 
@@ -49,6 +50,25 @@ def test_run_git_host_side_reports_failure(tmp_path: Path) -> None:
 def test_git_command_result_ok_property() -> None:
     assert GitCommandResult(returncode=0, stdout="", stderr="").ok is True
     assert GitCommandResult(returncode=1, stdout="", stderr="").ok is False
+
+
+# --- run_git_metadata_read (H36, `docs/HARDENING_TODO.md`) ------------------------
+
+
+def test_run_git_metadata_read_returns_stdout_and_exit_code(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    result = run_git_metadata_read(repo, ["rev-parse", "--abbrev-ref", "HEAD"])
+    assert result.ok
+    assert result.returncode == 0
+    assert result.stdout.strip() in ("main", "master")
+
+
+def test_run_git_metadata_read_reports_failure(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    result = run_git_metadata_read(repo, ["rev-parse", "no-such-ref"])
+    assert not result.ok
+    assert result.returncode != 0
+    assert result.stderr != ""
 
 
 # --- HR-022/HAT-019: a non-UTF-8 filename does not crash a host-side read --------
