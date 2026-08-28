@@ -15,7 +15,9 @@ from mcp.server.mcpserver.exceptions import ToolError
 from dev_workspace_mcp.config.models import FilesystemConfig, RepositoryConfig, ServerConfig
 from dev_workspace_mcp.db import open_db
 from dev_workspace_mcp.filesystem.service import FilesystemService
+from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.server import create_server
+from dev_workspace_mcp.tools import filesystem as filesystem_tools
 
 
 def _workspace_with_repo(config: ServerConfig, repo_path: Path) -> tuple[ServerConfig, str]:
@@ -111,6 +113,39 @@ async def test_patch_file_tool(minimal_config: ServerConfig, tmp_path: Path) -> 
         },
     )
     assert result.structured_content["applied"] is True
+    assert (tmp_path / "work" / "example" / "f.txt").read_text() == "one\nTWO\nthree\n"
+
+
+async def test_rr027_run_patch_file_is_directly_callable_without_a_server(
+    minimal_config: ServerConfig, tmp_path: Path
+) -> None:
+    """R27 (`docs/REMEDIATION_TODO.md`): `run_patch_file` — the
+    module-level extraction of `patch_file`'s body, the one tool body in
+    this module with real inline logic — called directly, with no
+    `MCPServer`/`create_server`/`server.call_tool` anywhere in the
+    chain, only its real dependencies (a real `sqlite3.Connection` with
+    the workspace/repository rows `_workspace_with_repo` inserts,
+    `RepositoryRegistry`) constructed directly. No Docker needed at all
+    — this tool body is host-side, unlike every other module this task
+    extracted (workspace/git/execution), which is exactly why it's the
+    cheapest of the four to prove."""
+    config, workspace_id = _workspace_with_repo(minimal_config, tmp_path / "work" / "example")
+    (tmp_path / "work" / "example" / "f.txt").write_text("one\ntwo\nthree\n")
+    db = open_db(config.state_db_path)
+    registry = RepositoryRegistry(config)
+
+    result = filesystem_tools.run_patch_file(
+        workspace_id,
+        "f.txt",
+        "@@ -2,1 +2,1 @@\n-two\n+TWO\n",
+        None,
+        db=db,
+        registry=registry,
+        filesystem_config=config.filesystem,
+        repository_roots=config.repository_roots,
+    )
+
+    assert result.applied is True
     assert (tmp_path / "work" / "example" / "f.txt").read_text() == "one\nTWO\nthree\n"
 
 

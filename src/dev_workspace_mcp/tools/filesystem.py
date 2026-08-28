@@ -105,6 +105,113 @@ class SearchMatchOutput:
     line_text: str | None
 
 
+# --- module-level tool bodies (R27, docs/REMEDIATION_TODO.md) ----------------------
+
+
+def build_filesystem_service(
+    workspace_id: str,
+    *,
+    db: sqlite3.Connection,
+    registry: RepositoryRegistry,
+    filesystem_config: FilesystemConfig,
+    repository_roots: list[Path],
+) -> FilesystemService:
+    root = _resolve_repository_root(db, workspace_id, registry)
+    security = FilesystemSecurity(root, authorized_roots=repository_roots)
+    return FilesystemService(security, filesystem_config)
+
+
+def run_patch_file(
+    workspace_id: str,
+    path: str,
+    diff: str,
+    expected_sha256: str | None,
+    *,
+    db: sqlite3.Connection,
+    registry: RepositoryRegistry,
+    filesystem_config: FilesystemConfig,
+    repository_roots: list[Path],
+) -> PatchFileOutput:
+    """§13.4: the `patch_file` tool's full body — module-level, not a
+    `register()` closure (R27, `docs/REMEDIATION_TODO.md`), so it can be
+    unit-tested by constructing its dependencies directly rather than a
+    whole running server. The one tool body in this module with real
+    inline logic (HR-004/HR-005's truncation and payload-size guards,
+    the read/write optimistic-concurrency threading) — every other tool
+    here delegates directly to `FilesystemService`, already
+    independently unit-tested, so extracting it would only relocate a
+    pass-through, not add testability."""
+    # HR-005 (`docs/HARDENING_SPEC.md` §5): the declared limit on the
+    # incoming diff payload was defined and never read — enforced here,
+    # before the file is even read, so an oversized diff fails cheaply.
+    diff_bytes = len(diff.encode("utf-8"))
+    if diff_bytes > filesystem_config.max_patch_bytes:
+        raise InvalidArgumentError(
+            f"diff exceeds the configured limit "
+            f"({diff_bytes} > {filesystem_config.max_patch_bytes} bytes)",
+            details={"path": path, "size": diff_bytes},
+        )
+
+    svc = build_filesystem_service(
+        workspace_id,
+        db=db,
+        registry=registry,
+        filesystem_config=filesystem_config,
+        repository_roots=repository_roots,
+    )
+    current = svc.read_file(path)
+    if current.is_binary:
+        raise InvalidArgumentError(f"cannot patch a binary file: {path!r}", details={"path": path})
+    # HR-004: a truncated read must never become a write of the
+    # truncated content over the whole file. A real regression:
+    # `current.content` here used to be silently the first
+    # `max_read_bytes` of the file whenever it exceeded that limit,
+    # and the patched (truncated) result was then written back over
+    # the entire file — destroying everything past the truncation
+    # point while reporting `applied: True`.
+    if current.truncated:
+        raise InvalidArgumentError(
+            f"file is larger than the configured read limit and cannot be "
+            f"safely patched as a whole: {path!r}",
+            details={"path": path, "size": current.size},
+        )
+    if expected_sha256 is not None and current.sha256 != expected_sha256:
+        raise FileConflictError(
+            f"file changed since it was read: {path!r}",
+            details={
+                "path": path,
+                "expected_sha256": expected_sha256,
+                "actual_sha256": current.sha256,
+            },
+        )
+
+    try:
+        patched = apply_unified_diff(current.content or "", diff)
+    except PatchFormatError as exc:
+        raise InvalidArgumentError(str(exc), details={"path": path}) from exc
+
+    if not patched.applied:
+        return PatchFileOutput(
+            applied=False,
+            old_sha256=current.sha256,
+            sha256=None,
+            rejected_hunks=[
+                RejectedHunkOutput(old_start=h.old_start, reason=h.reason)
+                for h in patched.rejected_hunks
+            ],
+        )
+
+    # HR-004: pass the sha256 just read through as the write's own
+    # `expected_sha256` — closing the read/write window in this
+    # function's own optimistic-concurrency guard, independent of
+    # whether the *client* supplied one. `ReadResult.sha256` is
+    # always the full, untruncated content's hash (see its own
+    # docstring), so this is safe even though `current.truncated` is
+    # already refused above.
+    write_result = svc.write_file(path, patched.new_content or "", expected_sha256=current.sha256)
+    return PatchFileOutput(applied=True, old_sha256=current.sha256, sha256=write_result.sha256)
+
+
 # --- registration ----------------------------------------------------------------------
 
 
@@ -117,9 +224,13 @@ def register(
     repository_roots: list[Path],
 ) -> None:
     def service_for(workspace_id: str) -> FilesystemService:
-        root = _resolve_repository_root(db, workspace_id, registry)
-        security = FilesystemSecurity(root, authorized_roots=repository_roots)
-        return FilesystemService(security, filesystem_config)
+        return build_filesystem_service(
+            workspace_id,
+            db=db,
+            registry=registry,
+            filesystem_config=filesystem_config,
+            repository_roots=repository_roots,
+        )
 
     @server.tool(name="list_files", description="List files and directories (§13.1).")
     @translate_workspace_errors
@@ -189,73 +300,16 @@ def register(
     async def patch_file(
         workspace_id: str, path: str, diff: str, expected_sha256: str | None = None
     ) -> PatchFileOutput:
-        # HR-005 (`docs/HARDENING_SPEC.md` §5): the declared limit on the
-        # incoming diff payload was defined and never read — enforced here,
-        # before the file is even read, so an oversized diff fails cheaply.
-        diff_bytes = len(diff.encode("utf-8"))
-        if diff_bytes > filesystem_config.max_patch_bytes:
-            raise InvalidArgumentError(
-                f"diff exceeds the configured limit "
-                f"({diff_bytes} > {filesystem_config.max_patch_bytes} bytes)",
-                details={"path": path, "size": diff_bytes},
-            )
-
-        svc = service_for(workspace_id)
-        current = svc.read_file(path)
-        if current.is_binary:
-            raise InvalidArgumentError(
-                f"cannot patch a binary file: {path!r}", details={"path": path}
-            )
-        # HR-004: a truncated read must never become a write of the
-        # truncated content over the whole file. A real regression:
-        # `current.content` here used to be silently the first
-        # `max_read_bytes` of the file whenever it exceeded that limit,
-        # and the patched (truncated) result was then written back over
-        # the entire file — destroying everything past the truncation
-        # point while reporting `applied: True`.
-        if current.truncated:
-            raise InvalidArgumentError(
-                f"file is larger than the configured read limit and cannot be "
-                f"safely patched as a whole: {path!r}",
-                details={"path": path, "size": current.size},
-            )
-        if expected_sha256 is not None and current.sha256 != expected_sha256:
-            raise FileConflictError(
-                f"file changed since it was read: {path!r}",
-                details={
-                    "path": path,
-                    "expected_sha256": expected_sha256,
-                    "actual_sha256": current.sha256,
-                },
-            )
-
-        try:
-            patched = apply_unified_diff(current.content or "", diff)
-        except PatchFormatError as exc:
-            raise InvalidArgumentError(str(exc), details={"path": path}) from exc
-
-        if not patched.applied:
-            return PatchFileOutput(
-                applied=False,
-                old_sha256=current.sha256,
-                sha256=None,
-                rejected_hunks=[
-                    RejectedHunkOutput(old_start=h.old_start, reason=h.reason)
-                    for h in patched.rejected_hunks
-                ],
-            )
-
-        # HR-004: pass the sha256 just read through as the write's own
-        # `expected_sha256` — closing the read/write window in this
-        # function's own optimistic-concurrency guard, independent of
-        # whether the *client* supplied one. `ReadResult.sha256` is
-        # always the full, untruncated content's hash (see its own
-        # docstring), so this is safe even though `current.truncated` is
-        # already refused above.
-        write_result = svc.write_file(
-            path, patched.new_content or "", expected_sha256=current.sha256
+        return run_patch_file(
+            workspace_id,
+            path,
+            diff,
+            expected_sha256,
+            db=db,
+            registry=registry,
+            filesystem_config=filesystem_config,
+            repository_roots=repository_roots,
         )
-        return PatchFileOutput(applied=True, old_sha256=current.sha256, sha256=write_result.sha256)
 
     @server.tool(name="delete_file", description="Delete a repository file or directory (§13.5).")
     @translate_workspace_errors

@@ -2160,7 +2160,7 @@ test asserts on these files' literal content/version
 re-run for the same reason R23 didn't: zero code/test diff to verify against.
 No Docker leftovers (no Docker-adjacent code touched).
 
-### R27 — Extract tool bodies from the `register()` closures 🚧
+### R27 — Extract tool bodies from the `register()` closures ✅
 **Satisfies:** (quality/testability — no `RR-nnn`; scoped by this section's own
 original deferral note)
 
@@ -2184,7 +2184,7 @@ tested service method gains nothing from the extra ceremony).
       `git_log_tool` are thin enough to leave as-is
 - [x] `tools/execution.py` — `exec_tool`, `exec_start_tool`; `exec_status_tool`/
       `exec_output_tool`/`exec_cancel_tool` are small enough to assess case by case
-- [ ] `tools/filesystem.py` — `patch_file` (the one tool body here with real
+- [x] `tools/filesystem.py` — `patch_file` (the one tool body here with real
       inline logic; the rest delegate directly to `FilesystemService`, already
       independently unit-tested)
 - [ ] `tools/repository.py` — assessed: not worth touching. Its one tool
@@ -2313,6 +2313,51 @@ needed, same module-level-indentation line-length shift as `tools/git.py`),
 `server.call_tool("exec", ...)` anywhere in the chain.
 
 **Commit:** `f69581c`
+
+**`tools/filesystem.py` (done — all four planned modules now complete;
+`tools/repository.py` was assessed and correctly left alone, so this closes
+the task).** Extracted `run_patch_file` (`patch_file`'s body — the one tool
+body in this module with real inline logic: HR-004/HR-005's truncation and
+payload-size guards, the read/write optimistic-concurrency threading) and
+`build_filesystem_service` (was `service_for`, needed by `run_patch_file`
+and, since it already existed and there was no reason to keep two versions
+of the same three lines, also now used by every other tool's closure in this
+module) to module level. The other five tools (`list_files`/`read_file`/
+`write_file`/`delete_file`/`search_files`) were confirmed, on reading them,
+to be exactly what the checklist assessed: direct pass-throughs to
+`FilesystemService`/`search_files`, already independently unit-tested — left
+untouched. Pure refactor — no behavior change.
+
+**Verification.** Full unscoped suite: 969 passed (968 baseline + `tools/
+execution.py`'s own new test, finally collected — same collection-timing
+gap the previous two modules' write-ups document). This task's own new test
+was, in turn, written after that run started — verified separately:
+`tests/tools/test_filesystem.py` alone, 14 passed. No Docker leftovers (this
+module's tools are host-side — no Docker-touching code at all, so no
+broader Docker-relevant suite was needed beyond the full run). `ruff check`,
+`ruff format --check`, `mypy src` clean on the first pass, no reformatting
+needed this time.
+
+**New test.** `tests/tools/test_filesystem.py`:
+`test_rr027_run_patch_file_is_directly_callable_without_a_server` —
+constructs `run_patch_file`'s dependencies directly (a real
+`sqlite3.Connection`, `RepositoryRegistry`) and calls it with no
+`MCPServer`/`create_server`/`server.call_tool` anywhere in the chain — the
+cheapest of the four modules' new tests to prove, since this tool body is
+host-side and needs no Docker at all.
+
+**Commit:** `PLACEHOLDER`
+
+**R27 complete.** All four modules identified as having tool bodies
+substantial enough to matter (`tools/workspace.py`, `tools/git.py`,
+`tools/execution.py`, `tools/filesystem.py`) now extract those bodies to
+module-level functions taking their dependencies as explicit parameters,
+matching the pattern H32's `run_setup_steps` established; `tools/
+repository.py` was assessed and correctly has nothing to extract. Every
+extraction was a pure refactor verified against the full existing test
+suite (no behavior change), plus one new test per module proving the
+specific property this task exists to establish — the tool body is now
+unit-testable without constructing a running `MCPServer`.
 
 ---
 
