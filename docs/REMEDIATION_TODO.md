@@ -1697,7 +1697,7 @@ and R19's three new tests updated to inject `MCP_CACHE_PATHS` via the new
 
 ### R21 — Teardown removes only what the suite created ✅
 **Satisfies:** RR-024 · **Verified by:** RAT-020
-**Commit:** `PLACEHOLDER`
+**Commit:** `b20d720`
 
 - [x] Track volume *creation*, not reference (`conftest.py:78-80`)
 - [x] Until then, give each run a unique repository id so the deterministic
