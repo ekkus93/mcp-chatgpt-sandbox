@@ -144,15 +144,15 @@ async def run_setup_steps(
 ) -> None:
     """§10: run `.mcp-workspace.yml`'s `setup` steps against `record`'s
     container, in order, failing closed on the first one that fails.
-    Module-level (not a `register()` closure) so both `workspace_open`
-    (`_run_setup_steps`, its own thin wrapper below) and `cli.py`'s
-    `reset`/`rebuild` commands (H32, `docs/HARDENING_SPEC.md` §9's
-    §8.4/§10 rows — a genuinely fresh container from either command had
-    never had these steps run against it at all, until the *next*
-    `workspace_open`, which `was_created`'s own "did a DB row already
-    exist" check could never actually trigger for a *reused* workspace
-    id, leaving it permanently, silently half-provisioned) can call the
-    same logic.
+    Module-level (not a `register()` closure) so both `open_workspace`
+    below (R27, `docs/REMEDIATION_TODO.md` — itself module-level for the
+    same reason) and `cli.py`'s `reset`/`rebuild` commands (H32,
+    `docs/HARDENING_SPEC.md` §9's §8.4/§10 rows — a genuinely fresh
+    container from either command had never had these steps run against
+    it at all, until the *next* `workspace_open`, which `was_created`'s
+    own "did a DB row already exist" check could never actually trigger
+    for a *reused* workspace id, leaving it permanently, silently
+    half-provisioned) can call the same logic.
 
     Each step is a shell command, run the same way `exec`'s own `shell`
     form is (`["bash", "-c", step]`) — `sudo` works exactly as it does
@@ -215,6 +215,337 @@ async def run_setup_steps(
             )
 
 
+def load_stored_remote_protection(
+    db: sqlite3.Connection, repository_id: str
+) -> RemoteProtectionResult | None:
+    row = db.execute(
+        "SELECT remote_protection FROM repository WHERE id = ?", (repository_id,)
+    ).fetchone()
+    return deserialize_remote_protection(row["remote_protection"]) if row is not None else None
+
+
+def store_remote_protection(
+    db: sqlite3.Connection, repository_id: str, result: RemoteProtectionResult
+) -> None:
+    with db:
+        db.execute(
+            "UPDATE repository SET remote_protection = ?, default_branch = ? WHERE id = ?",
+            (serialize_remote_protection(result), result.default_branch, repository_id),
+        )
+
+
+def load_image_provenance(
+    db: sqlite3.Connection, workspace_id: str
+) -> tuple[str | None, int | None]:
+    row = db.execute(
+        "SELECT image_digest, config_version FROM workspace WHERE id = ?", (workspace_id,)
+    ).fetchone()
+    if row is None:
+        return None, None
+    return row["image_digest"], row["config_version"]
+
+
+def build_workspace_info(
+    record: WorkspaceRecord,
+    *,
+    registry: RepositoryRegistry,
+    container_config: ContainerConfig,
+    ssh_config: SSHConfig,
+    db: sqlite3.Connection,
+) -> WorkspaceInfoOutput:
+    repository = registry.get(record.repository_id)
+    git_state = read_basic_git_state(repository.canonical_path)
+    image_digest, config_version = load_image_provenance(db, record.id)
+    return WorkspaceInfoOutput(
+        workspace_id=record.id,
+        repository_id=record.repository_id,
+        container_state=record.state.value,
+        workspace_path=record.workspace_path,
+        git_dir_mode=container_config.git_dir_mode,
+        ssh_key_mode=ssh_config.mode,
+        ssh_key_scope=ssh_config.scope,
+        remote_protection=to_report_output(load_stored_remote_protection(db, record.repository_id)),
+        git=GitStateOutput(
+            branch=git_state.branch,
+            head_sha=git_state.head_sha,
+            clean=git_state.clean,
+            upstream=git_state.upstream,
+        ),
+        image=record.image,
+        image_digest=image_digest,
+        config_version=config_version,
+        created_at=record.created_at,
+        oom_killed=record.oom_killed,
+        devcontainer_ignored=devcontainer_json_is_ignored(repository.canonical_path),
+    )
+
+
+async def open_workspace(
+    repository_id: str,
+    mode: WorkspaceMode,
+    *,
+    manager: DockerWorkspaceManager,
+    docker_client: docker.DockerClient,
+    execution_service: ExecutionService,
+    registry: RepositoryRegistry,
+    db: sqlite3.Connection,
+    job_store: JobStore,
+    docker_config: DockerConfig,
+    container_config: ContainerConfig,
+    execution_config: ExecutionConfig,
+    resources_config: ResourcesConfig,
+    ssh_config: SSHConfig,
+    workspace_config: WorkspaceConfig,
+    github_config: GithubConfig,
+    git_policy_config: GitPolicyConfig,
+    audit_config: AuditConfig,
+    repository_roots: list[Path],
+    ssh_agent_manager: SSHAgentManager | None,
+) -> WorkspaceInfoOutput:
+    """§8.3: the `workspace_open` tool's full body — module-level, not a
+    `register()` closure (R27, `docs/REMEDIATION_TODO.md`), so it can be
+    unit-tested by constructing its dependencies directly rather than a
+    whole running server, the same reason `run_setup_steps` above already
+    lives at module level. `register()`'s `workspace_open` tool is a thin
+    wrapper: resolve `docker_client`/`manager`/`execution_service` past
+    `_require_docker()`'s degraded-state check, then call this."""
+    try:
+        repository = registry.get(repository_id)
+    except RepositoryNotAllowedError:
+        # §24's "repository authorization failure" event: audited here
+        # rather than inside `RepositoryRegistry` itself, which has no
+        # `AuditConfig` of its own — every caller of `.get()` that can
+        # reach an actual client request goes through this tool.
+        write_audit_event(
+            audit_config,
+            operation="repository_authorization_failure",
+            result="denied",
+            metadata={"repository_id": repository_id},
+        )
+        raise
+
+    # §18.5/§20.4: verified before any container work, so `deny` can
+    # refuse the whole operation — never provisioning a key — rather
+    # than tearing down a container it already started.
+    default_branch = detect_default_branch(repository.canonical_path)
+    remote_protection = verify_remote_protection(
+        github_config=github_config,
+        owner_repo=repository.github,
+        default_branch=default_branch,
+        checks=git_policy_config.remote_protection_checks,
+    )
+    if (
+        git_policy_config.require_remote_protection == "deny"
+        and remote_protection.status == "missing"
+    ):
+        # §18.5: "SHALL NOT provision a write-capable key... SHALL
+        # NOT have provisioned a key into the container" — enforced
+        # here, before `ensure_workspace` touches Docker at all, not
+        # merely by skipping the ssh-agent step below.
+        write_audit_event(
+            audit_config,
+            operation="workspace_opened",
+            result="denied",
+            repository_id=repository_id,
+            metadata={
+                "policy_decision": "deny",
+                "policy": "require_remote_protection",
+                "remote_protection_status": remote_protection.status,
+            },
+        )
+        raise RemoteProtectionMissingError(
+            f"default branch {remote_protection.default_branch!r} lacks the "
+            f"required remote protections (§18.5): {remote_protection.reason}",
+            details={
+                "repository_id": repository_id,
+                "default_branch": remote_protection.default_branch,
+            },
+        )
+
+    # §9/§10: `.mcp-workspace.yml`, when present, is the highest
+    # `image` precedence level this daemon implements (`docker.
+    # workspace_path`'s own sibling gaps — devcontainer.json,
+    # per-project Dockerfile detection — are a documented, deliberate
+    # scope cut, not silent approximation: see docs/TODO.md).
+    project_config = load_project_config(repository.canonical_path)
+    effective_image = (
+        project_config.image
+        if project_config is not None and project_config.image is not None
+        else docker_config.default_image
+    )
+    resolved_caches = resolve_caches(
+        repository_id=repository.id,
+        project_caches=project_config.caches if project_config is not None else [],
+    )
+    extra_env = dict(project_config.environment) if project_config is not None else {}
+
+    run_kwargs = build_workspace_run_kwargs(
+        container_config=container_config,
+        docker_client=docker_client,
+        ssh_config=ssh_config,
+        workspace_path=DEFAULT_WORKSPACE_PATH,
+        extra_env=extra_env,
+        resources_config=resources_config,
+        cache_paths=[c.home_relative_path for c in resolved_caches],
+    )
+    mounts = build_workspace_mounts(
+        host_repository_path=repository.canonical_path,
+        workspace_path=DEFAULT_WORKSPACE_PATH,
+        git_dir_mode=container_config.git_dir_mode,
+        authorized_roots=repository_roots,
+    )
+    mounts.append(build_known_hosts_mount(ssh_config.known_hosts))
+    mounts.extend(build_cache_mounts(resolved_caches))
+    if ssh_agent_manager is not None and mode == "persistent":
+        # §19.2: mounts must be finalized before `ensure_workspace`
+        # creates the container, which is only possible here because
+        # `persistent_workspace_id` is a pure, deterministic function
+        # of `repository.id` — the exact same id `ensure_workspace`
+        # computes internally for `mode: "persistent"`. Ephemeral
+        # workspaces get a random-suffixed id only `ensure_workspace`
+        # itself generates, after mounts must already exist; ephemeral
+        # agent provisioning is a known, documented gap (docs/TODO.md).
+        key_path = resolve_ssh_key_path(ssh_config, repository)
+        if key_path is not None:
+            agent_record = ssh_agent_manager.ensure(
+                persistent_workspace_id(repository.id), key_path
+            )
+            mounts.append(build_ssh_agent_mount(agent_record.socket_path))
+    run_kwargs["mounts"] = mounts
+    # §10: whether `setup` runs below depends on whether this call is
+    # a genuine creation — checked *before* `ensure_workspace` (which
+    # always advances `last_used_at` past `created_at` on its own
+    # success path, even for a brand-new row, so comparing those two
+    # on the *returned* record can never distinguish create from
+    # reuse; a real bug this task's own tests caught before trusting
+    # it). Only meaningful for `mode: "persistent"`, whose workspace
+    # id is deterministic (`persistent_workspace_id`, the same trick
+    # the ssh-agent mount above already relies on) — `"ephemeral"`
+    # has no "the" workspace to reuse at all (`ensure_workspace`'s
+    # own docstring), so every ephemeral open is a creation.
+    was_created = mode == "ephemeral" or (
+        db.execute(
+            "SELECT 1 FROM workspace WHERE id = ?", (persistent_workspace_id(repository.id),)
+        ).fetchone()
+        is None
+    )
+    record = manager.ensure_workspace(
+        repository=repository,
+        image=effective_image,
+        mode=mode,
+        workspace_path=DEFAULT_WORKSPACE_PATH,
+        run_kwargs=run_kwargs,
+    )
+    # Persisted only now: `ensure_workspace` is what upserts the
+    # `repository` row this UPDATE targets (§67 — the row may not
+    # have existed a moment ago, for a repository opened for the
+    # first time), and the verification above already happened
+    # in-memory, before any container work, for the `deny` policy
+    # check that needed it early.
+    store_remote_protection(db, repository_id, remote_protection)
+
+    # §9.2's reproducibility record. The digest lookup is a real
+    # Docker API call (`images.get`), not a cached value — cheap, and
+    # correct even if the tag was retagged since the container last
+    # started.
+    image_digest = docker_client.images.get(effective_image).id
+    config_version = project_config.version if project_config is not None else None
+    with db:
+        db.execute(
+            "UPDATE workspace SET image_digest = ?, config_version = ? WHERE id = ?",
+            (image_digest, config_version, record.id),
+        )
+
+    if was_created and project_config is not None and project_config.setup:
+        # §10: run once, only for a container this call just created —
+        # never on a reused persistent workspace's every reopen.
+        await run_setup_steps(
+            execution_service,
+            record,
+            project_config.setup,
+            container_config=container_config,
+            execution_config=execution_config,
+        )
+
+    # §8.1's idle-stop (S17): no scheduler exists in the daemon, so —
+    # like S16's job-log retention — this runs opportunistically on a
+    # frequent, natural trigger point rather than on a real timer.
+    # `workspace_id` isn't necessarily among those swept (it was just
+    # ensured running, so its own `last_used_at` is fresh), but any
+    # *other* persistent workspace that has gone idle gets caught here.
+    manager.sweep_idle_workspaces(
+        idle_stop_after_seconds=workspace_config.idle_stop_after_seconds,
+        job_store=job_store,
+        audit_config=audit_config,
+    )
+
+    write_audit_event(
+        audit_config,
+        operation="workspace_opened",
+        result="success",
+        workspace_id=record.id,
+        repository_id=record.repository_id,
+        metadata={
+            "mode": mode,
+            "container_state": record.state.value,
+            "remote_protection_status": remote_protection.status,
+            "image": effective_image,
+            "setup_steps_run": was_created and bool(project_config and project_config.setup),
+            # H32 (`docs/HARDENING_SPEC.md` §9/§30 row): audited on
+            # every open, not only visible to a client that already
+            # thought to call `workspace_info` and check the field.
+            "devcontainer_ignored": devcontainer_json_is_ignored(repository.canonical_path),
+        },
+    )
+
+    return build_workspace_info(
+        record, registry=registry, container_config=container_config, ssh_config=ssh_config, db=db
+    )
+
+
+def get_server_info(
+    *,
+    docker_client: docker.DockerClient | None,
+    db: sqlite3.Connection,
+    job_store: JobStore,
+    registry: RepositoryRegistry,
+) -> ServerInfoOutput:
+    docker_available = False
+    docker_version: str | None = None
+    if docker_client is not None:
+        try:
+            docker_client.ping()
+            docker_available = True
+            docker_version = docker_client.version().get("Version")
+        except docker.errors.DockerException:
+            pass
+
+    (active_workspaces,) = db.execute(
+        "SELECT COUNT(*) FROM workspace WHERE state = 'running'"
+    ).fetchone()
+    running_jobs = len(
+        job_store.list_by_state(JobState.QUEUED, JobState.STARTING, JobState.RUNNING)
+    )
+
+    return ServerInfoOutput(
+        version=__version__,
+        contract_version=CONTRACT_VERSION,
+        docker_available=docker_available,
+        docker_version=docker_version,
+        active_workspaces=active_workspaces,
+        running_jobs=running_jobs,
+        configured_repositories=len(registry.list_all()),
+        capabilities={
+            "filesystem.patch.unified_diff": True,
+            "filesystem.write.expected_sha256": True,
+            "exec.jobs": True,
+            "git.commit.expected_head_sha": True,
+            "git.push.remote_protection": True,
+            "workspace.devcontainer": False,
+        },
+    )
+
+
 def register(
     server: MCPServer,
     *,
@@ -268,74 +599,6 @@ def register(
             )
         return manager, docker_client
 
-    def _load_stored_remote_protection(repository_id: str) -> RemoteProtectionResult | None:
-        row = db.execute(
-            "SELECT remote_protection FROM repository WHERE id = ?", (repository_id,)
-        ).fetchone()
-        return deserialize_remote_protection(row["remote_protection"]) if row is not None else None
-
-    def _store_remote_protection(repository_id: str, result: RemoteProtectionResult) -> None:
-        with db:
-            db.execute(
-                "UPDATE repository SET remote_protection = ?, default_branch = ? WHERE id = ?",
-                (serialize_remote_protection(result), result.default_branch, repository_id),
-            )
-
-    def _load_image_provenance(workspace_id: str) -> tuple[str | None, int | None]:
-        row = db.execute(
-            "SELECT image_digest, config_version FROM workspace WHERE id = ?", (workspace_id,)
-        ).fetchone()
-        if row is None:
-            return None, None
-        return row["image_digest"], row["config_version"]
-
-    async def _run_setup_steps(record: WorkspaceRecord, steps: list[str]) -> None:
-        """§10: run once, only for a container `workspace_open` just
-        created — never on a reused persistent workspace's every reopen.
-        A thin wrapper around the module-level `run_setup_steps`, which
-        `cli.py`'s `reset`/`rebuild` commands call directly too (H32,
-        `docs/HARDENING_SPEC.md` §9's §8.4/§10 rows) — those commands
-        build their own container from a genuinely fresh image outside
-        this closure's `register()` scope, so the shared logic has to
-        live at module level, not nested in here."""
-        assert execution_service is not None  # implied by `_require_docker` at the call site
-        await run_setup_steps(
-            execution_service,
-            record,
-            steps,
-            container_config=container_config,
-            execution_config=execution_config,
-        )
-
-    def _info(record: WorkspaceRecord) -> WorkspaceInfoOutput:
-        repository = registry.get(record.repository_id)
-        git_state = read_basic_git_state(repository.canonical_path)
-        image_digest, config_version = _load_image_provenance(record.id)
-        return WorkspaceInfoOutput(
-            workspace_id=record.id,
-            repository_id=record.repository_id,
-            container_state=record.state.value,
-            workspace_path=record.workspace_path,
-            git_dir_mode=container_config.git_dir_mode,
-            ssh_key_mode=ssh_config.mode,
-            ssh_key_scope=ssh_config.scope,
-            remote_protection=to_report_output(
-                _load_stored_remote_protection(record.repository_id)
-            ),
-            git=GitStateOutput(
-                branch=git_state.branch,
-                head_sha=git_state.head_sha,
-                clean=git_state.clean,
-                upstream=git_state.upstream,
-            ),
-            image=record.image,
-            image_digest=image_digest,
-            config_version=config_version,
-            created_at=record.created_at,
-            oom_killed=record.oom_killed,
-            devcontainer_ignored=devcontainer_json_is_ignored(repository.canonical_path),
-        )
-
     @server.tool(
         name="workspace_open",
         description="Open (creating and starting as needed) a repository's workspace (§8.3).",
@@ -345,188 +608,28 @@ def register(
         repository_id: str, mode: WorkspaceMode = "persistent"
     ) -> WorkspaceInfoOutput:
         active_manager, active_client = _require_docker()
-        try:
-            repository = registry.get(repository_id)
-        except RepositoryNotAllowedError:
-            # §24's "repository authorization failure" event: audited here
-            # rather than inside `RepositoryRegistry` itself, which has no
-            # `AuditConfig` of its own — every caller of `.get()` that can
-            # reach an actual client request goes through this tool.
-            write_audit_event(
-                audit_config,
-                operation="repository_authorization_failure",
-                result="denied",
-                metadata={"repository_id": repository_id},
-            )
-            raise
-
-        # §18.5/§20.4: verified before any container work, so `deny` can
-        # refuse the whole operation — never provisioning a key — rather
-        # than tearing down a container it already started.
-        default_branch = detect_default_branch(repository.canonical_path)
-        remote_protection = verify_remote_protection(
-            github_config=github_config,
-            owner_repo=repository.github,
-            default_branch=default_branch,
-            checks=git_policy_config.remote_protection_checks,
-        )
-        if (
-            git_policy_config.require_remote_protection == "deny"
-            and remote_protection.status == "missing"
-        ):
-            # §18.5: "SHALL NOT provision a write-capable key... SHALL
-            # NOT have provisioned a key into the container" — enforced
-            # here, before `ensure_workspace` touches Docker at all, not
-            # merely by skipping the ssh-agent step below.
-            write_audit_event(
-                audit_config,
-                operation="workspace_opened",
-                result="denied",
-                repository_id=repository_id,
-                metadata={
-                    "policy_decision": "deny",
-                    "policy": "require_remote_protection",
-                    "remote_protection_status": remote_protection.status,
-                },
-            )
-            raise RemoteProtectionMissingError(
-                f"default branch {remote_protection.default_branch!r} lacks the "
-                f"required remote protections (§18.5): {remote_protection.reason}",
-                details={
-                    "repository_id": repository_id,
-                    "default_branch": remote_protection.default_branch,
-                },
-            )
-
-        # §9/§10: `.mcp-workspace.yml`, when present, is the highest
-        # `image` precedence level this daemon implements (`docker.
-        # workspace_path`'s own sibling gaps — devcontainer.json,
-        # per-project Dockerfile detection — are a documented, deliberate
-        # scope cut, not silent approximation: see docs/TODO.md).
-        project_config = load_project_config(repository.canonical_path)
-        effective_image = (
-            project_config.image
-            if project_config is not None and project_config.image is not None
-            else docker_config.default_image
-        )
-        resolved_caches = resolve_caches(
-            repository_id=repository.id,
-            project_caches=project_config.caches if project_config is not None else [],
-        )
-        extra_env = dict(project_config.environment) if project_config is not None else {}
-
-        run_kwargs = build_workspace_run_kwargs(
-            container_config=container_config,
+        assert execution_service is not None  # implied by `_require_docker` above
+        return await open_workspace(
+            repository_id,
+            mode,
+            manager=active_manager,
             docker_client=active_client,
-            ssh_config=ssh_config,
-            workspace_path=DEFAULT_WORKSPACE_PATH,
-            extra_env=extra_env,
-            resources_config=resources_config,
-            cache_paths=[c.home_relative_path for c in resolved_caches],
-        )
-        mounts = build_workspace_mounts(
-            host_repository_path=repository.canonical_path,
-            workspace_path=DEFAULT_WORKSPACE_PATH,
-            git_dir_mode=container_config.git_dir_mode,
-            authorized_roots=repository_roots,
-        )
-        mounts.append(build_known_hosts_mount(ssh_config.known_hosts))
-        mounts.extend(build_cache_mounts(resolved_caches))
-        if ssh_agent_manager is not None and mode == "persistent":
-            # §19.2: mounts must be finalized before `ensure_workspace`
-            # creates the container, which is only possible here because
-            # `persistent_workspace_id` is a pure, deterministic function
-            # of `repository.id` — the exact same id `ensure_workspace`
-            # computes internally for `mode: "persistent"`. Ephemeral
-            # workspaces get a random-suffixed id only `ensure_workspace`
-            # itself generates, after mounts must already exist; ephemeral
-            # agent provisioning is a known, documented gap (docs/TODO.md).
-            key_path = resolve_ssh_key_path(ssh_config, repository)
-            if key_path is not None:
-                agent_record = ssh_agent_manager.ensure(
-                    persistent_workspace_id(repository.id), key_path
-                )
-                mounts.append(build_ssh_agent_mount(agent_record.socket_path))
-        run_kwargs["mounts"] = mounts
-        # §10: whether `setup` runs below depends on whether this call is
-        # a genuine creation — checked *before* `ensure_workspace` (which
-        # always advances `last_used_at` past `created_at` on its own
-        # success path, even for a brand-new row, so comparing those two
-        # on the *returned* record can never distinguish create from
-        # reuse; a real bug this task's own tests caught before trusting
-        # it). Only meaningful for `mode: "persistent"`, whose workspace
-        # id is deterministic (`persistent_workspace_id`, the same trick
-        # the ssh-agent mount above already relies on) — `"ephemeral"`
-        # has no "the" workspace to reuse at all (`ensure_workspace`'s
-        # own docstring), so every ephemeral open is a creation.
-        was_created = mode == "ephemeral" or (
-            db.execute(
-                "SELECT 1 FROM workspace WHERE id = ?", (persistent_workspace_id(repository.id),)
-            ).fetchone()
-            is None
-        )
-        record = active_manager.ensure_workspace(
-            repository=repository,
-            image=effective_image,
-            mode=mode,
-            workspace_path=DEFAULT_WORKSPACE_PATH,
-            run_kwargs=run_kwargs,
-        )
-        # Persisted only now: `ensure_workspace` is what upserts the
-        # `repository` row this UPDATE targets (§67 — the row may not
-        # have existed a moment ago, for a repository opened for the
-        # first time), and the verification above already happened
-        # in-memory, before any container work, for the `deny` policy
-        # check that needed it early.
-        _store_remote_protection(repository_id, remote_protection)
-
-        # §9.2's reproducibility record. The digest lookup is a real
-        # Docker API call (`images.get`), not a cached value — cheap, and
-        # correct even if the tag was retagged since the container last
-        # started.
-        image_digest = active_client.images.get(effective_image).id
-        config_version = project_config.version if project_config is not None else None
-        with db:
-            db.execute(
-                "UPDATE workspace SET image_digest = ?, config_version = ? WHERE id = ?",
-                (image_digest, config_version, record.id),
-            )
-
-        if was_created and project_config is not None and project_config.setup:
-            await _run_setup_steps(record, project_config.setup)
-
-        # §8.1's idle-stop (S17): no scheduler exists in the daemon, so —
-        # like S16's job-log retention — this runs opportunistically on a
-        # frequent, natural trigger point rather than on a real timer.
-        # `workspace_id` isn't necessarily among those swept (it was just
-        # ensured running, so its own `last_used_at` is fresh), but any
-        # *other* persistent workspace that has gone idle gets caught here.
-        active_manager.sweep_idle_workspaces(
-            idle_stop_after_seconds=workspace_config.idle_stop_after_seconds,
+            execution_service=execution_service,
+            registry=registry,
+            db=db,
             job_store=job_store,
+            docker_config=docker_config,
+            container_config=container_config,
+            execution_config=execution_config,
+            resources_config=resources_config,
+            ssh_config=ssh_config,
+            workspace_config=workspace_config,
+            github_config=github_config,
+            git_policy_config=git_policy_config,
             audit_config=audit_config,
+            repository_roots=repository_roots,
+            ssh_agent_manager=ssh_agent_manager,
         )
-
-        write_audit_event(
-            audit_config,
-            operation="workspace_opened",
-            result="success",
-            workspace_id=record.id,
-            repository_id=record.repository_id,
-            metadata={
-                "mode": mode,
-                "container_state": record.state.value,
-                "remote_protection_status": remote_protection.status,
-                "image": effective_image,
-                "setup_steps_run": was_created and bool(project_config and project_config.setup),
-                # H32 (`docs/HARDENING_SPEC.md` §9/§30 row): audited on
-                # every open, not only visible to a client that already
-                # thought to call `workspace_info` and check the field.
-                "devcontainer_ignored": devcontainer_json_is_ignored(repository.canonical_path),
-            },
-        )
-
-        return _info(record)
 
     @server.tool(name="workspace_info", description="Report current workspace state (§25).")
     @translate_workspace_errors
@@ -538,42 +641,17 @@ def register(
         # rather than report state it cannot currently corroborate.
         active_manager, _ = _require_docker()
         record = get_authorized(active_manager, workspace_id, registry)
-        return _info(record)
+        return build_workspace_info(
+            record,
+            registry=registry,
+            container_config=container_config,
+            ssh_config=ssh_config,
+            db=db,
+        )
 
     @server.tool(name="server_info", description="Server version, capabilities, and health (§25).")
     @translate_workspace_errors
     async def server_info() -> ServerInfoOutput:
-        docker_available = False
-        docker_version: str | None = None
-        if docker_client is not None:
-            try:
-                docker_client.ping()
-                docker_available = True
-                docker_version = docker_client.version().get("Version")
-            except docker.errors.DockerException:
-                pass
-
-        (active_workspaces,) = db.execute(
-            "SELECT COUNT(*) FROM workspace WHERE state = 'running'"
-        ).fetchone()
-        running_jobs = len(
-            job_store.list_by_state(JobState.QUEUED, JobState.STARTING, JobState.RUNNING)
-        )
-
-        return ServerInfoOutput(
-            version=__version__,
-            contract_version=CONTRACT_VERSION,
-            docker_available=docker_available,
-            docker_version=docker_version,
-            active_workspaces=active_workspaces,
-            running_jobs=running_jobs,
-            configured_repositories=len(registry.list_all()),
-            capabilities={
-                "filesystem.patch.unified_diff": True,
-                "filesystem.write.expected_sha256": True,
-                "exec.jobs": True,
-                "git.commit.expected_head_sha": True,
-                "git.push.remote_protection": True,
-                "workspace.devcontainer": False,
-            },
+        return get_server_info(
+            docker_client=docker_client, db=db, job_store=job_store, registry=registry
         )

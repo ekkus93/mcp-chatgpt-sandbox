@@ -9,12 +9,16 @@ import pytest
 from mcp.server import MCPServer
 
 import docker
+from dev_workspace_mcp.config.loader import ensure_known_hosts_file_exists
 from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
 from dev_workspace_mcp.db import open_db
+from dev_workspace_mcp.execution.service import ExecutionService
+from dev_workspace_mcp.jobs.store import JobStore
 from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.schema_export import CONTRACT_VERSION
 from dev_workspace_mcp.server import create_server
 from dev_workspace_mcp.tools import workspace as workspace_tools
+from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
 
 
 def _configured(
@@ -74,6 +78,60 @@ async def test_workspace_open_creates_a_running_container(
     assert info["container_state"] == "running"
     assert info["repository_id"] == "example"
     assert info["workspace_id"] == "ws_example"
+
+
+async def test_rr027_open_workspace_is_directly_callable_without_a_server(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """R27 (`docs/REMEDIATION_TODO.md`): the actual point of extracting
+    `open_workspace` to module level — no `MCPServer`, `create_server`, or
+    `server.call_tool` anywhere in this test, only the tool body's real
+    dependencies constructed directly, proving it no longer needs a
+    running server to exercise (unlike every other test in this file,
+    which deliberately keeps testing the full `server.call_tool` path
+    too — this is additional coverage, not a replacement for it)."""
+    config = _configured(minimal_config, default_image_tag, tmp_path / "work" / "example")
+    # `create_server` normally does this before ever registering tools
+    # (§19.3: the known_hosts bind mount needs a real file to exist, not
+    # a directory Docker silently substitutes for a missing one) —
+    # calling `open_workspace` directly, bypassing `create_server`
+    # entirely, means this test has to establish that precondition
+    # itself, the same as any other real caller not going through it would.
+    ensure_known_hosts_file_exists(config)
+    db = open_db(config.state_db_path)
+    registry = RepositoryRegistry(config)
+    manager = DockerWorkspaceManager(docker_client, db)
+    execution_service = ExecutionService(docker_client)
+    job_store = JobStore(db)
+
+    info = await workspace_tools.open_workspace(
+        "example",
+        "persistent",
+        manager=manager,
+        docker_client=docker_client,
+        execution_service=execution_service,
+        registry=registry,
+        db=db,
+        job_store=job_store,
+        docker_config=config.docker,
+        container_config=config.container,
+        execution_config=config.execution,
+        resources_config=config.resources,
+        ssh_config=config.ssh,
+        workspace_config=config.workspace,
+        github_config=config.github,
+        git_policy_config=config.git_policy,
+        audit_config=config.audit,
+        repository_roots=config.repository_roots,
+        ssh_agent_manager=None,
+    )
+
+    assert info.container_state == "running"
+    assert info.repository_id == "example"
+    assert info.workspace_id == "ws_example"
 
 
 async def test_at_032_reported_modes_match_configuration(

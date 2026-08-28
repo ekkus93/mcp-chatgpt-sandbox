@@ -2160,6 +2160,75 @@ test asserts on these files' literal content/version
 re-run for the same reason R23 didn't: zero code/test diff to verify against.
 No Docker leftovers (no Docker-adjacent code touched).
 
+### R27 — Extract tool bodies from the `register()` closures 🚧
+**Satisfies:** (quality/testability — no `RR-nnn`; scoped by this section's own
+original deferral note)
+
+Previously deferred (see the original note preserved below); revisited now that
+Phases 0–7 are closed, per that note's own condition, at explicit user request.
+`tools/git.py`'s `register()` is 853 lines and `git_push_tool` alone is 306; tool
+bodies cannot be unit-tested without constructing a server, which is what forced
+H32's `run_setup_steps` extraction. Applying that same pattern — a module-level
+function taking its dependencies as explicit parameters, with `register()`'s
+closure reduced to a thin wrapper — to every tool body substantial enough for
+the distinction to matter (a thin pass-through to an already-independently-
+tested service method gains nothing from the extra ceremony).
+
+- [x] `tools/workspace.py` — `open_workspace` (`workspace_open`'s ~185-line body,
+      the single largest in the codebase), `build_workspace_info` (shared by
+      `workspace_open`/`workspace_info`), `get_server_info`,
+      `load_stored_remote_protection`/`store_remote_protection`/
+      `load_image_provenance`
+- [ ] `tools/git.py` — `git_push_tool` (306 lines), `git_pull_tool` (~213 lines),
+      `git_commit_tool` (~264 lines); `git_status_tool`/`git_diff_tool`/
+      `git_log_tool` are thin enough to leave as-is
+- [ ] `tools/execution.py` — `exec_tool`, `exec_start_tool`; `exec_status_tool`/
+      `exec_output_tool`/`exec_cancel_tool` are small enough to assess case by case
+- [ ] `tools/filesystem.py` — `patch_file` (the one tool body here with real
+      inline logic; the rest delegate directly to `FilesystemService`, already
+      independently unit-tested)
+- [ ] `tools/repository.py` — assessed: not worth touching. Its one tool
+      (`repository_list`) is a three-line list comprehension over an
+      already-tested `RepositoryRegistry.list_all()`; extraction would add a
+      module-level function with no behavior currently untestable through it.
+
+**`tools/workspace.py` (done).** Extracted `open_workspace` (the full
+`workspace_open` body), `build_workspace_info` (was `_info`, shared with
+`workspace_info`), `get_server_info` (was `server_info`'s body), and the three
+small DB-read/write helpers `_load_stored_remote_protection`/
+`_store_remote_protection`/`_load_image_provenance` used — all to module level,
+taking their dependencies (`manager`, `docker_client`, `execution_service`,
+`registry`, `db`, `job_store`, and the various config objects) as explicit
+keyword arguments rather than closure captures. `register()`'s three tool
+closures (`workspace_open`, `workspace_info`, `server_info`) are now thin: resolve
+what `_require_docker()` gates, then call the module-level function. Pure
+refactor — no behavior change; every conditional, ordering, and error path is
+unchanged, just relocated.
+
+**Verification.** Full unscoped suite: 966 passed, 1 pre-existing flake
+(`test_at_034_substituted_host_key_fails_closed_no_prompt`, a `COMMAND_TIMEOUT`
+from an `apt-get install` — confirmed unrelated: this task's diff touches only
+`tools/workspace.py`/its test file, nothing in `execution`/timeout code, and the
+test passed cleanly (22.65s) rerun in isolation immediately after). Broader
+relevant suite (`tests/workspace/ tests/test_server.py tests/test_cli.py`, rerun
+after the fix above): 367 passed, no flakes. No Docker leftovers. `ruff check`,
+`ruff format --check`, `mypy src` clean.
+
+**New test.** `tests/workspace/test_workspace_tools.py`:
+`test_rr027_open_workspace_is_directly_callable_without_a_server` — constructs
+`open_workspace`'s dependencies directly (`DockerWorkspaceManager`,
+`ExecutionService`, `JobStore`, `RepositoryRegistry`, a real `sqlite3.Connection`)
+and calls it with no `MCPServer`/`create_server`/`server.call_tool` anywhere in
+the chain — the actual property this task exists to establish. Needed
+`ensure_known_hosts_file_exists(config)` called explicitly first, a precondition
+`create_server` normally establishes before ever registering tools — a real
+finding from writing the test, not assumed: the first attempt failed with a
+genuine Docker `400` (`bind source path does not exist`), confirming the known
+mount really does require it.
+
+**Commit:** `PLACEHOLDER` (workspace.py module; further modules land as
+separate commits, each updating this checklist)
+
 ---
 
 ## Deferred
@@ -2167,13 +2236,6 @@ No Docker leftovers (no Docker-adjacent code touched).
 ### H37 — §12.1 rule 3 classification gap
 Already tracked in `docs/HARDENING_TODO.md`'s Deferred section. Confirmed not an
 access-control bypass — only a less specific error code. Fix scoped there.
-
-### R27 — Extract tool bodies from the `register()` closures
-Not scheduled. `tools/git.py`'s `register()` is 853 lines and `git_push_tool`
-alone is 306; tool bodies cannot be unit-tested without constructing a server,
-which is what forced H32's `run_setup_steps` extraction. Worth doing, but it is a
-large mechanical refactor touching every tool module and would collide with every
-task above. Revisit once Phases 0–7 are closed.
 
 ---
 
