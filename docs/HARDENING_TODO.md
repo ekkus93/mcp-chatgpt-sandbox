@@ -3337,7 +3337,7 @@ test — only existing documentation).
 sites) for whoever picks it up.
 
 ### H37 — §12.1 rule 3 classification gap when only `repositories[]` is configured ✅
-**Commit:** `PLACEHOLDER`
+**Commit:** `9c0fbd5`
 
 - [x] `config/models.py`: add `ServerConfig.authorized_git_dir_roots`, the union
       of `repository_roots` and every configured `repositories[].path`
