@@ -974,14 +974,15 @@ container_id is correctly adopted, but its state must be `RUNNING`, not
 
 ## Phase 3 — High: output and pagination
 
-### R12 — Pagination is character-safe under any content
+### R12 — Pagination is character-safe under any content ✅
 **Satisfies:** RR-016, RR-017 · **Verified by:** RAT-014, RAT-015
+**Commit:** `PLACEHOLDER`
 
-- [ ] Trim by scanning back for a UTF-8 lead byte, or re-attempt the decode past
+- [x] Trim by scanning back for a UTF-8 lead byte, or re-attempt the decode past
       each invalid byte — not by inspecting only the first `UnicodeDecodeError`
-- [ ] Reject `max_bytes < 1`
-- [ ] Clamp `next_offset` to `total_bytes` rather than echoing an out-of-range offset
-- [ ] Test with invalid bytes present, for every `max_bytes` from 1 to 64
+- [x] Reject `max_bytes < 1`
+- [x] Clamp `next_offset` to `total_bytes` rather than echoing an out-of-range offset
+- [x] Test with invalid bytes present, for every `max_bytes` from 1 to 64
 
 **Defect (both reproduced).** `_trim_incomplete_trailing_char` inspects only the
 first decode error, so an earlier invalid byte masks the truncated tail:
@@ -1003,6 +1004,52 @@ call2  next_offset=0  truncated=True     <- forever
 ```
 
 — precisely the case H24's write-up claims was eliminated.
+
+All three reproduced directly against the real function/a real repository
+before implementing anything: `_trim_incomplete_trailing_char(b'\xff\xe6\x97')`
+returned unchanged; `read_git_diff(repo, max_bytes=0)` looped `next_offset=0`
+forever across two real calls; `read_git_diff(repo, max_bytes=100,
+offset=99999)` on a diff with `total_bytes=118` echoed `next_offset=99999`
+back unclamped.
+
+**Implementation.** `_trim_incomplete_trailing_char` rewritten to scan
+backward from the end of the window (at most 4 bytes — UTF-8's own maximum
+sequence length) for the trailing character's own lead byte, via a new
+`_utf8_lead_sequence_length` helper that classifies a byte as ASCII/2-byte/
+3-byte/4-byte lead or "not a valid lead at all." This is independent of
+whatever precedes it — an earlier invalid byte no longer masks a genuinely
+truncated character later in the same window. `max_bytes < 0` became
+`max_bytes < 1`, rejecting `0` outright. `next_offset = offset + len(window)`
+became `next_offset = min(offset + len(window), total_bytes)` — an
+already-past-the-end `offset` now reports `next_offset == total_bytes`
+("you're at the end") instead of echoing the out-of-range value back
+unclamped.
+
+**Verified the tests catch the regression.** Reverted `git/diff.py` to
+`HEAD`, reran the 6 new tests: the byte-level trim test, the `max_bytes=0`
+rejection test, and the `next_offset`-clamping test all failed for the exact
+reproduced reasons; the other 3 (complete-character, lone-invalid-byte, and
+bare-continuation-bytes trim cases) passed unchanged — correct, since those
+describe behavior the fix doesn't touch. The "every `max_bytes` from 1 to
+64, invalid byte present" pagination test also passed unchanged on the
+reverted code — an honest regression-guard, not a defect-catcher: the
+existing "keep the untrimmed window" fallback already guaranteed forward
+progress and termination even with the masking bug, silently corrupting
+content rather than hanging, which is exactly why the byte-level unit test
+above (not a black-box pagination loop) is what actually catches this
+specific defect. Restored; all 26 tests in the file pass again.
+
+**Full relevant suite.** `tests/git/ tests/workspace/test_git_diff_log_tools.py`:
+193 passed (fast — host-side, minimal Docker). Full unscoped suite:
+930 passed. No Docker leftovers.
+
+**New tests.** `tests/git/test_diff.py`: four pure-function tests for
+`_trim_incomplete_trailing_char` (the invalid-byte-masking reproduction, a
+complete trailing character left untouched, a lone invalid trailing byte
+left untouched, a run of bare continuation bytes with no reachable lead byte
+left untouched), `max_bytes=0` rejection, `next_offset` clamping for an
+out-of-range offset, and the checklist's own "every `max_bytes` from 1 to
+64" pagination test against a diff containing a genuine invalid byte.
 
 ### R13 — `read_file` classifies and bounds correctly
 **Satisfies:** RR-018, RR-020 · **Verified by:** RAT-016

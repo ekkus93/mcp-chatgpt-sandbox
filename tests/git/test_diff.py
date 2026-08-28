@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from dev_workspace_mcp.errors import InvalidArgumentError
-from dev_workspace_mcp.git.diff import read_git_diff
+from dev_workspace_mcp.git.diff import _trim_incomplete_trailing_char, read_git_diff
 
 
 def _init_repo(path: Path) -> Path:
@@ -291,3 +291,101 @@ def test_pagination_terminates_even_when_max_bytes_is_smaller_than_one_character
         offset = chunk.next_offset
     else:
         pytest.fail("pagination did not terminate")
+
+
+# --- RR-016/RR-017 (`docs/REMEDIATION_SPEC.md` §12): pagination is character-
+# safe under any content, including invalid bytes ----------------------------
+
+
+def test_rr016_trim_finds_a_truncated_character_past_an_earlier_invalid_byte() -> None:
+    """The exact reproduction: `window.decode("utf-8")` fails on the
+    leading `0xff` first (an invalid byte, not a truncated sequence —
+    reason "invalid start byte", not "unexpected end of data"), which
+    used to make the old implementation give up without ever examining
+    whether the *trailing* bytes were themselves a split character. Here
+    they are: `\\xe6\\x97` is 2 of the 3 bytes of `日` (`\\xe6\\x97\\xa5`).
+    Scanning backward from the end finds and trims it regardless of what
+    precedes it."""
+    window = b"\xff\xe6\x97"
+    assert _trim_incomplete_trailing_char(window) == b"\xff"
+
+
+def test_rr016_trim_leaves_a_complete_trailing_character_untouched() -> None:
+    window = "hello 日".encode()  # ends on a complete 3-byte character
+    assert _trim_incomplete_trailing_char(window) == window
+
+
+def test_rr016_trim_leaves_a_lone_invalid_trailing_byte_untouched() -> None:
+    """Not a truncated sequence — `0xff` is never a valid UTF-8 lead byte
+    at all, so there is nothing "more" that could ever complete it;
+    left in place for the caller's own `errors="replace"` decode."""
+    window = b"hello \xff"
+    assert _trim_incomplete_trailing_char(window) == window
+
+
+def test_rr016_trim_leaves_a_run_of_bare_continuation_bytes_untouched() -> None:
+    """No valid lead byte within UTF-8's own 4-byte maximum lookback —
+    genuinely invalid, not "truncated"; nothing to trim."""
+    window = b"\x80\x80\x80\x80"
+    assert _trim_incomplete_trailing_char(window) == window
+
+
+def test_rr016_max_bytes_zero_is_rejected(tmp_path: Path) -> None:
+    """`< 1`, not `< 0` — `max_bytes=0` used to be accepted and produce a
+    zero-byte window every call, `next_offset` never advancing: reproduced
+    empirically as permanent zero progress across repeated calls."""
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "a.txt").write_text("v1\n")
+    _commit_all(repo, "v1")
+    with pytest.raises(InvalidArgumentError):
+        read_git_diff(repo, max_bytes=0)
+
+
+def test_rr017_next_offset_is_clamped_to_total_bytes_for_an_out_of_range_offset(
+    tmp_path: Path,
+) -> None:
+    """An `offset` already past `total_bytes` (a client re-requesting past
+    the true end) used to echo that same out-of-range value back as
+    `next_offset` — reproduced empirically — rather than a value that
+    actually means "the end"."""
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "a.txt").write_text("v1\n")
+    _commit_all(repo, "v1")
+    (repo / "a.txt").write_text("v2\n")
+    full = read_git_diff(repo, max_bytes=10**9)
+
+    result = read_git_diff(repo, max_bytes=100, offset=full.total_bytes + 99999)
+
+    assert result.next_offset == full.total_bytes
+    assert result.content == ""
+    assert result.truncated is False
+
+
+def test_rr016_pagination_with_an_invalid_byte_for_every_max_bytes_from_1_to_64(
+    tmp_path: Path,
+) -> None:
+    """The checklist's own ask: a diff containing a genuinely invalid
+    byte (`errors="surrogateescape"` deliberately lets it survive,
+    HR-022/H19) must still paginate correctly at every `max_bytes` from
+    1 through 64 — no exception, always forward progress, termination."""
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "a.txt").write_bytes(b"line one\n")
+    _commit_all(repo, "initial")
+    (repo / "a.txt").write_bytes(
+        b"line one\nline two \xff invalid byte then \xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e text\n"
+    )
+
+    full = read_git_diff(repo, max_bytes=10**9)
+
+    for max_bytes in range(1, 65):
+        offset = 0
+        for _ in range(full.total_bytes + 10):
+            chunk = read_git_diff(repo, max_bytes=max_bytes, offset=offset)
+            if not chunk.truncated:
+                break
+            assert chunk.next_offset > offset, (
+                f"max_bytes={max_bytes}: pagination must always make forward progress"
+            )
+            offset = chunk.next_offset
+        else:
+            pytest.fail(f"max_bytes={max_bytes}: pagination did not terminate")

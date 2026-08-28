@@ -37,6 +37,22 @@ class GitDiffResult:
     next_offset: int
 
 
+def _utf8_lead_sequence_length(lead_byte: int) -> int | None:
+    """How many bytes the UTF-8 sequence starting with `lead_byte` needs
+    in total, or `None` if `lead_byte` isn't a valid lead byte at all (a
+    continuation byte, or one of the values UTF-8 never uses as a lead:
+    0xC0, 0xC1, 0xF5-0xFF)."""
+    if lead_byte & 0x80 == 0x00:
+        return 1
+    if lead_byte & 0xE0 == 0xC0:
+        return 2
+    if lead_byte & 0xF0 == 0xE0:
+        return 3
+    if lead_byte & 0xF8 == 0xF0:
+        return 4
+    return None
+
+
 def _trim_incomplete_trailing_char(window: bytes) -> bytes:
     """`window` is an arbitrary byte slice of a UTF-8 diff — its end can
     land in the middle of a multi-byte character. Trim any incomplete
@@ -51,12 +67,28 @@ def _trim_incomplete_trailing_char(window: bytes) -> bytes:
     be handled by the caller's own lossy `errors="replace"` decode, same
     as always: this function's job is pagination correctness, not
     encoding validation.
-    """
-    try:
-        window.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        if exc.end == len(window) and exc.reason == "unexpected end of data":
-            return window[: exc.start]
+
+    RR-016 (`docs/REMEDIATION_SPEC.md` §12): scans backward from the end
+    of `window` for the trailing character's own lead byte, rather than
+    inspecting only the *first* `UnicodeDecodeError` `window.decode`
+    raises — reproduced empirically that an earlier invalid byte (e.g. a
+    lone `0xff`, which `errors="surrogateescape"` deliberately lets
+    survive into a diff, HR-022/H19) makes `decode` fail *there* first,
+    masking a genuinely truncated multi-byte character later in the same
+    window: `b'\\xff\\xe6\\x97'` (an invalid byte, then 2 of 3 bytes of
+    `日`) used to come back unchanged, splitting the character instead of
+    deferring it to the next window. Scanning back (at most 4 bytes,
+    UTF-8's own maximum sequence length) finds the trailing character's
+    lead byte directly, independent of whatever precedes it."""
+    limit = min(len(window), 4)
+    for back in range(1, limit + 1):
+        byte = window[-back]
+        if byte & 0xC0 == 0x80:
+            continue  # a continuation byte — keep scanning backward
+        seq_len = _utf8_lead_sequence_length(byte)
+        if seq_len is not None and back < seq_len:
+            return window[: len(window) - back]
+        break  # a lead byte (valid or not) — nothing earlier to trim
     return window
 
 
@@ -100,9 +132,14 @@ def read_git_diff(
         )
     if offset < 0:
         raise InvalidArgumentError("offset must be >= 0 (§17.3)", details={"offset": offset})
-    if max_bytes is not None and max_bytes < 0:
+    # RR-016 (`docs/REMEDIATION_SPEC.md` §12): `< 1`, not `< 0` — `0` used
+    # to be accepted and produce a window of zero bytes every call,
+    # `next_offset` never advancing past the caller's own `offset` —
+    # reproduced empirically as permanent zero progress across repeated
+    # calls, exactly the case H24's write-up claims was eliminated.
+    if max_bytes is not None and max_bytes < 1:
         raise InvalidArgumentError(
-            "max_bytes must be >= 0 (§17.3)", details={"max_bytes": max_bytes}
+            "max_bytes must be >= 1 (§17.3)", details={"max_bytes": max_bytes}
         )
 
     # HR-002(1): a diff-producing read must not invoke a repository's own
@@ -163,7 +200,13 @@ def read_git_diff(
         # rather than stall.
         if trimmed or not window:
             window = trimmed
-    next_offset = offset + len(window)
+    # RR-016: clamped to `total_bytes`, not `offset + len(window)`
+    # unconditionally — an `offset` already past `total_bytes` (a client
+    # re-requesting past the true end, or paginating off a diff that
+    # shrank between calls) makes `window` empty, and `offset + 0` would
+    # otherwise echo the same out-of-range value back as `next_offset`,
+    # forever, rather than a value that actually means "the end."
+    next_offset = min(offset + len(window), total_bytes)
     truncated = next_offset < total_bytes
 
     return GitDiffResult(
