@@ -976,7 +976,7 @@ container_id is correctly adopted, but its state must be `RUNNING`, not
 
 ### R12 — Pagination is character-safe under any content ✅
 **Satisfies:** RR-016, RR-017 · **Verified by:** RAT-014, RAT-015
-**Commit:** `PLACEHOLDER`
+**Commit:** `219d57f`
 
 - [x] Trim by scanning back for a UTF-8 lead byte, or re-attempt the decode past
       each invalid byte — not by inspecting only the first `UnicodeDecodeError`
