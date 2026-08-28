@@ -182,20 +182,61 @@ def _check_repository_roots_exist(config: ServerConfig) -> None:
             )
 
 
+#: §19.3: "`known_hosts_mcp` SHALL contain GitHub's published SSH host
+#: keys, pinned. The daemon SHALL NOT rely on trust-on-first-use." — H32
+#: (`docs/HARDENING_SPEC.md` §9's §26/known_hosts row): before this, the
+#: file was created *empty*, satisfying neither sentence — trust-on-
+#: first-use was avoided only by trusting *nothing*, which a fresh
+#: install could never get past (every SSH connection to GitHub failed
+#: host verification, not just lacked a credential).
+#:
+#: These three lines are GitHub's own currently-published host keys,
+#: verified two independent ways before being pinned here: a live
+#: `ssh-keyscan -t rsa,ecdsa,ed25519 github.com` against the real
+#: internet, and GitHub's own published fingerprint documentation
+#: (https://docs.github.com/en/authentication/keeping-your-account-and-
+#: data-secure/githubs-ssh-key-fingerprints) — both matching exactly.
+#: Should GitHub ever rotate these, an operator's own `known_hosts`
+#: content (below, never overwritten once the file has any content)
+#: always takes precedence over this seed.
+GITHUB_SSH_HOST_KEYS = (
+    "github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1"
+    "aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYf"
+    "NqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z"
+    "8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIE"
+    "s4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0Th"
+    "S/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=",
+    "github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQE"
+    "ezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=",
+    "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl",
+)
+
+
 def ensure_known_hosts_file_exists(config: ServerConfig) -> None:
     """§19.3: `ssh.known_hosts` gets bind-mounted read-only into every
     workspace container. Docker turns a bind mount of a *missing* host
     file into an empty *directory* at the target path instead — silently
     breaking `UserKnownHostsFile` — so a real file needs to exist before
-    the first mount, not be created lazily per workspace. An empty file is
-    the correct starting point regardless, not merely a convenient one:
-    `StrictHostKeyChecking yes` against an empty known_hosts trusts
-    nothing at all, which is the safe side of "SHALL NOT rely on
-    trust-on-first-use" until an operator pins GitHub's real host keys
-    into it."""
-    if not config.ssh.known_hosts.exists():
-        config.ssh.known_hosts.parent.mkdir(parents=True, exist_ok=True)
-        config.ssh.known_hosts.touch(mode=0o644)
+    the first mount, not be created lazily per workspace.
+
+    Seeded with `GITHUB_SSH_HOST_KEYS` whenever the file is genuinely
+    empty — whether it does not exist yet (a fresh install) or exists
+    with zero bytes (an install from before this task, when this
+    function only ever `touch`ed an empty file and never wrote to it
+    again). Both cases can only be this daemon's own doing: nothing
+    upstream of this call ever writes to `ssh.known_hosts` with content
+    and then leaves it at zero bytes on purpose. A file with *any*
+    existing content, by contrast, is never touched — it is either an
+    operator's own deliberately customized `known_hosts` (additional
+    keys, a GitHub Enterprise Server host, intentionally different
+    content) or this same seed from an earlier run, and either way
+    overwriting it silently would be the wrong call."""
+    known_hosts = config.ssh.known_hosts
+    if known_hosts.exists() and known_hosts.stat().st_size > 0:
+        return
+    known_hosts.parent.mkdir(parents=True, exist_ok=True)
+    known_hosts.write_text("\n".join(GITHUB_SSH_HOST_KEYS) + "\n")
+    known_hosts.chmod(0o644)
 
 
 def docker_available() -> bool:

@@ -108,15 +108,34 @@ def deserialize_remote_protection(raw: str | None) -> RemoteProtectionResult | N
     return RemoteProtectionResult(**json.loads(raw))
 
 
-def _query_branch_protection(
+def _query_branch_rules(
     *, api_base_url: str, token: str, owner_repo: str, branch: str
-) -> dict[str, Any] | None:
-    """`GET /repos/{owner}/{repo}/branches/{branch}/protection`. Returns
-    the parsed JSON body on `200` (protection configured), `None` on
-    `404` (GitHub's own signal for "not protected" on this endpoint —
-    not an error). Any other status, or a network failure, raises
-    `urllib.error.URLError`/`HTTPError` for the caller to degrade on."""
-    url = f"{api_base_url}/repos/{owner_repo}/branches/{branch}/protection"
+) -> list[dict[str, Any]]:
+    """`GET /repos/{owner}/{repo}/rules/branches/{branch}` — H32
+    (`docs/HARDENING_SPEC.md` §9's §18.5 row, FR-032): the *unified*
+    rules endpoint, not the classic branch-protection-only one this
+    function used to query. GitHub's own documentation states rulesets
+    and classic branch protection "work alongside each other, and all
+    applicable rules are enforced" for a branch — this endpoint reports
+    that combined, already-translated set as one array of rule objects
+    (`{"type": "deletion", ...}`, `{"type": "non_fast_forward", ...}`,
+    `{"type": "pull_request", ...}`, and 20 other documented types),
+    which is why this replaces the classic query entirely rather than
+    supplementing it: rulesets are the *only* mechanism available on a
+    GitHub Free private repository, where the classic endpoint 404s
+    unconditionally regardless of whether protection exists.
+
+    GitHub documents only `200` as a possible response for this
+    endpoint — unlike the classic endpoint's own `404` (its documented
+    "not protected" signal), a `404` here has no such documented
+    meaning and is NOT treated as one: it is left to propagate as an
+    `HTTPError`, same as any other unexpected status, so the caller
+    degrades to `unverified` ("not visible to this token") rather than
+    asserting `missing` ("confirmed absent") without evidence — exactly
+    the distinction §18.5's amendment row requires. A genuinely
+    rule-free branch is reported as `200` with an empty array, which
+    *is* real evidence of absence and is handled by the caller."""
+    url = f"{api_base_url}/repos/{owner_repo}/rules/branches/{branch}"
     request = urllib.request.Request(  # noqa: S310
         url,
         headers={
@@ -125,13 +144,8 @@ def _query_branch_protection(
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
-    try:
-        with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:  # noqa: S310
-            body = response.read()
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            return None
-        raise
+    with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:  # noqa: S310
+        body = response.read()
     return json.loads(body)  # type: ignore[no-any-return]
 
 
@@ -170,19 +184,24 @@ def verify_remote_protection(
         return _unverified(default_branch, f"could not read api_token_path: {exc}")
 
     try:
-        protection = _query_branch_protection(
+        rules = _query_branch_rules(
             api_base_url=github_config.api_base_url,
             token=token,
             owner_repo=owner_repo,
             branch=default_branch,
         )
     except urllib.error.HTTPError as exc:
+        # H32: includes a `404` — the unified rules endpoint documents
+        # no "not protected" meaning for it (see `_query_branch_rules`'s
+        # own docstring), so it degrades honestly to `unverified`
+        # ("not visible to this token") rather than asserting `missing`.
         return _unverified(default_branch, f"GitHub API returned HTTP {exc.code}")
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         return _unverified(default_branch, f"GitHub API request failed: {exc}")
 
     checked_at = datetime.now(UTC).isoformat()
-    if protection is None:
+    rule_types = {rule.get("type") for rule in rules}
+    if not rule_types:
         return RemoteProtectionResult(
             status="missing",
             default_branch=default_branch,
@@ -190,14 +209,18 @@ def verify_remote_protection(
             deletion_blocked=False,
             requires_pull_request=False,
             checked_at=checked_at,
-            reason="no branch protection or ruleset configured for the default branch",
+            # A real, confirmed answer (§18.5) — `200` with an empty
+            # array from the unified rules endpoint, not an unreachable
+            # or forbidden query being assumed empty.
+            reason="no branch protection or ruleset rules apply to the default branch",
         )
 
-    force_push_blocked = not bool(
-        (protection.get("allow_force_pushes") or {}).get("enabled", False)
-    )
-    deletion_blocked = not bool((protection.get("allow_deletions") or {}).get("enabled", False))
-    requires_pull_request = protection.get("required_pull_request_reviews") is not None
+    #: GitHub's own rule-type names for exactly these three checks
+    #: (`_query_branch_rules`'s docstring lists the full 23-type set;
+    #: these are the only three §20.4's reported shape asks about).
+    force_push_blocked = "non_fast_forward" in rule_types
+    deletion_blocked = "deletion" in rule_types
+    requires_pull_request = "pull_request" in rule_types
 
     #: `checks` (`git_policy.remote_protection_checks`) narrows which of
     #: the *configured* protections actually count toward "verified" —

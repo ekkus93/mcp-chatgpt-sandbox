@@ -117,7 +117,12 @@ def test_unverified_when_token_file_is_missing(tmp_path: Path) -> None:
 # --- real HTTP round-trips against the local fake server ---------------------------
 
 
-def test_missing_when_the_server_returns_404(tmp_path: Path, fake_github) -> None:
+def test_unverified_when_the_server_returns_404(tmp_path: Path, fake_github) -> None:
+    """H32 (`docs/HARDENING_SPEC.md` §9's §18.5 row): the unified rules
+    endpoint documents no "not protected" meaning for `404` — unlike
+    the classic endpoint this used to query, a `404` here is "not
+    visible to this token", not confirmed-absent evidence, and SHALL
+    NOT be reported as `missing`."""
     base_url, handler_cls = fake_github
     handler_cls.response_status = 404
     token_path = tmp_path / "token"
@@ -130,9 +135,30 @@ def test_missing_when_the_server_returns_404(tmp_path: Path, fake_github) -> Non
         checks=["force_push", "deletion"],
     )
 
+    assert result.status == "unverified"
+    assert "404" in result.reason
+    assert result.default_branch == "main"
+    assert handler_cls.requested_paths == ["/repos/owner/repo/rules/branches/main"]
+
+
+def test_missing_when_the_rules_array_is_genuinely_empty(tmp_path: Path, fake_github) -> None:
+    """H32: unlike a `404`, a real `200` with an empty array *is*
+    confirmed-absent evidence from the unified rules endpoint."""
+    base_url, handler_cls = fake_github
+    handler_cls.response_status = 200
+    handler_cls.response_body = []
+    token_path = tmp_path / "token"
+    token_path.write_text("ghp_faketoken\n")
+
+    result = verify_remote_protection(
+        github_config=_github_config(base_url, token_path),
+        owner_repo="owner/repo",
+        default_branch="main",
+        checks=["force_push", "deletion"],
+    )
+
     assert result.status == "missing"
     assert result.default_branch == "main"
-    assert handler_cls.requested_paths == ["/repos/owner/repo/branches/main/protection"]
 
 
 def test_verified_when_force_push_and_deletion_are_both_blocked(
@@ -140,11 +166,11 @@ def test_verified_when_force_push_and_deletion_are_both_blocked(
 ) -> None:
     base_url, handler_cls = fake_github
     handler_cls.response_status = 200
-    handler_cls.response_body = {
-        "allow_force_pushes": {"enabled": False},
-        "allow_deletions": {"enabled": False},
-        "required_pull_request_reviews": {"required_approving_review_count": 1},
-    }
+    handler_cls.response_body = [
+        {"type": "non_fast_forward"},
+        {"type": "deletion"},
+        {"type": "pull_request", "parameters": {"required_approving_review_count": 1}},
+    ]
     token_path = tmp_path / "token"
     token_path.write_text("ghp_faketoken\n")
 
@@ -166,11 +192,10 @@ def test_missing_when_force_push_is_allowed_despite_other_protections(
     tmp_path: Path, fake_github
 ) -> None:
     base_url, handler_cls = fake_github
-    handler_cls.response_body = {
-        "allow_force_pushes": {"enabled": True},  # explicitly allowed
-        "allow_deletions": {"enabled": False},
-        "required_pull_request_reviews": None,
-    }
+    handler_cls.response_body = [
+        {"type": "deletion"},
+        # no "non_fast_forward" rule -> force pushes are not blocked
+    ]
     token_path = tmp_path / "token"
     token_path.write_text("ghp_faketoken\n")
 
@@ -190,11 +215,7 @@ def test_only_configured_checks_count_toward_verified(tmp_path: Path, fake_githu
     """`git_policy.remote_protection_checks` narrows what "verified" means
     — force push is allowed here, but only `deletion` is in `checks`."""
     base_url, handler_cls = fake_github
-    handler_cls.response_body = {
-        "allow_force_pushes": {"enabled": True},
-        "allow_deletions": {"enabled": False},
-        "required_pull_request_reviews": None,
-    }
+    handler_cls.response_body = [{"type": "deletion"}]
     token_path = tmp_path / "token"
     token_path.write_text("ghp_faketoken\n")
 
@@ -241,7 +262,8 @@ def test_unverified_when_the_server_is_unreachable(tmp_path: Path) -> None:
 def test_token_read_from_file_is_sent_as_a_bearer_header(tmp_path: Path, fake_github) -> None:
     base_url, handler_cls = fake_github
     handler_cls.require_token = "exact-token-value"
-    handler_cls.response_status = 404
+    handler_cls.response_status = 200
+    handler_cls.response_body = []
     token_path = tmp_path / "token"
     token_path.write_text("exact-token-value\n")  # trailing newline, must be stripped
 
@@ -252,4 +274,4 @@ def test_token_read_from_file_is_sent_as_a_bearer_header(tmp_path: Path, fake_gi
         checks=[],
     )
 
-    assert result.status == "missing"  # reached the server, got a real (empty->404) answer
+    assert result.status == "missing"  # reached the server, got a real (confirmed-empty) answer

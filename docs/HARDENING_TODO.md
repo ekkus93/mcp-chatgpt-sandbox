@@ -2805,26 +2805,250 @@ paragraph's own literal reproduction.
 `tests/workspace/test_git_push_tool.py` — a real policy denial through
 the MCP tool layer is logged, not only audited.
 
-### H32 — Close the remaining spec gaps
+### H32 — Close the remaining spec gaps ✅
 **Satisfies:** `HARDENING_SPEC.md` §9
+**Commit:** `ee98a5c`
 
-- [ ] Report OOM through a real surface — detection exists, reporting does not
-- [ ] Query GitHub rulesets, not only branch protection (§18.5, FR-032), and
+- [x] Report OOM through a real surface — detection exists, reporting does not
+- [x] Query GitHub rulesets, not only branch protection (§18.5, FR-032), and
       distinguish "confirmed absent" from "not visible to this token"
-- [ ] Ship pinned GitHub host keys, or document operator provisioning — the box
+- [x] Ship pinned GitHub host keys, or document operator provisioning — the box
       is ticked, the file is created empty, and a fresh install cannot push
-- [ ] Make `GIT_AUTH_FAILED` reachable (it is the likeliest real push failure
+- [x] Make `GIT_AUTH_FAILED` reachable (it is the likeliest real push failure
       under deploy-key auth and currently surfaces as `COMMAND_FAILED`); same
       for `GIT_REFSPEC_NOT_ALLOWED`, `NETWORK_FAILED`, `INTERNAL`
-- [ ] Warn when `.devcontainer/devcontainer.json` is present and ignored (§30
+- [x] Warn when `.devcontainer/devcontainer.json` is present and ignored (§30
       requires reporting, not support)
-- [ ] Validate `.mcp-workspace.yml`'s `version:` — `999` is currently accepted
+- [x] Validate `.mcp-workspace.yml`'s `version:` — `999` is currently accepted
       and recorded
-- [ ] Re-run setup steps after `reset`, or document that reset discards project
+- [x] Re-run setup steps after `reset`, or document that reset discards project
       configuration; a failed step currently leaves a permanently
       half-provisioned workspace that the next open silently accepts
-- [ ] Give `reset` and `rebuild` distinct behavior or merge them in the spec
-- [ ] Restore project `environment:` and cache mounts on `reset`/`rebuild`
+- [x] Give `reset` and `rebuild` distinct behavior or merge them in the spec
+- [x] Restore project `environment:` and cache mounts on `reset`/`rebuild`
+
+Nine sub-items, one commit — each is a distinct gap `HARDENING_SPEC.md` §9's
+amendment table names (the OOM/rulesets/§14.2/§14.4/§8.4 rows were already
+read in full during H30/H31; the remaining rows land here), but none is large
+enough alone to warrant splitting the ralph-loop discipline across nine
+commits.
+
+**1. OOM reporting.** `workspace/manager.py`'s `_state_from_docker_container`
+already folded an OOM kill into the same generic `FAILED` state as any other
+crash — detection existed, but `container_state: "failed"` alone could never
+tell a client *why*. Added `WorkspaceRecord.oom_killed: bool` (a new
+`workspace` column, migration v4→v5 in `db/schema.py`, following the exact
+transaction-safety pattern HR-019 already established) and a companion
+`_oom_killed_from_docker_container` read from the same `container.attrs`
+snapshot `_state_from_docker_container` reads, at all three of that
+function's call sites. Deliberately *not* a sticky "this workspace once
+OOM'd" flag: it reflects the *current* container, reset to `False` whenever
+a Docker-API-level failure (create/start/stop/restart raising) sets `FAILED`
+for an unrelated reason, and when a container disappears entirely (`ABSENT`).
+Surfaced on `workspace_open`/`workspace_info` via a new `oom_killed` field on
+`WorkspaceInfoOutput` — contract bump.
+
+**2. GitHub rulesets.** `github_api.py`'s `_query_branch_protection` only
+ever queried `GET /repos/{owner}/{repo}/branches/{branch}/protection` — the
+*classic* branch-protection endpoint, which 404s unconditionally on GitHub
+Free private repositories regardless of whether protection exists, and the
+old code treated that 404 as "confirmed missing" without evidence (exactly
+the defect §9's §18.5 row names). Replaced it with `_query_branch_rules`,
+querying the unified `GET /repos/{owner}/{repo}/rules/branches/{branch}`
+endpoint instead — GitHub's own documentation states rulesets and classic
+branch protection "work alongside each other, and all applicable rules are
+enforced" for a branch, and this endpoint reports that combined,
+already-translated set as one array of rule objects. GitHub documents only
+`200` as a possible response for it; a `404` here has no documented "not
+protected" meaning, so it is left to propagate as an `HTTPError` and degrade
+to `unverified` ("not visible to this token") rather than asserting
+`missing`. A genuinely rule-free branch (`200` with an empty array) *is*
+real evidence and is reported as `missing`. Rule types map directly:
+`non_fast_forward` → `force_push_blocked`, `deletion` → `deletion_blocked`,
+`pull_request` → `requires_pull_request`.
+
+**3. Pinned GitHub host keys.** `config/loader.py`'s
+`ensure_known_hosts_file_exists` created an *empty* file — satisfying
+neither half of §19.3's "`known_hosts_mcp` SHALL contain GitHub's published
+SSH host keys, pinned. The daemon SHALL NOT rely on trust-on-first-use":
+trust-on-first-use was avoided only by trusting nothing at all, so a fresh
+install's first structured Git operation failed host verification before it
+ever reached the (absent) auth stage. Added `GITHUB_SSH_HOST_KEYS`, GitHub's
+current RSA/ECDSA/Ed25519 host keys, verified two independent ways before
+being pinned — a live `ssh-keyscan -t rsa,ecdsa,ed25519 github.com` against
+the real internet, byte-for-byte diffed against GitHub's own published
+fingerprint documentation, matching exactly. Seeded whenever the file is
+genuinely empty (does not exist yet, *or* exists at zero bytes — an install
+from before this task, when the old code only ever `touch`ed it); a file
+with any existing content is never touched, since that can only be an
+operator's own deliberate customization or this same seed from an earlier
+run.
+
+**4. `GIT_AUTH_FAILED`/`GIT_REFSPEC_NOT_ALLOWED`/`NETWORK_FAILED`
+reachable.** All three existed in `errors.py` but were never raised
+anywhere — every push/pull transport failure fell through to a generic
+`CommandFailedError`. New `git/transport.py` classifies the two transport-
+level failures (shared by fetch and push, since both go through the same
+underlying `ssh`/`http` client): `is_auth_failure` (`"Permission denied"`,
+`"Authentication failed"`) and `is_network_failure` (`"Could not resolve
+host"` — a substring of OpenSSH's own `"Could not resolve hostname"` too —
+`"Connection refused"`, `"Connection timed out"`). Every marker was produced
+empirically in this sandbox before being trusted: a real SSH auth rejection
+against a real, publicly reachable host (reusing the same real-network
+harness `tests/workspace/test_git_pull_tool.py`/`test_git_push_tool.py`
+already established), a real HTTPS credential rejection against a real
+GitHub repository, a real DNS failure against a `.invalid` hostname, a real
+refused connection on an unbound loopback port, and a real SSH connect
+timeout against a `192.0.2.1` (TEST-NET-1) address with a short
+`ConnectTimeout`. Wired into `tools/git.py`'s fetch-failure site
+(`git_pull_tool`) and push-failure site (`git_push_tool`), checked before
+falling through to `CommandFailedError`, mirroring the existing
+`is_non_fast_forward_failure` precedent exactly. Separately,
+`git/push.py`'s `validate_branch_name` was raising `InvalidArgumentError`
+for the exact rule §20.3 names (`GIT_REFSPEC_NOT_ALLOWED`'s own reason for
+existing) — changed to raise `GitRefspecNotAllowedError` instead, the
+error code that actually fits. `INTERNAL_ERROR`/`InternalError` remains
+unreachable, deliberately: see `errors.py`'s own comment on the class —
+wiring it up would mean a blanket `except Exception` in the tool layer,
+directly contradicting `translate_workspace_errors`'s own documented design
+("nothing from an unexpected exception reaches the client" — a real bug
+SHALL crash loudly, not get silently reshaped into a generic, actionless
+"unknown cause" error). The same shape of tension H30's three retracted
+validators found; resolved the same way — explained, not forced.
+
+**5. `devcontainer.json` warning.** New `devcontainer_json_is_ignored`
+(`project_config.py`) — a plain existence check for
+`.devcontainer/devcontainer.json`, independent of whether
+`.mcp-workspace.yml` is also present (§9's precedence ranking `.mcp-
+workspace.yml` above it does not make the second file's existence stop
+mattering). The existing `capabilities.workspace.devcontainer: False`
+server-wide flag only satisfies §30's "reported clearly" for a client that
+already knows to check it against a repository it already knows has the
+file; this is the per-repository half, surfaced as a new
+`devcontainer_ignored` field on `WorkspaceInfoOutput`
+(`workspace_open`/`workspace_info`) and audited on every `workspace_opened`
+event.
+
+**6. `.mcp-workspace.yml` `version:` validation.** `ProjectWorkspaceConfig.
+version` was a bare `int` — `999` parsed cleanly and got recorded as the
+workspace's `config_version` (§9.2's reproducibility record), exactly as
+happily as `version: 1`, the only schema this module has ever actually
+implemented. New `SUPPORTED_PROJECT_CONFIG_VERSIONS = frozenset({1})` and a
+`field_validator` rejecting anything else with a clear message naming what
+*is* supported.
+
+**7/8/9. `reset`/`rebuild`: setup re-run, distinct behavior, restored
+environment/caches.** All three live in the same `cli.py` code path and
+were fixed together. Before this task, `DockerWorkspaceManager.rebuild` and
+`.reset` were byte-for-byte identical (`§9`'s own §8.4 row: "they are one
+code path"), and `cli.py`'s `_recreated_run_kwargs` deliberately omitted
+`.mcp-workspace.yml`'s `environment:` and cache-volume mounts, reasoning
+they were "tied to state this standalone operator command has no reason to
+duplicate" — true of an `ssh.mode: agent` socket (a live process, genuinely
+not reconstructible without one) but not of `environment:` or a cache
+volume's name, both pure functions of `repository_id` and the project
+config alone (`resolve_caches`/`cache_volume_name`), the same values
+`workspace_open` itself would compute. Fixed: `_recreated_run_kwargs` now
+builds `extra_env` and cache mounts the same way `workspace_open` does, and
+returns the loaded `ProjectWorkspaceConfig` alongside `(image, run_kwargs)`.
+`rebuild` now pulls the image fresh before recreating the container (best-
+effort — a locally-built-only image, this project's own default
+`docker/default/Dockerfile` included, was never pushed anywhere, so a pull
+failure there is expected, not fatal, and falls back to the cached image
+with a warning); `reset` does not, matching its own documented "discard
+container-local state, keep everything else exactly as it was" semantics.
+Both now re-run `.mcp-workspace.yml`'s `setup` steps against the freshly
+recreated container afterward — extracted from `tools/workspace.py`'s
+`_run_setup_steps` closure into a module-level `run_setup_steps` function
+(now a thin closure wrapper there) so `cli.py` can call the identical logic
+without a second implementation. Without this, a `setup` step could never
+run again for an *already-existing* workspace id: `workspace_open`'s own
+`was_created` check only asks "did a DB row already exist," which a CLI
+`reset`/`rebuild` never changes — the container comes back genuinely fresh
+but the next `workspace_open` silently treats it as already-provisioned,
+permanently. `_run_async`, a small helper, runs the now-needed async setup
+step logic from these plain-`def` click commands correctly whether or not
+an event loop is already running (real in this task's own async test
+suite, driving `main` through `CliRunner` from inside `async def` tests;
+never true in real standalone CLI use) rather than assuming `asyncio.run`'s
+usual "no loop yet" precondition always holds.
+
+**Revert-verification:** backed up every changed source file to the
+scratchpad, reverted each to `git show HEAD:<file>` in turn, confirmed the
+corresponding new test(s) failed for the right reason, restored from
+backup. Notably: `git/push.py` reverted → `test_validate_branch_name_
+rejects_dangerous_or_invalid_names` raised `InvalidArgumentError` instead of
+`GitRefspecNotAllowedError` (wrong type, not just wrong message).
+`workspace/manager.py`/`db/schema.py` reverted together (the migration and
+the field are inseparable) → `test_at_h032_a_real_oom_kill_is_reported_
+distinctly_not_just_as_failed` failed with `AttributeError:
+'WorkspaceRecord' object has no attribute 'oom_killed'`. `git/transport.py`
+removed + `tools/git.py` reverted together → `tests/git/test_transport.py`
+failed to even import (`ModuleNotFoundError`), and the two real-network
+`..._reaches_the_real_github_auth_stage_cleanly` tests in
+`test_git_pull_tool.py`/`test_git_push_tool.py` failed on `assert
+"GIT_AUTH_FAILED" in message`, the real GitHub auth rejection falling back
+to `COMMAND_FAILED` exactly as before this task. `github_api.py` reverted
+alone → 6 of 13 tests in `tests/test_github_api.py` failed with
+`AttributeError: 'list' object has no attribute 'get'` — the old classic-
+endpoint parsing code choking on the new tests' rules-array-shaped response
+bodies, not a silent pass. `config/loader.py` reverted → `tests/config/
+test_loader.py` failed to even import (`ImportError: cannot import name
+'GITHUB_SSH_HOST_KEYS'`), the whole file's test dependency on the new
+constant. `project_config.py` reverted → `tests/test_project_config.py`
+likewise failed to import (`ImportError: cannot import name
+'devcontainer_json_is_ignored'`). `tools/workspace.py` reverted alone →
+`cli.py` failed to import (`ImportError: cannot import name
+'run_setup_steps'`). `cli.py` reverted → all four new
+`test_at_h032_*` tests in `test_cli_lifecycle.py` failed: no setup-step
+re-run, no pull-attempt warning distinguishing `rebuild` from `reset`, no
+restored `RUST_BACKTRACE`/cache-volume mount. All restored; full relevant
+suite passed again on each restore.
+
+No Docker leftovers after any run in this task.
+
+**Schema drift:** `workspace_open`/`workspace_info` gained `oom_killed` and
+`devcontainer_ignored` — `CONTRACT_VERSION` bumped `0.7.4`→`0.7.5` (patch:
+purely additive fields, no new tools; also backfilled the missing 0.7.3/
+0.7.4 history-comment entries H24/H29 never added). `remote_protection`'s
+own shape is unchanged (item 2 only changed how it's computed, not what it
+reports), so no separate bump for that. Re-exported and diffed against a
+throwaway config — exactly the expected diff (version bump plus the two new
+fields on both tools' output schemas), nothing else.
+
+**Full relevant suite:** `tests/git/` + `tests/workspace/` + `tests/config/`
++ `tests/db/` + `tests/test_github_api.py` + `tests/test_project_config.py`
++ `tests/test_cli.py` (616 passed, real Docker throughout) — clean. Full
+unscoped `tests/` background run also completed cleanly this time (no
+interruption at the usual 60-83% mark). `ruff check`, `ruff format --check`,
+`mypy src` clean across the whole tree. No Docker leftovers.
+
+**New tests:** `tests/git/test_transport.py` — marker-string coverage for
+`is_auth_failure`/`is_network_failure`, plus two tests reproducing a real
+DNS failure and a real refused connection rather than hand-typed stderr.
+`tests/workspace/test_manager.py` — a real cgroup OOM kill (16 MiB limit,
+128 MiB allocated) is reported distinctly; an ordinary non-OOM exit under
+the same `FAILED` state is not. `tests/test_github_api.py`/`tests/workspace/
+test_remote_protection.py` — a `404` from the rules endpoint is `unverified`
+(not `missing`); a genuinely empty rules array is `missing`; rule-type
+mapping for all three checks; `require_remote_protection: deny` treats a
+`404` as `unverified`/warn, not a hard failure, through the full
+`workspace_open` path. `tests/config/test_loader.py` — a fresh install gets
+the real pinned keys; an existing-but-empty file (the pre-fix state) gets
+seeded too; an existing non-empty file is untouched; a real `ssh` connection
+to real `github.com` using exactly the seeded file passes host verification.
+`tests/test_project_config.py` — `999`/`0`/`-1`/`2` all rejected;
+`devcontainer_json_is_ignored` true/false/alongside-a-configured-`.mcp-
+workspace.yml`. `tests/workspace/test_project_config_integration.py` — a
+present `devcontainer.json` is reported on both `workspace_open` and
+`workspace_info`; absent is not. `tests/workspace/test_cli_lifecycle.py` —
+`rebuild` attempts a pull (visible via its fallback warning against the
+locally-built-only test image) and `reset` does not; a `setup` step re-runs
+on `reset` (proven against a workspace whose step already ran once, not
+merely that it runs the first time); a failing post-reset setup step is a
+clear CLI error, not a crash; `RUST_BACKTRACE` and a cache-volume write both
+survive `reset`, with the volume confirmed to be the *same* one (not
+recreated).
 
 ### H33 — Documentation matches the shipped system
 **Satisfies:** HR-032

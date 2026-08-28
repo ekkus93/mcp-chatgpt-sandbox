@@ -33,7 +33,14 @@ from mcp.server import MCPServer
 #: 0.7.2 (S30): patch bump — `workspace_open`/`workspace_info` gained
 #: `image`, `image_digest`, `config_version`, `created_at` (§9.2); no new
 #: tools.
-CONTRACT_VERSION = "0.7.4"
+#: 0.7.3 (H24, `docs/HARDENING_TODO.md`): patch bump — `git_diff` gained
+#: `next_offset` (character-boundary-safe pagination); no new tools.
+#: 0.7.4 (H29): patch bump — `exec_output` gained `stored_bytes`
+#: (distinct from the uncapped `stream_total_bytes`, §15.6); no new
+#: tools.
+#: 0.7.5 (H32): patch bump — `workspace_open`/`workspace_info` gained
+#: `oom_killed` (§26) and `devcontainer_ignored` (§30); no new tools.
+CONTRACT_VERSION = "0.7.5"
 
 
 async def collect_tool_schemas(server: MCPServer) -> list[dict[str, Any]]:

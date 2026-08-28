@@ -7,7 +7,7 @@ import pytest
 import yaml
 
 from dev_workspace_mcp.errors import ContainerCreateFailedError
-from dev_workspace_mcp.project_config import load_project_config
+from dev_workspace_mcp.project_config import devcontainer_json_is_ignored, load_project_config
 
 
 def _write(repo_path: Path, data: dict, filename: str = ".mcp-workspace.yml") -> None:
@@ -91,6 +91,18 @@ def test_missing_required_version_field_is_a_validation_error(tmp_path: Path) ->
     repo_path = tmp_path / "repo"
     _write(repo_path, {"image": "alpine"})
     with pytest.raises(ContainerCreateFailedError, match="invalid project configuration"):
+        load_project_config(repo_path)
+
+
+@pytest.mark.parametrize("version", [999, 0, -1, 2])
+def test_at_h032_an_unsupported_version_is_rejected(tmp_path: Path, version: int) -> None:
+    """H32 (`docs/HARDENING_SPEC.md` §9's §10 row): `999` — or any
+    version this daemon has never implemented — used to parse cleanly
+    and get recorded as the workspace's `config_version` (§9.2's
+    reproducibility record), silently as wrong as `version: 1`."""
+    repo_path = tmp_path / "repo"
+    _write(repo_path, {"version": version})
+    with pytest.raises(ContainerCreateFailedError, match="unsupported version"):
         load_project_config(repo_path)
 
 
@@ -180,3 +192,31 @@ def test_mcp_workspace_yml_takes_precedence_over_yaml_extension(tmp_path: Path) 
     config = load_project_config(repo_path)
     assert config is not None
     assert config.image == "yml-wins"
+
+
+# --- devcontainer_json_is_ignored (§9/§30, H32) -------------------------------------
+
+
+def test_devcontainer_json_is_ignored_is_false_when_absent(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    assert devcontainer_json_is_ignored(repo_path) is False
+
+
+def test_devcontainer_json_is_ignored_is_true_when_present(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo"
+    (repo_path / ".devcontainer").mkdir(parents=True)
+    (repo_path / ".devcontainer" / "devcontainer.json").write_text("{}\n")
+    assert devcontainer_json_is_ignored(repo_path) is True
+
+
+def test_devcontainer_json_is_ignored_alongside_a_configured_mcp_workspace_yml(
+    tmp_path: Path,
+) -> None:
+    """§9's precedence list ranks `.mcp-workspace.yml` first; that does
+    not make a co-present `devcontainer.json` stop being ignored."""
+    repo_path = tmp_path / "repo"
+    _write(repo_path, {"version": 1})
+    (repo_path / ".devcontainer").mkdir(parents=True)
+    (repo_path / ".devcontainer" / "devcontainer.json").write_text("{}\n")
+    assert devcontainer_json_is_ignored(repo_path) is True

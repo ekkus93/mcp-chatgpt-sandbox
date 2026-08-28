@@ -2,10 +2,13 @@
 image provenance (§9.2) through the real `workspace_open` tool, against a
 real Docker daemon and the real S7 default image.
 
-`.devcontainer/devcontainer.json` support (§30) is not implemented — see
-`project_config.py`'s own module docstring — so there is no test for it
-here; the precedence chain this task implements has two effective
-levels: `.mcp-workspace.yml`'s `image`, then `docker.default_image`.
+`.devcontainer/devcontainer.json` *support* (§30) is still not
+implemented — see `project_config.py`'s own module docstring — so the
+precedence chain this task implements still has two effective levels:
+`.mcp-workspace.yml`'s `image`, then `docker.default_image`. H32
+(`docs/HARDENING_SPEC.md` §9's §30 row) adds the one piece that *is*
+tested here: reporting that a present `devcontainer.json` is being
+silently ignored, rather than giving no indication at all.
 """
 
 import subprocess
@@ -24,13 +27,19 @@ from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
 from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager
 
 
-def _init_repo(repo_path: Path, *, project_config: dict | None = None) -> None:
+def _init_repo(
+    repo_path: Path, *, project_config: dict | None = None, devcontainer: bool = False
+) -> None:
     repo_path.mkdir(parents=True)
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo_path, check=True)
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_path, check=True)
     subprocess.run(["git", "config", "user.name", "Test"], cwd=repo_path, check=True)
     if project_config is not None:
         (repo_path / ".mcp-workspace.yml").write_text(yaml.safe_dump(project_config))
+    if devcontainer:
+        devcontainer_dir = repo_path / ".devcontainer"
+        devcontainer_dir.mkdir()
+        (devcontainer_dir / "devcontainer.json").write_text('{"image": "mcr.microsoft.com/x"}\n')
     (repo_path / "README.md").write_text("hello\n")
     subprocess.run(["git", "add", "-A"], cwd=repo_path, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "initial"], cwd=repo_path, check=True)
@@ -346,7 +355,10 @@ async def test_image_provenance_is_recorded_and_reported(
     tmp_path: Path,
 ) -> None:
     repo_path = tmp_path / "work" / "example"
-    _init_repo(repo_path, project_config={"version": 7})
+    # H32: `version` is validated now (`test_at_h032_an_unsupported_version_is_rejected`
+    # in `tests/test_project_config.py`) — `1` is the only value this
+    # daemon accepts, not an arbitrary probe value.
+    _init_repo(repo_path, project_config={"version": 1})
     config = _configured(minimal_config, default_image_tag, repo_path)
     server = create_server(config)
 
@@ -354,12 +366,12 @@ async def test_image_provenance_is_recorded_and_reported(
     content = opened.structured_content
     assert content["image"] == default_image_tag
     assert content["image_digest"]  # a real image id, non-empty
-    assert content["config_version"] == 7
+    assert content["config_version"] == 1
     assert content["created_at"]
 
     info = await server.call_tool("workspace_info", {"workspace_id": content["workspace_id"]})
     assert info.structured_content["image_digest"] == content["image_digest"]
-    assert info.structured_content["config_version"] == 7
+    assert info.structured_content["config_version"] == 1
 
 
 # --- AT-004: persistent package install survives a reopen --------------------------
@@ -412,3 +424,41 @@ async def test_at_004_persistent_package_install_survives_stop_and_reopen(
         "exec", {"workspace_id": workspace_id, "shell": "tree --version"}
     )
     assert check.structured_content["exit_code"] == 0, check.structured_content
+
+
+# --- H32: a present devcontainer.json is reported, not silently ignored ------------
+
+
+async def test_at_h032_a_present_devcontainer_json_is_reported_as_ignored(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    repo_path = tmp_path / "work" / "example"
+    _init_repo(repo_path, devcontainer=True)
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+
+    opened = await _open(server)
+    workspace_id = opened.structured_content["workspace_id"]
+    info = await server.call_tool("workspace_info", {"workspace_id": workspace_id})
+
+    assert opened.structured_content["devcontainer_ignored"] is True
+    assert info.structured_content["devcontainer_ignored"] is True
+
+
+async def test_no_devcontainer_json_is_not_reported_as_ignored(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    repo_path = tmp_path / "work" / "example"
+    _init_repo(repo_path)
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+
+    opened = await _open(server)
+
+    assert opened.structured_content["devcontainer_ignored"] is False

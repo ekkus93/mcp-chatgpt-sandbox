@@ -132,6 +132,16 @@ MIGRATIONS: list[list[str]] = [
         "ALTER TABLE workspace ADD COLUMN image_digest TEXT",
         "ALTER TABLE workspace ADD COLUMN config_version INTEGER",
     ],
+    # --- version 4 -> 5: OOM reporting surface (§26, HARDENING_SPEC §9, H32) ----
+    [
+        # OOM *detection* already existed (`_state_from_docker_container`
+        # folds it into `state == FAILED`); this is the distinct reporting
+        # surface §26's "SHOULD detect and report" was missing — see
+        # `WorkspaceRecord.oom_killed`'s own docstring for why it is not
+        # a sticky history flag.
+        "ALTER TABLE workspace ADD COLUMN oom_killed INTEGER NOT NULL DEFAULT 0 "
+        "CHECK (oom_killed IN (0, 1))",
+    ],
 ]
 
 

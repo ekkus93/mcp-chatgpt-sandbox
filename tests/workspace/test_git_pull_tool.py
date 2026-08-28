@@ -321,7 +321,9 @@ async def test_git_pull_reaches_the_real_github_auth_stage_cleanly(
         await server.call_tool("git_pull", {"workspace_id": workspace_id})
 
     message = str(excinfo.value)
-    assert "COMMAND_FAILED" in message
+    # H32: a real auth-stage rejection now gets its own error code
+    # instead of the generic COMMAND_FAILED it used to fall through to.
+    assert "GIT_AUTH_FAILED" in message
     assert "REMOTE HOST IDENTIFICATION HAS CHANGED" not in message  # host key matched
     assert "Host key verification failed" not in message  # host verification passed
     assert "Permission denied" in message  # failed at auth, for lack of a key (S23)

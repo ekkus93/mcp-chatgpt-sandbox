@@ -147,7 +147,11 @@ async def test_at_035_warn_succeeds_with_missing_status(
     fake_github,
 ) -> None:
     base_url, handler_cls = fake_github
-    handler_cls.response_status = 404  # no protection configured
+    # H32: a real, confirmed "no rules apply" answer from the unified
+    # rules endpoint — `200` with an empty array, not a `404` (which no
+    # longer means "not protected"; see `test_at_h032_*` below).
+    handler_cls.response_status = 200
+    handler_cls.response_body = []
     token_path = tmp_path / "token"
     token_path.write_text("fake-token\n")
 
@@ -169,7 +173,46 @@ async def test_at_035_warn_succeeds_with_missing_status(
     protection = result.structured_content["remote_protection"]
     assert protection["status"] == "missing"
     assert protection["default_branch"] == "main"
-    assert handler_cls.requested_paths == ["/repos/owner/example/branches/main/protection"]
+    assert handler_cls.requested_paths == ["/repos/owner/example/rules/branches/main"]
+
+
+async def test_at_h032_a_404_from_the_rules_endpoint_is_unverified_not_missing(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+    fake_github,
+) -> None:
+    """H32 (`docs/HARDENING_SPEC.md` §9's §18.5 row): the actual defect
+    this task fixes, through the full `workspace_open` path — a `404`
+    from the unified rules endpoint (e.g. a token that cannot see this
+    repository's rules) is `unverified`, and `require_remote_protection:
+    deny` SHALL treat `unverified` as `warn` (§18.5) and still succeed —
+    it must not fail closed on evidence that was never actually
+    confirmed."""
+    base_url, handler_cls = fake_github
+    handler_cls.response_status = 404
+    token_path = tmp_path / "token"
+    token_path.write_text("fake-token\n")
+
+    config = _configured_with_resolvable_default_branch(minimal_config, default_image_tag, tmp_path)
+    config = config.model_copy(
+        update={
+            "github": config.github.model_copy(
+                update={"api_auth": "token", "api_token_path": token_path, "api_base_url": base_url}
+            ),
+            "git_policy": config.git_policy.model_copy(
+                update={"require_remote_protection": "deny"}
+            ),
+        }
+    )
+    server = create_server(config)
+
+    result = await _open(server)  # SHALL NOT raise REMOTE_PROTECTION_MISSING
+
+    protection = result.structured_content["remote_protection"]
+    assert protection["status"] == "unverified"
+    assert "404" in protection["reason"]
 
 
 async def test_at_035_deny_fails_and_provisions_no_key(
@@ -180,7 +223,10 @@ async def test_at_035_deny_fails_and_provisions_no_key(
     fake_github,
 ) -> None:
     base_url, handler_cls = fake_github
-    handler_cls.response_status = 404
+    # H32: deny only fails closed on a *confirmed* missing (§18.5) — a
+    # real `200` with an empty rules array, not a `404`.
+    handler_cls.response_status = 200
+    handler_cls.response_body = []
     token_path = tmp_path / "token"
     token_path.write_text("fake-token\n")
     key_path = tmp_path / "example.ed25519"
@@ -229,11 +275,11 @@ async def test_verified_when_the_configured_checks_are_satisfied(
 ) -> None:
     base_url, handler_cls = fake_github
     handler_cls.response_status = 200
-    handler_cls.response_body = {
-        "allow_force_pushes": {"enabled": False},
-        "allow_deletions": {"enabled": False},
-        "required_pull_request_reviews": {"required_approving_review_count": 1},
-    }
+    handler_cls.response_body = [
+        {"type": "non_fast_forward"},
+        {"type": "deletion"},
+        {"type": "pull_request", "parameters": {"required_approving_review_count": 1}},
+    ]
     token_path = tmp_path / "token"
     token_path.write_text("fake-token\n")
 
@@ -270,7 +316,8 @@ async def test_workspace_info_reports_the_cached_result_without_requerying(
     fake_github,
 ) -> None:
     base_url, handler_cls = fake_github
-    handler_cls.response_status = 404
+    handler_cls.response_status = 200
+    handler_cls.response_body = []
     token_path = tmp_path / "token"
     token_path.write_text("fake-token\n")
 

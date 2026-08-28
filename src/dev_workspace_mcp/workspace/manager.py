@@ -83,6 +83,15 @@ class WorkspaceRecord:
     state: WorkspaceState
     created_at: str
     last_used_at: str
+    #: H32 (`docs/HARDENING_SPEC.md` §9/§26 row): OOM detection already
+    #: existed (folded into `state == FAILED` by `_state_from_docker_container`
+    #: below), but had no distinct reporting surface — a `FAILED` workspace
+    #: looked identical whether it OOM'd or crashed for any other reason.
+    #: Reflects the *current* container's own Docker-reported `OOMKilled`
+    #: flag, recomputed on every reconcile — `False` again once the same
+    #: container (or a replacement) is observed running or stopped cleanly,
+    #: not a sticky "this workspace once OOM'd" history flag.
+    oom_killed: bool = False
 
 
 def _now() -> str:
@@ -197,6 +206,7 @@ class DockerWorkspaceManager:
             state=WorkspaceState(row["state"]),
             created_at=row["created_at"],
             last_used_at=row["last_used_at"],
+            oom_killed=bool(row["oom_killed"]),
         )
 
     def _load(self, workspace_id: str) -> WorkspaceRecord | None:
@@ -220,8 +230,8 @@ class DockerWorkspaceManager:
             """
             INSERT INTO workspace
                 (id, repository_id, mode, container_id, container_name, image,
-                 workspace_path, state, created_at, last_used_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 workspace_path, state, created_at, last_used_at, oom_killed)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record.id,
@@ -234,6 +244,7 @@ class DockerWorkspaceManager:
                 record.state.value,
                 record.created_at,
                 record.last_used_at,
+                int(record.oom_killed),
             ),
         )
         self._db.commit()
@@ -242,7 +253,8 @@ class DockerWorkspaceManager:
         self._db.execute(
             """
             UPDATE workspace
-            SET container_id = ?, container_name = ?, image = ?, state = ?, last_used_at = ?
+            SET container_id = ?, container_name = ?, image = ?, state = ?,
+                last_used_at = ?, oom_killed = ?
             WHERE id = ?
             """,
             (
@@ -251,6 +263,7 @@ class DockerWorkspaceManager:
                 record.image,
                 record.state.value,
                 record.last_used_at,
+                int(record.oom_killed),
                 record.id,
             ),
         )
@@ -411,6 +424,7 @@ class DockerWorkspaceManager:
                     record,
                     container_id=existing.id,
                     state=_state_from_docker_container(existing),
+                    oom_killed=_oom_killed_from_docker_container(existing),
                     last_used_at=_now(),
                 )
             )
@@ -436,7 +450,9 @@ class DockerWorkspaceManager:
                 **run_kwargs,
             )
         except DockerException as exc:
-            self._save(replace(record, state=WorkspaceState.FAILED, last_used_at=_now()))
+            self._save(
+                replace(record, state=WorkspaceState.FAILED, oom_killed=False, last_used_at=_now())
+            )
             _logger.warning(
                 "workspace %s: container create failed (image=%s): %s", record.id, image, exc
             )
@@ -470,7 +486,9 @@ class DockerWorkspaceManager:
         try:
             container.start()
         except DockerException as exc:
-            self._save(replace(record, state=WorkspaceState.FAILED, last_used_at=_now()))
+            self._save(
+                replace(record, state=WorkspaceState.FAILED, oom_killed=False, last_used_at=_now())
+            )
             _logger.warning("workspace %s: container start failed: %s", workspace_id, exc)
             raise ContainerRuntimeFailedError(
                 f"failed to start container for workspace {workspace_id!r}: {exc}"
@@ -487,7 +505,9 @@ class DockerWorkspaceManager:
         try:
             container.stop()
         except DockerException as exc:
-            self._save(replace(record, state=WorkspaceState.FAILED, last_used_at=_now()))
+            self._save(
+                replace(record, state=WorkspaceState.FAILED, oom_killed=False, last_used_at=_now())
+            )
             _logger.warning("workspace %s: container stop failed: %s", workspace_id, exc)
             raise ContainerRuntimeFailedError(
                 f"failed to stop container for workspace {workspace_id!r}: {exc}"
@@ -559,7 +579,9 @@ class DockerWorkspaceManager:
         try:
             container.restart()
         except DockerException as exc:
-            self._save(replace(record, state=WorkspaceState.FAILED, last_used_at=_now()))
+            self._save(
+                replace(record, state=WorkspaceState.FAILED, oom_killed=False, last_used_at=_now())
+            )
             raise ContainerRuntimeFailedError(
                 f"failed to restart container for workspace {workspace_id!r}: {exc}"
             ) from exc
@@ -731,13 +753,20 @@ class DockerWorkspaceManager:
             if container is None:
                 return self._save(
                     replace(
-                        record, container_id=None, state=WorkspaceState.ABSENT, last_used_at=_now()
+                        record,
+                        container_id=None,
+                        state=WorkspaceState.ABSENT,
+                        # the container itself is gone; nothing left to
+                        # report an OOM state about.
+                        oom_killed=False,
+                        last_used_at=_now(),
                     )
                 )
             return self._save(
                 replace(
                     record,
                     state=_state_from_docker_container(container),
+                    oom_killed=_oom_killed_from_docker_container(container),
                     last_used_at=_now(),
                 )
             )
@@ -749,6 +778,7 @@ class DockerWorkspaceManager:
                     record,
                     container_id=container.id,
                     state=_state_from_docker_container(container),
+                    oom_killed=_oom_killed_from_docker_container(container),
                     last_used_at=_now(),
                 )
             )
@@ -808,3 +838,12 @@ def _state_from_docker_container(container: Container) -> WorkspaceState:
     if container.status == "dead" or state.get("OOMKilled") or state.get("Error"):
         return WorkspaceState.FAILED
     return WorkspaceState.STOPPED
+
+
+def _oom_killed_from_docker_container(container: Container) -> bool:
+    """The reporting half of the same Docker-reported flag
+    `_state_from_docker_container` folds into `FAILED` above — H32
+    (`docs/HARDENING_SPEC.md` §9/§26 row). Read alongside that function
+    at every call site, from the same `container.attrs` snapshot, so
+    the two never disagree about which container's state they describe."""
+    return bool(container.attrs.get("State", {}).get("OOMKilled"))

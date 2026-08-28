@@ -48,7 +48,7 @@ from dev_workspace_mcp.github_api import (
     verify_remote_protection,
 )
 from dev_workspace_mcp.jobs.store import JobState, JobStore
-from dev_workspace_mcp.project_config import load_project_config
+from dev_workspace_mcp.project_config import devcontainer_json_is_ignored, load_project_config
 from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.schema_export import CONTRACT_VERSION
 from dev_workspace_mcp.workspace.caches import build_cache_mounts, resolve_caches
@@ -110,6 +110,16 @@ class WorkspaceInfoOutput:
     `None`/absent for a workspace that predates this task's migration."""
     config_version: int | None = None
     created_at: str | None = None
+    oom_killed: bool = False
+    """H32 (`docs/HARDENING_SPEC.md` §9/§26 row): the reporting surface
+    OOM detection was missing — `container_state: "failed"` alone does
+    not distinguish an OOM kill from any other crash. Reflects the
+    *current* container's state (`WorkspaceRecord.oom_killed`'s own
+    docstring), not a sticky history flag."""
+    devcontainer_ignored: bool = False
+    """H32 (`docs/HARDENING_SPEC.md` §9/§30 row): `True` when this
+    repository has a `.devcontainer/devcontainer.json` the daemon is
+    not reading — see `devcontainer_json_is_ignored`'s own docstring."""
 
 
 @dataclass
@@ -122,6 +132,87 @@ class ServerInfoOutput:
     running_jobs: int
     configured_repositories: int
     capabilities: dict[str, bool]
+
+
+async def run_setup_steps(
+    execution_service: ExecutionService,
+    record: WorkspaceRecord,
+    steps: list[str],
+    *,
+    container_config: ContainerConfig,
+    execution_config: ExecutionConfig,
+) -> None:
+    """§10: run `.mcp-workspace.yml`'s `setup` steps against `record`'s
+    container, in order, failing closed on the first one that fails.
+    Module-level (not a `register()` closure) so both `workspace_open`
+    (`_run_setup_steps`, its own thin wrapper below) and `cli.py`'s
+    `reset`/`rebuild` commands (H32, `docs/HARDENING_SPEC.md` §9's
+    §8.4/§10 rows — a genuinely fresh container from either command had
+    never had these steps run against it at all, until the *next*
+    `workspace_open`, which `was_created`'s own "did a DB row already
+    exist" check could never actually trigger for a *reused* workspace
+    id, leaving it permanently, silently half-provisioned) can call the
+    same logic.
+
+    Each step is a shell command, run the same way `exec`'s own `shell`
+    form is (`["bash", "-c", step]`) — `sudo` works exactly as it does
+    from `exec`, since this is the same execution service, the same
+    container user, no second path (§20.1's rationale)."""
+    assert record.container_id is not None  # implied by state == RUNNING
+    container_id = record.container_id
+    user = resolve_exec_user(container_config)
+    for step in steps:
+        # HR-022 (`docs/HARDENING_SPEC.md` §10): `docker.errors.DockerException`
+        # from either call used to escape uncaught, past
+        # `@translate_workspace_errors`, reaching the client as an
+        # unstructured crash instead of a clean workspace_open failure.
+        try:
+            exec_id = await asyncio.to_thread(
+                execution_service.start,
+                container_id,
+                ["bash", "-c", step],
+                cwd=record.workspace_path,
+                user=user,
+                env=None,
+            )
+        except docker.errors.DockerException as exc:
+            raise ContainerRuntimeFailedError(
+                f"failed to start .mcp-workspace.yml setup step: {step!r}: {exc}",
+                details={"workspace_id": record.id, "step": step},
+            ) from exc
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    execution_service.consume,
+                    exec_id,
+                    max_output_bytes=execution_config.max_output_bytes,
+                    response_tail_lines=execution_config.response_tail_lines,
+                ),
+                timeout=_SETUP_STEP_TIMEOUT_SECONDS,
+            )
+        except docker.errors.DockerException as exc:
+            raise ContainerRuntimeFailedError(
+                f"failed while running .mcp-workspace.yml setup step: {step!r}: {exc}",
+                details={"workspace_id": record.id, "step": step},
+            ) from exc
+        except TimeoutError:
+            await asyncio.to_thread(execution_service.kill, exec_id)
+            await asyncio.sleep(_SETUP_KILL_GRACE_PERIOD_SECONDS)
+            await asyncio.to_thread(execution_service.kill, exec_id, grace_period_reached=True)
+            raise CommandFailedError(
+                f".mcp-workspace.yml setup step exceeded {_SETUP_STEP_TIMEOUT_SECONDS}s: {step!r}",
+                details={"workspace_id": record.id, "step": step},
+            ) from None
+        if result.exit_code != 0:
+            raise CommandFailedError(
+                f".mcp-workspace.yml setup step failed (exit {result.exit_code}): "
+                f"{step!r}: {result.stderr_tail}",
+                details={
+                    "workspace_id": record.id,
+                    "step": step,
+                    "exit_code": result.exit_code,
+                },
+            )
 
 
 def register(
@@ -201,67 +292,20 @@ def register(
     async def _run_setup_steps(record: WorkspaceRecord, steps: list[str]) -> None:
         """§10: run once, only for a container `workspace_open` just
         created — never on a reused persistent workspace's every reopen.
-        Each step is a shell command, run the same way `exec`'s own
-        `shell` form is (`["bash", "-c", step]`) — `sudo` works exactly
-        as it does from `exec`, since this is the same execution service,
-        the same container user, no second path (§20.1's rationale)."""
+        A thin wrapper around the module-level `run_setup_steps`, which
+        `cli.py`'s `reset`/`rebuild` commands call directly too (H32,
+        `docs/HARDENING_SPEC.md` §9's §8.4/§10 rows) — those commands
+        build their own container from a genuinely fresh image outside
+        this closure's `register()` scope, so the shared logic has to
+        live at module level, not nested in here."""
         assert execution_service is not None  # implied by `_require_docker` at the call site
-        assert record.container_id is not None  # implied by state == RUNNING
-        container_id = record.container_id
-        user = resolve_exec_user(container_config)
-        for step in steps:
-            # HR-022 (`docs/HARDENING_SPEC.md` §10): `docker.errors.DockerException`
-            # from either call used to escape uncaught, past
-            # `@translate_workspace_errors`, reaching the client as an
-            # unstructured crash instead of a clean workspace_open failure.
-            try:
-                exec_id = await asyncio.to_thread(
-                    execution_service.start,
-                    container_id,
-                    ["bash", "-c", step],
-                    cwd=record.workspace_path,
-                    user=user,
-                    env=None,
-                )
-            except docker.errors.DockerException as exc:
-                raise ContainerRuntimeFailedError(
-                    f"failed to start .mcp-workspace.yml setup step: {step!r}: {exc}",
-                    details={"workspace_id": record.id, "step": step},
-                ) from exc
-            try:
-                result = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        execution_service.consume,
-                        exec_id,
-                        max_output_bytes=execution_config.max_output_bytes,
-                        response_tail_lines=execution_config.response_tail_lines,
-                    ),
-                    timeout=_SETUP_STEP_TIMEOUT_SECONDS,
-                )
-            except docker.errors.DockerException as exc:
-                raise ContainerRuntimeFailedError(
-                    f"failed while running .mcp-workspace.yml setup step: {step!r}: {exc}",
-                    details={"workspace_id": record.id, "step": step},
-                ) from exc
-            except TimeoutError:
-                await asyncio.to_thread(execution_service.kill, exec_id)
-                await asyncio.sleep(_SETUP_KILL_GRACE_PERIOD_SECONDS)
-                await asyncio.to_thread(execution_service.kill, exec_id, grace_period_reached=True)
-                raise CommandFailedError(
-                    f".mcp-workspace.yml setup step exceeded "
-                    f"{_SETUP_STEP_TIMEOUT_SECONDS}s: {step!r}",
-                    details={"workspace_id": record.id, "step": step},
-                ) from None
-            if result.exit_code != 0:
-                raise CommandFailedError(
-                    f".mcp-workspace.yml setup step failed (exit {result.exit_code}): "
-                    f"{step!r}: {result.stderr_tail}",
-                    details={
-                        "workspace_id": record.id,
-                        "step": step,
-                        "exit_code": result.exit_code,
-                    },
-                )
+        await run_setup_steps(
+            execution_service,
+            record,
+            steps,
+            container_config=container_config,
+            execution_config=execution_config,
+        )
 
     def _info(record: WorkspaceRecord) -> WorkspaceInfoOutput:
         repository = registry.get(record.repository_id)
@@ -288,6 +332,8 @@ def register(
             image_digest=image_digest,
             config_version=config_version,
             created_at=record.created_at,
+            oom_killed=record.oom_killed,
+            devcontainer_ignored=devcontainer_json_is_ignored(repository.canonical_path),
         )
 
     @server.tool(
@@ -474,6 +520,10 @@ def register(
                 "remote_protection_status": remote_protection.status,
                 "image": effective_image,
                 "setup_steps_run": was_created and bool(project_config and project_config.setup),
+                # H32 (`docs/HARDENING_SPEC.md` §9/§30 row): audited on
+                # every open, not only visible to a client that already
+                # thought to call `workspace_info` and check the field.
+                "devcontainer_ignored": devcontainer_json_is_ignored(repository.canonical_path),
             },
         )
 

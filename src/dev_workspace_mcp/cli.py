@@ -15,8 +15,9 @@ time (step 1) rather than as a separate pass.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import Any
 
@@ -27,17 +28,23 @@ from dev_workspace_mcp import __version__
 from dev_workspace_mcp.config import ConfigError, docker_available, load_config
 from dev_workspace_mcp.config.models import ServerConfig
 from dev_workspace_mcp.db import open_db
-from dev_workspace_mcp.errors import RepositoryNotAllowedError, WorkspaceNotFoundError
+from dev_workspace_mcp.errors import (
+    RepositoryNotAllowedError,
+    WorkspaceError,
+    WorkspaceNotFoundError,
+)
+from dev_workspace_mcp.execution.service import ExecutionService
 from dev_workspace_mcp.jobs.reconcile import reconcile_jobs
 from dev_workspace_mcp.jobs.store import JobStore
 from dev_workspace_mcp.logging_config import configure_logging
-from dev_workspace_mcp.project_config import load_project_config
+from dev_workspace_mcp.project_config import ProjectWorkspaceConfig, load_project_config
 from dev_workspace_mcp.repositories import RepositoryRecord, RepositoryRegistry
 from dev_workspace_mcp.schema_export import export_schemas
 from dev_workspace_mcp.server import Transport, create_server, run_server
-from dev_workspace_mcp.workspace.caches import cache_volume_name
+from dev_workspace_mcp.tools.workspace import run_setup_steps
+from dev_workspace_mcp.workspace.caches import build_cache_mounts, cache_volume_name, resolve_caches
 from dev_workspace_mcp.workspace.container_config import build_workspace_run_kwargs
-from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
+from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager, WorkspaceRecord
 from dev_workspace_mcp.workspace.mounts import build_known_hosts_mount, build_workspace_mounts
 from dev_workspace_mcp.workspace.naming import persistent_workspace_id
 from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager, running_workspace_key_paths
@@ -221,29 +228,48 @@ def _docker_client_or_exit() -> docker.DockerClient:
 
 def _recreated_run_kwargs(
     config: ServerConfig, docker_client: docker.DockerClient, repository: RepositoryRecord
-) -> tuple[str, dict[str, Any]]:
-    """§8.4's `reset`/`rebuild`: a fresh container with the working tree
-    and pinned known_hosts mount, using `.mcp-workspace.yml`'s `image` if
-    the repository has one (§9/§10, S30). Deliberately does **not**
-    reattach an `ssh.mode: agent` socket or named cache-volume mounts —
-    those are `workspace_open`'s own concern (§19.2/§11, S23/S30), tied
-    to state (a running agent, a cache volume name) this standalone
-    operator command has no reason to duplicate. An operator who needs
-    those back should follow this with a normal `workspace_open` call
-    for a workspace that does not have them yet; a workspace this
-    command just recreated does — this creates a genuinely fresh
-    container, not a reused one, the same way a first-ever
-    `workspace_open` would."""
+) -> tuple[str, dict[str, Any], ProjectWorkspaceConfig | None]:
+    """§8.4's `reset`/`rebuild`: a fresh container with the working tree,
+    pinned known_hosts mount, `.mcp-workspace.yml`'s `image` if the
+    repository has one (§9/§10, S30) — and, as of H32
+    (`docs/HARDENING_SPEC.md` §9's §11/§10 rows), its `environment:` and
+    named cache-volume mounts too. The earlier version of this function
+    deliberately left those two out, reasoning they were "tied to state
+    this standalone operator command has no reason to duplicate" — true
+    of an `ssh.mode: agent` socket (a *running process*, genuinely not
+    reconstructible without one), but not of `environment:` or a cache
+    volume's name: `resolve_caches`/`cache_volume_name` are pure
+    functions of `repository_id` and `.mcp-workspace.yml` alone, the
+    exact same values `workspace_open` itself would compute — nothing
+    to "duplicate state" from, and every reason to restore them, since
+    §8.4 says `reset` discards *container-local* state, not the
+    project's own configured environment. The ssh-agent socket remains
+    the one deliberate exclusion: an operator who needs it back still
+    follows this with a normal `workspace_open` call, which reattaches
+    it because the container this just recreated has none yet.
+
+    Returns the loaded `ProjectWorkspaceConfig` alongside the usual
+    `(image, run_kwargs)` pair so callers (`reset`/`rebuild` below) can
+    re-run its `setup` steps against the freshly recreated container
+    without loading the file a second time."""
     project_config = load_project_config(repository.canonical_path)
     image = (
         project_config.image
         if project_config is not None and project_config.image is not None
         else config.docker.default_image
     )
+    resolved_caches = resolve_caches(
+        repository_id=repository.id,
+        project_caches=project_config.caches if project_config is not None else [],
+    )
+    extra_env = dict(project_config.environment) if project_config is not None else {}
+    if resolved_caches:
+        extra_env["MCP_CACHE_PATHS"] = ":".join(c.home_relative_path for c in resolved_caches)
     run_kwargs = build_workspace_run_kwargs(
         container_config=config.container,
         docker_client=docker_client,
         ssh_config=config.ssh,
+        extra_env=extra_env,
         resources_config=config.resources,
     )
     mounts = build_workspace_mounts(
@@ -253,8 +279,60 @@ def _recreated_run_kwargs(
         authorized_roots=config.repository_roots,
     )
     mounts.append(build_known_hosts_mount(config.ssh.known_hosts))
+    mounts.extend(build_cache_mounts(resolved_caches))
     run_kwargs["mounts"] = mounts
-    return image, run_kwargs
+    return image, run_kwargs, project_config
+
+
+def _run_async(coro: Coroutine[Any, Any, None]) -> None:
+    """Runs `coro` to completion. `asyncio.run` alone refuses to nest
+    inside an already-running event loop — never true for `reset`/
+    `rebuild` in real, standalone CLI use (a plain `def` click command,
+    invoked from a process with no event loop of its own), but real
+    inside this project's own async test suite, which drives `main`
+    through `click.testing.CliRunner` from *inside* an `async def`
+    test. A dedicated thread with its own fresh loop sidesteps the
+    nesting restriction entirely rather than assuming the caller is
+    always loop-free."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(coro)
+        return
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        pool.submit(asyncio.run, coro).result()
+
+
+async def _run_setup_steps_after_recreate(
+    config: ServerConfig,
+    docker_client: docker.DockerClient,
+    record: WorkspaceRecord,
+    project_config: ProjectWorkspaceConfig | None,
+) -> None:
+    """H32 (`docs/HARDENING_SPEC.md` §9's §8.4/§10 rows): `reset` and
+    `rebuild` both hand back a genuinely fresh container — no
+    `.mcp-workspace.yml` `setup` step has ever run against it, and
+    (`run_setup_steps`'s own docstring) the next `workspace_open` for
+    this *already-existing* workspace id would never trigger them
+    either, leaving it silently, permanently half-provisioned. Run
+    here, synchronously, as part of the operator command that just
+    discarded the old environment — the same steps `workspace_open`
+    itself runs for a brand-new workspace, through the same execution
+    service (§20.1's "no second path" rationale)."""
+    if project_config is None or not project_config.setup:
+        return
+    execution_service = ExecutionService(docker_client)
+    try:
+        await run_setup_steps(
+            execution_service,
+            record,
+            project_config.setup,
+            container_config=config.container,
+            execution_config=config.execution,
+        )
+    except WorkspaceError as exc:
+        click.echo(f"error: setup step failed after recreation: {exc}", err=True)
+        sys.exit(1)
 
 
 @main.command()
@@ -262,9 +340,15 @@ def _recreated_run_kwargs(
 @_repository_option
 def reset(config_path: Path, repository_id: str) -> None:
     """§8.4 operator path (AT-005): discard container-local environment
-    state and recreate the container fresh. The host repository is a
-    bind mount `DockerWorkspaceManager.reset` never touches — it SHALL
-    remain exactly as it was."""
+    state and recreate the container fresh, from the currently-cached
+    image — no image pull (that is `rebuild`'s distinct behavior, H32
+    below). The host repository is a bind mount `DockerWorkspaceManager.
+    reset` never touches — it SHALL remain exactly as it was.
+
+    H32 (`docs/HARDENING_SPEC.md` §9's §10 row): `.mcp-workspace.yml`
+    `setup` steps run again afterward, against the fresh container —
+    without this, they would never run again for this workspace id at
+    all (`run_setup_steps`'s own docstring)."""
     config = _load_config_or_exit(config_path)
     registry = RepositoryRegistry(config)
     try:
@@ -277,10 +361,11 @@ def reset(config_path: Path, repository_id: str) -> None:
     db = open_db(config.state_db_path)
     workspace_id = persistent_workspace_id(repository.id)
     try:
-        image, run_kwargs = _recreated_run_kwargs(config, docker_client, repository)
-        DockerWorkspaceManager(docker_client, db).reset(
+        image, run_kwargs, project_config = _recreated_run_kwargs(config, docker_client, repository)
+        record = DockerWorkspaceManager(docker_client, db).reset(
             workspace_id, image=image, run_kwargs=run_kwargs
         )
+        _run_async(_run_setup_steps_after_recreate(config, docker_client, record, project_config))
     except WorkspaceNotFoundError:
         click.echo(
             f"error: no workspace open yet for repository {repository_id!r}; nothing to reset",
@@ -298,11 +383,27 @@ def reset(config_path: Path, repository_id: str) -> None:
 @_repository_option
 def rebuild(config_path: Path, repository_id: str) -> None:
     """§8.4 operator path: rebuild the container while preserving the
-    repository. Distinct semantics from `reset` per §8.4; the same
-    underlying recreation mechanism today (`DockerWorkspaceManager`'s own
-    `rebuild`/`reset` are identical as of this task — a pre-existing
-    characteristic of S6/S18's implementation, not something this task
-    changes)."""
+    repository — the host repository is a bind mount this SHALL never
+    touch, same guarantee as `reset`.
+
+    H32 (`docs/HARDENING_SPEC.md` §9's §8.4 row): distinct from `reset`,
+    not merely a second name for the same operation — the prior version
+    of this command shared `reset`'s exact behavior, which is the
+    defect that row names. `rebuild` pulls the image fresh first,
+    picking up an upstream change to a mutable tag (a plain
+    `docker.default_image: ubuntu:24.04` being updated, say) that
+    `reset` deliberately leaves alone — `reset` is "discard container-
+    local state, keep everything else exactly as it was," `rebuild` is
+    "start over from a current image too." The pull is best-effort: a
+    locally-built-only image (this project's own default `docker/
+    default/Dockerfile`, or a hand-built `.mcp-workspace.yml` `image`)
+    was never pushed anywhere, so "not found on any registry" is
+    expected there, not a reason to refuse a rebuild the operator
+    explicitly asked for — it falls back to the locally cached image
+    with a warning, never a hard failure. `.mcp-workspace.yml` `setup`
+    steps run again afterward, same as `reset` (`run_setup_steps`'s own
+    docstring) — a freshly pulled image needs them at least as much as
+    a freshly recreated container from the existing one does."""
     config = _load_config_or_exit(config_path)
     registry = RepositoryRegistry(config)
     try:
@@ -315,10 +416,27 @@ def rebuild(config_path: Path, repository_id: str) -> None:
     db = open_db(config.state_db_path)
     workspace_id = persistent_workspace_id(repository.id)
     try:
-        image, run_kwargs = _recreated_run_kwargs(config, docker_client, repository)
-        DockerWorkspaceManager(docker_client, db).rebuild(
+        image, run_kwargs, project_config = _recreated_run_kwargs(config, docker_client, repository)
+        try:
+            docker_client.images.pull(image)
+        except docker.errors.DockerException as exc:
+            # Best-effort, not fail-closed: `image` is frequently a
+            # locally-built tag (`docker/default/Dockerfile`'s own
+            # image, or a project's own `.mcp-workspace.yml` `image`
+            # built by hand) that was never pushed to any registry —
+            # "not found on any registry" is the *expected* outcome
+            # there, not a reason to refuse a rebuild the operator
+            # explicitly asked for. Proceeds with whatever image is
+            # already cached locally, same as `reset` would.
+            click.echo(
+                f"warning: could not pull image {image!r} ({exc}); "
+                "using the locally cached image instead",
+                err=True,
+            )
+        record = DockerWorkspaceManager(docker_client, db).rebuild(
             workspace_id, image=image, run_kwargs=run_kwargs
         )
+        _run_async(_run_setup_steps_after_recreate(config, docker_client, record, project_config))
     except WorkspaceNotFoundError:
         click.echo(
             f"error: no workspace open yet for repository {repository_id!r}; nothing to rebuild",
@@ -328,7 +446,10 @@ def rebuild(config_path: Path, repository_id: str) -> None:
     finally:
         db.close()
         docker_client.close()
-    click.echo(f"workspace {workspace_id!r} rebuilt: container recreated, repository untouched")
+    click.echo(
+        f"workspace {workspace_id!r} rebuilt: image pulled, container recreated, "
+        f"repository untouched"
+    )
 
 
 @main.command(name="delete")

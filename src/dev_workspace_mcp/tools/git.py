@@ -42,12 +42,14 @@ from dev_workspace_mcp.errors import (
     CommandFailedError,
     ContainerRuntimeFailedError,
     ErrorCode,
+    GitAuthFailedError,
     GitConflictError,
     GitDirtyError,
     GitHeadChangedError,
     GitNonFastForwardError,
     GitNothingToCommitError,
     InvalidArgumentError,
+    NetworkFailedError,
     PolicyDeniedError,
     WorkspaceError,
     WorkspaceNotRunningError,
@@ -83,6 +85,7 @@ from dev_workspace_mcp.git.remote import (
 )
 from dev_workspace_mcp.git.service import detect_interrupted_operation, run_git_host_side
 from dev_workspace_mcp.git.status import head_sha_matches, read_git_status
+from dev_workspace_mcp.git.transport import is_auth_failure, is_network_failure
 from dev_workspace_mcp.github_api import (
     RemoteProtectionReportOutput,
     RemoteProtectionResult,
@@ -696,6 +699,29 @@ def register(
         # submodule's own remote at all (AT-030).
         fetch_exit, fetch_stderr = await exec_git(build_fetch_argv(remote))
         if fetch_exit != 0:
+            # H32: a transport failure underneath fetch gets its own
+            # error code — `GIT_AUTH_FAILED`/`NETWORK_FAILED` — instead
+            # of always falling through to `COMMAND_FAILED`, mirroring
+            # how `is_non_fast_forward_failure` is already checked
+            # before the generic case just below.
+            if is_auth_failure(fetch_stderr):
+                raise GitAuthFailedError(
+                    f"git fetch failed authentication: {fetch_stderr}",
+                    details={
+                        "workspace_id": workspace_id,
+                        "remote": remote,
+                        "remote_repository": remote_repository,
+                    },
+                )
+            if is_network_failure(fetch_stderr):
+                raise NetworkFailedError(
+                    f"git fetch failed to reach the remote: {fetch_stderr}",
+                    details={
+                        "workspace_id": workspace_id,
+                        "remote": remote,
+                        "remote_repository": remote_repository,
+                    },
+                )
             raise CommandFailedError(
                 f"git fetch failed: {fetch_stderr}",
                 details={
@@ -1006,6 +1032,30 @@ def register(
                 raise GitNonFastForwardError(
                     f"push rejected: {target_branch!r} has diverged from "
                     f"{remote}/{target_branch}: {result.stderr_tail} (§20.5)",
+                    details={
+                        "workspace_id": workspace_id,
+                        "remote": remote,
+                        "branch": target_branch,
+                        "remote_repository": remote_repository,
+                    },
+                )
+            # H32: same transport-failure classification as the fetch
+            # step in `git_pull_tool` above — a rejected credential or
+            # an unreachable remote is `GIT_AUTH_FAILED`/
+            # `NETWORK_FAILED`, not a generic `COMMAND_FAILED`.
+            if is_auth_failure(result.stderr_tail):
+                raise GitAuthFailedError(
+                    f"git push failed authentication: {result.stderr_tail}",
+                    details={
+                        "workspace_id": workspace_id,
+                        "remote": remote,
+                        "branch": target_branch,
+                        "remote_repository": remote_repository,
+                    },
+                )
+            if is_network_failure(result.stderr_tail):
+                raise NetworkFailedError(
+                    f"git push failed to reach the remote: {result.stderr_tail}",
                     details={
                         "workspace_id": workspace_id,
                         "remote": remote,

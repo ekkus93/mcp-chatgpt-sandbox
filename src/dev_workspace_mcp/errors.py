@@ -225,6 +225,24 @@ class NetworkFailedError(WorkspaceError):
 class InternalError(WorkspaceError):
     code = ErrorCode.INTERNAL_ERROR
     default_recoverable = False  # unknown cause; do not promise a retry will help
+    # H32 (`docs/HARDENING_SPEC.md` §9): still never raised anywhere.
+    # Considered, and deliberately did NOT wire this up to a blanket
+    # `except Exception` somewhere in the tool layer to make it
+    # "reachable" — `translate_workspace_errors`'s own docstring is
+    # explicit that an exception which is not a `WorkspaceError` is
+    # meant to propagate as the SDK's own crash handling ("nothing from
+    # an unexpected exception reaches the client"), precisely so a real
+    # bug surfaces loudly (in logs, in CI, in an operator's face)
+    # instead of being silently reshaped into a generic "something went
+    # wrong, unknown cause" the client can do nothing useful with and
+    # nobody is prompted to go fix. Every OTHER §31 error code this task
+    # made reachable (`GIT_AUTH_FAILED`, `GIT_REFSPEC_NOT_ALLOWED`,
+    # `NETWORK_FAILED`) has a specific, well-understood failure it
+    # names; `INTERNAL_ERROR` by definition does not, which is exactly
+    # what makes wiring it up a regression against this codebase's own
+    # established "crash loudly on the genuinely unexpected" design,
+    # not an improvement to it — the same shape of tension H30's three
+    # retracted validators found and resolved the same way.
 
 
 # --- §31 "Secrets SHALL not be included": redaction as defense in depth ----------

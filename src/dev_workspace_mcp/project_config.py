@@ -31,6 +31,12 @@ from dev_workspace_mcp.errors import ContainerCreateFailedError
 #: extensions are accepted since real YAML tooling accepts either.
 _CANDIDATE_FILENAMES = (".mcp-workspace.yml", ".mcp-workspace.yaml")
 
+#: §10's schema, as parsed by this module today. `1` is the only value
+#: any released version of this daemon has ever implemented — H32
+#: (`docs/HARDENING_SPEC.md` §9): widen this set the day a second
+#: schema version actually exists, not before.
+SUPPORTED_PROJECT_CONFIG_VERSIONS = frozenset({1})
+
 
 class ProjectCacheEntry(BaseModel):
     """One `caches[]` entry (§11). `path` is authored `$HOME`-relative
@@ -70,6 +76,15 @@ class ProjectWorkspaceConfig(BaseModel):
 
     model_config = {"extra": "forbid"}
 
+    #: §10: "The configuration format SHALL be versioned." — H32
+    #: (`docs/HARDENING_SPEC.md` §9): a bare `int` satisfied the letter
+    #: of that sentence while accepting *any* integer, including a
+    #: `version` no version of this daemon has ever implemented (`999`
+    #: parsed and got recorded as this workspace's `config_version` — a
+    #: silent, wrong "reproducibility record", §9.2 — exactly as
+    #: happily as `version: 1`). `1` is the only schema this module
+    #: parses, so it is the only value accepted; a real future schema
+    #: change widens this, not a blanket `int`.
     version: int
     image: str | None = None
     workspace: str | None = None
@@ -83,6 +98,16 @@ class ProjectWorkspaceConfig(BaseModel):
     caches: list[ProjectCacheEntry] = Field(default_factory=list)
     github: ProjectGithubConfig | None = None
     validation: ProjectValidationConfig | None = None
+
+    @field_validator("version")
+    @classmethod
+    def _version_must_be_supported(cls, v: int) -> int:
+        if v not in SUPPORTED_PROJECT_CONFIG_VERSIONS:
+            raise ValueError(
+                f"unsupported version {v!r} (§10) — this daemon only implements "
+                f"{sorted(SUPPORTED_PROJECT_CONFIG_VERSIONS)!r}"
+            )
+        return v
 
     @field_validator("environment")
     @classmethod
@@ -150,3 +175,23 @@ def load_project_config(repo_path: Path) -> ProjectWorkspaceConfig | None:
             f"{path.name}: invalid project configuration: {exc}",
             details={"path": str(path)},
         ) from exc
+
+
+def devcontainer_json_is_ignored(repo_path: Path) -> bool:
+    """H32 (`docs/HARDENING_SPEC.md` §9's §30 row): `.devcontainer/
+    devcontainer.json` support is not implemented (this module's own
+    docstring above) — §30 requires that fact be "reported clearly,"
+    which the server-wide `capabilities.workspace.devcontainer: False`
+    flag (`server_info`) only does for a client that already knows to
+    check it against a repository it already knows has the file. This
+    is the per-repository half: `True` when *this* repository actually
+    has a `devcontainer.json` the daemon is silently not reading,
+    surfaced on `workspace_info`/`workspace_open` where an operator
+    working with this one repository will actually see it.
+
+    Checked independently of whether `.mcp-workspace.yml` is also
+    present — §9's precedence list ranks `.mcp-workspace.yml` above
+    `devcontainer.json`, but ranking is not the same as "so the second
+    file's existence no longer matters"; a project with *both* still
+    has a devcontainer.json being ignored."""
+    return (repo_path / ".devcontainer" / "devcontainer.json").is_file()

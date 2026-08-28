@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.errors import InvalidArgumentError
+from dev_workspace_mcp.errors import GitRefspecNotAllowedError
 from dev_workspace_mcp.git.push import (
     PUSH_NON_FAST_FORWARD_MARKERS,
     build_force_with_lease_arg,
@@ -51,7 +51,7 @@ def test_validate_branch_name_accepts_ordinary_names(branch: str) -> None:
     "branch", ["../etc/passwd", "-oops", "a..b", "", "a b", "HEAD", "refs/heads/main"]
 )
 def test_validate_branch_name_rejects_dangerous_or_invalid_names(branch: str) -> None:
-    with pytest.raises(InvalidArgumentError):
+    with pytest.raises(GitRefspecNotAllowedError):
         validate_branch_name(branch)
 
 

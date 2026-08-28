@@ -2,13 +2,19 @@
 invariants — ssh_key never under the host's own .ssh (§19.1), secrets never
 under a repository root or path (§53)."""
 
+import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
 
-from dev_workspace_mcp.config.loader import ConfigError, docker_available, load_config
+from dev_workspace_mcp.config.loader import (
+    GITHUB_SSH_HOST_KEYS,
+    ConfigError,
+    docker_available,
+    load_config,
+)
 
 
 def _write_config(path: Path, data: dict[str, Any]) -> Path:
@@ -318,6 +324,10 @@ def test_docker_available_never_raises() -> None:
 def test_load_config_creates_a_missing_known_hosts_file(
     tmp_path: Path, minimal_config_dict: dict[str, Any]
 ) -> None:
+    """H32 (`docs/HARDENING_SPEC.md` §9's §19.3 row): a fresh install
+    gets GitHub's real, pinned host keys — not an empty file a fresh
+    install could never actually push through (§19.3: "SHALL contain
+    GitHub's published SSH host keys, pinned")."""
     config_path = _write_config(tmp_path, minimal_config_dict)
     known_hosts = Path(minimal_config_dict["ssh"]["known_hosts"])
     assert not known_hosts.exists()
@@ -326,7 +336,9 @@ def test_load_config_creates_a_missing_known_hosts_file(
 
     assert config.ssh.known_hosts.exists()
     assert config.ssh.known_hosts.is_file()
-    assert config.ssh.known_hosts.read_text() == ""
+    content = config.ssh.known_hosts.read_text()
+    for key_line in GITHUB_SSH_HOST_KEYS:
+        assert key_line in content
 
 
 def test_load_config_leaves_an_existing_known_hosts_file_untouched(
@@ -342,6 +354,26 @@ def test_load_config_leaves_an_existing_known_hosts_file_untouched(
     assert config.ssh.known_hosts.read_text() == "github.com ssh-ed25519 AAAA...\n"
 
 
+def test_load_config_seeds_an_existing_but_empty_known_hosts_file(
+    tmp_path: Path, minimal_config_dict: dict[str, Any]
+) -> None:
+    """H32: an install from *before* this task left a zero-byte file
+    behind (the old `touch`-only behavior) — that state is this
+    daemon's own doing, never an operator's deliberate customization,
+    so it gets seeded too, not left broken forever."""
+    known_hosts = Path(minimal_config_dict["ssh"]["known_hosts"])
+    known_hosts.parent.mkdir(parents=True, exist_ok=True)
+    known_hosts.touch()
+    assert known_hosts.stat().st_size == 0
+    config_path = _write_config(tmp_path, minimal_config_dict)
+
+    config = load_config(config_path, home=tmp_path / "home")
+
+    content = config.ssh.known_hosts.read_text()
+    for key_line in GITHUB_SSH_HOST_KEYS:
+        assert key_line in content
+
+
 def test_load_config_creates_missing_known_hosts_parent_directories(
     tmp_path: Path, minimal_config_dict: dict[str, Any]
 ) -> None:
@@ -351,3 +383,45 @@ def test_load_config_creates_missing_known_hosts_parent_directories(
     config = load_config(config_path, home=tmp_path / "home")
 
     assert config.ssh.known_hosts.exists()
+
+
+def test_the_shipped_github_host_keys_pass_a_real_ssh_host_verification(
+    tmp_path: Path, minimal_config_dict: dict[str, Any]
+) -> None:
+    """H32: the constant's bytes, not just its self-consistency — a
+    real `ssh` connection to the real `github.com`, using exactly the
+    file `load_config` seeds, SHALL pass host verification (fail at the
+    auth stage, never at "Host key verification failed"). The same
+    real-network pattern `tests/workspace/test_ssh_client_config.py`'s
+    AT-034 test and `tests/workspace/test_git_pull_tool.py`'s own real-
+    auth-stage test use, here proving the *shipped* constant is
+    genuinely github.com's current key, not merely internally
+    consistent with itself."""
+    config_path = _write_config(tmp_path, minimal_config_dict)
+    config = load_config(config_path, home=tmp_path / "home")
+
+    result = subprocess.run(  # noqa: S603, S607
+        [
+            "ssh",
+            "-o",
+            f"UserKnownHostsFile={config.ssh.known_hosts}",
+            "-o",
+            "StrictHostKeyChecking=yes",
+            "-o",
+            "BatchMode=yes",
+            "git@github.com",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+    assert "REMOTE HOST IDENTIFICATION HAS CHANGED" not in result.stderr
+    assert "Host key verification failed" not in result.stderr
+    # GitHub answers an authenticated-but-keyless connection with a
+    # friendly "Hi <user>! You've successfully authenticated..." message
+    # on stdout and exit 1 — this is the real "reached the auth stage
+    # cleanly" shape the other real-GitHub tests in this suite check.
+    assert "Permission denied" in result.stderr or "successfully authenticated" in (
+        result.stdout + result.stderr
+    )

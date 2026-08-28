@@ -6,6 +6,7 @@ Every test in this file creates real containers; `conftest.py`'s
 """
 
 import sqlite3
+import time
 
 import pytest
 
@@ -374,3 +375,76 @@ def test_at_hat015_delete_of_a_workspace_with_multiple_jobs_removes_all_of_them(
 
     remaining = db.execute("SELECT COUNT(*) AS n FROM job WHERE workspace_id = ?", (record.id,))
     assert remaining.fetchone()["n"] == 0
+
+
+# --- H32: OOM reporting surface (`docs/HARDENING_SPEC.md` §9/§26 row) --------------
+
+
+def test_at_h032_a_real_oom_kill_is_reported_distinctly_not_just_as_failed(
+    manager: DockerWorkspaceManager,
+    docker_client: docker.DockerClient,
+    repository: RepositoryRecord,
+) -> None:
+    """A real cgroup OOM kill, not a simulated one: a 16 MiB memory
+    ceiling and a shell command that holds 128 MiB of genuinely
+    non-reclaimable (anonymous, not page-cache) memory in a variable —
+    verified empirically (`docker run --memory=16m ...` in isolation,
+    outside this test) to reliably trigger the kernel OOM killer within
+    a few seconds, with `docker inspect` reporting `OOMKilled: true`."""
+    oom_run_kwargs = {
+        "command": [
+            "sh",
+            "-c",
+            "a=$(head -c 134217728 /dev/zero | tr '\\0' 'a'); sleep 30",
+        ],
+        "mem_limit": "16m",
+        "memswap_limit": "16m",
+    }
+    record = manager.ensure_workspace(
+        repository=repository, image=TEST_IMAGE, run_kwargs=oom_run_kwargs
+    )
+    container_id = record.container_id
+    assert container_id is not None
+
+    # Poll for the real kernel OOM kill to land, rather than a fixed
+    # sleep — Docker's own accounting can take a moment after the kill.
+    for _ in range(30):
+        container = docker_client.containers.get(container_id)
+        if container.status != "running":
+            break
+        time.sleep(1)
+    assert container.attrs["State"]["OOMKilled"] is True  # sanity: the real kill happened
+
+    reconciled = manager.reconcile(record.id)
+
+    assert reconciled.state == WorkspaceState.FAILED
+    assert reconciled.oom_killed is True
+
+
+def test_at_h032_a_workspace_that_exited_cleanly_is_not_reported_as_oom_killed(
+    manager: DockerWorkspaceManager,
+    docker_client: docker.DockerClient,
+    repository: RepositoryRecord,
+) -> None:
+    """The false-positive guard for the test above: an ordinary,
+    non-OOM exit (well within the memory limit) SHALL NOT be reported
+    as `oom_killed`, even though it also lands in `state == FAILED`
+    via `_state_from_docker_container`'s `state.get("Error")` branch."""
+    record = manager.ensure_workspace(
+        repository=repository,
+        image=TEST_IMAGE,
+        run_kwargs={"command": ["sh", "-c", "exit 1"], "mem_limit": "64m"},
+    )
+    container_id = record.container_id
+    assert container_id is not None
+
+    for _ in range(30):
+        container = docker_client.containers.get(container_id)
+        if container.status != "running":
+            break
+        time.sleep(1)
+    assert container.attrs["State"]["OOMKilled"] is False  # sanity: not an OOM exit
+
+    reconciled = manager.reconcile(record.id)
+
+    assert reconciled.oom_killed is False

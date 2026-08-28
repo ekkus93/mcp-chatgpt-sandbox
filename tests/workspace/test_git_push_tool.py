@@ -117,7 +117,9 @@ async def test_invalid_branch_name_is_rejected(
     server = create_server(config)
     workspace_id = await _open(server)
 
-    with pytest.raises(ToolError, match="INVALID_ARGUMENT"):
+    # H32: `validate_branch_name`'s own error code, not the generic
+    # `INVALID_ARGUMENT` — this *is* §20.3's "not a valid ref name" rule.
+    with pytest.raises(ToolError, match="GIT_REFSPEC_NOT_ALLOWED"):
         await server.call_tool("git_push", {"workspace_id": workspace_id, "branch": "../evil"})
 
 
@@ -571,6 +573,9 @@ async def test_git_push_reaches_the_real_github_auth_stage_cleanly(
         await server.call_tool("git_push", {"workspace_id": workspace_id, "branch": "main"})
 
     message = str(excinfo.value)
+    # H32: a real auth-stage rejection now gets its own error code
+    # instead of the generic COMMAND_FAILED it used to fall through to.
+    assert "GIT_AUTH_FAILED" in message
     assert "REMOTE HOST IDENTIFICATION HAS CHANGED" not in message  # host key matched
     assert "Host key verification failed" not in message  # host verification passed
     assert "Permission denied" in message  # failed at auth, for lack of a key (S23)

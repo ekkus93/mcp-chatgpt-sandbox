@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.7.4",
+  "contract_version": "0.7.5",
   "tools": [
     {
       "description": "Delete a repository file or directory (\u00a713.5).",
@@ -1989,6 +1989,11 @@
             "default": null,
             "title": "Created At"
           },
+          "devcontainer_ignored": {
+            "default": false,
+            "title": "Devcontainer Ignored",
+            "type": "boolean"
+          },
           "git": {
             "$ref": "#/$defs/GitStateOutput"
           },
@@ -2019,6 +2024,11 @@
             ],
             "default": null,
             "title": "Image Digest"
+          },
+          "oom_killed": {
+            "default": false,
+            "title": "Oom Killed",
+            "type": "boolean"
           },
           "remote_protection": {
             "$ref": "#/$defs/RemoteProtectionReportOutput"
@@ -2237,6 +2247,11 @@
             "default": null,
             "title": "Created At"
           },
+          "devcontainer_ignored": {
+            "default": false,
+            "title": "Devcontainer Ignored",
+            "type": "boolean"
+          },
           "git": {
             "$ref": "#/$defs/GitStateOutput"
           },
@@ -2267,6 +2282,11 @@
             ],
             "default": null,
             "title": "Image Digest"
+          },
+          "oom_killed": {
+            "default": false,
+            "title": "Oom Killed",
+            "type": "boolean"
           },
           "remote_protection": {
             "$ref": "#/$defs/RemoteProtectionReportOutput"

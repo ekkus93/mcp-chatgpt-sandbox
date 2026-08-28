@@ -16,7 +16,7 @@ import subprocess
 from pathlib import Path
 from typing import Literal
 
-from dev_workspace_mcp.errors import InvalidArgumentError
+from dev_workspace_mcp.errors import GitRefspecNotAllowedError
 from dev_workspace_mcp.git.remote import PROTOCOL_EXT_DISABLED_ARGS
 from dev_workspace_mcp.git.service import run_git_host_side
 
@@ -33,6 +33,16 @@ def validate_branch_name(branch: str) -> None:
     """§20.3: reject a `branch` that is not a valid ref name, or that
     would place the destination outside `refs/heads/`/`refs/tags/`.
 
+    Raises `GitRefspecNotAllowedError` (`GIT_REFSPEC_NOT_ALLOWED`, §31)
+    — this *is* §20.3's own "reject a `branch` value that is not a
+    valid ref name, or that would place the destination outside
+    `refs/heads/`/`refs/tags/`" bullet, not a generic argument-shape
+    problem; `default_recoverable = True` on that error class ("correct
+    the refspec parameters and retry") matches exactly what a caller
+    should do with a rejection here. H32 (`docs/HARDENING_TODO.md`,
+    `HARDENING_SPEC.md` §9/§26 row): previously `InvalidArgumentError`,
+    which left the more specific code unreachable.
+
     Delegates the actual syntax check to Git itself
     (`check-ref-format --branch`) rather than a hand-rolled regex —
     verified empirically to reject `..`, a leading `-` (which `git push`
@@ -43,7 +53,7 @@ def validate_branch_name(branch: str) -> None:
     double up rather than cleanly "place the destination outside" the
     namespace — confusing enough on its own to refuse outright."""
     if branch.startswith("refs/"):
-        raise InvalidArgumentError(
+        raise GitRefspecNotAllowedError(
             f"branch must be a short name, not a fully-qualified ref: {branch!r}",
             details={"branch": branch},
         )
@@ -53,7 +63,7 @@ def validate_branch_name(branch: str) -> None:
         text=True,
     )
     if result.returncode != 0:
-        raise InvalidArgumentError(
+        raise GitRefspecNotAllowedError(
             f"not a valid branch name: {branch!r} ({result.stderr.strip()})",
             details={"branch": branch},
         )
