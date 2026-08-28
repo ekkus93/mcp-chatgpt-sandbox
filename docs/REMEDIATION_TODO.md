@@ -1292,7 +1292,7 @@ already-OOM'd one").
 
 ### R16 — A running job has a pid, or its absence is surfaced ✅
 **Satisfies:** RR-022
-**Commit:** `PLACEHOLDER`
+**Commit:** `2589a8b`
 
 - [x] Retry `pid_of` until the exec reports one, or record the absence explicitly
 - [x] Make `reconcile_jobs` distinguish "pid unknown" from "pid not alive"
