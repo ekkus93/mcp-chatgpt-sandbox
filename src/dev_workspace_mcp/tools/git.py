@@ -390,6 +390,19 @@ def register(
                 "git_commit requires at least one explicit path (§17.4) — there is "
                 "no separate git_add; exec('git add ...') if you need a broader stage"
             )
+        # RR-004: a non-empty *list* containing an empty-string (or otherwise
+        # root-normalizing) entry passed the check above. `:(literal)` disables
+        # glob/anchor magic for every *other* character, but an empty literal
+        # is still not "no pathspec at all" to git — reproduced empirically,
+        # `git add -- ':(literal)'` stages the entire working tree, exactly
+        # the "no separate git_add" boundary this tool exists to enforce.
+        root_normalizing = sorted({path for path in paths if posixpath.normpath(path) == "."})
+        if root_normalizing:
+            raise InvalidArgumentError(
+                "git_commit requires each path to name a real file, not the "
+                f"repository root (§17.4): {root_normalizing}",
+                details={"paths": paths, "root_normalizing": root_normalizing},
+            )
         if not message.strip():
             raise InvalidArgumentError("git_commit requires a non-empty message")
 

@@ -647,6 +647,72 @@ async def test_at_hr024_a_magic_pathspec_does_not_stage_the_whole_repository(
     assert status.structured_content["staged"] == []
 
 
+@pytest.mark.parametrize("root_path", ["", ".", "./"])
+async def test_rr004_an_empty_or_root_normalizing_path_is_rejected_before_staging(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+    root_path: str,
+) -> None:
+    """RR-004 (`docs/REMEDIATION_SPEC.md` §5): `paths=[""]` is a non-empty
+    *list*, so it passed the `if not paths:` check untouched, and reached
+    `git add -- ':(literal)'` — reproduced empirically against real git
+    2.43 that this stages the *entire* working tree, not "no such file"
+    the way a genuinely nonexistent literal path should fail. `"."` and
+    `"./"` normalize to the same repository-root pathspec."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    await server.call_tool(
+        "write_file", {"workspace_id": workspace_id, "path": "a.txt", "content": "a\n"}
+    )
+    await server.call_tool(
+        "write_file", {"workspace_id": workspace_id, "path": "b.txt", "content": "b\n"}
+    )
+
+    with pytest.raises(ToolError, match="INVALID_ARGUMENT"):
+        await server.call_tool(
+            "git_commit",
+            {"workspace_id": workspace_id, "message": "x", "paths": [root_path]},
+        )
+
+    # Nothing was staged or committed — both files are still untracked.
+    status = await server.call_tool("git_status", {"workspace_id": workspace_id})
+    assert set(status.structured_content["untracked"]) == {"a.txt", "b.txt"}
+    assert status.structured_content["staged"] == []
+
+
+async def test_rr004_a_root_normalizing_path_mixed_with_a_real_path_is_still_rejected(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """The check must inspect every entry, not just reject a lone one —
+    a caller who names one real path and one root-normalizing path should
+    not have the real path's presence mask the dangerous one."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    await server.call_tool(
+        "write_file", {"workspace_id": workspace_id, "path": "a.txt", "content": "a\n"}
+    )
+
+    with pytest.raises(ToolError, match="INVALID_ARGUMENT"):
+        await server.call_tool(
+            "git_commit",
+            {"workspace_id": workspace_id, "message": "x", "paths": ["a.txt", ""]},
+        )
+
+    status = await server.call_tool("git_status", {"workspace_id": workspace_id})
+    assert status.structured_content["staged"] == []
+
+
 async def test_at_hr024_files_committed_reports_what_git_actually_committed(
     minimal_config: ServerConfig,
     default_image_tag: str,

@@ -198,18 +198,50 @@ construction. Tracked as genuinely open, not silently dropped.
 
 ## Phase 1 — High: data loss and client-visible correctness
 
-### R3 — `git_commit` refuses a path that is not a path
+### R3 — `git_commit` refuses a path that is not a path ✅
 **Satisfies:** RR-004 · **Verified by:** RAT-005
+**Commit:** `PLACEHOLDER`
 
-- [ ] Reject an empty-string entry, and any entry normalizing to the repository
+- [x] Reject an empty-string entry, and any entry normalizing to the repository
       root (`""`, `"."`, `"./"`), with `INVALID_ARGUMENT`
-- [ ] Test each rejected form stages nothing — with `strict=False`, the default
+- [x] Test each rejected form stages nothing — with `strict=False`, the default
 
 **Defect (reproduced).** `tools/git.py:385` checks only `if not paths:` — a
 non-empty list containing an empty string passes.
 `build_add_argv([""])` → `['git', 'add', '--', ':(literal)']`, and real git 2.43
 stages the entire working tree for that pathspec. `strict` mode catches it
 incidentally (`normpath("") == "."`) but defaults to `False`.
+
+Reproduced directly against a real repository before implementing anything:
+`git add -- ':(literal)'` on a tree with one modified tracked file and one
+untracked directory staged both — `git status --short` showed `A  sub/other.txt`
+alongside `M  tracked.txt`, exactly the whole-tree stage the defect predicted.
+
+**Implementation.** `git_commit_tool` now computes, immediately after the
+existing `if not paths:` guard, the set of every path whose
+`posixpath.normpath(...)` is `"."` — that's `""`, `"."`, `"./"`, and any
+equivalent (`"a/.."`, etc.) — and raises `InvalidArgumentError` naming the
+offending entries if the set is non-empty, before `git add` ever runs. The
+check runs unconditionally (not just under `strict=True`), and inspects every
+entry in the list rather than short-circuiting on the first — a caller who
+names one real path and one root-normalizing path is still rejected, not
+silently given a partial success.
+
+**Verified the tests catch the regression.** Reverted `tools/git.py` to
+`HEAD`, reran the 4 new tests alone: all failed with `DID NOT RAISE
+ToolError` — every root-normalizing form (`""`, `"."`, `"./"`) plus the
+mixed-with-a-real-path case reached `git add` unrejected on the pre-fix
+code, matching the reproduction above. Restored the fix; all 4 pass again.
+
+**Full relevant suite.** `tests/workspace/ tests/git/`: 502 passed.
+Full unscoped suite: 886 passed. No Docker leftovers
+(`docker ps -a --filter "name=mcp-dev-"` empty before and after).
+
+**New tests.** `tests/workspace/test_git_commit_tool.py`:
+`test_rr004_an_empty_or_root_normalizing_path_is_rejected_before_staging`
+(parametrized over `""`, `"."`, `"./"`, each confirming both files stay
+untracked and nothing is staged afterward) and
+`test_rr004_a_root_normalizing_path_mixed_with_a_real_path_is_still_rejected`.
 
 ### R4 — A failed commit restores the index
 **Satisfies:** RR-005 · **Verified by:** RAT-006
