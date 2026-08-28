@@ -3587,7 +3587,7 @@ new in-container/async tests added). No Docker leftovers at any step.
 are now both fully closed; nothing further is queued.
 
 #### H36a — Truncated captures are reported, never silent ✅
-**Corrects:** H36 (this task) · **Commit:** `PLACEHOLDER`
+**Corrects:** H36 (this task) · **Commit:** `5e00986`
 
 - [x] `ExecutionService.capture` reports `stdout_truncated`/`stderr_truncated`
 - [x] `run_git_in_container` fails closed (`CommandFailedError`) on a truncated
