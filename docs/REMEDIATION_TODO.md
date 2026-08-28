@@ -827,14 +827,15 @@ the call) and `test_rr012_delete_succeeds_when_ssh_agent_termination_fails`
 provoking a genuine ssh-agent-termination failure isn't practically
 reproducible the way the volume one is).
 
-### R10 — A failed termination is never reported as success
+### R10 — A failed termination is never reported as success ✅
 **Satisfies:** RR-013, RR-015 · **Verified by:** RAT-013
+**Commit:** `PLACEHOLDER`
 
-- [ ] Propagate the `DockerException` at `execution/service.py:205-208` instead
+- [x] Propagate the `DockerException` at `execution/service.py:205-208` instead
       of returning silently
-- [ ] Bound the drain by closing the stream, not by abandoning the `wait_for` —
+- [x] Bound the drain by closing the stream, not by abandoning the `wait_for` —
       including on the `timeout_seconds is None` path
-- [ ] Test with `exec_inspect` raising, not with `os.killpg` monkeypatched
+- [x] Test with `exec_inspect` raising, not with `os.killpg` monkeypatched
 
 **Defect (reproduced structurally).** `execution/service.py:205-208`:
 
@@ -855,6 +856,53 @@ Separately: `asyncio.wait_for` cancels the awaiting future, not the `to_thread`
 worker. A stream that never EOFs holds an executor thread forever; the only thing
 that frees it (`live.stream.close()`) runs *only on termination failure*. The
 reviewing agent's own verification script hung on this until killed.
+
+Upgraded from "reproduced structurally" to reproduced end to end against a
+real Docker daemon: started a job, force-removed its *container* out from
+under the still-running exec (so a subsequent `exec_inspect` genuinely 404s
+— not a mock), then called `exec_cancel`. On the pre-fix code this returned
+`{"state": "canceled"}` — a clean, silent success — even though the process
+inside the now-gone container was never actually signaled at all.
+
+**Implementation.** `kill`'s `try/except docker.errors.DockerException:
+return` around `exec_inspect` is gone — the exception now propagates.
+`_terminate` (`async_runner.py`) widened its own `except OSError` to also
+catch `docker.errors.DockerException`, wrapping either into the same
+structured `ContainerRuntimeFailedError` it already produced for a
+`PermissionError`. For the drain-bounding half: `_terminate_and_track_failure`
+now force-closes `live.stream` in a `finally`, unconditionally — not only
+inside the `except ContainerRuntimeFailedError` branch, which is what the
+code did before. A *successful* `_terminate` only confirms the kill signal
+was delivered; it says nothing about whether the underlying Docker exec
+stream will actually reach EOF promptly afterward (a daemon/network quirk
+can still leave it blocked), and `asyncio.wait_for` elsewhere cancels only
+the *awaiting* future, never the underlying `asyncio.to_thread` worker still
+blocked on that same read — closing the stream is the only thing that
+reliably frees it. Because `_terminate_and_track_failure` is the single
+shared call site for both `_run`'s own internal timeout handling *and*
+`cancel_job`, this one change covers the `timeout_seconds is None` path too
+(`cancel_job` is the only way a `None`-timeout job's termination is ever
+attempted at all — `_run` itself never bounds that branch).
+
+**Verified the tests catch the regression.** Reverted `execution/service.py`
+and `execution/async_runner.py` to `HEAD`, reran the new test: failed with
+the exact real `docker.errors.NotFound` (404, "No such exec instance")
+surfacing all the way up through `drain_stream`'s own `exec_inspect` call
+(a related, separately-real crash site — logged via H31's existing
+`_logger.exception` catch-all rather than silently swallowed there either)
+instead of the expected `CONTAINER_RUNTIME_FAILED` from `exec_cancel`
+itself. Restored; all 31 tests across both files pass again.
+
+**Full relevant suite.** `tests/workspace/`: 335 passed. Full unscoped
+suite: 921 passed. No Docker leftovers.
+
+**New tests.** `tests/workspace/test_async_execution_tools.py`:
+`test_rr013_failed_termination_via_a_real_exec_inspect_failure` — the same
+assertions as the existing `os.killpg`-monkeypatched sibling test
+(structured error, job not marked `canceled`, a bounded reach of a terminal
+state rather than a hang), but forcing the failure at the *other* point in
+`kill` (`exec_inspect` itself, via a genuinely removed container) the
+checklist specifically asked for real, not monkeypatched, coverage of.
 
 ### R11 — `rebuild`/`reset` never adopt the container they replace
 **Satisfies:** RR-014

@@ -68,8 +68,9 @@ class LiveJob:
     stream: object
     """The open `CancellableStream` `drain_stream` is blocking on, kept
     here (not just as a local in `_run`) so `cancel_job` — a separate
-    call path — can also force-close it if termination fails (see
-    `termination_failed` below)."""
+    call path — can also force-close it once termination has been
+    attempted (RR-013 — regardless of whether it succeeded; see
+    `_terminate_and_track_failure`)."""
     started_monotonic: float = field(default_factory=time.monotonic)
     finished_monotonic: float | None = None
     cancel_requested: bool = False
@@ -195,12 +196,12 @@ class AsyncJobRunner:
                     timed_out = True
                     with contextlib.suppress(ContainerRuntimeFailedError):
                         await self._terminate_and_track_failure(live)
-                    # HR-020: bounded, not an unconditional `await drain` —
-                    # if termination itself failed, `_terminate_and_track_failure`
-                    # already force-closed the stream, so `drain_stream`'s
-                    # blocked read SHALL have already returned; this wait
-                    # is a bound against anything else unexpected, not the
-                    # primary mechanism.
+                    # HR-020/RR-013: bounded, not an unconditional `await
+                    # drain` — `_terminate_and_track_failure` already
+                    # force-closed the stream unconditionally (success or
+                    # failure), so `drain_stream`'s blocked read SHALL
+                    # have already returned; this wait is a bound against
+                    # anything else unexpected, not the primary mechanism.
                     try:
                         exit_code = await asyncio.wait_for(drain, timeout=_DRAIN_GRACE_SECONDS)
                     except TimeoutError:
@@ -267,12 +268,17 @@ class AsyncJobRunner:
         lacks permission to signal this pid/process group) — re-raised
         here as a structured `ContainerRuntimeFailedError` rather than
         left as a raw `OSError` a broad `except Exception` elsewhere
-        could quietly absorb."""
+        could quietly absorb. RR-013 (`docs/REMEDIATION_SPEC.md` §10):
+        `kill` itself no longer swallows an `exec_inspect` failure (a
+        real `docker.errors.DockerException`, e.g. the container
+        disappearing out from under a still-running exec) — caught here
+        alongside `OSError` for the same structured-error treatment,
+        rather than silently reported as a successful termination."""
         try:
             await asyncio.to_thread(self._execution.kill, exec_id)
             await asyncio.sleep(KILL_GRACE_PERIOD_SECONDS)
             await asyncio.to_thread(self._execution.kill, exec_id, grace_period_reached=True)
-        except OSError as exc:
+        except (OSError, docker.errors.DockerException) as exc:
             raise ContainerRuntimeFailedError(
                 f"failed to signal process for exec {exec_id!r}: {exc}",
                 details={"exec_id": exec_id},
@@ -283,22 +289,31 @@ class AsyncJobRunner:
         """Shared by `_run`'s own timeout handling and `cancel_job`: on a
         failed `_terminate`, marks `live.termination_failed` (read by
         `_run`'s terminal-state decision, from whichever call path
-        actually reaches it) and force-closes `live.stream`'s underlying
-        socket — `CancellableStream.close()` is explicitly documented as
-        safe to call from another thread — so the still-blocked
-        `drain_stream` call (which would otherwise wait for an EOF that
-        may never come, since the process could not actually be
-        signaled) returns promptly instead of holding its
-        `asyncio.to_thread` executor slot forever (HR-020). Re-raises the
-        original error so a caller with a client-facing response
-        (`exec_cancel`, notably) can report it as a structured failure."""
+        actually reaches it). Re-raises the original error so a caller
+        with a client-facing response (`exec_cancel`, notably) can report
+        it as a structured failure.
+
+        RR-013 (`docs/REMEDIATION_SPEC.md` §10): `live.stream`'s
+        underlying socket is force-closed in a `finally`, unconditionally
+        — not only when `_terminate` itself reports failure, which is
+        what the code did before this task. A *successful* `_terminate`
+        only confirms the signal was delivered, not that the exec's
+        stream will actually reach EOF promptly afterward (a Docker
+        daemon/network quirk can still leave it blocked); `asyncio.wait_for`
+        elsewhere cancels the *awaiting* future, never the underlying
+        `asyncio.to_thread` worker still blocked on that same read — so
+        closing the stream here, regardless of outcome, is the only thing
+        that reliably frees it rather than leaking the executor slot for
+        the rest of the process's lifetime. `CancellableStream.close()`
+        is explicitly documented as safe to call from another thread."""
         try:
             await self._terminate(live.exec_id)
         except ContainerRuntimeFailedError:
             live.termination_failed = True
+            raise
+        finally:
             with contextlib.suppress(Exception):
                 live.stream.close()  # type: ignore[attr-defined]
-            raise
 
     async def cancel_job(self, job_id: str) -> None:
         """§15.3's `exec_cancel`. Idempotent no-op for a job this process

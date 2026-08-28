@@ -11,6 +11,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 import docker
 from dev_workspace_mcp.config.models import ExecutionConfig, RepositoryConfig, ServerConfig
 from dev_workspace_mcp.server import create_server
+from dev_workspace_mcp.workspace.naming import container_name
 
 
 def _configured(
@@ -624,6 +625,47 @@ async def test_at_hat017_failed_termination_is_reported_and_not_marked_canceled(
     # blocked read return even though the process itself was never
     # actually signaled (the monkeypatch prevented that) — proving the
     # executor thread genuinely gets released rather than held forever.
+    async def reached_a_terminal_state() -> bool:
+        current = await server.call_tool("exec_status", {"job_id": job_id})
+        return bool(current.structured_content["state"] == "failed")
+
+    await _wait_until(reached_a_terminal_state, timeout=10.0)
+
+
+async def test_rr013_failed_termination_via_a_real_exec_inspect_failure(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """RR-013 (`docs/REMEDIATION_SPEC.md` §10): a different failure point
+    in `kill` than the sibling test above — `exec_inspect` itself raising
+    (here, forced the real way: the container is removed out from under
+    a still-running exec, so a subsequent `exec_inspect` genuinely 404s
+    — not `os.killpg` monkeypatched). Reproduced empirically before this
+    fix that this used to be swallowed: `exec_cancel` returned
+    `{"state": "canceled"}`, a clean success, despite the process never
+    having been signaled at all (the container it lived in was already
+    gone). Same assertions as the sibling test: a structured error, the
+    job not marked `canceled`, and a bounded reach of a terminal state
+    rather than a hang."""
+    config = _configured(minimal_config, default_image_tag, tmp_path / "work" / "example")
+    server = create_server(config)
+    workspace_id = await _open_workspace(server)
+
+    started = await server.call_tool(
+        "exec_start", {"workspace_id": workspace_id, "shell": "sleep 60"}
+    )
+    job_id = started.structured_content["job_id"]
+
+    docker_client.containers.get(container_name(workspace_id)).remove(force=True)
+
+    with pytest.raises(ToolError, match="CONTAINER_RUNTIME_FAILED"):
+        await server.call_tool("exec_cancel", {"job_id": job_id})
+
+    status = await server.call_tool("exec_status", {"job_id": job_id})
+    assert status.structured_content["state"] != "canceled"
+
     async def reached_a_terminal_state() -> bool:
         current = await server.call_tool("exec_status", {"job_id": job_id})
         return bool(current.structured_content["state"] == "failed")

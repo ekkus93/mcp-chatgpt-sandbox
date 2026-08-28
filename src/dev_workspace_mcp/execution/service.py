@@ -201,11 +201,19 @@ class ExecutionService:
         requires a failed signal be reported as a structured error, not
         silently swallowed; only `ProcessLookupError` (the process — or
         its whole group — is already gone) is treated as a benign no-op.
+
+        RR-013 (`docs/REMEDIATION_SPEC.md` §10): `exec_inspect` itself
+        failing is deliberately allowed to propagate too, for the same
+        reason — reproduced empirically that this used to swallow a real
+        `docker.errors.DockerException` (e.g. the container was removed
+        out from under a still-running exec) and return as if the signal
+        had been sent successfully. An inspect *failure* means the
+        daemon genuinely does not know whether the process is still
+        there — that is not the same thing as `ProcessLookupError`'s "we
+        checked, and it's gone," and reporting it identically is exactly
+        the silent-success HR-020 exists to close.
         """
-        try:
-            info = self._docker.api.exec_inspect(exec_id)
-        except docker.errors.DockerException:
-            return
+        info = self._docker.api.exec_inspect(exec_id)
         pid = info.get("Pid")
         if not pid or not info.get("Running", False):
             return
