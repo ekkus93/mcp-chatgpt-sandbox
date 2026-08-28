@@ -342,7 +342,7 @@ def test_h12_pushurl_redirect_to_an_allowlisted_repo_is_accepted(tmp_path: Path)
         fetch_url="https://github.com/owner/repo.git",
         push_url="https://github.com/other-owner/other-repo.git",
     )
-    identity = validate_remote_identity_for_push(
+    validated = validate_remote_identity_for_push(
         repo,
         remote="origin",
         allowed_url_schemes=["ssh", "https"],
@@ -350,7 +350,8 @@ def test_h12_pushurl_redirect_to_an_allowlisted_repo_is_accepted(tmp_path: Path)
         allowlisted_repositories=["other-owner/other-repo"],
         expected_remote_repository=None,
     )
-    assert identity == "other-owner/other-repo"
+    assert validated.repository == "other-owner/other-repo"
+    assert validated.push_url == "https://github.com/other-owner/other-repo.git"
 
 
 def test_h12_matching_pushurl_is_accepted_same_as_plain_case(tmp_path: Path) -> None:
@@ -363,7 +364,7 @@ def test_h12_matching_pushurl_is_accepted_same_as_plain_case(tmp_path: Path) -> 
         fetch_url="https://github.com/owner/repo.git",
         push_url="https://github.com/owner/repo.git",
     )
-    identity = validate_remote_identity_for_push(
+    validated = validate_remote_identity_for_push(
         repo,
         remote="origin",
         allowed_url_schemes=["ssh", "https"],
@@ -371,7 +372,8 @@ def test_h12_matching_pushurl_is_accepted_same_as_plain_case(tmp_path: Path) -> 
         allowlisted_repositories=[],
         expected_remote_repository=None,
     )
-    assert identity == "owner/repo"
+    assert validated.repository == "owner/repo"
+    assert validated.push_url == "https://github.com/owner/repo.git"
 
 
 def test_h12_no_pushurl_configured_behaves_like_plain_validate_remote_identity(
@@ -383,7 +385,7 @@ def test_h12_no_pushurl_configured_behaves_like_plain_validate_remote_identity(
     from dev_workspace_mcp.git.remote import validate_remote_identity_for_push
 
     repo = _repo_with_remote(tmp_path / "repo", "https://github.com/owner/repo.git")
-    identity = validate_remote_identity_for_push(
+    validated = validate_remote_identity_for_push(
         repo,
         remote="origin",
         allowed_url_schemes=["ssh", "https"],
@@ -391,7 +393,8 @@ def test_h12_no_pushurl_configured_behaves_like_plain_validate_remote_identity(
         allowlisted_repositories=[],
         expected_remote_repository=None,
     )
-    assert identity == "owner/repo"
+    assert validated.repository == "owner/repo"
+    assert validated.push_url == "https://github.com/owner/repo.git"
 
 
 def test_h12_expected_remote_repository_checked_against_push_destination(

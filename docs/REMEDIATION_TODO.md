@@ -104,15 +104,17 @@ tainted daemon environment (`monkeypatch.setenv`), proven against a real
 baseline subprocess call that confirms the injection mechanism itself works
 before asserting the mediated call suppresses it.
 
-### R2 — The push goes to the validated URL
+### R2 — The push goes to the validated URL ✅ (partial — see below)
 **Satisfies:** RR-002, RR-003 · **Verified by:** RAT-003, RAT-004
+**Commit:** `46905f1`
 
-- [ ] Substitute the resolved, validated URL into the push invocation instead of
-      passing the remote name (`git/push.py:109`)
-- [ ] Keep the existing host-side resolution — it is necessary, just not sufficient
+- [x] Substitute the resolved, validated URL into the push invocation instead of
+      passing the remote name (`git/push.py:109`) — **superseded, see below**
+- [x] Keep the existing host-side resolution — it is necessary, just not sufficient
 - [ ] Assert the success audit record's `remote_repository` matches the
-      destination actually contacted
+      destination actually contacted — **blocked, see below**
 - [ ] Add the missing assertions for `refspec` and `remote_protection_status`
+      — **blocked, see below**
 
 **Defect (reproduced).** Validation runs host-side with
 `GIT_CONFIG_GLOBAL=/dev/null`; the push runs in-container **by remote name**,
@@ -131,9 +133,66 @@ HR-014 offered two remedies as alternatives; only the first was taken, and it
 does not close the gap. The resulting audit record names the approved
 destination, not the one reached.
 
-**Note.** This also closes the TOCTOU where a concurrent `exec` rewrites
-`.git/config` between validation and invocation — the resolved *value* crosses
-the boundary rather than a name re-resolved on the far side (RR-000).
+**The originally-planned fix (URL substitution alone) does not work —
+discovered empirically while implementing, not assumed.** `RR-002`'s own
+"Note" claimed passing the resolved URL instead of the remote name closes the
+TOCTOU because "the resolved value crosses the boundary rather than a name
+re-resolved on the far side." Verified directly against git 2.43.0 before
+trusting it: `url.<base>.pushInsteadOf` rewrites a *literal URL argument*
+exactly as readily as a named remote —
+
+```
+git -c "url.<real>.pushInsteadOf=" push "<real-url>" ...   -> still redirected to evil.git
+```
+
+— the `-c` override doesn't neutralize it either: `pushInsteadOf` is a
+multi-valued, prefix-matching key (every configured occurrence is checked
+against the destination, not "the last one wins" the way a scalar key like
+`filter.x.clean` is), so adding an empty override via `-c` just adds another
+entry alongside the real one rather than replacing it. There is no git flag or
+config override that disables `insteadOf` rewriting for one invocation. This
+supersedes RR-002's own text, which is corrected by this task's R26 amendment.
+
+**The actual fix: compare, don't just substitute.** `git remote get-url --push
+<name>` is pure local configuration resolution — verified empirically to
+return instantly even against an unresolvable hostname, no DNS lookup, no
+connection. Run *in-container*, as the container user, immediately before the
+real push, it tells the daemon exactly what the container's own git would
+actually use — including any `pushInsteadOf`/`pushurl` redirect written to
+`.git/config` or `$HOME/.gitconfig` through `exec`. Compared against the
+host-side-validated identity (by normalized `owner/repo`, not raw string — see
+below) and the push is refused, before `git push` itself ever runs, on any
+disagreement. `validate_remote_identity_for_push` now returns a
+`ValidatedPushRemote(repository, push_url)` instead of a bare `str`, so the
+caller has the exact validated identity to compare against.
+
+**A real false positive found and fixed before trusting the check.** The
+first version compared raw URL strings and failed
+`test_git_push_reaches_the_real_github_auth_stage_cleanly` — a *legitimate*
+push, no attack involved. `entrypoint.sh:48` provisions a trusted, root-owned,
+system-scope `url."git@github.com:".insteadOf "https://github.com/"` (S24) so
+an HTTPS-authored origin pushes over the container's actual SSH key. The
+host-side resolution deliberately blanks `GIT_CONFIG_SYSTEM` too (the host's
+own `/etc/gitconfig` has nothing to do with this container), so it never sees
+this rewrite, while the in-container resolution correctly applies it — a real
+difference, not an attack. Comparing by **normalized identity**
+(`normalize_to_owner_repo`) instead of raw string fixes this: `https://
+github.com/owner/repo.git` and `git@github.com:owner/repo.git` normalize to
+the same `owner/repo` and are accepted, while a redirect to an unrecognized
+host or a different repository normalizes to a different value (or `None`)
+and is rejected. The actual push now uses the in-container-resolved URL
+(freshest possible value, confirmed a moment earlier to match), not the
+host-side one.
+
+**Blocked, same reason as AT-010/AT-027/AT-028's second halves.** The last two
+checklist items need a *successful* structured `git_push` to inspect its
+success-path audit record, and the structured tool restricts remotes to
+`github.com` forms only (§20.2) — a genuine end-to-end success needs a real,
+provisioned GitHub deploy key, which D3 deferred (manual provisioning, none
+registered in this sandbox). Not faked with a mock: this codebase's entire
+suite is real-Docker/real-git throughout (3 of 66 test files use any mock at
+all), and a mocked "success" would prove nothing about the actual metadata
+construction. Tracked as genuinely open, not silently dropped.
 
 ---
 

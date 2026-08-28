@@ -48,6 +48,7 @@ from dev_workspace_mcp.errors import (
     GitHeadChangedError,
     GitNonFastForwardError,
     GitNothingToCommitError,
+    GitRemoteNotAllowedError,
     InvalidArgumentError,
     NetworkFailedError,
     PolicyDeniedError,
@@ -80,6 +81,8 @@ from dev_workspace_mcp.git.push import (
     validate_branch_name,
 )
 from dev_workspace_mcp.git.remote import (
+    build_get_push_url_argv,
+    normalize_to_owner_repo,
     validate_remote_identity,
     validate_remote_identity_for_push,
 )
@@ -988,7 +991,7 @@ def register(
         # the plain fetch URL `validate_remote_identity` alone checks
         # (`remote.<name>.pushurl`/`url.<base>.pushInsteadOf`).
         repository_record = registry.get(record.repository_id)
-        remote_repository = validate_remote_identity_for_push(
+        validated_remote = validate_remote_identity_for_push(
             repo_path,
             remote=remote,
             allowed_url_schemes=git_policy_config.allowed_url_schemes,
@@ -996,6 +999,7 @@ def register(
             allowlisted_repositories=github_config.repositories,
             expected_remote_repository=expected_remote_repository,
         )
+        remote_repository = validated_remote.repository
 
         refspec = build_refspec(
             target_branch,
@@ -1008,11 +1012,76 @@ def register(
             if force_with_lease
             else None
         )
-        argv = build_push_argv(remote, refspec, force_with_lease_arg=force_with_lease_arg)
+        user = resolve_exec_user(container_config)
+
+        # RR-002 (`docs/REMEDIATION_SPEC.md` §5): `validate_remote_identity_for_push`
+        # above only establishes what the *host*, reading `.git/config`
+        # with a clean environment, resolves the push destination to —
+        # it says nothing about what the *container's own* `git` would
+        # actually use, and `url.<base>.pushInsteadOf` rewrites a literal
+        # URL argument exactly as readily as a named remote (verified
+        # empirically), so simply pushing to the validated URL instead of
+        # the remote name does not by itself close the gap. This
+        # re-resolves the push URL *in-container*, as the container user
+        # — pure local configuration resolution, no network contact
+        # (verified empirically: instant, even against an unresolvable
+        # hostname) — and refuses before ever invoking `git push` if the
+        # container's own view disagrees with what was already approved.
+        #
+        # Compared by *normalized identity*, not raw string: S24's own
+        # `entrypoint.sh` provisions a trusted, root-owned, system-scope
+        # `url."git@github.com:".insteadOf "https://github.com/"` so an
+        # HTTPS-authored origin pushes over the container's actual SSH
+        # key — a real, benign difference between the host's clean-env
+        # resolution (which deliberately blanks `GIT_CONFIG_SYSTEM` too,
+        # since the *host's own* `/etc/gitconfig` has nothing to do with
+        # this container) and the container's. Raw string equality
+        # treated that as a mismatch; comparing `owner/repo` identity
+        # accepts the legitimate rewrite while still catching a redirect
+        # to an unauthorized host or repository, since only a recognized
+        # GitHub URL form normalizes to a non-`None` identity at all.
+        check_exec_id = await asyncio.to_thread(
+            execution_service.start,
+            container_id,
+            build_get_push_url_argv(remote),
+            cwd=record.workspace_path,
+            user=user,
+            env=None,
+        )
+        check_result = await asyncio.to_thread(
+            execution_service.consume,
+            check_exec_id,
+            max_output_bytes=execution_config.max_output_bytes,
+            response_tail_lines=execution_config.response_tail_lines,
+        )
+        in_container_push_url = check_result.stdout_tail.strip()
+        in_container_repository = (
+            normalize_to_owner_repo(in_container_push_url) if check_result.exit_code == 0 else None
+        )
+        if in_container_repository != validated_remote.repository:
+            raise GitRemoteNotAllowedError(
+                f"remote {remote!r} resolves to a different push destination "
+                "inside the container than the daemon validated host-side "
+                "(§20.2/HR-014) — refusing rather than pushing to an "
+                "unconfirmed destination",
+                details={
+                    "workspace_id": workspace_id,
+                    "remote": remote,
+                    "validated_repository": validated_remote.repository,
+                    "in_container_push_url": in_container_push_url,
+                },
+            )
+
+        # Pushes to the URL the container's *own* git just resolved,
+        # not the host-validated string — freshest possible value,
+        # computed immediately before this call, and already confirmed
+        # above to resolve to the authorized identity.
+        argv = build_push_argv(
+            in_container_push_url, refspec, force_with_lease_arg=force_with_lease_arg
+        )
         if no_verify:
             argv.insert(argv.index("push") + 1, "--no-verify")
 
-        user = resolve_exec_user(container_config)
         exec_id = await asyncio.to_thread(
             execution_service.start,
             container_id,

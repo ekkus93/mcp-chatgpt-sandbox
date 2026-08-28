@@ -19,6 +19,7 @@ one to reach a real `git` invocation.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -63,6 +64,22 @@ def resolve_remote_url(repo_path: Path, remote: str) -> str:
             details={"remote": remote},
         )
     return result.stdout.strip()
+
+
+def build_get_push_url_argv(remote: str) -> list[str]:
+    """RR-002 (`docs/REMEDIATION_SPEC.md` §5): the in-container
+    counterpart of `resolve_remote_push_url` below — same command, run by
+    `tools/git.py`'s `git_push_tool` through the execution service, as
+    the container user, immediately before the real push. `git remote
+    get-url --push` is pure local configuration resolution: verified
+    empirically that it returns instantly against an unresolvable
+    hostname, with no DNS lookup and no network connection attempted —
+    so comparing its result against the host-side-validated URL detects
+    a container-side redirect (`url.<base>.pushInsteadOf`,
+    `remote.<name>.pushurl` set in `.git/config` or `$HOME/.gitconfig`,
+    either container-writable) *before* the daemon ever contacts
+    anything, not merely before it transmits objects."""
+    return ["git", *PROTOCOL_EXT_DISABLED_ARGS, "remote", "get-url", "--push", remote]
 
 
 def resolve_remote_push_url(repo_path: Path, remote: str) -> str:
@@ -211,6 +228,29 @@ def validate_remote_identity(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class ValidatedPushRemote:
+    """The result of a validated push-destination resolution: the
+    normalized `owner/repo` identity §20.7's audit record reports, and
+    the exact push URL string that was actually checked against it.
+
+    RR-002 (`docs/REMEDIATION_SPEC.md` §5): `push_url` is what a caller
+    SHALL compare against a fresh in-container resolution
+    (`build_get_push_url_argv`) before pushing — resolving the URL
+    host-side is necessary but not sufficient on its own, since
+    `url.<base>.pushInsteadOf` rewrites a literal URL argument exactly as
+    readily as a named remote (verified empirically against git 2.43.0:
+    passing the resolved URL directly to `git push` as a positional
+    argument, from an environment with a matching `pushInsteadOf` rule,
+    still redirects). The only way to know the container's own
+    configuration agrees with what was validated is to ask the
+    container's own `git`, immediately before pushing, and refuse on any
+    disagreement."""
+
+    repository: str
+    push_url: str
+
+
 def validate_remote_identity_for_push(
     repo_path: Path,
     *,
@@ -219,7 +259,7 @@ def validate_remote_identity_for_push(
     configured_github: str,
     allowlisted_repositories: list[str],
     expected_remote_repository: str | None,
-) -> str:
+) -> ValidatedPushRemote:
     """HR-014 (`docs/HARDENING_SPEC.md` §8): `git push` resolves its
     destination via `git remote get-url --push`, which can silently
     differ from the plain fetch URL `validate_remote_identity` alone
@@ -235,9 +275,11 @@ def validate_remote_identity_for_push(
     too, whenever it differs from the fetch URL — so a `pushurl`/
     `pushInsteadOf` redirect cannot bypass validation by only being
     checked against the wrong URL. Returns the *push* destination's
-    normalized identity, since that is what `git_push_tool` is about to
-    actually contact and is what its audit record and response SHALL
-    report (§20.7).
+    normalized identity and its resolved URL — `git_push_tool` SHALL
+    re-resolve the push URL in-container and refuse to push unless it
+    matches `push_url` exactly (RR-002); this function only establishes
+    what was approved from the host's own clean view, it does not by
+    itself guarantee the container agrees.
     """
     fetch_url = resolve_remote_url(repo_path, remote)
     fetch_normalized = _validate_url_identity(
@@ -251,9 +293,9 @@ def validate_remote_identity_for_push(
 
     push_url = resolve_remote_push_url(repo_path, remote)
     if push_url == fetch_url:
-        return fetch_normalized
+        return ValidatedPushRemote(repository=fetch_normalized, push_url=push_url)
 
-    return _validate_url_identity(
+    push_normalized = _validate_url_identity(
         push_url,
         remote=remote,
         allowed_url_schemes=allowed_url_schemes,
@@ -261,3 +303,4 @@ def validate_remote_identity_for_push(
         allowlisted_repositories=allowlisted_repositories,
         expected_remote_repository=expected_remote_repository,
     )
+    return ValidatedPushRemote(repository=push_normalized, push_url=push_url)
