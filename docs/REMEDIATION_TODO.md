@@ -1217,7 +1217,7 @@ actually exercise the intended boundary).
 
 ### R15 — `oom_killed` reflects the current container ✅
 **Satisfies:** RR-021 · **Verified by:** RAT-018
-**Commit:** `PLACEHOLDER`
+**Commit:** `3166c83`
 
 - [x] Recompute or clear `oom_killed` on every transition that changes which
       container the record describes — `start`, `stop`, `restart`, `_recreate`
