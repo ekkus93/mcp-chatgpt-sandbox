@@ -1157,7 +1157,7 @@ file.
 
 ### R14 — `read_log_tail` returns whole lines ✅
 **Satisfies:** RR-019 · **Verified by:** RAT-017
-**Commit:** `PLACEHOLDER`
+**Commit:** `fcc8026`
 
 - [x] Change `>=` to `>` at `execution/log_capture.py:159`
 - [x] Test `read_log_tail` composed with `tail_text` — the composition
