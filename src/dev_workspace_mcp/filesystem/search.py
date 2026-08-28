@@ -107,6 +107,18 @@ def search_files(
             # through it into host content — skipped, same as an entry
             # `.gitignore`-excludes.
             continue
+        except RuntimeError:
+            # RR-007 (`docs/REMEDIATION_SPEC.md` §5): a symlink loop
+            # raises `RuntimeError` from `Path.resolve()` (confirmed
+            # empirically, CPython 3.12), not `OSError`/`WorkspaceError`.
+            # `candidate.is_file()` above already returns `False` for a
+            # loop (an `OSError` it catches internally), so this branch
+            # is never actually reached by a *pure* symlink loop today —
+            # but relying on that check-ordering coincidence to protect
+            # this `resolve()` call is exactly the "luck, not coverage"
+            # this task exists to close, in case a future change ever
+            # reorders these checks or reaches `resolve()` some other way.
+            continue
 
         if mode == "glob":
             if fnmatch.fnmatch(candidate.name, pattern) or fnmatch.fnmatch(relative, pattern):

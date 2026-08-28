@@ -131,12 +131,26 @@ class FilesystemService:
         enough). `_describe` below is what reports it as a plain entry
         instead, per HR-012's actual requirement — this function's only
         job is the Git-metadata question.
+
+        RR-007 (`docs/REMEDIATION_SPEC.md` §5): a symlink loop is the
+        same story, one exception type further out. `Path.resolve()`
+        (which `self._security.resolve()` uses internally) detects a
+        cycle itself and raises `RuntimeError` — confirmed empirically
+        against CPython 3.12 — which is neither an `OSError` nor a
+        `WorkspaceError`, so it used to propagate uncaught here too,
+        aborting the whole listing over two mutually-referencing
+        symlinks (trivially creatable via `exec`). Treated the same way
+        as an escaping symlink: not Git metadata, reported as a plain
+        entry by `_describe` instead (which does not itself re-trigger
+        this — `path.exists()` on a loop returns `False`, an `OSError`
+        it already catches internally, short-circuiting before its own
+        `path.resolve()` call would run).
         """
         try:
             self._security.resolve(path.relative_to(self._security.root).as_posix())
         except PathGitMetadataError:
             return True
-        except PathOutsideRepositoryError:
+        except (PathOutsideRepositoryError, RuntimeError):
             return False
         return False
 

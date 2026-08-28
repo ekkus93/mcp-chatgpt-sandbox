@@ -137,3 +137,38 @@ def test_search_on_nonexistent_path_raises(tmp_path: Path) -> None:
     root = _repo(tmp_path)
     with pytest.raises(InvalidArgumentError):
         search_files(_security(root), pattern="x", mode="text", path="does-not-exist")
+
+
+# --- RR-007 (`docs/REMEDIATION_SPEC.md` §5): enumeration survives a bad entry -----
+
+
+def test_rr007_search_files_survives_a_symlink_loop(tmp_path: Path) -> None:
+    """`candidate.is_file()` happens to return `False` for a symlink
+    loop (an `OSError` it catches internally) before this function's own
+    `security.resolve(relative)` call would raise `RuntimeError` — "luck,
+    not coverage," per the write-up this test exists to close. A direct
+    test here guards against a future reordering silently reopening it."""
+    root = _repo(tmp_path)
+    (root / "ok.txt").write_text("hello marker\n")
+    (root / "a").symlink_to(root / "b")
+    (root / "b").symlink_to(root / "a")
+
+    results = search_files(_security(root), pattern="hello marker", mode="text")
+    assert [r.path for r in results] == ["ok.txt"]  # the loop didn't abort the search
+
+
+def test_rr007_search_files_survives_an_unreadable_subdirectory(tmp_path: Path) -> None:
+    root = _repo(tmp_path)
+    (root / "ok.txt").write_text("hello marker\n")
+    locked = root / "locked"
+    locked.mkdir()
+    (locked / "secret.txt").write_text("hello marker\n")
+    locked.chmod(0o000)
+    try:
+        results = search_files(_security(root), pattern="hello marker", mode="text")
+    finally:
+        locked.chmod(0o755)  # restore so tmp_path cleanup can remove it
+
+    # the locked subtree couldn't be searched, but the rest of the tree
+    # was — no crash, and no content read from inside the locked directory.
+    assert [r.path for r in results] == ["ok.txt"]

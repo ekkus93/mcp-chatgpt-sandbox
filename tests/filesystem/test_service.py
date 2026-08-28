@@ -752,3 +752,45 @@ def test_rr006_write_file_expected_sha_matches_across_a_multi_chunk_hash(
     # masked by a mis-hashed "current" value.
     with pytest.raises(FileConflictError):
         svc.write_file("big.txt", "again", expected_sha256=correct_sha)
+
+
+# --- RR-007 (`docs/REMEDIATION_SPEC.md` §5): enumeration survives a bad entry -----
+
+
+def test_rr007_list_files_survives_a_symlink_loop(tmp_path: Path) -> None:
+    """Reproduced empirically that two mutually-referencing symlinks used
+    to abort the *entire* listing: `Path.resolve()` raises `RuntimeError`
+    on a detected cycle (CPython 3.12) — neither `OSError` nor
+    `WorkspaceError`, so `_is_git_metadata`'s handlers didn't catch it."""
+    root = _repo(tmp_path)
+    svc = _service(root)
+    (root / "a").symlink_to(root / "b")
+    (root / "b").symlink_to(root / "a")
+
+    entries = svc.list_files("", recursive=False)
+    by_path = {e.path: e for e in entries}
+    assert by_path["a"].type == "symlink"
+    assert by_path["b"].type == "symlink"
+    assert "src" in by_path  # the rest of the listing is unaffected
+
+
+def test_rr007_list_files_survives_an_unreadable_subdirectory(tmp_path: Path) -> None:
+    """A permission-denied subtree must not crash the listing either — the
+    locked directory itself is still listed (its own `stat` needs only
+    lookup permission on *its parent*, already proven by `iterdir`
+    having found it), but nothing inside it can be enumerated."""
+    root = _repo(tmp_path)
+    svc = _service(root)
+    locked = root / "locked"
+    locked.mkdir()
+    (locked / "secret.txt").write_text("secret")
+    locked.chmod(0o000)
+    try:
+        entries = svc.list_files("", recursive=True)
+    finally:
+        locked.chmod(0o755)  # restore so tmp_path cleanup can remove it
+
+    by_path = {e.path: e for e in entries}
+    assert by_path["locked"].type == "directory"
+    assert "locked/secret.txt" not in by_path
+    assert "src/lib.rs" in by_path  # the rest of the listing is unaffected

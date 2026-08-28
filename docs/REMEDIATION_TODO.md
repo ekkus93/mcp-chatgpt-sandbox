@@ -481,13 +481,14 @@ hash), and an end-to-end `expected_sha256` round trip through `write_file`
 using the real default chunk size, guarding against a future regression
 back to a single unbounded `os.pread`.
 
-### R6 — Enumeration survives any unreadable entry
+### R6 — Enumeration survives any unreadable entry ✅
 **Satisfies:** RR-007 · **Verified by:** RAT-008
+**Commit:** `PLACEHOLDER`
 
-- [ ] Catch `RuntimeError` (ELOOP) alongside the existing `WorkspaceError`
+- [x] Catch `RuntimeError` (ELOOP) alongside the existing `WorkspaceError`
       handlers at `service.py:116-117` and `search.py:100-109`
-- [ ] Skip or per-entry-report the bad entry; never abort the listing
-- [ ] Test a symlink loop and a permission error, in both `list_files` and
+- [x] Skip or per-entry-report the bad entry; never abort the listing
+- [x] Test a symlink loop and a permission error, in both `list_files` and
       `search_files`
 
 **Defect (reproduced).** Two mutually-referencing symlinks — trivially creatable
@@ -500,6 +501,73 @@ RuntimeError: Symlink loop from '/tmp/…/a'   UNTRANSLATED -> whole listing abo
 `Path.resolve()` raises `RuntimeError` on ELOOP in CPython 3.12, which is neither
 `OSError` nor a `WorkspaceError`. `search_files` survives only incidentally
 (`candidate.is_file()` is `False` for a loop) — that is luck, not coverage.
+
+Reproduced directly first: two mutually-referencing symlinks (`a -> b`,
+`b -> a`) plus one ordinary file, `list_files("")` raised
+`builtins.RuntimeError: Symlink loop from '.../a'` uncaught, exactly as
+predicted; `search_files` on the same tree survived (confirming the "luck"
+claim empirically rather than trusting it).
+
+**Implementation.** Traced the crash to its exact origin, not just the
+symptom `list_files`'s bare loop body suggests: `_is_git_metadata` is the
+only thing in `list_files`'s per-candidate loop that can raise at all
+(`_describe` cannot — for a loop, `path.exists()` returns `False`, an
+`OSError` it already catches internally, short-circuiting before its own
+`path.resolve()` call would run). `_is_git_metadata`'s `except
+PathOutsideRepositoryError` became `except (PathOutsideRepositoryError,
+RuntimeError)`, treating a symlink loop the same way as an escaping
+symlink — not Git metadata, reported as a plain `type="symlink"` entry by
+`_describe` (which already handles a symlink whose target can't be
+confirmed within the root, and a loop is exactly that). `search_files`
+gained `except RuntimeError: continue` alongside its existing
+`PathOutsideRepositoryError` handler, for the same reproduced call
+(`security.resolve(relative)`) — genuine defensive coverage even though,
+confirmed via revert-verification below, today's `is_file()`-before-
+`resolve()` check ordering already prevents a *pure* symlink loop from
+ever reaching it in practice.
+
+**The permission-error half of the checklist needed no production fix.**
+Traced (not assumed) before writing any test: `Path.resolve()` — what
+`FilesystemSecurity.resolve()` uses, non-strict by default — does not
+raise for an unreadable intermediate directory the way `resolve(strict=
+True)`/`stat()` do (confirmed empirically: `os.open` on the same path
+correctly raises `PermissionError` at the kernel level, but non-strict
+`resolve()` doesn't surface it). Separately, `Path.rglob()`/`iterdir()`
+already swallow a `PermissionError` internally when descending into an
+unreadable subdirectory rather than propagating it (confirmed
+empirically: a `chmod 0o000` subdirectory is silently not descended into,
+no exception). Both `list_files` and `search_files` were already safe
+against this case — the checklist's "test a permission error" is
+satisfied by adding real coverage for already-correct behavior, not by
+changing it, since changing correct behavior wasn't warranted.
+
+**Verified the tests catch the regression.** Reverted `service.py` and
+`search.py` to `HEAD`, reran the 4 new tests: `list_files`'s symlink-loop
+test failed with the exact reproduced `RuntimeError`, uncaught, at
+`_is_git_metadata`; the other 3 (both unreadable-subdirectory tests, and
+`search_files`'s symlink-loop test) passed unchanged on the reverted
+code too — honestly expected, not a gap: the permission tests exercise
+behavior this task's fix never needed to change, and `search_files`'s own
+existing check ordering already protects it from this exact input
+independent of the new `except RuntimeError` clause (which the write-up
+above already documents as defensive-only, added because relying on that
+ordering is fragile, not because today's specific test can currently
+defeat it). Restored; all 72 tests in the two files pass again.
+
+**Full relevant suite.** `tests/filesystem/ tests/tools/`: 125 passed
+(host-side, no Docker needed). Full unscoped suite: 909 passed. No
+Docker leftovers.
+
+**New tests.** `tests/filesystem/test_service.py`:
+`test_rr007_list_files_survives_a_symlink_loop` (the real defect —
+confirms the rest of the listing is unaffected and the loop's own two
+entries are reported as `type="symlink"`),
+`test_rr007_list_files_survives_an_unreadable_subdirectory` (the locked
+directory itself is still listed; its contents are not).
+`tests/filesystem/test_search.py`: the same two scenarios for
+`search_files`, using a unique marker string per test so an unrelated
+match in the shared `_repo` fixture's other files can't produce a false
+pass.
 
 ### R7 — A diagnostic cannot fail the operation it annotates
 **Satisfies:** RR-008 · **Verified by:** RAT-009
