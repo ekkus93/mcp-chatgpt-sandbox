@@ -1856,7 +1856,7 @@ rather than adding new ones, per the checklist's own framing.
 
 ### R23 — Coverage is selected adversarially ✅
 **Satisfies:** RR-026
-**Commit:** `PLACEHOLDER`
+**Commit:** `816aeb8`
 
 Strengthen each test to exercise the input class that motivated its requirement.
 Most are folded into R3–R17; this task is the sweep that confirms none was missed:
