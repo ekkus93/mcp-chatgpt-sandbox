@@ -2,7 +2,9 @@
 
 **Source of truth:** `docs/HARDENING_SPEC.md` (HR/HAT references point into it),
 which in turn defers to `docs/SPEC.md` for everything it does not address.
-**Status:** not started
+**Status:** complete — H1 through H37 (including H36, the one item this file's
+own Deferred section originally held back) are all done; see each task's own
+entry and the Definition of done below
 **Origin:** security and correctness review of 2026-08-27 against `214c095`
 **Convention:** tasks are `H<n>`. Each names the hardening requirements it
 implements and the acceptance tests that prove it. One task per commit.
@@ -3451,7 +3453,7 @@ either run. Full unscoped `tests/` background run: **974 passed, 0 failed**
 
 ---
 
-## In progress
+## Additional work (post-Phase 9)
 
 ### H36 — Move Git reads into the container ✅
 **Supersedes:** HD1
