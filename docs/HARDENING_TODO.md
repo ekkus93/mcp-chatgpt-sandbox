@@ -3498,13 +3498,21 @@ part of it.
       symbolic-ref`, verified against Git's own hook list — no hook exists
       for it, so HR-002's neutralization was never protecting anything
       here). **Commit:** `16a5c75`
-- [ ] (7/8) `git/remote.py`'s `resolve_remote_url`/`resolve_remote_push_url`/
+- [x] (7/8) `git/remote.py`'s `resolve_remote_url`/`resolve_remote_push_url`/
       `validate_remote_identity`/`validate_remote_identity_for_push`
       (preserving RR-002's two-read TOCTOU timing — validate early, re-verify
       immediately before the push, refuse on disagreement — now with both
       reads in-container instead of one host-side and one in-container),
       `git/push.py`'s `build_force_with_lease_arg`, `tools/git.py`'s own two
-      remaining inline calls
+      remaining inline calls. **Commit:** `402a799`. `run_git_host_side` now
+      has zero remaining callers in `src/`. Real gap found via this task's
+      own discipline: the rewritten `tests/git/test_remote.py`/`test_push.py`
+      no longer call the real async functions at all (only local replicas)
+      — reverting `src/` left them unchanged. Real coverage of the migrated
+      functions comes from the pre-existing Docker-based
+      `tests/workspace/test_git_pull_tool.py`/`test_git_push_tool.py` suite,
+      confirmed passing (30/30) including the RR-002 TOCTOU redirect
+      scenario.
 - [ ] (8/8) Delete `run_git_host_side` and the HR-002 control surface
       (`_CODE_EXECUTING_CONFIG_KEY_RE`, `_discover_code_executing_overrides`,
       `_host_side_git_env`, the env-scrub tuples) once no caller remains;
