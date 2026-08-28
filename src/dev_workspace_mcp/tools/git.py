@@ -1237,6 +1237,59 @@ async def run_git_status(
     )
 
 
+async def run_git_diff(
+    workspace_id: str,
+    staged: bool,
+    base: str | None,
+    head: str | None,
+    paths: list[str] | None,
+    stat_only: bool,
+    max_bytes: int | None,
+    offset: int,
+    *,
+    manager: DockerWorkspaceManager,
+    execution_service: ExecutionService,
+    registry: RepositoryRegistry,
+    db: sqlite3.Connection,
+    container_config: ContainerConfig,
+    execution_config: ExecutionConfig,
+) -> GitDiffOutput:
+    """§17.3: the `git_diff` tool's full body — module-level (R27), the
+    same reason `run_git_status` above is. `register()`'s `git_diff_tool`
+    is a thin wrapper: check Docker reachability, then call this."""
+    record = get_authorized(manager, workspace_id, registry)
+    if record.state != WorkspaceState.RUNNING:
+        raise WorkspaceNotRunningError(
+            f"workspace {workspace_id!r} is not running (state: {record.state.value})",
+            details={"workspace_id": workspace_id, "state": record.state.value},
+        )
+    assert record.container_id is not None  # implied by state == RUNNING
+    touch_last_used(db, workspace_id)  # §8.1: post-H36, real container usage
+
+    repo_path = resolve_repository_root(db, workspace_id, registry)
+    result = await read_git_diff(
+        repo_path,
+        container_id=record.container_id,
+        workspace_path=record.workspace_path,
+        execution_service=execution_service,
+        container_config=container_config,
+        execution_config=execution_config,
+        staged=staged,
+        base=base,
+        head=head,
+        paths=paths,
+        stat_only=stat_only,
+        max_bytes=max_bytes,
+        offset=offset,
+    )
+    return GitDiffOutput(
+        content=result.content,
+        truncated=result.truncated,
+        total_bytes=result.total_bytes,
+        next_offset=result.next_offset,
+    )
+
+
 def register(
     server: MCPServer,
     *,
@@ -1290,22 +1343,26 @@ def register(
         max_bytes: int | None = None,
         offset: int = 0,
     ) -> GitDiffOutput:
-        repo_path = resolve_repository_root(db, workspace_id, registry)
-        result = read_git_diff(
-            repo_path,
-            staged=staged,
-            base=base,
-            head=head,
-            paths=paths,
-            stat_only=stat_only,
-            max_bytes=max_bytes,
-            offset=offset,
-        )
-        return GitDiffOutput(
-            content=result.content,
-            truncated=result.truncated,
-            total_bytes=result.total_bytes,
-            next_offset=result.next_offset,
+        if manager is None or execution_service is None or docker_client is None:
+            raise ContainerRuntimeFailedError(
+                "Docker is not reachable; the server is running in a degraded "
+                "state (§73) and cannot diff"
+            )
+        return await run_git_diff(
+            workspace_id,
+            staged,
+            base,
+            head,
+            paths,
+            stat_only,
+            max_bytes,
+            offset,
+            manager=manager,
+            execution_service=execution_service,
+            registry=registry,
+            db=db,
+            container_config=container_config,
+            execution_config=execution_config,
         )
 
     @server.tool(name="git_log", description="Bounded commit history (§17.3).")

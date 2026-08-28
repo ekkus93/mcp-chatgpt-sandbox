@@ -11,6 +11,20 @@ this module's own `next_offset` pagination needs (RR-016) moved to
 `filesystem/service.py`'s `read_file` needs the identical fix for the
 identical reason (a byte window blind to character boundaries), and
 duplicating it risked the two copies silently diverging.
+
+H36 (`docs/HARDENING_TODO.md`, 3/8): `read_git_diff` runs in-container
+now, through `run_git_in_container` — `async`, and needs a running
+workspace's container context. Split into three pieces so the parts with
+no Docker dependency of their own stay directly, cheaply testable —
+matching `git/commit.py`/`git/pull.py`/`git/push.py`'s existing
+pure-argv-builder convention, which this module predates:
+
+- `build_diff_argv`: mode selection + HR-001 validation, pure;
+- `paginate_diff_output`: §46's byte-windowing/truncation math over an
+  already-fetched diff, pure — this never depended on where the diff
+  came from, and moving the invocation in-container changed none of it;
+- `read_git_diff`: the async glue between the two, plus the actual
+  in-container invocation.
 """
 
 from __future__ import annotations
@@ -18,10 +32,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from dev_workspace_mcp.config.models import ContainerConfig, ExecutionConfig
 from dev_workspace_mcp.errors import CommandFailedError, InvalidArgumentError
+from dev_workspace_mcp.execution.service import ExecutionService
 from dev_workspace_mcp.git.service import (
     END_OF_OPTIONS,
-    run_git_host_side,
+    run_git_in_container,
     validate_revision_argument,
 )
 from dev_workspace_mcp.utf8_boundary import (
@@ -47,17 +63,14 @@ class GitDiffResult:
     next_offset: int
 
 
-def read_git_diff(
-    repo_path: Path,
+def build_diff_argv(
     *,
     staged: bool = False,
     base: str | None = None,
     head: str | None = None,
     paths: list[str] | None = None,
     stat_only: bool = False,
-    max_bytes: int | None = None,
-    offset: int = 0,
-) -> GitDiffResult:
+) -> list[str]:
     """Three modes, matching §17.3:
 
     - working-tree diff (default): `staged=False`, no `base`/`head`;
@@ -67,13 +80,7 @@ def read_git_diff(
     `staged` and `base`/`head` are mutually exclusive — combining them
     is ambiguous, not a request for anything git diff itself would do.
     `paths` filters to those paths; `stat_only` requests `--stat` instead
-    of the full patch text. Bounded by `max_bytes` (§46), with `offset`
-    for follow-up retrieval of what a first, truncated call did not
-    include — the same shape `exec_output`'s byte range uses. The
-    returned `next_offset` is the byte position to pass as `offset` on
-    the follow-up call; it can differ from `offset + max_bytes` by a few
-    bytes whenever the naive window would have split a multi-byte
-    character (`_trim_incomplete_trailing_char`).
+    of the full patch text.
     """
     if head is not None and base is None:
         raise InvalidArgumentError(
@@ -85,6 +92,49 @@ def read_git_diff(
             "staged and base/head are mutually exclusive (§17.3)",
             details={"staged": staged, "base": base},
         )
+
+    # HR-002(1): a diff-producing read must not invoke a repository's own
+    # `diff.external`/`diff.<name>.textconv` driver. `--no-ext-diff`
+    # alone is not enough — verified empirically that it does not
+    # suppress `textconv` — and `--no-textconv` cannot substitute for
+    # `--no-ext-diff` either, so both are required. Neither errors in
+    # any mode this function has (`--stat`, `--cached`, commit-to-commit).
+    # H36: kept even though in-container execution no longer needs this
+    # for the *code-execution* concern HR-002 named it for (§4's control
+    # surface is retired) — an external diff/textconv driver's *output*
+    # replacing the real diff would still corrupt what the client sees,
+    # a correctness reason independent of where Git runs.
+    cmd = ["diff", "--no-ext-diff", "--no-textconv"]
+    if stat_only:
+        cmd.append("--stat")
+    if base is not None:
+        head_value = head or "HEAD"
+        # HR-001: `base`/`head` are client-supplied strings that reach a
+        # Git invocation — reject anything option-shaped, and place the
+        # real end-of-options marker immediately before them as a
+        # second, load-bearing layer (rejection alone is a denylist).
+        validate_revision_argument(base, param_name="base")
+        validate_revision_argument(head_value, param_name="head")
+        cmd.append(END_OF_OPTIONS)
+        cmd.extend([base, head_value])
+    elif staged:
+        cmd.append("--cached")
+    if paths:
+        cmd.append("--")
+        cmd.extend(paths)
+    return cmd
+
+
+def paginate_diff_output(
+    stdout: str, *, max_bytes: int | None = None, offset: int = 0
+) -> GitDiffResult:
+    """§46's bounded-output pagination over an already-fetched `git diff`
+    stdout. `offset` for follow-up retrieval of what a first, truncated
+    call did not include — the same shape `exec_output`'s byte range
+    uses. The returned `next_offset` is the byte position to pass as
+    `offset` on the follow-up call; it can differ from `offset +
+    max_bytes` by a few bytes whenever the naive window would have split
+    a multi-byte character (`_trim_incomplete_trailing_char`)."""
     if offset < 0:
         raise InvalidArgumentError("offset must be >= 0 (§17.3)", details={"offset": offset})
     # RR-016 (`docs/REMEDIATION_SPEC.md` §12): `< 1`, not `< 0` — `0` used
@@ -97,44 +147,16 @@ def read_git_diff(
             "max_bytes must be >= 1 (§17.3)", details={"max_bytes": max_bytes}
         )
 
-    # HR-002(1): a diff-producing read must not invoke a repository's own
-    # `diff.external`/`diff.<name>.textconv` driver. `--no-ext-diff` alone
-    # is not enough — verified empirically that it does not suppress
-    # `textconv` — and `--no-textconv` cannot substitute for
-    # `--no-ext-diff` either, so both are required. Neither errors in any
-    # mode this function has (`--stat`, `--cached`, commit-to-commit).
-    cmd = ["diff", "--no-ext-diff", "--no-textconv"]
-    if stat_only:
-        cmd.append("--stat")
-    if base is not None:
-        head_value = head or "HEAD"
-        # HR-001: `base`/`head` are client-supplied strings that reach a
-        # host-side `git` invocation — reject anything option-shaped, and
-        # place the real end-of-options marker immediately before them as
-        # a second, load-bearing layer (rejection alone is a denylist).
-        validate_revision_argument(base, param_name="base")
-        validate_revision_argument(head_value, param_name="head")
-        cmd.append(END_OF_OPTIONS)
-        cmd.extend([base, head_value])
-    elif staged:
-        cmd.append("--cached")
-    if paths:
-        cmd.append("--")
-        cmd.extend(paths)
-
-    result = run_git_host_side(repo_path, cmd)
-    if not result.ok:
-        raise CommandFailedError(
-            f"git diff failed: {result.stderr.strip()}",
-            details={"path": str(repo_path), "stderr": result.stderr},
-        )
-
-    # HR-022: `result.stdout` was decoded with `errors="surrogateescape"`
-    # (`run_git_host_side`) precisely so a non-UTF-8 byte in the diff
-    # can't raise here either — re-encode the same way rather than
-    # `.encode("utf-8")`, which would raise `UnicodeEncodeError` on a
-    # lone surrogate the moment the diff touched a non-UTF-8 file.
-    encoded = result.stdout.encode("utf-8", errors="surrogateescape")
+    # HR-022: `stdout` is decoded with `errors="replace"`
+    # (`execution/service.py`'s `capture`) — re-encode the same lossy
+    # way, not `.encode("utf-8")`, which would raise `UnicodeEncodeError`
+    # on... nothing, actually, since `errors="replace"` already replaced
+    # every undecodable byte with U+FFFD before this function ever saw
+    # the string. Kept as `surrogateescape` regardless: harmless on an
+    # already-`replace`d string (U+FFFD round-trips losslessly through
+    # UTF-8), and this function has no way to know which decoding
+    # produced its input if a future caller's capture path changes.
+    encoded = stdout.encode("utf-8", errors="surrogateescape")
     total_bytes = len(encoded)
     limit = max_bytes if max_bytes is not None else DEFAULT_MAX_DIFF_BYTES
     window = encoded[offset : offset + limit]
@@ -170,3 +192,42 @@ def read_git_diff(
         total_bytes=total_bytes,
         next_offset=next_offset,
     )
+
+
+async def read_git_diff(
+    repo_path: Path,
+    *,
+    container_id: str,
+    workspace_path: str,
+    execution_service: ExecutionService,
+    container_config: ContainerConfig,
+    execution_config: ExecutionConfig,
+    staged: bool = False,
+    base: str | None = None,
+    head: str | None = None,
+    paths: list[str] | None = None,
+    stat_only: bool = False,
+    max_bytes: int | None = None,
+    offset: int = 0,
+) -> GitDiffResult:
+    """`build_diff_argv` (mode + HR-001) + an in-container invocation +
+    `paginate_diff_output` (§46). `repo_path` is used only for error
+    reporting — the actual read happens in-container, against
+    `workspace_path`."""
+    cmd = build_diff_argv(staged=staged, base=base, head=head, paths=paths, stat_only=stat_only)
+
+    result = await run_git_in_container(
+        cmd,
+        container_id=container_id,
+        workspace_path=workspace_path,
+        execution_service=execution_service,
+        container_config=container_config,
+        execution_config=execution_config,
+    )
+    if not result.ok:
+        raise CommandFailedError(
+            f"git diff failed: {result.stderr.strip()}",
+            details={"path": str(repo_path), "stderr": result.stderr},
+        )
+
+    return paginate_diff_output(result.stdout, max_bytes=max_bytes, offset=offset)

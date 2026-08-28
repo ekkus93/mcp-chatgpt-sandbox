@@ -1,13 +1,27 @@
-"""S21: `git_diff` (§17.3, §46)."""
+"""S21: `git_diff` (§17.3, §46).
+
+H36 (`docs/HARDENING_TODO.md`, 3/8): `read_git_diff` itself now needs a
+running workspace's container context (it runs `git diff` in-container).
+`_diff_of` below exercises the real, unchanged `build_diff_argv` +
+`paginate_diff_output` pair against a real host-side `git diff` — the
+same split production's own `read_git_diff` uses, just fed by a host
+subprocess here instead of `run_git_in_container` — keeping this whole
+suite fast and Docker-free. `tests/workspace/test_git_diff_log_tools.py`
+covers `read_git_diff` end-to-end, in-container.
+"""
 
 import subprocess
 from pathlib import Path
 
 import pytest
 
-import dev_workspace_mcp.git.service as git_service
 from dev_workspace_mcp.errors import InvalidArgumentError
-from dev_workspace_mcp.git.diff import _trim_incomplete_trailing_char, read_git_diff
+from dev_workspace_mcp.git.diff import (
+    GitDiffResult,
+    _trim_incomplete_trailing_char,
+    build_diff_argv,
+    paginate_diff_output,
+)
 
 
 def _init_repo(path: Path) -> Path:
@@ -26,13 +40,31 @@ def _commit_all(path: Path, message: str) -> str:
     ).stdout.strip()
 
 
+def _diff_of(
+    repo: Path,
+    *,
+    staged: bool = False,
+    base: str | None = None,
+    head: str | None = None,
+    paths: list[str] | None = None,
+    stat_only: bool = False,
+    max_bytes: int | None = None,
+    offset: int = 0,
+) -> GitDiffResult:
+    argv = build_diff_argv(staged=staged, base=base, head=head, paths=paths, stat_only=stat_only)
+    result = subprocess.run(
+        ["git", *argv], cwd=repo, capture_output=True, text=True, errors="replace", check=True
+    )
+    return paginate_diff_output(result.stdout, max_bytes=max_bytes, offset=offset)
+
+
 def test_working_tree_diff_shows_unstaged_changes(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path / "repo")
     (repo / "a.txt").write_text("line one\n")
     _commit_all(repo, "initial")
     (repo / "a.txt").write_text("line one\nline two\n")
 
-    result = read_git_diff(repo)
+    result = _diff_of(repo)
     assert "line two" in result.content
     assert "a.txt" in result.content
     assert result.truncated is False
@@ -45,7 +77,7 @@ def test_working_tree_diff_excludes_staged_changes(tmp_path: Path) -> None:
     (repo / "a.txt").write_text("line one\nstaged\n")
     subprocess.run(["git", "add", "a.txt"], cwd=repo, check=True)
 
-    result = read_git_diff(repo)
+    result = _diff_of(repo)
     assert result.content == ""
 
 
@@ -57,7 +89,7 @@ def test_staged_diff_shows_only_staged_changes(tmp_path: Path) -> None:
     subprocess.run(["git", "add", "a.txt"], cwd=repo, check=True)
     (repo / "a.txt").write_text("line one\nstaged\nunstaged\n")
 
-    result = read_git_diff(repo, staged=True)
+    result = _diff_of(repo, staged=True)
     assert "staged" in result.content
     assert "unstaged" not in result.content
 
@@ -69,7 +101,7 @@ def test_commit_to_commit_diff(tmp_path: Path) -> None:
     (repo / "a.txt").write_text("v2\n")
     second_sha = _commit_all(repo, "v2")
 
-    result = read_git_diff(repo, base=first_sha, head=second_sha)
+    result = _diff_of(repo, base=first_sha, head=second_sha)
     assert "-v1" in result.content
     assert "+v2" in result.content
 
@@ -81,55 +113,35 @@ def test_commit_to_commit_diff_head_defaults_to_head(tmp_path: Path) -> None:
     (repo / "a.txt").write_text("v2\n")
     _commit_all(repo, "v2")
 
-    result = read_git_diff(repo, base=first_sha)
+    result = _diff_of(repo, base=first_sha)
     assert "+v2" in result.content
 
 
-def test_base_and_staged_together_is_rejected(tmp_path: Path) -> None:
-    repo = _init_repo(tmp_path / "repo")
-    (repo / "a.txt").write_text("v1\n")
-    sha = _commit_all(repo, "v1")
+def test_base_and_staged_together_is_rejected() -> None:
     with pytest.raises(InvalidArgumentError):
-        read_git_diff(repo, staged=True, base=sha)
+        build_diff_argv(staged=True, base="abc1234")
 
 
-def test_head_without_base_is_rejected(tmp_path: Path) -> None:
-    repo = _init_repo(tmp_path / "repo")
-    (repo / "a.txt").write_text("v1\n")
-    sha = _commit_all(repo, "v1")
+def test_head_without_base_is_rejected() -> None:
     with pytest.raises(InvalidArgumentError):
-        read_git_diff(repo, head=sha)
+        build_diff_argv(head="abc1234")
 
 
 # --- HR-001 (docs/HARDENING_SPEC.md §4): option injection via base/head ----------
 
 
-def test_at_h001_an_option_shaped_base_is_rejected_not_executed(tmp_path: Path) -> None:
+def test_at_h001_an_option_shaped_base_is_rejected_not_executed() -> None:
     """A real regression: `base="--output=<path>"` used to reach a
-    host-side `git diff` unguarded and write that file to the host,
-    exit 0, no error. Confirms it is rejected before git ever runs, and
-    that no file is created."""
-    repo = _init_repo(tmp_path / "repo")
-    (repo / "a.txt").write_text("v1\n")
-    _commit_all(repo, "v1")
-    target = tmp_path / "PWNED_VIA_BASE"
-
+    host-side `git diff` unguarded and write that file to the host, exit
+    0, no error. `build_diff_argv` rejects it before any argv (and so
+    any git invocation at all) is ever produced."""
     with pytest.raises(InvalidArgumentError):
-        read_git_diff(repo, base=f"--output={target}")
-
-    assert not target.exists()
+        build_diff_argv(base="--output=/tmp/PWNED_VIA_BASE")
 
 
-def test_at_h001_an_option_shaped_head_is_rejected_not_executed(tmp_path: Path) -> None:
-    repo = _init_repo(tmp_path / "repo")
-    (repo / "a.txt").write_text("v1\n")
-    sha = _commit_all(repo, "v1")
-    target = tmp_path / "PWNED_VIA_HEAD"
-
+def test_at_h001_an_option_shaped_head_is_rejected_not_executed() -> None:
     with pytest.raises(InvalidArgumentError):
-        read_git_diff(repo, base=sha, head=f"--output={target}")
-
-    assert not target.exists()
+        build_diff_argv(base="abc1234", head="--output=/tmp/PWNED_VIA_HEAD")
 
 
 def test_at_h001_a_legitimate_base_and_head_still_work(tmp_path: Path) -> None:
@@ -142,8 +154,22 @@ def test_at_h001_a_legitimate_base_and_head_still_work(tmp_path: Path) -> None:
     (repo / "a.txt").write_text("v2\n")
     second_sha = _commit_all(repo, "v2")
 
-    result = read_git_diff(repo, base=first_sha, head=second_sha)
+    result = _diff_of(repo, base=first_sha, head=second_sha)
     assert "+v2" in result.content
+
+
+def test_end_of_options_precedes_base_and_head_in_the_argv(tmp_path: Path) -> None:
+    """RR-027 (`docs/REMEDIATION_SPEC.md` §27): every existing test for
+    `validate_revision_argument` uses a leading-`-` value, which trips
+    that (first, denylist) layer before the second, load-bearing one
+    (`--end-of-options`, placed immediately before `base`/`head`) is ever
+    reached. `build_diff_argv` being a pure argv builder (H36) makes this
+    directly inspectable — no subprocess spying needed the way the
+    pre-H36 version of this test required."""
+    argv = build_diff_argv(base="abc1234", head=None)
+    base_index = argv.index("abc1234")
+    assert argv[base_index - 1] == "--end-of-options"
+    assert argv[base_index + 1] == "HEAD"  # head defaults to HEAD, right after base
 
 
 def test_path_filter_restricts_the_diff(tmp_path: Path) -> None:
@@ -154,7 +180,7 @@ def test_path_filter_restricts_the_diff(tmp_path: Path) -> None:
     (repo / "a.txt").write_text("one\nchanged-a\n")
     (repo / "b.txt").write_text("one\nchanged-b\n")
 
-    result = read_git_diff(repo, paths=["a.txt"])
+    result = _diff_of(repo, paths=["a.txt"])
     assert "changed-a" in result.content
     assert "changed-b" not in result.content
 
@@ -165,7 +191,7 @@ def test_stat_only_mode(tmp_path: Path) -> None:
     _commit_all(repo, "initial")
     (repo / "a.txt").write_text("one\ntwo\nthree\n")
 
-    result = read_git_diff(repo, stat_only=True)
+    result = _diff_of(repo, stat_only=True)
     assert "a.txt" in result.content
     assert "+++" not in result.content  # not a full patch
     assert "insertion" in result.content or "changed" in result.content
@@ -177,7 +203,7 @@ def test_output_is_bounded_by_max_bytes(tmp_path: Path) -> None:
     _commit_all(repo, "initial")
     (repo / "a.txt").write_text("y\n" * 1000)
 
-    result = read_git_diff(repo, max_bytes=50)
+    result = _diff_of(repo, max_bytes=50)
     assert len(result.content.encode("utf-8")) <= 50
     assert result.truncated is True
     assert result.total_bytes > 50
@@ -189,9 +215,9 @@ def test_offset_retrieves_the_remainder(tmp_path: Path) -> None:
     _commit_all(repo, "initial")
     (repo / "a.txt").write_text("y\n" * 1000)
 
-    full = read_git_diff(repo, max_bytes=10**9)
-    first_chunk = read_git_diff(repo, max_bytes=100)
-    second_chunk = read_git_diff(repo, max_bytes=10**9, offset=100)
+    full = _diff_of(repo, max_bytes=10**9)
+    first_chunk = _diff_of(repo, max_bytes=100)
+    second_chunk = _diff_of(repo, max_bytes=10**9, offset=100)
     assert first_chunk.content + second_chunk.content == full.content
     assert second_chunk.truncated is False
 
@@ -200,20 +226,14 @@ def test_offset_retrieves_the_remainder(tmp_path: Path) -> None:
 # pagination + offset/max_bytes validation -----------------------------------
 
 
-def test_negative_offset_is_rejected(tmp_path: Path) -> None:
-    repo = _init_repo(tmp_path / "repo")
-    (repo / "a.txt").write_text("v1\n")
-    _commit_all(repo, "v1")
+def test_negative_offset_is_rejected() -> None:
     with pytest.raises(InvalidArgumentError):
-        read_git_diff(repo, offset=-1)
+        paginate_diff_output("diff --git a/x b/x\n", offset=-1)
 
 
-def test_negative_max_bytes_is_rejected(tmp_path: Path) -> None:
-    repo = _init_repo(tmp_path / "repo")
-    (repo / "a.txt").write_text("v1\n")
-    _commit_all(repo, "v1")
+def test_negative_max_bytes_is_rejected() -> None:
     with pytest.raises(InvalidArgumentError):
-        read_git_diff(repo, max_bytes=-1)
+        paginate_diff_output("diff --git a/x b/x\n", max_bytes=-1)
 
 
 def test_next_offset_matches_the_actual_bytes_consumed(tmp_path: Path) -> None:
@@ -222,11 +242,11 @@ def test_next_offset_matches_the_actual_bytes_consumed(tmp_path: Path) -> None:
     _commit_all(repo, "initial")
     (repo / "a.txt").write_text("y\n" * 1000)
 
-    chunk = read_git_diff(repo, max_bytes=100)
+    chunk = _diff_of(repo, max_bytes=100)
     assert chunk.next_offset == len(chunk.content.encode("utf-8"))
     assert chunk.truncated is True
 
-    final = read_git_diff(repo, max_bytes=10**9, offset=chunk.next_offset)
+    final = _diff_of(repo, max_bytes=10**9, offset=chunk.next_offset)
     assert final.truncated is False
     assert final.next_offset == final.total_bytes
 
@@ -248,13 +268,13 @@ def test_at_hr022_pagination_never_splits_a_multibyte_character(tmp_path: Path) 
     _commit_all(repo, "initial")
     (repo / "a.txt").write_text("日本語のテスト文字列です — café — naïve\n" * 5)
 
-    full = read_git_diff(repo, max_bytes=10**9)
+    full = _diff_of(repo, max_bytes=10**9)
     assert "�" not in full.content  # sanity: an unpaginated read is already clean
 
     reassembled = ""
     offset = 0
     for _ in range(full.total_bytes + 10):  # generous bound against a stuck loop
-        chunk = read_git_diff(repo, max_bytes=4, offset=offset)
+        chunk = _diff_of(repo, max_bytes=4, offset=offset)
         reassembled += chunk.content
         if not chunk.truncated:
             break
@@ -281,11 +301,11 @@ def test_pagination_terminates_even_when_max_bytes_is_smaller_than_one_character
     _commit_all(repo, "initial")
     (repo / "a.txt").write_text("日本語のテスト\n")
 
-    full = read_git_diff(repo, max_bytes=10**9)
+    full = _diff_of(repo, max_bytes=10**9)
 
     offset = 0
     for _ in range(full.total_bytes + 10):
-        chunk = read_git_diff(repo, max_bytes=1, offset=offset)
+        chunk = _diff_of(repo, max_bytes=1, offset=offset)
         if not chunk.truncated:
             break
         assert chunk.next_offset > offset, "pagination must always make forward progress"
@@ -331,15 +351,12 @@ def test_rr016_trim_leaves_a_run_of_bare_continuation_bytes_untouched() -> None:
     assert _trim_incomplete_trailing_char(window) == window
 
 
-def test_rr016_max_bytes_zero_is_rejected(tmp_path: Path) -> None:
+def test_rr016_max_bytes_zero_is_rejected() -> None:
     """`< 1`, not `< 0` — `max_bytes=0` used to be accepted and produce a
     zero-byte window every call, `next_offset` never advancing: reproduced
     empirically as permanent zero progress across repeated calls."""
-    repo = _init_repo(tmp_path / "repo")
-    (repo / "a.txt").write_text("v1\n")
-    _commit_all(repo, "v1")
     with pytest.raises(InvalidArgumentError):
-        read_git_diff(repo, max_bytes=0)
+        paginate_diff_output("diff --git a/x b/x\n", max_bytes=0)
 
 
 def test_rr017_next_offset_is_clamped_to_total_bytes_for_an_out_of_range_offset(
@@ -353,9 +370,9 @@ def test_rr017_next_offset_is_clamped_to_total_bytes_for_an_out_of_range_offset(
     (repo / "a.txt").write_text("v1\n")
     _commit_all(repo, "v1")
     (repo / "a.txt").write_text("v2\n")
-    full = read_git_diff(repo, max_bytes=10**9)
+    full = _diff_of(repo, max_bytes=10**9)
 
-    result = read_git_diff(repo, max_bytes=100, offset=full.total_bytes + 99999)
+    result = _diff_of(repo, max_bytes=100, offset=full.total_bytes + 99999)
 
     assert result.next_offset == full.total_bytes
     assert result.content == ""
@@ -376,12 +393,12 @@ def test_rr016_pagination_with_an_invalid_byte_for_every_max_bytes_from_1_to_64(
         b"line one\nline two \xff invalid byte then \xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e text\n"
     )
 
-    full = read_git_diff(repo, max_bytes=10**9)
+    full = _diff_of(repo, max_bytes=10**9)
 
     for max_bytes in range(1, 65):
         offset = 0
         for _ in range(full.total_bytes + 10):
-            chunk = read_git_diff(repo, max_bytes=max_bytes, offset=offset)
+            chunk = _diff_of(repo, max_bytes=max_bytes, offset=offset)
             if not chunk.truncated:
                 break
             assert chunk.next_offset > offset, (
@@ -390,49 +407,3 @@ def test_rr016_pagination_with_an_invalid_byte_for_every_max_bytes_from_1_to_64(
             offset = chunk.next_offset
         else:
             pytest.fail(f"max_bytes={max_bytes}: pagination did not terminate")
-
-
-def test_rr027_end_of_options_precedes_base_and_head_in_the_real_argv(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """RR-027 (`docs/REMEDIATION_SPEC.md` §27): every existing test for
-    `validate_revision_argument` uses a leading-`-` value, which trips
-    that (first, denylist) layer before the second, load-bearing one
-    (`--end-of-options`, placed immediately before `base`/`head` in the
-    real argv `run_git_host_side` executes) is ever reached — deleting
-    the `cmd.append(END_OF_OPTIONS)` line left the whole suite green.
-    Spies on the real `subprocess.run` call, using an ordinary,
-    non-hostile revision (`"main"`) specifically so
-    `validate_revision_argument` passes and the second layer is what
-    this test actually exercises."""
-    repo = _init_repo(tmp_path / "repo")
-    (repo / "a.txt").write_text("v1\n")
-    first_sha = _commit_all(repo, "v1")
-    (repo / "a.txt").write_text("v2\n")
-    _commit_all(repo, "v2")
-
-    captured_argv: list[list[str]] = []
-    real_run = subprocess.run
-
-    def _spy(argv: list[str], *args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
-        captured_argv.append(list(argv))
-        return real_run(argv, *args, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(git_service.subprocess, "run", _spy)
-
-    # `base` is a real commit sha (a normal, non-hostile revision, unlike
-    # every existing `validate_revision_argument` test's leading-`-`
-    # value) and `head` is left to default to `HEAD` — both non-empty,
-    # both exercising the argv shape end to end.
-    result = read_git_diff(repo, base=first_sha)
-    assert "+v2" in result.content  # sanity: the read actually succeeded
-
-    # `_discover_code_executing_overrides` (HR-002) makes its own,
-    # preceding `git config --list` calls through the same spy — the
-    # actual `diff` invocation is whichever captured call is a `diff`.
-    diff_argvs = [argv for argv in captured_argv if "diff" in argv]
-    assert diff_argvs, f"no 'diff' invocation captured; got: {captured_argv}"
-    argv = diff_argvs[0]
-    base_index = argv.index(first_sha)
-    assert argv[base_index - 1] == "--end-of-options"
-    assert argv[base_index + 1] == "HEAD"  # head defaults to HEAD, right after base
