@@ -3487,8 +3487,17 @@ part of it.
       to HR-002) still blocks `diff.external`/`textconv` through `git_diff`;
       only `filter.*.clean`-style drivers (reachable via `git_status`/
       `workspace_info`, no such static flag) actually changed.
-- [ ] (6/8) `git/commit.py`'s `read_committed_files`/`detect_default_branch`/
-      `is_head_published`
+- [x] (6/8) `git/commit.py`'s `read_committed_files`/`is_head_published`
+      migrated; `detect_default_branch` did **not** — it is called by
+      `open_workspace`'s §18.5 remote-protection check *before* any
+      container exists (SHALL run before Docker is touched at all / before
+      a key is provisioned), which is structurally incompatible with moving
+      in-container. Added `git/service.py`'s `run_git_metadata_read`: a
+      narrow, permanent host-side exception, restricted to Git plumbing
+      that provably invokes no repository-configured code (`git
+      symbolic-ref`, verified against Git's own hook list — no hook exists
+      for it, so HR-002's neutralization was never protecting anything
+      here). **Commit:** `16a5c75`
 - [ ] (7/8) `git/remote.py`'s `resolve_remote_url`/`resolve_remote_push_url`/
       `validate_remote_identity`/`validate_remote_identity_for_push`
       (preserving RR-002's two-read TOCTOU timing — validate early, re-verify
