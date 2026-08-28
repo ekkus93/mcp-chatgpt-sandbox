@@ -1460,7 +1460,7 @@ real-refused-connection tests).
 
 ### R18 — Redaction recurses and preserves types ✅
 **Satisfies:** RR-009 · **Verified by:** RAT-010
-**Commit:** `PLACEHOLDER`
+**Commit:** `f69ff25`
 
 - [x] Carry the key hint into the dict branch (`errors.py:284`), as the list
       branch at `:290` already does
