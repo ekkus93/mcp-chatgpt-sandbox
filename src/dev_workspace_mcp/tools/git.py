@@ -89,7 +89,7 @@ from dev_workspace_mcp.git.remote import (
     validate_remote_identity,
     validate_remote_identity_for_push,
 )
-from dev_workspace_mcp.git.service import detect_interrupted_operation, run_git_host_side
+from dev_workspace_mcp.git.service import detect_interrupted_operation, run_git_in_container
 from dev_workspace_mcp.git.status import head_sha_matches, read_git_status
 from dev_workspace_mcp.git.transport import is_auth_failure, is_network_failure
 from dev_workspace_mcp.github_api import (
@@ -668,13 +668,17 @@ async def run_git_pull(
     # §20.2: validate the remote before contacting it at all — before
     # the fetch below, not merely before the integration step.
     repository_record = registry.get(record.repository_id)
-    remote_repository = validate_remote_identity(
-        repo_path,
+    remote_repository = await validate_remote_identity(
         remote=remote,
         allowed_url_schemes=git_policy_config.allowed_url_schemes,
         configured_github=repository_record.github or "",
         allowlisted_repositories=github_config.repositories,
         expected_remote_repository=expected_remote_repository,
+        container_id=container_id,
+        workspace_path=record.workspace_path,
+        execution_service=execution_service,
+        container_config=container_config,
+        execution_config=execution_config,
     )
 
     user = resolve_exec_user(container_config)
@@ -775,8 +779,13 @@ async def run_git_pull(
     # a fast-forward when there was nothing to actually integrate.
     fast_forward = False
     if previous_head_sha is not None:
-        ancestor_check = run_git_host_side(
-            repo_path, ["merge-base", "--is-ancestor", previous_head_sha, new_status.head_sha]
+        ancestor_check = await run_git_in_container(
+            ["merge-base", "--is-ancestor", previous_head_sha, new_status.head_sha],
+            container_id=container_id,
+            workspace_path=record.workspace_path,
+            execution_service=execution_service,
+            container_config=container_config,
+            execution_config=execution_config,
         )
         fast_forward = ancestor_check.ok
 
@@ -884,8 +893,13 @@ async def run_git_push(
     elif target_branch == status.branch:
         local_head_sha = status.head_sha
     else:
-        rev = run_git_host_side(
-            repo_path, ["rev-parse", "--verify", "-q", f"refs/heads/{target_branch}"]
+        rev = await run_git_in_container(
+            ["rev-parse", "--verify", "-q", f"refs/heads/{target_branch}"],
+            container_id=container_id,
+            workspace_path=record.workspace_path,
+            execution_service=execution_service,
+            container_config=container_config,
+            execution_config=execution_config,
         )
         if not rev.ok:
             raise InvalidArgumentError(
@@ -1004,13 +1018,17 @@ async def run_git_push(
     # the plain fetch URL `validate_remote_identity` alone checks
     # (`remote.<name>.pushurl`/`url.<base>.pushInsteadOf`).
     repository_record = registry.get(record.repository_id)
-    validated_remote = validate_remote_identity_for_push(
-        repo_path,
+    validated_remote = await validate_remote_identity_for_push(
         remote=remote,
         allowed_url_schemes=git_policy_config.allowed_url_schemes,
         configured_github=repository_record.github or "",
         allowlisted_repositories=github_config.repositories,
         expected_remote_repository=expected_remote_repository,
+        container_id=container_id,
+        workspace_path=record.workspace_path,
+        execution_service=execution_service,
+        container_config=container_config,
+        execution_config=execution_config,
     )
     remote_repository = validated_remote.repository
 
@@ -1021,7 +1039,15 @@ async def run_git_push(
         delete=delete,
     )
     force_with_lease_arg = (
-        build_force_with_lease_arg(repo_path, remote=remote, branch=target_branch)
+        await build_force_with_lease_arg(
+            remote=remote,
+            branch=target_branch,
+            container_id=container_id,
+            workspace_path=record.workspace_path,
+            execution_service=execution_service,
+            container_config=container_config,
+            execution_config=execution_config,
+        )
         if force_with_lease
         else None
     )

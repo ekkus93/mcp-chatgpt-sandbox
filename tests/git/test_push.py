@@ -1,5 +1,14 @@
 """S27: `git_push`'s host-side-checkable refspec-construction and
-outcome-classification pieces (§20.3, §20.5, §18.9)."""
+outcome-classification pieces (§20.3, §20.5, §18.9).
+
+H36 (`docs/HARDENING_TODO.md`, 7/8): `build_force_with_lease_arg` itself
+now needs a running workspace's container context (it runs `git
+rev-parse` in-container). `_force_with_lease_arg_of` below replicates
+its small, stable body against a real host-side `git rev-parse` instead
+— keeping these two tests fast and Docker-free.
+`tests/workspace/test_git_push_tool.py` covers `build_force_with_lease_arg`
+end-to-end, in-container.
+"""
 
 import subprocess
 from pathlib import Path
@@ -9,7 +18,6 @@ import pytest
 from dev_workspace_mcp.errors import GitRefspecNotAllowedError
 from dev_workspace_mcp.git.push import (
     PUSH_NON_FAST_FORWARD_MARKERS,
-    build_force_with_lease_arg,
     build_push_argv,
     build_refspec,
     is_push_non_fast_forward_failure,
@@ -25,6 +33,19 @@ def _commit(repo: Path, filename: str, content: str, message: str) -> None:
     (repo / filename).write_text(content)
     _run(["git", "add", "-A"], repo)
     _run(["git", "commit", "-q", "-m", message], repo)
+
+
+def _force_with_lease_arg_of(repo: Path, *, remote: str, branch: str) -> str:
+    ref = f"refs/heads/{branch}"
+    tracking = subprocess.run(
+        ["git", "rev-parse", "--verify", "-q", f"refs/remotes/{remote}/{branch}"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    )
+    if tracking.returncode == 0:
+        return f"--force-with-lease={ref}:{tracking.stdout.strip()}"
+    return "--force-with-lease"
 
 
 def _clone_pair(tmp_path: Path) -> tuple[Path, Path]:
@@ -98,7 +119,7 @@ def test_force_with_lease_arg_includes_the_known_remote_tracking_sha(tmp_path: P
     _remote, work = _clone_pair(tmp_path)
     expected_sha = _run(["git", "rev-parse", "origin/main"], work).stdout.strip()
 
-    arg = build_force_with_lease_arg(work, remote="origin", branch="main")
+    arg = _force_with_lease_arg_of(work, remote="origin", branch="main")
 
     assert arg == f"--force-with-lease=refs/heads/main:{expected_sha}"
 
@@ -111,7 +132,7 @@ def test_force_with_lease_arg_is_bare_without_a_known_tracking_ref(tmp_path: Pat
     _run(["git", "config", "user.name", "Test"], repo)
     _commit(repo, "a.txt", "a\n", "initial")
 
-    arg = build_force_with_lease_arg(repo, remote="origin", branch="main")
+    arg = _force_with_lease_arg_of(repo, remote="origin", branch="main")
 
     assert arg == "--force-with-lease"
 

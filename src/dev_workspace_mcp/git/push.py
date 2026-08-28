@@ -2,23 +2,34 @@
 S27.
 
 The daemon constructs its own refspec from validated parameters — never a
-client-supplied string (FR-034) — exactly per §20.3's table. Pure
+client-supplied string (FR-034) — exactly per §20.3's table. Mostly pure
 functions here, mirroring `git/commit.py`/`git/pull.py`'s own split;
 `tools/git.py`'s `git_push_tool` is what actually evaluates policy and
 runs the constructed command, in-container, through the execution
 service (§20.1), after `git/remote.py`'s `validate_remote_identity`
 (S25) has already cleared the remote.
+
+`build_force_with_lease_arg` is the one exception to "pure": it reads
+the local remote-tracking ref to construct its return value, and (H36,
+`docs/HARDENING_TODO.md`, 7/8) that read now runs in-container, through
+`run_git_in_container` — `async`. `validate_branch_name`'s own `git
+check-ref-format --branch` call stays a bare `subprocess.run`, untouched
+by H36 either way: it takes no repository path at all (no `-C`, no
+`cwd`) and reads no repository configuration — a stateless syntax
+checker, not a read this migration's "repository-configured code
+execution" concern ever applied to.
 """
 
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 from typing import Literal
 
+from dev_workspace_mcp.config.models import ContainerConfig, ExecutionConfig
 from dev_workspace_mcp.errors import GitRefspecNotAllowedError
+from dev_workspace_mcp.execution.service import ExecutionService
 from dev_workspace_mcp.git.remote import PROTOCOL_EXT_DISABLED_ARGS
-from dev_workspace_mcp.git.service import run_git_host_side
+from dev_workspace_mcp.git.service import run_git_in_container
 
 RefType = Literal["branch", "tag"]
 
@@ -80,16 +91,34 @@ def build_refspec(branch: str, *, ref_type: RefType, force: bool, delete: bool) 
     return f"{prefix}refs/heads/{branch}:refs/heads/{branch}"
 
 
-def build_force_with_lease_arg(repo_path: Path, *, remote: str, branch: str) -> str:
+async def build_force_with_lease_arg(
+    *,
+    remote: str,
+    branch: str,
+    container_id: str,
+    workspace_path: str,
+    execution_service: ExecutionService,
+    container_config: ContainerConfig,
+    execution_config: ExecutionConfig,
+) -> str:
     """`--force-with-lease=<ref>:<sha>` when the local remote-tracking
     ref for `<remote>/<branch>` is known (the common case, after any
     fetch) — protecting against clobbering a push that happened since;
     bare `--force-with-lease` otherwise, letting Git fall back to its own
     reflog-based safety check rather than this daemon inventing an
-    expected value it does not actually have."""
+    expected value it does not actually have.
+
+    H36 (`docs/HARDENING_TODO.md`, 7/8): runs in-container now, through
+    `run_git_in_container` — always called from within `run_git_push`,
+    which already requires a running workspace before reaching here."""
     ref = f"refs/heads/{branch}"
-    tracking = run_git_host_side(
-        repo_path, ["rev-parse", "--verify", "-q", f"refs/remotes/{remote}/{branch}"]
+    tracking = await run_git_in_container(
+        ["rev-parse", "--verify", "-q", f"refs/remotes/{remote}/{branch}"],
+        container_id=container_id,
+        workspace_path=workspace_path,
+        execution_service=execution_service,
+        container_config=container_config,
+        execution_config=execution_config,
     )
     if tracking.ok:
         return f"--force-with-lease={ref}:{tracking.stdout.strip()}"

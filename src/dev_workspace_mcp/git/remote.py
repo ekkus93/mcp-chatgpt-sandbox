@@ -1,13 +1,35 @@
 """Remote identity validation (§20.2, §7.3) — S25.
 
 Before any structured operation that contacts a remote (`git_pull`,
-`git_push`, S26/S27), the daemon validates the configured remote the same
-way `git_commit`'s own preconditions are validated (S22): host-side,
-against the bind-mounted working tree, before anything runs in-container
-or touches the network. This module is that validation's shared core — it
-registers no MCP tool of its own; `git_pull`/`git_push` call
-`validate_remote_identity` as their first precondition, then invoke Git
-in-container only once it returns.
+`git_push`, S26/S27), the daemon validates the configured remote — the
+same "resolve, then check, before touching the network" ordering
+`git_commit`'s own preconditions use (S22). This module is that
+validation's shared core — it registers no MCP tool of its own;
+`git_pull`/`git_push` call `validate_remote_identity` as their first
+precondition, then invoke Git in-container (for the actual fetch/push)
+only once it returns.
+
+H36 (`docs/HARDENING_TODO.md`, 7/8): `resolve_remote_url`/
+`resolve_remote_push_url` run in-container now, through
+`run_git_in_container` — `async`, and always called from within
+`run_git_pull`/`run_git_push`, both of which already require a running
+workspace before reaching this module, unlike `git/commit.py`'s
+`detect_default_branch` (see its own H36 note for the one call site that
+couldn't migrate).
+
+RR-002's two-read structure is deliberately preserved, not collapsed:
+`validate_remote_identity_for_push` reads the push URL once, here, as
+part of validation (this module) — and `git_push_tool`
+(`build_get_push_url_argv`, already in-container pre-H36) reads it
+*again*, immediately before the actual push, refusing on any
+disagreement. Both reads happening in-container now doesn't weaken
+that — the property RR-002 depends on is *timing* (validate early,
+re-verify immediately before use, refuse on drift), not one read being
+host-side and the other in-container; the container and the host were
+always looking at the same bind-mounted `.git/config` regardless. What
+matters is that these stay two distinct invocations at two distinct
+points in the flow — merging them into one "optimization" would defeat
+the TOCTOU protection HR-014 exists for.
 
 There is deliberately no parameter here (or anywhere in this module) for
 a raw `--upload-pack`, `--receive-pack`, or `--exec` value (§20.2's final
@@ -20,11 +42,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Literal
 
+from dev_workspace_mcp.config.models import ContainerConfig, ExecutionConfig
 from dev_workspace_mcp.errors import GitRemoteNotAllowedError
-from dev_workspace_mcp.git.service import run_git_host_side
+from dev_workspace_mcp.execution.service import ExecutionService
+from dev_workspace_mcp.git.service import run_git_in_container
 
 #: §20.3's own backstop, reused here defensively: passed on every git
 #: invocation this module makes, so a scheme-check bug could not itself
@@ -46,17 +69,29 @@ _SCP_LIKE_RE = re.compile(r"^(?:[^@/]+@)?github\.com:(?P<owner_repo>[^/]+/[^/]+?
 UrlScheme = Literal["https", "ssh", "ext", "file", "other"]
 
 
-def resolve_remote_url(repo_path: Path, remote: str) -> str:
-    """§20.2 step 1: `git remote get-url <name>`, host-side — the same
-    precondition-read pattern `git_commit` already uses for status and
-    interrupted-operation checks (§20.1), against the bind-mounted working
-    tree rather than starting a container just to read config.
+async def resolve_remote_url(
+    remote: str,
+    *,
+    container_id: str,
+    workspace_path: str,
+    execution_service: ExecutionService,
+    container_config: ContainerConfig,
+    execution_config: ExecutionConfig,
+) -> str:
+    """§20.2 step 1: `git remote get-url <name>`, in-container — the
+    same precondition-read pattern `git_commit` already uses for status
+    and interrupted-operation checks (§20.1).
 
     Raises `GitRemoteNotAllowedError` if `remote` is not configured at
     all: there is nothing to validate, and a structured operation has no
     business inventing a remote."""
-    result = run_git_host_side(
-        repo_path, [*PROTOCOL_EXT_DISABLED_ARGS, "remote", "get-url", remote]
+    result = await run_git_in_container(
+        [*PROTOCOL_EXT_DISABLED_ARGS, "remote", "get-url", remote],
+        container_id=container_id,
+        workspace_path=workspace_path,
+        execution_service=execution_service,
+        container_config=container_config,
+        execution_config=execution_config,
     )
     if not result.ok:
         raise GitRemoteNotAllowedError(
@@ -67,22 +102,32 @@ def resolve_remote_url(repo_path: Path, remote: str) -> str:
 
 
 def build_get_push_url_argv(remote: str) -> list[str]:
-    """RR-002 (`docs/REMEDIATION_SPEC.md` §5): the in-container
-    counterpart of `resolve_remote_push_url` below — same command, run by
-    `tools/git.py`'s `git_push_tool` through the execution service, as
-    the container user, immediately before the real push. `git remote
-    get-url --push` is pure local configuration resolution: verified
-    empirically that it returns instantly against an unresolvable
-    hostname, with no DNS lookup and no network connection attempted —
-    so comparing its result against the host-side-validated URL detects
-    a container-side redirect (`url.<base>.pushInsteadOf`,
+    """RR-002 (`docs/REMEDIATION_SPEC.md` §5): `resolve_remote_push_url`
+    below reads this same command once, early, as part of validation;
+    `tools/git.py`'s `git_push_tool` reads it *again*, through the
+    execution service directly (not through this module), immediately
+    before the real push — see this module's own docstring for why both
+    reads now happening in-container doesn't collapse them into one.
+    `git remote get-url --push` is pure local configuration resolution:
+    verified empirically that it returns instantly against an
+    unresolvable hostname, with no DNS lookup and no network connection
+    attempted — so comparing the two reads' results detects a
+    container-side redirect (`url.<base>.pushInsteadOf`,
     `remote.<name>.pushurl` set in `.git/config` or `$HOME/.gitconfig`,
     either container-writable) *before* the daemon ever contacts
     anything, not merely before it transmits objects."""
     return ["git", *PROTOCOL_EXT_DISABLED_ARGS, "remote", "get-url", "--push", remote]
 
 
-def resolve_remote_push_url(repo_path: Path, remote: str) -> str:
+async def resolve_remote_push_url(
+    remote: str,
+    *,
+    container_id: str,
+    workspace_path: str,
+    execution_service: ExecutionService,
+    container_config: ContainerConfig,
+    execution_config: ExecutionConfig,
+) -> str:
     """HR-014 (`docs/HARDENING_SPEC.md` §8): `git remote get-url --push
     <name>` — the URL `git push` actually resolves to, which can differ
     from `resolve_remote_url`'s plain fetch URL via
@@ -91,8 +136,13 @@ def resolve_remote_push_url(repo_path: Path, remote: str) -> str:
     and `get-url --push` return different strings for the same remote
     name). `.git/config` is container-writable by default, so either is
     reachable through `exec` alone, with no structured tool involved."""
-    result = run_git_host_side(
-        repo_path, [*PROTOCOL_EXT_DISABLED_ARGS, "remote", "get-url", "--push", remote]
+    result = await run_git_in_container(
+        [*PROTOCOL_EXT_DISABLED_ARGS, "remote", "get-url", "--push", remote],
+        container_id=container_id,
+        workspace_path=workspace_path,
+        execution_service=execution_service,
+        container_config=container_config,
+        execution_config=execution_config,
     )
     if not result.ok:
         raise GitRemoteNotAllowedError(
@@ -195,21 +245,25 @@ def _validate_url_identity(
     return normalized
 
 
-def validate_remote_identity(
-    repo_path: Path,
+async def validate_remote_identity(
     *,
     remote: str,
     allowed_url_schemes: list[Literal["ssh", "https"]],
     configured_github: str,
     allowlisted_repositories: list[str],
     expected_remote_repository: str | None,
+    container_id: str,
+    workspace_path: str,
+    execution_service: ExecutionService,
+    container_config: ContainerConfig,
+    execution_config: ExecutionConfig,
 ) -> str:
     """§20.2 steps 1-6, run before any structured operation contacts
     `remote`. Returns the normalized `owner/repo` identity on success;
     raises `GitRemoteNotAllowedError` on the first check that fails.
-    Callers invoke Git in-container only after this returns — exactly how
-    `git_commit` runs its mutating commands only once every precondition
-    in §20.6 has already passed.
+    Callers invoke Git's actual fetch/push only after this returns —
+    exactly how `git_commit` runs its mutating commands only once every
+    precondition in §20.6 has already passed.
 
     Validates the *fetch* URL (`git remote get-url`) — correct for
     `git_pull`, which only ever fetches. `git_push` SHALL use
@@ -217,7 +271,14 @@ def validate_remote_identity(
     resolves its destination differently, and validating the fetch URL
     alone can approve a destination the push itself never goes to.
     """
-    url = resolve_remote_url(repo_path, remote)
+    url = await resolve_remote_url(
+        remote,
+        container_id=container_id,
+        workspace_path=workspace_path,
+        execution_service=execution_service,
+        container_config=container_config,
+        execution_config=execution_config,
+    )
     return _validate_url_identity(
         url,
         remote=remote,
@@ -251,14 +312,18 @@ class ValidatedPushRemote:
     push_url: str
 
 
-def validate_remote_identity_for_push(
-    repo_path: Path,
+async def validate_remote_identity_for_push(
     *,
     remote: str,
     allowed_url_schemes: list[Literal["ssh", "https"]],
     configured_github: str,
     allowlisted_repositories: list[str],
     expected_remote_repository: str | None,
+    container_id: str,
+    workspace_path: str,
+    execution_service: ExecutionService,
+    container_config: ContainerConfig,
+    execution_config: ExecutionConfig,
 ) -> ValidatedPushRemote:
     """HR-014 (`docs/HARDENING_SPEC.md` §8): `git push` resolves its
     destination via `git remote get-url --push`, which can silently
@@ -281,7 +346,14 @@ def validate_remote_identity_for_push(
     what was approved from the host's own clean view, it does not by
     itself guarantee the container agrees.
     """
-    fetch_url = resolve_remote_url(repo_path, remote)
+    fetch_url = await resolve_remote_url(
+        remote,
+        container_id=container_id,
+        workspace_path=workspace_path,
+        execution_service=execution_service,
+        container_config=container_config,
+        execution_config=execution_config,
+    )
     fetch_normalized = _validate_url_identity(
         fetch_url,
         remote=remote,
@@ -291,7 +363,14 @@ def validate_remote_identity_for_push(
         expected_remote_repository=expected_remote_repository,
     )
 
-    push_url = resolve_remote_push_url(repo_path, remote)
+    push_url = await resolve_remote_push_url(
+        remote,
+        container_id=container_id,
+        workspace_path=workspace_path,
+        execution_service=execution_service,
+        container_config=container_config,
+        execution_config=execution_config,
+    )
     if push_url == fetch_url:
         return ValidatedPushRemote(repository=fetch_normalized, push_url=push_url)
 

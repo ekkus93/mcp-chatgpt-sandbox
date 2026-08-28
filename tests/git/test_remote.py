@@ -1,15 +1,30 @@
 """S25: remote identity validation (§20.2, §7.3).
 
-`validate_remote_identity` is the mechanism a future structured
-`git_pull`/`git_push` (S26/S27) will call as their first precondition —
-these tests exercise it directly, the same way §20.2 itself describes the
-check ("before any structured operation that contacts a remote"), without
-needing a running container or a real network. AT-009 (unauthorized
-remote), AT-026 (`ext::` transport), and the validation half of AT-027
-(key-scope mismatch) and AT-028 (SSH-form remote accepted) are covered
-this way; the SSH-connectivity/GitHub-authentication halves of AT-027/
-AT-028, and AT-030 (submodule fetch), require S23's key provisioning (D3,
-blocked) and S26/S27's actual fetch/push respectively — see docs/TODO.md.
+`validate_remote_identity` is the mechanism `git_pull`/`git_push` call as
+their first precondition — these tests exercise it directly, the same
+way §20.2 itself describes the check ("before any structured operation
+that contacts a remote"), without needing a running container or a real
+network. AT-009 (unauthorized remote), AT-026 (`ext::` transport), and
+the validation half of AT-027 (key-scope mismatch) and AT-028 (SSH-form
+remote accepted) are covered this way; the SSH-connectivity/GitHub-
+authentication halves of AT-027/AT-028, and AT-030 (submodule fetch),
+require S23's key provisioning (D3, blocked) and S26/S27's actual
+fetch/push respectively — see docs/TODO.md.
+
+H36 (`docs/HARDENING_TODO.md`, 7/8): `resolve_remote_url`/
+`resolve_remote_push_url` themselves now need a running workspace's
+container context (they run `git remote get-url` in-container).
+`_resolve_url_of`/`_resolve_push_url_of` below read the same
+configuration directly, host-side, real `git remote get-url [--push]`
+calls — these tests are about the *validation* logic
+(`_validate_url_identity`, imported directly the same way this test
+suite already imports other underscore-prefixed internals like
+`git/service.py`'s `_discover_code_executing_overrides`), not about
+where the URL read happens, so replicating that one trivial read
+host-side keeps the whole suite fast and Docker-free.
+`tests/workspace/test_git_pull_tool.py`/`test_git_push_tool.py` cover
+`validate_remote_identity`/`validate_remote_identity_for_push`
+end-to-end, in-container.
 """
 
 import subprocess
@@ -19,10 +34,10 @@ import pytest
 
 from dev_workspace_mcp.errors import GitRemoteNotAllowedError
 from dev_workspace_mcp.git.remote import (
+    ValidatedPushRemote,
+    _validate_url_identity,
     classify_url_scheme,
     normalize_to_owner_repo,
-    resolve_remote_url,
-    validate_remote_identity,
 )
 
 
@@ -31,6 +46,82 @@ def _repo_with_remote(path: Path, url: str) -> Path:
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=path, check=True)
     subprocess.run(["git", "remote", "add", "origin", url], cwd=path, check=True)
     return path
+
+
+def _resolve_url_of(repo: Path, remote: str) -> str:
+    result = subprocess.run(
+        ["git", "remote", "get-url", remote], cwd=repo, capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise GitRemoteNotAllowedError(
+            f"remote {remote!r} is not configured: {result.stderr.strip()}",
+            details={"remote": remote},
+        )
+    return result.stdout.strip()
+
+
+def _resolve_push_url_of(repo: Path, remote: str) -> str:
+    result = subprocess.run(
+        ["git", "remote", "get-url", "--push", remote], cwd=repo, capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise GitRemoteNotAllowedError(
+            f"remote {remote!r} has no push URL configured: {result.stderr.strip()}",
+            details={"remote": remote},
+        )
+    return result.stdout.strip()
+
+
+def _validate_remote_identity_of(
+    repo: Path,
+    *,
+    remote: str,
+    allowed_url_schemes: list[str],
+    configured_github: str,
+    allowlisted_repositories: list[str],
+    expected_remote_repository: str | None,
+) -> str:
+    url = _resolve_url_of(repo, remote)
+    return _validate_url_identity(
+        url,
+        remote=remote,
+        allowed_url_schemes=allowed_url_schemes,
+        configured_github=configured_github,
+        allowlisted_repositories=allowlisted_repositories,
+        expected_remote_repository=expected_remote_repository,
+    )
+
+
+def _validate_remote_identity_for_push_of(
+    repo: Path,
+    *,
+    remote: str,
+    allowed_url_schemes: list[str],
+    configured_github: str,
+    allowlisted_repositories: list[str],
+    expected_remote_repository: str | None,
+) -> ValidatedPushRemote:
+    fetch_url = _resolve_url_of(repo, remote)
+    fetch_normalized = _validate_url_identity(
+        fetch_url,
+        remote=remote,
+        allowed_url_schemes=allowed_url_schemes,
+        configured_github=configured_github,
+        allowlisted_repositories=allowlisted_repositories,
+        expected_remote_repository=expected_remote_repository,
+    )
+    push_url = _resolve_push_url_of(repo, remote)
+    if push_url == fetch_url:
+        return ValidatedPushRemote(repository=fetch_normalized, push_url=push_url)
+    push_normalized = _validate_url_identity(
+        push_url,
+        remote=remote,
+        allowed_url_schemes=allowed_url_schemes,
+        configured_github=configured_github,
+        allowlisted_repositories=allowlisted_repositories,
+        expected_remote_repository=expected_remote_repository,
+    )
+    return ValidatedPushRemote(repository=push_normalized, push_url=push_url)
 
 
 # --- classify_url_scheme -----------------------------------------------------------
@@ -84,7 +175,7 @@ def test_normalize_to_owner_repo_rejects_ext_transport() -> None:
 
 def test_resolve_remote_url_reads_the_configured_url(tmp_path: Path) -> None:
     repo = _repo_with_remote(tmp_path / "repo", "git@github.com:owner/repo.git")
-    assert resolve_remote_url(repo, "origin") == "git@github.com:owner/repo.git"
+    assert _resolve_url_of(repo, "origin") == "git@github.com:owner/repo.git"
 
 
 def test_resolve_remote_url_raises_for_an_unconfigured_remote(tmp_path: Path) -> None:
@@ -92,7 +183,7 @@ def test_resolve_remote_url_raises_for_an_unconfigured_remote(tmp_path: Path) ->
     repo.mkdir()
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
     with pytest.raises(GitRemoteNotAllowedError):
-        resolve_remote_url(repo, "origin")
+        _resolve_url_of(repo, "origin")
 
 
 # --- validate_remote_identity --------------------------------------------------------
@@ -100,7 +191,7 @@ def test_resolve_remote_url_raises_for_an_unconfigured_remote(tmp_path: Path) ->
 
 def test_matching_https_remote_is_accepted(tmp_path: Path) -> None:
     repo = _repo_with_remote(tmp_path / "repo", "https://github.com/owner/repo.git")
-    identity = validate_remote_identity(
+    identity = _validate_remote_identity_of(
         repo,
         remote="origin",
         allowed_url_schemes=["ssh", "https"],
@@ -115,7 +206,7 @@ def test_at_028_matching_ssh_form_remote_is_accepted(tmp_path: Path) -> None:
     """AT-028 (validation half): the SCP-like SSH form is normalized and
     accepted exactly like the other two forms, not treated as unusual."""
     repo = _repo_with_remote(tmp_path / "repo", "git@github.com:owner/repo.git")
-    identity = validate_remote_identity(
+    identity = _validate_remote_identity_of(
         repo,
         remote="origin",
         allowed_url_schemes=["ssh", "https"],
@@ -128,7 +219,7 @@ def test_at_028_matching_ssh_form_remote_is_accepted(tmp_path: Path) -> None:
 
 def test_remote_matching_the_github_repositories_allowlist_is_accepted(tmp_path: Path) -> None:
     repo = _repo_with_remote(tmp_path / "repo", "https://github.com/other-owner/other-repo.git")
-    identity = validate_remote_identity(
+    identity = _validate_remote_identity_of(
         repo,
         remote="origin",
         allowed_url_schemes=["ssh", "https"],
@@ -147,7 +238,7 @@ def test_at_009_and_at_027_unauthorized_remote_is_rejected(tmp_path: Path) -> No
     which is what makes a structured push fail at all under AT-009/027."""
     repo = _repo_with_remote(tmp_path / "repo", "https://github.com/attacker/unrelated.git")
     with pytest.raises(GitRemoteNotAllowedError) as excinfo:
-        validate_remote_identity(
+        _validate_remote_identity_of(
             repo,
             remote="origin",
             allowed_url_schemes=["ssh", "https"],
@@ -163,7 +254,7 @@ def test_at_026_ext_transport_is_rejected_before_any_authenticated_operation(
 ) -> None:
     repo = _repo_with_remote(tmp_path / "repo", "ext::sh -c 'touch /tmp/pwned'")
     with pytest.raises(GitRemoteNotAllowedError) as excinfo:
-        validate_remote_identity(
+        _validate_remote_identity_of(
             repo,
             remote="origin",
             allowed_url_schemes=["ssh", "https"],
@@ -177,7 +268,7 @@ def test_at_026_ext_transport_is_rejected_before_any_authenticated_operation(
 def test_file_transport_is_rejected(tmp_path: Path) -> None:
     repo = _repo_with_remote(tmp_path / "repo", "file:///etc/passwd")
     with pytest.raises(GitRemoteNotAllowedError) as excinfo:
-        validate_remote_identity(
+        _validate_remote_identity_of(
             repo,
             remote="origin",
             allowed_url_schemes=["ssh", "https"],
@@ -194,7 +285,7 @@ def test_scheme_outside_the_configured_allowlist_is_rejected(tmp_path: Path) -> 
     list to `["ssh"]` SHALL actually stop an HTTPS remote."""
     repo = _repo_with_remote(tmp_path / "repo", "https://github.com/owner/repo.git")
     with pytest.raises(GitRemoteNotAllowedError):
-        validate_remote_identity(
+        _validate_remote_identity_of(
             repo,
             remote="origin",
             allowed_url_schemes=["ssh"],
@@ -213,7 +304,7 @@ def test_expected_remote_repository_mismatch_fails_even_when_server_allows_it(
     fails because it doesn't match what the caller expected."""
     repo = _repo_with_remote(tmp_path / "repo", "https://github.com/owner/repo.git")
     with pytest.raises(GitRemoteNotAllowedError) as excinfo:
-        validate_remote_identity(
+        _validate_remote_identity_of(
             repo,
             remote="origin",
             allowed_url_schemes=["ssh", "https"],
@@ -226,7 +317,7 @@ def test_expected_remote_repository_mismatch_fails_even_when_server_allows_it(
 
 def test_expected_remote_repository_match_is_accepted(tmp_path: Path) -> None:
     repo = _repo_with_remote(tmp_path / "repo", "https://github.com/owner/repo.git")
-    identity = validate_remote_identity(
+    identity = _validate_remote_identity_of(
         repo,
         remote="origin",
         allowed_url_schemes=["ssh", "https"],
@@ -240,7 +331,7 @@ def test_expected_remote_repository_match_is_accepted(tmp_path: Path) -> None:
 def test_non_github_host_is_rejected_even_with_an_allowed_scheme(tmp_path: Path) -> None:
     repo = _repo_with_remote(tmp_path / "repo", "https://gitlab.com/owner/repo.git")
     with pytest.raises(GitRemoteNotAllowedError):
-        validate_remote_identity(
+        _validate_remote_identity_of(
             repo,
             remote="origin",
             allowed_url_schemes=["ssh", "https"],
@@ -262,24 +353,20 @@ def _repo_with_pushurl(path: Path, *, fetch_url: str, push_url: str) -> Path:
 
 
 def test_resolve_remote_push_url_reads_the_configured_pushurl(tmp_path: Path) -> None:
-    from dev_workspace_mcp.git.remote import resolve_remote_push_url
-
     repo = _repo_with_pushurl(
         tmp_path / "repo",
         fetch_url="https://github.com/owner/repo.git",
         push_url="https://github.com/owner/different-repo.git",
     )
-    assert resolve_remote_push_url(repo, "origin") == "https://github.com/owner/different-repo.git"
+    assert _resolve_push_url_of(repo, "origin") == "https://github.com/owner/different-repo.git"
 
 
 def test_resolve_remote_push_url_falls_back_to_fetch_url_when_unset(tmp_path: Path) -> None:
     """Git itself falls back to the fetch URL for `get-url --push` when no
     `remote.<name>.pushurl` is configured — the common case, where push
     and fetch legitimately go to the same place."""
-    from dev_workspace_mcp.git.remote import resolve_remote_push_url
-
     repo = _repo_with_remote(tmp_path / "repo", "https://github.com/owner/repo.git")
-    assert resolve_remote_push_url(repo, "origin") == "https://github.com/owner/repo.git"
+    assert _resolve_push_url_of(repo, "origin") == "https://github.com/owner/repo.git"
 
 
 def test_h12_pushurl_redirect_to_an_unauthorized_host_is_rejected(tmp_path: Path) -> None:
@@ -288,15 +375,13 @@ def test_h12_pushurl_redirect_to_an_unauthorized_host_is_rejected(tmp_path: Path
     (fetch-only) approved this remote; `git push` would have actually
     contacted the pushurl host instead. `validate_remote_identity_for_push`
     SHALL reject it."""
-    from dev_workspace_mcp.git.remote import validate_remote_identity_for_push
-
     repo = _repo_with_pushurl(
         tmp_path / "repo",
         fetch_url="https://github.com/owner/repo.git",
         push_url="https://evil.example.com/evil/other.git",
     )
     with pytest.raises(GitRemoteNotAllowedError) as excinfo:
-        validate_remote_identity_for_push(
+        _validate_remote_identity_for_push_of(
             repo,
             remote="origin",
             allowed_url_schemes=["ssh", "https"],
@@ -310,15 +395,13 @@ def test_h12_pushurl_redirect_to_an_unauthorized_host_is_rejected(tmp_path: Path
 def test_h12_pushurl_redirect_to_an_unauthorized_sibling_repo_is_rejected(tmp_path: Path) -> None:
     """Same host, same owner, different repo — a subtler redirect than a
     different host entirely, and still SHALL be rejected."""
-    from dev_workspace_mcp.git.remote import validate_remote_identity_for_push
-
     repo = _repo_with_pushurl(
         tmp_path / "repo",
         fetch_url="https://github.com/owner/repo.git",
         push_url="https://github.com/owner/different-repo.git",
     )
     with pytest.raises(GitRemoteNotAllowedError) as excinfo:
-        validate_remote_identity_for_push(
+        _validate_remote_identity_for_push_of(
             repo,
             remote="origin",
             allowed_url_schemes=["ssh", "https"],
@@ -335,14 +418,12 @@ def test_h12_pushurl_redirect_to_an_allowlisted_repo_is_accepted(tmp_path: Path)
     and the returned identity SHALL be the push destination's, not the
     fetch URL's (the caller uses this to name the actual destination in
     the audit record, per HR-014)."""
-    from dev_workspace_mcp.git.remote import validate_remote_identity_for_push
-
     repo = _repo_with_pushurl(
         tmp_path / "repo",
         fetch_url="https://github.com/owner/repo.git",
         push_url="https://github.com/other-owner/other-repo.git",
     )
-    validated = validate_remote_identity_for_push(
+    validated = _validate_remote_identity_for_push_of(
         repo,
         remote="origin",
         allowed_url_schemes=["ssh", "https"],
@@ -357,14 +438,12 @@ def test_h12_pushurl_redirect_to_an_allowlisted_repo_is_accepted(tmp_path: Path)
 def test_h12_matching_pushurl_is_accepted_same_as_plain_case(tmp_path: Path) -> None:
     """Push URL explicitly configured but identical to the fetch URL —
     ordinary case, not a redirect — SHALL still validate normally."""
-    from dev_workspace_mcp.git.remote import validate_remote_identity_for_push
-
     repo = _repo_with_pushurl(
         tmp_path / "repo",
         fetch_url="https://github.com/owner/repo.git",
         push_url="https://github.com/owner/repo.git",
     )
-    validated = validate_remote_identity_for_push(
+    validated = _validate_remote_identity_for_push_of(
         repo,
         remote="origin",
         allowed_url_schemes=["ssh", "https"],
@@ -382,10 +461,8 @@ def test_h12_no_pushurl_configured_behaves_like_plain_validate_remote_identity(
     """No `pushurl` at all (the common case) — push and fetch URL are the
     same string, and validation behaves exactly like
     `validate_remote_identity`."""
-    from dev_workspace_mcp.git.remote import validate_remote_identity_for_push
-
     repo = _repo_with_remote(tmp_path / "repo", "https://github.com/owner/repo.git")
-    validated = validate_remote_identity_for_push(
+    validated = _validate_remote_identity_for_push_of(
         repo,
         remote="origin",
         allowed_url_schemes=["ssh", "https"],
@@ -404,15 +481,13 @@ def test_h12_expected_remote_repository_checked_against_push_destination(
     of server config) SHALL be checked against the actual push
     destination, not just the fetch URL — otherwise a caller who pinned
     an expected repository could still be redirected by a pushurl."""
-    from dev_workspace_mcp.git.remote import validate_remote_identity_for_push
-
     repo = _repo_with_pushurl(
         tmp_path / "repo",
         fetch_url="https://github.com/owner/repo.git",
         push_url="https://github.com/owner/different-repo.git",
     )
     with pytest.raises(GitRemoteNotAllowedError) as excinfo:
-        validate_remote_identity_for_push(
+        _validate_remote_identity_for_push_of(
             repo,
             remote="origin",
             allowed_url_schemes=["ssh", "https"],
