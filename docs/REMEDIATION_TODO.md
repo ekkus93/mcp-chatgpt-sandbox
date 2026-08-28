@@ -2312,7 +2312,7 @@ needed, same module-level-indentation line-length shift as `tools/git.py`),
 `run_exec`'s dependencies directly and calls it with no
 `server.call_tool("exec", ...)` anywhere in the chain.
 
-**Commit:** `PLACEHOLDER`
+**Commit:** `f69581c`
 
 ---
 
