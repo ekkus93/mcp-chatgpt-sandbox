@@ -2226,7 +2226,7 @@ finding from writing the test, not assumed: the first attempt failed with a
 genuine Docker `400` (`bind source path does not exist`), confirming the known
 mount really does require it.
 
-**Commit:** `PLACEHOLDER` (workspace.py module; further modules land as
+**Commit:** `a1269a6` (workspace.py module; further modules land as
 separate commits, each updating this checklist)
 
 ---
