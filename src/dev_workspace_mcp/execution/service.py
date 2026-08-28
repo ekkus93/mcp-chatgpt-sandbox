@@ -87,11 +87,24 @@ class CapturedOutput:
     command's output to do their own pagination/parsing over it (e.g.
     `git_diff`'s `offset`-based windowing, §46) — "the last N lines for a
     human to skim", `consume`'s own contract, is the wrong shape for
-    that, not merely a smaller version of it."""
+    that, not merely a smaller version of it.
+
+    `stdout_truncated`/`stderr_truncated` report whether the cap was
+    actually reached. They exist because omitting them was a real,
+    client-reachable defect: every parser downstream of
+    `run_git_in_container` assumes complete input, and a silent cap made
+    `git_log`/`git_status` raise a bare `ValueError`/`IndexError` (not a
+    `WorkspaceError`, so `translate_workspace_errors` could not classify
+    it) and `git_diff` report `truncated: false` on an incomplete diff.
+    A caller cannot infer truncation from the returned text — `len(stdout)
+    == max_bytes` is equally consistent with output that happened to end
+    exactly there — so the flag has to come from the read itself."""
 
     exit_code: int
     stdout: str
     stderr: str
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
 
 
 class ExecutionService:
@@ -169,14 +182,11 @@ class ExecutionService:
         docstring for why `consume` itself is the wrong shape for this
         caller rather than being extended with another parameter.
 
-        Deliberately does not track `_total`/`_truncated` the way
-        `consume` does: this method's only caller (`run_git_in_container`)
-        picks `max_bytes` generously (`execution_config.max_output_bytes`,
-        already an order of magnitude larger than any single Git read's
-        own default cap), and the *caller's* pagination logic — not this
-        method — is what a client-visible `truncated` flag SHALL reflect
-        (H36); a second, lower-fidelity truncation signal here would only
-        invite confusing the two.
+        Tracks the true totals (the same way `consume` does) so the
+        returned `stdout_truncated`/`stderr_truncated` can report whether
+        the cap was reached — see `CapturedOutput`'s own docstring for
+        why silently capping was a real defect rather than an acceptable
+        simplification.
 
         Call via `asyncio.to_thread`, same as `consume`."""
         api = self._docker.api
@@ -184,15 +194,20 @@ class ExecutionService:
 
         stdout_chunks: list[bytes] = []
         stderr_chunks: list[bytes] = []
+        stdout_total = stderr_total = 0
         stdout_captured = stderr_captured = 0
 
         for out_chunk, err_chunk in stream:
-            if out_chunk and stdout_captured < max_bytes:
-                stdout_chunks.append(out_chunk)
-                stdout_captured += len(out_chunk)
-            if err_chunk and stderr_captured < max_bytes:
-                stderr_chunks.append(err_chunk)
-                stderr_captured += len(err_chunk)
+            if out_chunk:
+                stdout_total += len(out_chunk)
+                if stdout_captured < max_bytes:
+                    stdout_chunks.append(out_chunk)
+                    stdout_captured += len(out_chunk)
+            if err_chunk:
+                stderr_total += len(err_chunk)
+                if stderr_captured < max_bytes:
+                    stderr_chunks.append(err_chunk)
+                    stderr_captured += len(err_chunk)
 
         exit_code = api.exec_inspect(exec_id).get("ExitCode")
         stdout_bytes = b"".join(stdout_chunks)[:max_bytes]
@@ -202,6 +217,8 @@ class ExecutionService:
             exit_code=exit_code if exit_code is not None else -1,
             stdout=stdout_bytes.decode("utf-8", errors="replace"),
             stderr=stderr_bytes.decode("utf-8", errors="replace"),
+            stdout_truncated=stdout_total > max_bytes,
+            stderr_truncated=stderr_total > max_bytes,
         )
 
     def start_and_open_stream(

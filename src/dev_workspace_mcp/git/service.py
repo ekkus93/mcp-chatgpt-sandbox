@@ -42,7 +42,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from dev_workspace_mcp.config.models import ContainerConfig, ExecutionConfig
-from dev_workspace_mcp.errors import InvalidArgumentError
+from dev_workspace_mcp.errors import CommandFailedError, InvalidArgumentError
 from dev_workspace_mcp.execution.service import ExecutionService
 from dev_workspace_mcp.workspace.container_config import resolve_exec_user
 
@@ -137,14 +137,26 @@ async def run_git_in_container(
     smaller, read-specific defaults like `git/diff.py`'s
     `DEFAULT_MAX_DIFF_BYTES`) is deliberately generous: this is `capture`
     the caller does its *own* pagination/truncation on top of (§46), not
-    the client-visible cap — a smaller value here would silently mean a
-    caller's own `total_bytes`/pagination reasons about less than the
-    command's true output. A single Git read exceeding
-    `execution_config.max_output_bytes` (10 MiB by default — an order of
-    magnitude past `DEFAULT_MAX_DIFF_BYTES`) is the one case this can
-    still under-report the true total; accepted as a known, generous
-    limit rather than an unbounded capture, consistent with every other
-    container-output capture in this codebase.
+    the client-visible cap — a smaller value here would mean a caller's
+    own `total_bytes`/pagination reasons about less than the command's
+    true output.
+
+    **Raises `CommandFailedError` when the capture hit that cap**, rather
+    than handing a caller a silently-incomplete string. Every parser
+    downstream of this function assumes complete input, and none of them
+    can detect a cut for themselves — so the check belongs here, once, in
+    the shared primitive, where it holds for every caller by construction
+    rather than by each one remembering. Fixing this per-parser was the
+    alternative and would have left the next caller unprotected.
+
+    A read big enough to trip this is genuinely unservable, not merely
+    inconvenient: the daemon never captured the remainder, so there is
+    nothing for `git_diff`'s own `next_offset` pagination to page *to*.
+    Reporting it as a failure with an actionable message is the honest
+    outcome; reporting `truncated: false` (what this did before) is not.
+    `git_state.py`'s `read_basic_git_state` is the one deliberate
+    exception — see its own docstring for why a diagnostic block absorbs
+    this rather than propagating it.
     """
     user = resolve_exec_user(container_config)
     exec_id = await asyncio.to_thread(
@@ -160,6 +172,18 @@ async def run_git_in_container(
         exec_id,
         max_bytes=execution_config.max_output_bytes,
     )
+    if captured.stdout_truncated:
+        raise CommandFailedError(
+            f"git {args[0] if args else ''} produced more output than the daemon can "
+            f"capture ({execution_config.max_output_bytes} bytes, "
+            f"execution.max_output_bytes) and was truncated; the result cannot be "
+            f"served completely. Narrow the request (e.g. a path filter, "
+            f"stat_only, or fewer entries) or raise execution.max_output_bytes.",
+            details={
+                "git_command": args[0] if args else "",
+                "max_output_bytes": execution_config.max_output_bytes,
+            },
+        )
     return GitCommandResult(
         returncode=captured.exit_code, stdout=captured.stdout, stderr=captured.stderr
     )

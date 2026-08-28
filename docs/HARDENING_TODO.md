@@ -3586,6 +3586,94 @@ new in-container/async tests added). No Docker leftovers at any step.
 `docs/REMEDIATION_TODO.md` (R1-R27) and `docs/HARDENING_TODO.md` (H1-H37)
 are now both fully closed; nothing further is queued.
 
+#### H36a — Truncated captures are reported, never silent ✅
+**Corrects:** H36 (this task) · **Commit:** `PLACEHOLDER`
+
+- [x] `ExecutionService.capture` reports `stdout_truncated`/`stderr_truncated`
+- [x] `run_git_in_container` fails closed (`CommandFailedError`) on a truncated
+      capture, in the shared primitive rather than per-parser
+- [x] `read_basic_git_state` absorbs it, per its documented best-effort contract
+
+**Defect (found by a code review of `docs/REMEDIATION_TODO.md`, reproduced
+before fixing).** H36's own `ExecutionService.capture` (step 1/8) capped output
+at `max_bytes` **with no signal to the caller**, and every parser downstream of
+`run_git_in_container` assumes complete input. Three client-visible
+consequences, each reproduced directly:
+
+```
+git_log:    parse_git_log_output    -> ValueError: not enough values to unpack (expected 4, got 3)
+git_status: parse_git_status_output -> IndexError: list index out of range
+git_diff:   total_bytes=100  truncated=False   <- client believes it has everything
+```
+
+`ValueError`/`IndexError` are not `WorkspaceError`, so
+`translate_workspace_errors` could not classify them and they reached the client
+as unstructured crashes — **verbatim the R5 defect class** (`docs/
+REMEDIATION_TODO.md`, "Every filesystem error is a typed `WorkspaceError`"),
+reintroduced on the git side. `git_log` is the most reachable: `max_entries` is
+client-supplied and `build_log_argv` bounds only `<= 0`.
+
+**A regression, not a pre-existing gap — verified, not assumed.** `git show
+e89fdc0~1` confirms the retired `run_git_host_side` used
+`subprocess.run(capture_output=True)`, which has no byte cap at all, so
+output was always complete before this migration.
+
+**Why it shipped:** no test anywhere exercised a git read at the truncation
+boundary — every `max_output_bytes` test targets `StreamCapture`/`exec`. H36
+introduced a new boundary with zero coverage of it, which is precisely the
+failure mode `docs/REMEDIATION_TODO.md`'s own preamble exists to prevent.
+`capture`'s original docstring argued the *caller's* pagination "is what a
+client-visible `truncated` flag SHALL reflect"; that reasoning is wrong — a
+caller can only paginate over bytes it received, so an unsignalled upstream cap
+makes its flag structurally unable to be correct.
+
+**Implementation.** `capture` now tracks true totals the way `consume` already
+did, and `CapturedOutput` carries `stdout_truncated`/`stderr_truncated` — a
+caller cannot infer this from the text, since `len(stdout) == max_bytes` is
+equally consistent with output that ended exactly there. The check that acts on
+it lives in `run_git_in_container`, once: none of the eleven call sites can
+detect a cut for themselves, so putting it in the shared primitive makes the
+property hold for every current *and future* caller by construction rather than
+by each one remembering — the same "holds by construction, not by keeping two
+mechanisms in sync" reasoning this file's own HR-002 notes used. Reuses the
+existing `COMMAND_FAILED` code (no new error code, no §31 change, no schema
+drift, no `CONTRACT_VERSION` bump), with an actionable message naming
+`execution.max_output_bytes` and suggesting a path filter / `stat_only` /
+fewer entries.
+
+Failing closed is the honest outcome rather than a conservative one: the daemon
+never captured the remainder, so there is nothing for `git_diff`'s `next_offset`
+to page *to* — reporting `truncated: false` was a lie, and reporting
+`truncated: true` with an unreachable remainder would stall a paginating client
+forever. `read_basic_git_state` is the one deliberate exception, documented in
+its own docstring: it feeds `workspace_info`'s *diagnostic* `git` block, whose
+contract is already "`None` when it cannot be determined", and a pathological
+working tree must not make `workspace_info` itself unavailable.
+
+**Verified the tests catch the regression.** Six new tests written first and
+watched fail (`AttributeError: 'CapturedOutput' object has no attribute
+'stdout_truncated'`, then the three parser crashes and the `clean is None`
+assertion). After implementing, reverted all three `src/` files to `HEAD` with
+the tests in place: the same 6 failed, 3 pre-existing passed. Restored; 9/9 pass.
+
+**Full suite:** 980 passed, 0 failed (974 + this task's 6). `ruff check`, `ruff
+format --check`, `mypy src` clean. No Docker leftovers. `schemas/tools.json`
+untouched; `tests/test_schema_export.py`/`test_docs_tools.py` pass.
+
+**New tests** (`tests/workspace/test_git_service_container.py`, real Docker, a
+deliberately tiny `execution.max_output_bytes` to reach the boundary cheaply):
+`capture` reports truncation and does not false-positive on small output;
+`run_git_in_container` raises typed; `read_git_status`/`read_git_log`/
+`read_git_diff` each fail typed rather than crashing or lying; and
+`read_basic_git_state` degrades to `clean: None` while still reporting
+`branch` from the reads that did fit.
+
+**Known gap.** `git_log`'s `max_entries` remains unbounded above — the fix
+converts what was a crash into a clean typed error, but a client can still
+request a log large enough to trigger it. Bounding it is a separate,
+contract-visible decision (§17.3 says "bounded log" without a number) and is
+deliberately not folded into this correction.
+
 ---
 
 ## Definition of done

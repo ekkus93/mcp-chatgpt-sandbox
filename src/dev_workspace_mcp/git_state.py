@@ -23,6 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from dev_workspace_mcp.config.models import ContainerConfig, ExecutionConfig
+from dev_workspace_mcp.errors import CommandFailedError
 from dev_workspace_mcp.execution.service import ExecutionService
 from dev_workspace_mcp.git.service import run_git_in_container
 
@@ -56,17 +57,32 @@ async def read_basic_git_state(
     No host `repo_path` parameter, unlike this module's sibling
     functions: this never had a host-side fallback (`detect_interrupted_
     operation`-shaped or otherwise), so once the read moved in-container
-    there was nothing left needing the host path at all."""
+    there was nothing left needing the host path at all.
+
+    The one caller that deliberately absorbs `run_git_in_container`'s
+    truncation failure rather than propagating it. That function fails
+    closed for everything else — a parser handed a cut-off `git status`
+    or `git log` would produce silently wrong results — but this block is
+    `workspace_info`'s *diagnostic* `git` field, whose whole contract is
+    already "`None` when it cannot be determined". A working tree
+    pathological enough to overflow the capture cap must not make
+    `workspace_info` itself unavailable: reporting `clean: null` beside
+    an accurate `container_state` is strictly more useful than failing
+    the call. This is the same reasoning as the `if result.ok else None`
+    below, applied to one more failure mode."""
 
     async def _run(args: list[str]) -> str | None:
-        result = await run_git_in_container(
-            args,
-            container_id=container_id,
-            workspace_path=workspace_path,
-            execution_service=execution_service,
-            container_config=container_config,
-            execution_config=execution_config,
-        )
+        try:
+            result = await run_git_in_container(
+                args,
+                container_id=container_id,
+                workspace_path=workspace_path,
+                execution_service=execution_service,
+                container_config=container_config,
+                execution_config=execution_config,
+            )
+        except CommandFailedError:
+            return None
         return result.stdout.strip() if result.ok else None
 
     branch = await _run(["rev-parse", "--abbrev-ref", "HEAD"])
