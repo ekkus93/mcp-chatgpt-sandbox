@@ -7,6 +7,7 @@ Every test in this file creates real containers; `conftest.py`'s
 
 import sqlite3
 import time
+from pathlib import Path
 
 import pytest
 
@@ -147,6 +148,87 @@ def test_delete_removes_container_and_db_row(
     )
     container_id = record.container_id
     manager.delete(record.id)
+
+    assert db.execute("SELECT * FROM workspace WHERE id = ?", (record.id,)).fetchone() is None
+    with pytest.raises(docker.errors.NotFound):
+        docker_client.containers.get(container_id)  # type: ignore[arg-type]
+
+
+def test_rr012_delete_succeeds_and_leaves_no_row_when_volume_removal_fails(
+    manager: DockerWorkspaceManager,
+    docker_client: docker.DockerClient,
+    db: sqlite3.Connection,
+    repository: RepositoryRecord,
+) -> None:
+    """RR-012 (`docs/REMEDIATION_SPEC.md` §10): reproduced end to end
+    against a real Docker daemon before this fix — a cache volume held
+    in use by another (real) container, the same cross-workspace sharing
+    HR-009 exists to support, made `delete` raise `ContainerRuntimeFailedError`
+    *between* container removal and row deletion: the container was
+    confirmed gone, the row was confirmed stuck in `deleting`, and a
+    retry hit the identical failure, forever — `delete` never succeeded
+    again for that workspace. `delete` SHALL now succeed regardless: the
+    workspace (container + rows) is fully gone either way, with the
+    volume-removal failure only logged."""
+    from docker.types import Mount
+
+    from dev_workspace_mcp.workspace.caches import cache_volume_name
+
+    volume_name = cache_volume_name(repository_id=repository.id, cache_name="cargo")
+    mounts = [Mount(target="/root/.cargo", source=volume_name, type="volume", read_only=False)]
+    record = manager.ensure_workspace(
+        repository=repository,
+        image=TEST_IMAGE,
+        run_kwargs={**KEEP_ALIVE_RUN_KWARGS, "mounts": mounts},
+    )
+    container_id = record.container_id
+
+    # A second, real container holds the volume in use.
+    holder = docker_client.containers.run(
+        TEST_IMAGE,
+        "sleep 300",
+        detach=True,
+        volumes={volume_name: {"bind": "/data", "mode": "rw"}},
+    )
+    try:
+        manager.delete(record.id, cache_volume_names=[volume_name])  # SHALL NOT raise
+
+        assert db.execute("SELECT * FROM workspace WHERE id = ?", (record.id,)).fetchone() is None
+        with pytest.raises(docker.errors.NotFound):
+            docker_client.containers.get(container_id)  # type: ignore[arg-type]
+        # The volume itself genuinely survives (still in use) — the
+        # failure was real, just no longer fatal to the delete call.
+        docker_client.volumes.get(volume_name)
+    finally:
+        holder.remove(force=True)
+        docker_client.volumes.get(volume_name).remove(force=True)
+
+
+def test_rr012_delete_succeeds_when_ssh_agent_termination_fails(
+    manager: DockerWorkspaceManager,
+    docker_client: docker.DockerClient,
+    db: sqlite3.Connection,
+    repository: RepositoryRecord,
+    tmp_path: Path,
+) -> None:
+    """The other half of the same fix, forced deterministically: whatever
+    the reason (`SSHAgentManager.terminate`'s own docstring only claims
+    the *signal itself* is best-effort, not every step around it), a
+    real failure there SHALL NOT prevent `delete` from completing."""
+    from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager
+
+    class _AlwaysFailsTermination(SSHAgentManager):
+        def terminate(self, workspace_id: str) -> None:
+            raise RuntimeError("simulated ssh-agent termination failure")
+
+    manager._ssh_agents = _AlwaysFailsTermination(db, runtime_dir=tmp_path)  # type: ignore[attr-defined]
+
+    record = manager.ensure_workspace(
+        repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
+    )
+    container_id = record.container_id
+
+    manager.delete(record.id)  # SHALL NOT raise
 
     assert db.execute("SELECT * FROM workspace WHERE id = ?", (record.id,)).fetchone() is None
     with pytest.raises(docker.errors.NotFound):

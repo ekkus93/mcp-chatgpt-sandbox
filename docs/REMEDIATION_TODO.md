@@ -762,14 +762,15 @@ SQL (`tests/jobs/conftest.py`'s own established pattern) since `exec_start`
 itself requires Docker and so can't be used to create one in a degraded-mode
 test.
 
-### R9 — `delete` cannot wedge a workspace
+### R9 — `delete` cannot wedge a workspace ✅
 **Satisfies:** RR-012 · **Verified by:** RAT-012
+**Commit:** `PLACEHOLDER`
 
-- [ ] Move cache-volume removal and ssh-agent termination so they cannot sit
+- [x] Move cache-volume removal and ssh-agent termination so they cannot sit
       between container removal and row deletion
-- [ ] Make both best-effort (log and continue) — neither is a reason to strand
+- [x] Make both best-effort (log and continue) — neither is a reason to strand
       the row
-- [ ] Test a `delete` whose volume removal fails
+- [x] Test a `delete` whose volume removal fails
 
 **Defect (reproduced structurally).** `workspace/manager.py:653-661` orders:
 mark `DELETING` → remove container → **remove cache volumes** (raises) →
@@ -782,6 +783,49 @@ and hits the same failure.
 
 H23 introduced the volume-removal failure point into the method H16 had just made
 atomic — the second clause of HR-018 was never implemented.
+
+Upgraded from "reproduced structurally" to reproduced end to end against a
+real Docker daemon before implementing anything: created a workspace with a
+cache-mounted volume, held that volume in use with a second real container
+(the exact cross-workspace sharing HR-009 exists to support), and called
+`delete` — it raised `ContainerRuntimeFailedError` (a real `409 volume is in
+use`), the container was confirmed genuinely gone, the row was confirmed
+stuck at `state='deleting'`, and a retry hit the identical failure. Exactly
+as predicted.
+
+**Implementation.** Cache-volume removal and ssh-agent termination both moved
+to *after* the `job`+`workspace` row-deletion transaction — the container and
+the rows are what make a workspace "deleted"; neither cleanup step is, so
+neither can any longer sit between them. On top of that reordering, both are
+now also best-effort: `_remove_cache_volumes` catches `DockerException` and
+logs a warning instead of raising, and a new `_terminate_ssh_agent` wrapper
+catches any exception from `SSHAgentManager.terminate` (deliberately broader
+than that method's own internal handling, which its own docstring scopes to
+just the termination *signal*) and logs rather than propagating. Two
+independent guarantees rather than one: even if a future change moved either
+step back to its old position, it still couldn't raise; even if a future
+change made either step raise-capable again, it's no longer positioned where
+that would matter.
+
+**Verified the tests catch the regression.** Reverted `workspace/manager.py`
+to `HEAD`, reran the 2 new tests: the volume-removal one failed with the
+exact real `ContainerRuntimeFailedError`/409 the reproduction produced; the
+ssh-agent one failed with the injected `RuntimeError` propagating uncaught
+out of `delete`. Restored; all 24 tests in the file pass again. No Docker
+leftovers (containers or cache volumes) after either run.
+
+**Full relevant suite.** `tests/workspace/`: 334 passed. Full unscoped suite:
+920 passed. No Docker leftovers.
+
+**New tests.** `tests/workspace/test_manager.py`:
+`test_rr012_delete_succeeds_and_leaves_no_row_when_volume_removal_fails`
+(the real, end-to-end 409-in-use reproduction — asserts `delete` no longer
+raises, the container and row are both genuinely gone, and the volume itself
+correctly still exists since the failure was real, just no longer fatal to
+the call) and `test_rr012_delete_succeeds_when_ssh_agent_termination_fails`
+(a deterministic forced failure via a `SSHAgentManager` subclass, since
+provoking a genuine ssh-agent-termination failure isn't practically
+reproducible the way the volume one is).
 
 ### R10 — A failed termination is never reported as success
 **Satisfies:** RR-013, RR-015 · **Verified by:** RAT-013

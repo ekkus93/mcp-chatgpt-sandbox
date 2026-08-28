@@ -648,18 +648,36 @@ class DockerWorkspaceManager:
         project's cache volumes by name — caches hold executables, so
         this is a cross-repository write primitive, not only leftover
         disk usage.
+
+        RR-012 (`docs/REMEDIATION_SPEC.md` §10): cache-volume removal and
+        ssh-agent termination run *after* the row deletion, and neither
+        can raise — HR-018's second clause ("a failure SHALL NOT leave
+        the container removed and the row in `deleting`") SHALL hold for
+        every failure point, not only the `job` foreign-key one it was
+        written for. Reproduced end to end against a real Docker daemon:
+        a cache volume held in use by another container (§4.2's own
+        cross-workspace sharing is exactly what makes this reachable)
+        made the old code raise `ContainerRuntimeFailedError` *between*
+        container removal and row deletion — container gone, row stuck
+        in `deleting` permanently (a retry finds no container and hits
+        the identical volume-removal failure again, forever). Neither
+        cleanup step is what makes a workspace "deleted" — the container
+        and the rows are — so both now run only after those two are
+        already gone, and are best-effort (logged, not raised) on top of
+        that as a second, independent guarantee that neither can ever
+        again come between anything.
         """
         record = self._get_or_raise(workspace_id)
         self._save(replace(record, state=WorkspaceState.DELETING, last_used_at=_now()))
         self._remove_container_if_present(record)
-        if cache_volume_names:
-            self._remove_cache_volumes(cache_volume_names)
-        if self._ssh_agents is not None:
-            self._ssh_agents.terminate(workspace_id)  # §19.2: no agent after delete
         with self._db:
             self._db.execute("DELETE FROM job WHERE workspace_id = ?", (workspace_id,))
             self._db.execute("DELETE FROM workspace WHERE id = ?", (workspace_id,))
         _logger.info("workspace %s: deleted", workspace_id)
+        if cache_volume_names:
+            self._remove_cache_volumes(cache_volume_names)
+        if self._ssh_agents is not None:
+            self._terminate_ssh_agent(workspace_id)  # §19.2: no agent after delete
 
     def _remove_cache_volumes(self, cache_volume_names: list[str]) -> None:
         for name in cache_volume_names:
@@ -670,10 +688,27 @@ class DockerWorkspaceManager:
             try:
                 volume.remove(force=True)
             except DockerException as exc:
-                raise ContainerRuntimeFailedError(
-                    f"failed to remove cache volume {name!r}: {exc}",
-                    details={"volume_name": name},
-                ) from exc
+                # RR-012: best-effort — the workspace is already fully
+                # deleted (container and rows both gone) by the time this
+                # runs, so a volume genuinely still in use by another
+                # workspace of the same repository (§4.2's sharing) is
+                # logged and left for a later delete to reclaim, never a
+                # reason to report this call itself as failed.
+                _logger.warning("workspace delete: failed to remove cache volume %r: %s", name, exc)
+
+    def _terminate_ssh_agent(self, workspace_id: str) -> None:
+        """RR-012: best-effort, deliberately broader than
+        `SSHAgentManager.terminate`'s own internal handling (which only
+        covers the signal itself, per its own docstring) — this call
+        site is what §8.4/HR-018 actually need never able to leave the
+        workspace's own deletion incomplete or reported as failed."""
+        assert self._ssh_agents is not None  # checked by the one caller
+        try:
+            self._ssh_agents.terminate(workspace_id)
+        except Exception as exc:  # noqa: BLE001 - deliberately broad, see above
+            _logger.warning(
+                "workspace delete: failed to terminate ssh-agent for %s: %s", workspace_id, exc
+            )
 
     def _remove_container_if_present(self, record: WorkspaceRecord) -> None:
         container = self._find_container(record)
