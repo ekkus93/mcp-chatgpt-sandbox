@@ -38,7 +38,7 @@ from dev_workspace_mcp.errors import (
 )
 from dev_workspace_mcp.execution.service import ExecutionService
 from dev_workspace_mcp.git.commit import detect_default_branch
-from dev_workspace_mcp.git_state import read_basic_git_state
+from dev_workspace_mcp.git_state import NO_GIT_STATE, read_basic_git_state
 from dev_workspace_mcp.github_api import (
     RemoteProtectionReportOutput,
     RemoteProtectionResult,
@@ -59,6 +59,7 @@ from dev_workspace_mcp.workspace.container_config import (
 from dev_workspace_mcp.workspace.manager import (
     DockerWorkspaceManager,
     WorkspaceRecord,
+    WorkspaceState,
     get_authorized,
 )
 from dev_workspace_mcp.workspace.mounts import (
@@ -245,16 +246,40 @@ def load_image_provenance(
     return row["image_digest"], row["config_version"]
 
 
-def build_workspace_info(
+async def build_workspace_info(
     record: WorkspaceRecord,
     *,
     registry: RepositoryRegistry,
     container_config: ContainerConfig,
+    execution_config: ExecutionConfig,
     ssh_config: SSHConfig,
     db: sqlite3.Connection,
+    execution_service: ExecutionService,
 ) -> WorkspaceInfoOutput:
+    """H36 (`docs/HARDENING_TODO.md`, 5/8): the `git` block is only
+    populated when `record` is currently `RUNNING` — `NO_GIT_STATE`
+    (every field `None`) otherwise. Unlike `git_status`/`git_diff`/
+    `git_log`, `workspace_info` itself does not raise
+    `WorkspaceNotRunningError` for a stopped or absent workspace: it is
+    the tool that reports container state, including "not running", so
+    it has to keep succeeding for exactly the workspaces where that is
+    the answer — only the git block it can no longer read anything from
+    goes empty. Both callers (`open_workspace`, `workspace_info_tool`)
+    already require Docker to be reachable at all before calling this;
+    `execution_service` is `ExecutionService`, not `Optional`, on that
+    basis."""
     repository = registry.get(record.repository_id)
-    git_state = read_basic_git_state(repository.canonical_path)
+    if record.state == WorkspaceState.RUNNING:
+        assert record.container_id is not None  # implied by state == RUNNING
+        git_state = await read_basic_git_state(
+            container_id=record.container_id,
+            workspace_path=record.workspace_path,
+            execution_service=execution_service,
+            container_config=container_config,
+            execution_config=execution_config,
+        )
+    else:
+        git_state = NO_GIT_STATE
     image_digest, config_version = load_image_provenance(db, record.id)
     return WorkspaceInfoOutput(
         workspace_id=record.id,
@@ -498,8 +523,14 @@ async def open_workspace(
         },
     )
 
-    return build_workspace_info(
-        record, registry=registry, container_config=container_config, ssh_config=ssh_config, db=db
+    return await build_workspace_info(
+        record,
+        registry=registry,
+        container_config=container_config,
+        execution_config=execution_config,
+        ssh_config=ssh_config,
+        db=db,
+        execution_service=execution_service,
     )
 
 
@@ -640,13 +671,16 @@ def register(
         # ability to act on it, and a degraded daemon should say so plainly
         # rather than report state it cannot currently corroborate.
         active_manager, _ = _require_docker()
+        assert execution_service is not None  # implied by `_require_docker` above
         record = get_authorized(active_manager, workspace_id, registry)
-        return build_workspace_info(
+        return await build_workspace_info(
             record,
             registry=registry,
             container_config=container_config,
+            execution_config=execution_config,
             ssh_config=ssh_config,
             db=db,
+            execution_service=execution_service,
         )
 
     @server.tool(name="server_info", description="Server version, capabilities, and health (§25).")

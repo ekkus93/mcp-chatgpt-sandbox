@@ -182,6 +182,72 @@ async def test_workspace_info_matches_workspace_open(
     assert info.structured_content == opened.structured_content
 
 
+async def test_workspace_info_on_a_stopped_workspace_has_no_git_state(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """H36 (`docs/HARDENING_TODO.md`, 5/8): before this migration,
+    `workspace_info`'s git block was Docker-free — it read the bind-mounted
+    working tree directly, host-side, regardless of whether the workspace's
+    container was running. Now that the read happens in-container, a
+    stopped workspace (Docker itself still reachable — this is a
+    per-workspace state, not the degraded-daemon case
+    `test_workspace_info_fails_clearly_when_docker_unreachable` covers) has
+    nothing to read from: the git block SHALL report all-`None`, not raise
+    and not fall back to a stale value, while every other field
+    (`container_state` in particular) still reports accurately."""
+    # A real `git init`, not `_configured()`'s stub `.git` directory —
+    # needs a real branch/commit for `opened`'s own git block to be
+    # non-`None`, so the stopped case's all-`None` result is unambiguous.
+    repo_path = tmp_path / "work" / "example"
+    repo_path.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo_path)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo_path),
+            "-c",
+            "user.email=t@example.com",
+            "-c",
+            "user.name=t",
+            "commit",
+            "--allow-empty",
+            "-q",
+            "-m",
+            "initial",
+        ],
+        check=True,
+    )
+    config = minimal_config.model_copy(
+        update={
+            "docker": minimal_config.docker.model_copy(update={"default_image": default_image_tag}),
+            "repositories": [
+                RepositoryConfig(id="example", path=repo_path, github="owner/example")
+            ],
+        }
+    )
+    server = create_server(config)
+    opened = await server.call_tool("workspace_open", {"repository_id": "example"})
+    workspace_id = opened.structured_content["workspace_id"]
+    assert opened.structured_content["git"]["branch"] == "main"  # sanity: running, has git state
+
+    db = open_db(config.state_db_path)
+    DockerWorkspaceManager(docker_client, db).stop(workspace_id)
+
+    info = await server.call_tool("workspace_info", {"workspace_id": workspace_id})
+    content = info.structured_content
+    assert content["container_state"] == "stopped"
+    assert content["git"] == {
+        "branch": None,
+        "head_sha": None,
+        "clean": None,
+        "upstream": None,
+    }
+
+
 async def test_workspace_open_reports_git_state(
     minimal_config: ServerConfig,
     default_image_tag: str,
