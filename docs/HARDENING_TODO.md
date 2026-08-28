@@ -3477,10 +3477,16 @@ part of it.
       `dbde877`
 - [x] (4/8) `git/log.py` (`read_git_log`) + `git_log_tool`. **Commit:**
       `9a67350`
-- [ ] (5/8) `git_state.py` (`read_basic_git_state`) + `tools/workspace.py`'s
+- [x] (5/8) `git_state.py` (`read_basic_git_state`) + `tools/workspace.py`'s
       `build_workspace_info`/`open_workspace`/`workspace_info_tool` (git block
       empty when the workspace is not currently running, not only when the
-      repository is unborn/invalid)
+      repository is unborn/invalid). **Commit:** `866336f`. Empirically found
+      while writing this step's tests: not every HR-002-neutralized driver
+      actually changed behavior — `git/diff.py`'s unconditional
+      `--no-ext-diff --no-textconv` (kept for content-correctness, unrelated
+      to HR-002) still blocks `diff.external`/`textconv` through `git_diff`;
+      only `filter.*.clean`-style drivers (reachable via `git_status`/
+      `workspace_info`, no such static flag) actually changed.
 - [ ] (6/8) `git/commit.py`'s `read_committed_files`/`detect_default_branch`/
       `is_head_published`
 - [ ] (7/8) `git/remote.py`'s `resolve_remote_url`/`resolve_remote_push_url`/
