@@ -3473,7 +3473,8 @@ part of it.
       in `run_git_commit`/`run_git_pull`/`run_git_push` + `git_status_tool`
       (now requires a running workspace, matching `git_commit`/`git_pull`/
       `git_push`). **Commit:** `fab8b1e`
-- [ ] (3/8) `git/diff.py` (`read_git_diff`) + `git_diff_tool`
+- [x] (3/8) `git/diff.py` (`read_git_diff`) + `git_diff_tool`. **Commit:**
+      `dbde877`
 - [ ] (4/8) `git/log.py` (`read_git_log`) + `git_log_tool`
 - [ ] (5/8) `git_state.py` (`read_basic_git_state`) + `tools/workspace.py`'s
       `build_workspace_info`/`open_workspace`/`workspace_info_tool` (git block
