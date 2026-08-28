@@ -70,9 +70,10 @@ def _literal_pathspecs(paths: list[str]) -> list[str]:
 
 def build_add_argv(paths: list[str]) -> list[str]:
     """A full argv for the execution service (§14) — unlike
-    `run_git_host_side`, which prepends `git` itself, a raw in-container
-    exec needs it spelled out (verified the hard way: omitting it exec's
-    the literal argument `"add"` as the program, which is not on `$PATH`)."""
+    `run_git_in_container`, which prepends `git` itself, a raw
+    in-container exec needs it spelled out (verified the hard way:
+    omitting it exec's the literal argument `"add"` as the program,
+    which is not on `$PATH`)."""
     return ["git", "add", "--", *_literal_pathspecs(paths)]
 
 

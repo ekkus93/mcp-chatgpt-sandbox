@@ -216,3 +216,35 @@ async def test_an_arbitrary_unlisted_driver_name_now_executes_too(
     await _call_every_migrated_read(server, workspace_id)
 
     assert await _marker_exists_in_container(server, workspace_id, marker)
+
+
+async def test_at_025_fsmonitor_now_executes_in_container(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """AT-025 (`docs/SPEC.md`), superseded by H36: `core.fsmonitor` — not
+    `core.hooksPath`, this test's own pre-H36 title notwithstanding; no
+    real Git hook fires on a plain `status`/`diff`/`log` at all,
+    `core.fsmonitor` is the one hook-*like* mechanism that does — was
+    previously overridden unconditionally on every host-side read
+    (`-c core.fsmonitor=`, §18.7). An in-container `git_status` now runs
+    it, as the container user, the same as `exec("git status")` already
+    could."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    marker = "/tmp/FSMONITOR_RAN"
+    subprocess.run(
+        ["git", "config", "core.fsmonitor", _driver_script(marker, echo="fsmonitor")],
+        cwd=repo_path,
+        check=True,
+    )
+
+    server = create_server(config)
+    opened = await server.call_tool("workspace_open", {"repository_id": "example"})
+    workspace_id = opened.structured_content["workspace_id"]
+
+    await server.call_tool("git_status", {"workspace_id": workspace_id})
+
+    assert await _marker_exists_in_container(server, workspace_id, marker)

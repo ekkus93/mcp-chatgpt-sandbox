@@ -61,7 +61,7 @@ def _init_repo(path: Path) -> Path:
 
 
 # --- argv builders: must include "git" — a raw in-container exec, unlike ----------
-# --- run_git_host_side, does not prepend it. A real regression: an earlier --------
+# --- run_git_in_container, does not prepend it. A real regression: an earlier -----
 # --- version omitted it and failed with "exec: add: executable file not found". ---
 
 

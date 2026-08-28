@@ -79,9 +79,24 @@ a standing rule when reasoning about this system:
 
 ## 4. Host-side execution safety
 
-Per the 2026-08-27 decision, host-side Git reads are **retained** (§20.1's
-speed exception, and §73's degraded start, both depend on them) and hardened in
-place. The client can still reach them through `git_status`, `git_diff`,
+**Superseded by H36** (`docs/HARDENING_TODO.md`, `docs/SPEC.md` §20.1/§18.7,
+version 0.4): the 2026-08-27 decision this section opens by citing (HD1,
+`docs/HARDENING_TODO.md`'s own Decisions section) was reversed, on explicit
+request. Host-side Git reads are gone, not merely hardened — every structured
+Git tool runs in-container now, with one narrow, permanent exception
+(`detect_default_branch`, `docs/SPEC.md` §20.1) that itself invokes no
+repository-configured code and so was never in HR-002's scope to begin with.
+HR-002 (below) and its four-part control (§4.1's key list, §4.2's constraints)
+describe a mechanism (`run_git_host_side`) that has been deleted; HR-001
+(option-injection protection) is unaffected and still governs, since it
+protects against a concern independent of where Git runs. This section is
+preserved as an accurate record of the defect this document's own review
+found and how it was originally fixed, not as a description of the system
+today — see `docs/SPEC.md` §20.1 for that.
+
+Per the 2026-08-27 decision, host-side Git reads were **retained** (§20.1's
+speed exception, and §73's degraded start, both depended on them) and hardened
+in place. The client could reach them through `git_status`, `git_diff`,
 `git_log`, `workspace_open`, and `workspace_info`.
 
 ### HR-001 No option injection through Git revision parameters
@@ -107,6 +122,8 @@ host file through a real `git_log` MCP call, returning `{'result': []}` with no
 error.
 
 ### HR-002 Host-side reads SHALL NOT execute repository-supplied code
+
+**Superseded by H36** — see §4's note above. Preserved as historical record.
 
 This restates §18.7's stated property, which the current mechanism does not
 achieve.

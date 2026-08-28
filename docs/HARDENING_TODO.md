@@ -205,6 +205,14 @@ what an attacker holds, not the internal function.
 **Satisfies:** HR-002 · **Verified by:** HAT-002
 **Commit:** `6141dfc`
 
+**Superseded by H36** (`docs/HARDENING_TODO.md`, this file): the host-side
+read path (`run_git_host_side`) this task hardened is gone — every
+structured Git invocation runs in-container now, where repository-code
+execution is an already-accepted risk `exec` already exposes, so HR-002's
+four-part neutralization this task built has nothing left to protect and
+was deleted along with `run_git_host_side` itself. This entry is preserved
+as an accurate record of what shipped and why, at the time it shipped.
+
 - [x] Add `--no-ext-diff --no-textconv` to diff-producing reads
 - [x] Enumerate the repository's own config and pass `-c <key>=` for every
       code-executing key (`HARDENING_SPEC.md` §4.1), as a named module-level
@@ -3445,8 +3453,9 @@ either run. Full unscoped `tests/` background run: **974 passed, 0 failed**
 
 ## In progress
 
-### H36 — Move Git reads into the container 🚧
+### H36 — Move Git reads into the container ✅
 **Supersedes:** HD1
+**Commit:** `PLACEHOLDER`
 
 Reverses HD1's original decision, on explicit request — the reasons HD1 gave
 (§20.1's speed exception, §73's degraded start, `git_dir_mode: none` keeping
@@ -3513,16 +3522,67 @@ part of it.
       `tests/workspace/test_git_pull_tool.py`/`test_git_push_tool.py` suite,
       confirmed passing (30/30) including the RR-002 TOCTOU redirect
       scenario.
-- [ ] (8/8) Delete `run_git_host_side` and the HR-002 control surface
+- [x] (8/8) Deleted `run_git_host_side` and the entire HR-002 control surface
       (`_CODE_EXECUTING_CONFIG_KEY_RE`, `_discover_code_executing_overrides`,
-      `_host_side_git_env`, the env-scrub tuples) once no caller remains;
-      amend `docs/SPEC.md` §20.1 (drop the read-only host-side exception),
-      §73 (degraded start no longer covers `workspace_info`/Git reads), the
-      `git_dir_mode` table (`read-only`/`none` rows — all six structured Git
-      tools now run in-container, so `none` masks Git from them too); amend
-      `docs/HARDENING_SPEC.md` §4/§4.1 (HR-002 superseded — nothing left for
-      it to govern; HR-001's option-injection protection stays, reframed as
-      in-container rather than host-side)
+      `_host_side_git_env`, `_ENV_VARS_TO_SCRUB`/`_ENV_VAR_PREFIXES_TO_SCRUB`,
+      the hooks-dir `tempfile` neutralization) from `git/service.py` — zero
+      remaining callers after 7/8. `git/commit.py`'s one stale docstring
+      reference to `run_git_host_side` fixed to `run_git_in_container`.
+      Amended `docs/SPEC.md` (version 0.3 → 0.4): §20.1 (the read-only
+      host-side exception withdrawn; the `run_git_metadata_read` exception
+      documented as the one remaining host-side invocation in the whole
+      system; costs — running-workspace requirement, `git_dir_mode: none`
+      breakage, latency — stated explicitly), §73 (degraded state now
+      covers these six tools too), §18.7 (the four-part host-side control
+      retired along with what it protected; kept as historical record of
+      what shipped and why), the `git_dir_mode` table (`read-only`/`none`
+      rows), and **AT-025** (retargeted from `core.hooksPath`/host-side to
+      `core.fsmonitor`/in-container — the property this acceptance test
+      names is now the *inverse* of what it required pre-H36). Amended
+      `docs/HARDENING_SPEC.md` §4/HR-002 (marked superseded, preserved as
+      historical record — this document's own convention throughout this
+      file's history, matching H3's own TODO entry above); HR-001 unaffected
+      (still governs, independent of execution location). **Commit:**
+      `PLACEHOLDER`
+
+      Real gap found via this task's own discipline, empirically, not
+      assumed: amending §18.7 and deleting the old `test_host_side_
+      execution_safety.py` (5/8) removed AT-025's only citation anywhere
+      under `tests/` — `tests/test_acceptance_test_coverage.py`'s own
+      coverage audit (S33) caught it immediately as a real failure, not a
+      false one. Fixed by retargeting AT-025 itself to the property that
+      actually changed (§18.7's own docstring already noted `core.fsmonitor`,
+      not `core.hooksPath`, is the one hook-like mechanism a plain
+      `status`/`diff`/`log` genuinely triggers) and adding
+      `test_at_025_fsmonitor_now_executes_in_container` (`tests/workspace/
+      test_in_container_execution_accepts_repository_code.py`) to cite and
+      prove it, against a real Docker daemon.
+
+**H36 complete.** Every structured Git invocation in the system now runs
+in-container, as the container user, through the same execution service
+`exec` already used — except `detect_default_branch`, a single, permanent,
+independently-justified host-side exception (`git/service.py`'s
+`run_git_metadata_read`) forced by §18.5's own "before any container exists"
+ordering requirement, not a compromise on H36's own goal. `run_git_host_side`
+and the entire HR-002 four-part neutralization it implemented are deleted,
+not merely bypassed. Every one of the deliberate costs HD1 originally weighed
+against this reversal — the Docker-free degraded-start path for
+`git_status`/`git_diff`/`git_log`/`workspace_info`, the `git_dir_mode: none`
+exemption for those same three tools, and host-side speed — is now gone, and
+`docs/SPEC.md`/`docs/HARDENING_SPEC.md` both say so plainly rather than
+leaving the old, no-longer-true text in place. Real gaps this task's own
+discipline caught before landing, not assumed correct: `detect_default_branch`'s
+pre-container call site (6/8), `--no-ext-diff`/`--no-textconv` leaving
+`diff.external`/`textconv` blocked for an unrelated reason (5/8), the
+`test_remote.py`/`test_push.py` rewrite silently no longer exercising the
+real migrated functions (7/8), and AT-025's coverage audit failure (8/8) —
+each found empirically, by running the actual checks this discipline
+requires, not by inspection alone. Full unscoped `tests/` background run:
+**974 passed, 0 failed** — the same count H37 left the suite at, despite
+substantial churn in both directions (old host-side/HR-002 tests removed,
+new in-container/async tests added). No Docker leftovers at any step.
+`docs/REMEDIATION_TODO.md` (R1-R27) and `docs/HARDENING_TODO.md` (H1-H37)
+are now both fully closed; nothing further is queued.
 
 ---
 

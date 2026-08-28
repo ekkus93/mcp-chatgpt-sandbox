@@ -1,9 +1,12 @@
 # Development Workspace MCP Server — Specification
 
 **Status:** Draft  
-**Version:** 0.3 — incorporates the sixteen amendments from
-`docs/HARDENING_SPEC.md` §9 (H34, `docs/HARDENING_TODO.md`), and the four
-amendments from `docs/REMEDIATION_SPEC.md` §16 (R26, `docs/REMEDIATION_TODO.md`)  
+**Version:** 0.4 — incorporates the sixteen amendments from
+`docs/HARDENING_SPEC.md` §9 (H34, `docs/HARDENING_TODO.md`), the four
+amendments from `docs/REMEDIATION_SPEC.md` §16 (R26, `docs/REMEDIATION_TODO.md`),
+and H36's (`docs/HARDENING_TODO.md`) reversal of §20.1's host-side read
+exception — every structured Git tool now runs in-container, with one narrow,
+permanent exception (§20.1)  
 **Date:** 2026-08-28
 
 ## 1. Purpose
@@ -1390,8 +1393,8 @@ container:
 | Mode | `.git` | Use |
 |---|---|---|
 | `read-write` | bind-mounted `rw` | Default. Full Git workflow inside the container. |
-| `read-only` | bind-mounted `ro` over the parent mount | Hardened fetch-only workspace. Commit and push fail from `exec` and from `git_commit`/`git_push`, which run in-container; the read-only tools `git_status`, `git_diff`, and `git_log` still work, because they run host-side (§20.1). For validation and CI-like runs, not development. |
-| `none` | masked with an empty read-only tmpfs | Git is not visible inside the container. Because `.git` is a subpath of the working-tree mount, it cannot be "not mounted"; it SHALL be masked. |
+| `read-only` | bind-mounted `ro` over the parent mount | Hardened fetch-only workspace. Commit and push fail from `exec` and from `git_commit`/`git_push`; the read-only tools `git_status`, `git_diff`, and `git_log` still work, since a read-only bind mount is still visible to them (they run in-container too, §20.1, H36 — `.git` just can't be written through it). For validation and CI-like runs, not development. |
+| `none` | masked with an empty read-only tmpfs | Git is not visible inside the container — to `exec`, and (H36, `docs/HARDENING_TODO.md`) now to every structured Git tool too, since all of them run in-container: `git_status`/`git_diff`/`git_log`/`workspace_info`'s Git block fail here the same way `git_commit`/`git_pull`/`git_push` already did. Before H36 the three read tools ran host-side and worked under this mode regardless of what the container could see; that is no longer true. Because `.git` is a subpath of the working-tree mount, it cannot be "not mounted"; it SHALL be masked. |
 
 The container user (§5.3) SHALL own `.git` on the host, so no ownership mismatch
 arises. The daemon SHALL nonetheless write a container-local `safe.directory`
@@ -1560,58 +1563,31 @@ model runs them.
 
 Structured Git tools execute inside the container (§20.1), so hooks run there,
 under the container user, with the same reach as any other `exec`. The daemon
-SHALL NOT disable them by default.
+SHALL NOT disable them by default. This now includes `git_status`, `git_diff`,
+and `git_log` (H36, `docs/HARDENING_TODO.md`) — every structured Git tool runs
+in-container, so there is no longer a host-side/in-container distinction for
+this section to draw.
 
 `git_commit` and `git_push` MAY accept a `no_verify: true` parameter to skip hooks
 for a single operation, matching `--no-verify`.
 
-Hooks are never executed by the daemon on the host. The property this SHALL
-achieve — a host-side read cannot execute repository-supplied code under the
-daemon's identity — is broader than `core.hooksPath`/`core.fsmonitor` alone
-can guarantee: `diff.external`, `textconv` drivers, and `filter.*` all
-execute too, and `git status` is affected, not only `git_diff`/`git_status`
-as a narrower reading might suggest (`workspace_open`/`workspace_info`
-reach this same code path through `read_basic_git_state`, §20.1). Every Git
-invocation the daemon runs on the host SHALL apply all four of the
-following:
-
-1. **Static flags.** Diff-producing reads SHALL pass `--no-ext-diff
-   --no-textconv`.
-2. **Dynamic driver neutralization.** Before invoking Git, the daemon SHALL
-   enumerate the repository's own configuration and pass `-c <key>=` for
-   every key matching a code-executing pattern (`filter.*.clean`,
-   `diff.*.textconv`, `core.hooksPath`, `core.fsmonitor`, `credential.helper`,
-   and the rest of §4.1's list in `docs/HARDENING_SPEC.md`) — complete with
-   respect to what can actually run, since a driver not present in
-   configuration cannot be invoked. RR-001 (`docs/REMEDIATION_SPEC.md` §1):
-   this enumeration SHALL be performed with include expansion enabled
-   (`git config --list --includes`, for both the `--local` and
-   `--worktree` scopes) — `include.path`/`includeIf.*.path` are
-   configuration mechanisms too, and a driver defined only through one
-   (itself reachable via a container-writable `.git/config`) is reachable
-   the same as one written directly; without `--includes`, `--list`
-   verifiably does not expand them, so the enumeration silently misses
-   it. The enumeration probe itself is a host-side Git invocation and
-   SHALL run under the same `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM`
-   exclusion and environment scrubbing items 3 and 4 below require of
-   every other one — what it reads back SHALL depend only on the
-   repository's own configuration, the same as any other read performed
-   on the client's behalf.
-3. **External configuration exclusion.** Host-side reads SHALL run with
-   `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_SYSTEM=/dev/null`, so
-   host-global Git configuration cannot influence a read performed on the
-   client's behalf.
-4. **Environment scrubbing.** The inherited environment SHALL have
-   `GIT_EXTERNAL_DIFF`, `GIT_PAGER`, `GIT_EDITOR`, `GIT_SEQUENCE_EDITOR`,
-   `GIT_SSH`, `GIT_SSH_COMMAND`, `GIT_ASKPASS`, `GIT_PROXY_COMMAND`, and
-   `GIT_TEMPLATE_DIR` removed.
-
-This four-part control is exhaustive against what is known to execute today,
-not a permanent guarantee: the property stated above — a host-side read
-cannot execute repository-supplied code — is what governs, and any future
-Git mechanism found to execute repository-supplied configuration SHALL be
-added to it, the same way `filter.*.clean` (found to affect `git status`,
-not only `git diff`) was.
+**Pre-H36 history.** Until H36, `git_status`/`git_diff`/`git_log` (and
+`workspace_open`/`workspace_info`'s Git-state read) ran host-side, as the daemon
+uid (§20.1's now-withdrawn exception) — a different trust boundary than `exec`,
+since it ran as the *daemon's* identity rather than the container user. This
+section accordingly required a host-side read to be unable to execute
+repository-supplied code under the daemon's identity, and specified a four-part
+control to achieve it: static `--no-ext-diff --no-textconv` flags, dynamic
+enumeration and neutralization of the repository's own code-executing
+configuration keys (`docs/HARDENING_SPEC.md` §4.1's list), `GIT_CONFIG_GLOBAL`/
+`GIT_CONFIG_SYSTEM` exclusion, and environment scrubbing. H36 retired all of it
+along with the host-side execution class it protected: once every structured
+Git tool runs in-container, as the container user, the property this control
+existed for is simply true by construction — there is no host-side identity
+left for repository-supplied code to run under. `docs/HARDENING_SPEC.md`'s HR-002
+(which this four-part control implemented) and AT-025 (which tested the
+`core.hooksPath`/`core.fsmonitor` slice of it) are superseded on the same basis;
+see their own entries for the historical record.
 
 ### 18.8 Submodules
 
@@ -1883,29 +1859,52 @@ Stated once, so that no other section overclaims:
 
 ### 20.1 Execution Location
 
-Structured Git tools SHALL execute inside the development container, through the
-execution service (§14), as the container user, using the container's SSH key.
-They are a structured, validated, audited front-end over the same Git the client
-could reach through `exec` — not a second execution path with a second credential.
+Every structured Git tool SHALL execute inside the development container, through
+the execution service (§14), as the container user, using the container's SSH
+key — `git_status`, `git_diff`, `git_log`, `git_commit`, `git_pull`, and
+`git_push` alike, and `workspace_open`/`workspace_info`'s own Git-state reads
+with them. They are a structured, validated, audited front-end over the same Git
+the client could reach through `exec` — not a second execution path with a
+second credential.
 
 Rationale: once the container holds a write-capable key, a host-side broker with
 its own credential adds a second credential to protect and no enforcement that the
 first path does not already lack. Keeping one execution identity (§5.3) and one
-credential (§19.1) keeps the model honest and the implementation small.
+credential (§19.1) keeps the model honest and the implementation small. This
+applies uniformly, including to the read-only tools (H36, `docs/HARDENING_TODO.md`)
+— an earlier revision of this section carved out a host-side exception for them,
+for speed and to keep them available without a running container; that exception
+is withdrawn, on request, at the cost of the properties it bought (see below), in
+favor of eliminating the host-side execution class structurally rather than
+maintaining it as an ongoing control surface (`docs/HARDENING_SPEC.md` §4's
+HR-002, since retired along with it).
 
-Exceptions — read-only queries the daemon MAY perform host-side for speed, without
-starting a container:
+**Costs of this reversal, accepted deliberately:** these six tools now require a
+running workspace container the same as every other structured Git tool —
+`workspace_open` has to have already created and started one — where they
+previously worked against any workspace whose checkout existed, running or not
+(§73's degraded start no longer covers them; see below). A workspace configured
+with `git_dir_mode: none` (§18.2) masks `.git` inside the container entirely,
+which now means these six tools do not work there either — previously they did,
+specifically because they ran host-side, against the real `.git` outside the
+container's view. Every Git invocation now also carries container-exec latency
+that a direct host subprocess did not.
 
-- `git_status`, `git_diff`, `git_log`.
+**One narrow, permanent exception remains:** `detect_default_branch`, an internal
+read (not a tool of its own) `workspace_open`'s §18.5 remote-protection check
+depends on, runs host-side — restricted to `git symbolic-ref`, a command that
+invokes no repository-configured code (no hook, filter, textconv, or driver of
+any kind), so the risk category §18.7's four-part control existed for never
+applied to it. §18.5's own ordering ("SHALL NOT provision a write-capable key...
+SHALL NOT have provisioned a key into the container") requires this check to run
+*before* any container exists at all, which makes it structurally unable to move
+in-container regardless. This is the only Git invocation in the whole system that
+still runs host-side.
 
-Host-side reads SHALL apply §18.7's full four-part control (`docs/
-HARDENING_SPEC.md` HR-002), not `core.hooksPath`/`core.fsmonitor` alone, and
-SHALL NOT take the index lock (`GIT_OPTIONAL_LOCKS=0`). Client-supplied
-revision parameters reaching these reads (`git_diff`'s `base`/`head`,
-`git_log`'s `ref`) SHALL be protected against option injection per HR-001.
-Host-side reads run as the daemon uid, which is the checkout owner (§40).
-`workspace_open`/`workspace_info` reach this same host-side read path too,
-through `read_basic_git_state` — not only the three tools named above.
+Client-supplied revision parameters (`git_diff`'s `base`/`head`, `git_log`'s
+`ref`) SHALL still be protected against option injection per HR-001 — a concern
+independent of where the invocation runs, unlike HR-002's now-retired
+host-side-code-execution concern.
 
 ### 20.2 Remote Identity Validation
 
@@ -3671,17 +3670,18 @@ Acceptance:
 Implement:
 
 - structured Git tools as an in-container front-end over the execution service
-  (§20.1), with host-side read-only queries;
+  (§20.1);
 - `git_status`, `git_diff`, `git_log`;
 - `git_commit` with explicit paths;
-- state guards;
-- hook neutralization on host-side reads (§18.7).
+- state guards.
 
 Acceptance:
 
 - client can safely implement, validate, and commit a change;
-- AT-025 passes — a `core.hooksPath` hook inside the tracked working tree does not
-  execute during a host-side `git_status`.
+- AT-025 passes — a `core.fsmonitor` script inside the tracked working tree
+  executes during an in-container `git_status`, as the container user (H36,
+  `docs/HARDENING_TODO.md` — see AT-025's own entry for the pre-H36 form of
+  this acceptance test, which required the opposite).
 
 ### Phase 4 — GitHub Synchronization
 
@@ -3874,11 +3874,18 @@ and the test SHALL record that this is documented behaviour (§18.3).
 Under `git_dir_mode: read-only`, setting `core.fsmonitor` in `.git/config` from
 inside the development container SHALL fail.
 
-### AT-025 Hooks Path on Host-Side Reads
+### AT-025 Hooks Path on In-Container Reads
 
-With `core.hooksPath` pointed at a directory inside the tracked working tree
-containing an executable hook, a host-side `git_status` or `git_diff` SHALL NOT
-execute that hook under the daemon's identity.
+**Superseded by H36** (`docs/HARDENING_TODO.md`): this test originally required
+that with `core.hooksPath` pointed at a directory inside the tracked working
+tree containing an executable hook, a host-side `git_status` or `git_diff`
+SHALL NOT execute that hook under the daemon's identity — the host-side
+execution class this protected no longer exists (§20.1, §18.7). The property
+now required is the inverse: with `core.fsmonitor` (the one hook-like
+mechanism a plain `status`/`diff`/`log` actually triggers; a real,
+non-fsmonitor hook fires on neither) pointed at an executable script, an
+in-container `git_status`/`git_diff` SHALL execute it, as the container
+user — matching `exec`'s own already-accepted behavior, not a regression.
 
 ### AT-026 Local-Command Transport
 
@@ -4312,7 +4319,12 @@ The server:
 7. validates repository roots;
 8. starts MCP transport.
 
-A health check SHOULD report degraded state if Docker is unavailable.
+A health check SHOULD report degraded state if Docker is unavailable. H36
+(`docs/HARDENING_TODO.md`) widened what "degraded" means in practice: `git_status`,
+`git_diff`, `git_log`, and `workspace_info`'s Git-state block now all require a
+running container the same as every other structured Git tool (§20.1), so none of
+them work while Docker is unreachable — before H36, these specifically kept
+working in that state, since they ran host-side.
 
 ---
 
