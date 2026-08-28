@@ -34,19 +34,37 @@ starts the process server-side — eagerly, before returning; only reading
 the response it returns is lazy (verified against docker-py's own
 source). That means the exec can be started and its real pid obtained
 *before* handing the (already-open) stream off to a background task to
-drain, with no race between "job is running" and "job has a pid" the way
-there would be if starting and draining were one blocking call.
+drain, rather than the two racing the way they would if starting and
+draining were one blocking call.
+
+That said, `exec_inspect` immediately after `exec_start` does not always
+have the pid yet, even once the exec's own stream is already producing
+output (RR-022, `docs/REMEDIATION_SPEC.md` §15 — reproduced empirically,
+not assumed). `pid_of` retries briefly to close that window; see its
+docstring.
 """
 
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import signal
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
 import docker
+
+_logger = logging.getLogger(__name__)
+
+#: RR-022 (`docs/REMEDIATION_SPEC.md` §15): `pid_of`'s retry budget for a
+#: freshly-started exec whose pid `exec_inspect` has not reported yet.
+#: Empirically tuned (see `pid_of`'s docstring): 5 retries, 10ms apart —
+#: at most ~50ms added latency — eliminated the race in 30/30 trials
+#: where 6/30 (20%) still came back empty with a single, unretried call.
+_PID_RETRY_ATTEMPTS = 5
+_PID_RETRY_INTERVAL_SECONDS = 0.01
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,9 +159,11 @@ class ExecutionService:
         """Creates the exec and starts it (§15.3's `exec_start` tool),
         returning `(exec_id, stream, pid)`. Blocking but fast: returns
         once the process has actually started, not once it produces
-        output or exits — see the module docstring for why the pid is
-        already reliable at this point. Pass `stream` to `drain_stream`
-        to read it; do not call `exec_start` on this `exec_id` again."""
+        output or exits — see the module docstring for why the exec
+        itself is already running by this point. The pid, separately,
+        may not be — see `pid_of`, which this calls and retries through.
+        Pass `stream` to `drain_stream` to read it; do not call
+        `exec_start` on this `exec_id` again."""
         exec_id = self.start(container_id, cmd, cwd=cwd, user=user, env=env)
         stream = self._docker.api.exec_start(exec_id, stream=True, demux=True)
         return exec_id, stream, self.pid_of(exec_id)
@@ -173,14 +193,35 @@ class ExecutionService:
 
     def pid_of(self, exec_id: str) -> int | None:
         """The exec'd process's pid in the *host* PID namespace (see the
-        module docstring), or `None` if the exec is unknown or has not
-        produced one yet."""
-        try:
-            info = self._docker.api.exec_inspect(exec_id)
-        except docker.errors.DockerException:
-            return None
-        pid = info.get("Pid")
-        return pid or None
+        module docstring), or `None` if the exec is unknown, or genuinely
+        never reports one even after retrying.
+
+        RR-022: a single `exec_inspect` right after `exec_start` reports
+        `Pid: 0` often enough to matter — reproduced empirically, 6 of 30
+        (20%) trials, even once the exec's own stream was already
+        producing output. Retrying up to `_PID_RETRY_ATTEMPTS` times,
+        `_PID_RETRY_INTERVAL_SECONDS` apart, closed the window entirely
+        in the same empirical setup: 0 of 30 trials still unreported. A
+        `None` that survives every retry is logged here and should be
+        treated by callers as a real absence (see `mark_running`'s
+        docstring), not as "ask again later" — there is no later update
+        that would."""
+        for attempt in range(_PID_RETRY_ATTEMPTS + 1):
+            try:
+                info = self._docker.api.exec_inspect(exec_id)
+            except docker.errors.DockerException:
+                return None
+            pid = info.get("Pid")
+            if pid:
+                return int(pid)
+            if attempt < _PID_RETRY_ATTEMPTS:
+                time.sleep(_PID_RETRY_INTERVAL_SECONDS)
+        _logger.warning(
+            "exec %s: no pid reported after %d retries; proceeding without one",
+            exec_id,
+            _PID_RETRY_ATTEMPTS,
+        )
+        return None
 
     def kill(self, exec_id: str, *, grace_period_reached: bool = False) -> None:
         """Signals the exec'd process's *process group* directly via

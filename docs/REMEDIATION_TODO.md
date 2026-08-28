@@ -1290,14 +1290,15 @@ killed_container_preserves_true` (a second real OOM kill, proving the fix
 correctly distinguishes "stop a healthy container" from "no-op stop on an
 already-OOM'd one").
 
-### R16 — A running job has a pid, or its absence is surfaced
+### R16 — A running job has a pid, or its absence is surfaced ✅
 **Satisfies:** RR-022
+**Commit:** `PLACEHOLDER`
 
-- [ ] Retry `pid_of` until the exec reports one, or record the absence explicitly
-- [ ] Make `reconcile_jobs` distinguish "pid unknown" from "pid not alive"
-- [ ] Correct `mark_running`'s docstring, which promises a later update that does
+- [x] Retry `pid_of` until the exec reports one, or record the absence explicitly
+- [x] Make `reconcile_jobs` distinguish "pid unknown" from "pid not alive"
+- [x] Correct `mark_running`'s docstring, which promises a later update that does
       not exist
-- [ ] Decide `update_output_counts`: wire it up or delete it with its test
+- [x] Decide `update_output_counts`: wire it up or delete it with its test
 
 **Defect.** `ExecutionService.pid_of` returns `int | None` — `None` on
 `DockerException` and on a missing/zero `Pid`. `mark_running(pid=None)` is
@@ -1311,6 +1312,82 @@ exactly this case.
 The review's two separate findings ("the no-race claim is false" and
 "`update_output_counts` is dead code") are the same defect: the dead method is
 the missing half of the mitigation.
+
+**Defect reproduced.** A single, unretried `exec_inspect` called immediately
+after a real `exec_start` reported `Pid: 0` in 6 of 30 (20%) trials against a
+real Docker daemon — even once the exec's own output stream was already
+producing data. Separately confirmed a bounded retry loop (up to 5 retries,
+10ms apart — ≤50ms added latency) resolves it: 0 of 30 trials still unreported
+in the same setup. `grep -rn "update_output_counts"` confirmed zero production
+call sites: `AsyncJobRunner` never calls it, and a running job's live byte
+counts are served from the in-memory `LiveJob` captures instead (per that
+module's own docstring), not the DB row — there is no legitimate "wire it up"
+path, only deletion. Reading `jobs/reconcile.py` in full confirmed
+`pid_alive = job.pid is not None and _pid_alive(job.pid)` collapses "pid never
+known" and "pid known and confirmed dead" into the identical `False`,
+discarding exactly the "cannot verify, might still be orphaned" signal the
+function's own docstring says the return value exists to carry.
+
+**Implementation.**
+- `ExecutionService.pid_of` (`execution/service.py`) now retries up to
+  `_PID_RETRY_ATTEMPTS` (5) times, `_PID_RETRY_INTERVAL_SECONDS` (10ms) apart,
+  before giving up; a `None` that survives every retry is logged
+  (`_logger.warning`) rather than silently passed through, and its docstring
+  (plus the module docstring's now-corrected "no race" claim) documents the
+  empirical numbers above. `start_and_open_stream`'s docstring no longer
+  claims the pid is "already reliable" at that point — it retries through
+  `pid_of`, it doesn't assume.
+- `reconcile_jobs` (`jobs/reconcile.py`) now returns `list[tuple[str, bool |
+  None]]`: `True` (pid known, confirmed alive), `False` (pid known, confirmed
+  dead), or `None` (no pid was ever recorded for the job). `cli.py`'s
+  `serve` warns "check and clean up by hand" for both `True` and `None` —
+  a pid that was never recorded is exactly the "cannot verify" case that
+  needs a human look, same as a confirmed-alive one; only a confirmed-dead
+  pid (`False`) is safe to report as an ordinary "lost" with no further detail.
+- `mark_running`'s docstring (`jobs/store.py`) no longer promises a "later
+  update" that doesn't exist; it now says plainly that a `None` here is
+  permanent for the job's `running` lifetime and points at `reconcile_jobs`
+  for how that distinction is surfaced.
+- `update_output_counts` (`jobs/store.py`) and its one test
+  (`test_update_output_counts_reflects_progress`,
+  `tests/jobs/test_store.py`) are deleted — confirmed dead code with no
+  architectural role left to fill.
+
+**Verified the tests catch the regression.** Backed up the four changed
+source files, reverted each to `HEAD` (confirmed via `grep -c` on a marker
+string unique to each file's fix — all zero), and reran the affected tests:
+`test_reconcile_marks_queued_job_lost` and `test_reconcile_marks_starting_job_
+lost` failed with `('job_1', False) != ('job_1', None)`;
+`test_rr022_pid_never_known_is_distinguished_from_pid_confirmed_dead` failed
+the same way; `test_serve_warns_to_check_by_hand_when_a_lost_jobs_pid_was_
+never_recorded` failed on the missing warning text; and
+`test_rr022_pid_of_reliably_reports_a_pid_immediately_after_exec_start`
+(real Docker, 30 trials) failed on trial 1 with `pid is None`. Restored from
+backup (confirmed via the same `grep -c` markers, now all present again); all
+tests pass again. No Docker leftovers.
+
+**Full relevant suite.** `tests/jobs/ tests/execution/
+tests/workspace/test_async_runner.py`: 62 passed. Full unscoped suite: 943
+passed. No Docker leftovers.
+
+**New tests.** `tests/jobs/test_reconcile.py`:
+`test_rr022_pid_never_known_is_distinguished_from_pid_confirmed_dead` (a
+never-started job and a job with a real, reaped, confirmed-dead pid, asserted
+distinct: `None` vs `False`); `test_reconcile_marks_queued_job_lost` and
+`test_reconcile_marks_starting_job_lost` updated to assert `None` rather than
+the old, collapsed `False`. `tests/test_cli.py`:
+`test_serve_warns_to_check_by_hand_when_a_lost_jobs_pid_was_never_recorded`
+(real CLI invocation, a job left `queued`, asserts the "check and clean up by
+hand" warning appears for the pid-never-known case same as the existing
+confirmed-alive-pid test, which now also asserts that warning text
+explicitly). `tests/workspace/test_async_runner.py`:
+`test_rr022_pid_of_reliably_reports_a_pid_immediately_after_exec_start` —
+real Docker, `start_and_open_stream` called 30 times against a real
+container's real execs, every trial required to report a pid; deliberately a
+statistical bar (all 30 must succeed, ~99% likely to fail on the unfixed code
+per the empirical 20% single-trial failure rate) rather than a single
+deterministic reproduction, since a genuine Docker API race can't be pinned to
+one.
 
 ### R17 — Transport classification separates auth from local failure
 **Satisfies:** RR-023 · **Verified by:** RAT-019

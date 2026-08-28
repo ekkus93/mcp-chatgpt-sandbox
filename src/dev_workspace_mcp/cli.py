@@ -105,10 +105,15 @@ def serve(config_path: Path, transport: Transport) -> None:
     reconcile_db = open_db(config.state_db_path)
     try:
         lost = reconcile_jobs(JobStore(reconcile_db))
-        for job_id, pid_still_alive in lost:
+        for job_id, pid_status in lost:
+            # RR-022 (`docs/REMEDIATION_SPEC.md` §15): `pid_status is None`
+            # ("this job's pid was never recorded, so liveness cannot be
+            # checked at all") warrants the same "go look by hand" warning
+            # as a confirmed-alive pid — it is `False` alone, a pid that
+            # was recorded and is now confirmed dead, that needs none.
             detail = (
                 " (host process may still be running; check and clean up by hand)"
-                if pid_still_alive
+                if pid_status is None or pid_status
                 else ""
             )
             click.echo(

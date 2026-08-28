@@ -211,32 +211,18 @@ class JobStore:
         return self._save(replace(record, state=JobState.STARTING))
 
     def mark_running(self, job_id: str, *, pid: int | None) -> JobRecord:
-        """`pid` is `None` when the exec hasn't reported one yet (S15's
-        `ExecutionService.pid_of` returns `None` in that case) — still a
-        real transition to `running`, just without a liveness-probe
-        target until a later update fills it in."""
+        """`pid` is `None` when the exec's pid genuinely never got
+        reported (RR-022, `docs/REMEDIATION_SPEC.md` §15:
+        `ExecutionService.pid_of` retries the transient case itself and
+        only returns `None` once that retry budget is exhausted) — still
+        a real transition to `running`, just permanently without a
+        liveness-probe target: nothing writes `pid` after this call, so a
+        `None` here stays `None` for the job's whole `running` lifetime
+        (`reconcile_jobs`, on an unclean shutdown, reports this
+        distinctly from a pid that was known and has since died — see
+        its docstring)."""
         record = self._get_or_raise(job_id)
         return self._save(replace(record, state=JobState.RUNNING, pid=pid, started_at=_now()))
-
-    def update_output_counts(
-        self,
-        job_id: str,
-        *,
-        stdout_total_bytes: int,
-        stderr_total_bytes: int,
-        output_truncated: bool,
-    ) -> JobRecord:
-        """Called periodically while a job runs (S16), so `exec_status`
-        reflects progress on a job nobody has finished yet."""
-        record = self._get_or_raise(job_id)
-        return self._save(
-            replace(
-                record,
-                stdout_total_bytes=stdout_total_bytes,
-                stderr_total_bytes=stderr_total_bytes,
-                output_truncated=output_truncated,
-            )
-        )
 
     def mark_finished(
         self,

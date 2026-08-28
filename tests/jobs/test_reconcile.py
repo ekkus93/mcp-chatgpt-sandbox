@@ -37,9 +37,12 @@ def test_reconcile_is_a_noop_when_nothing_is_non_terminal(job_store: JobStore) -
 
 
 def test_reconcile_marks_queued_job_lost(job_store: JobStore) -> None:
+    """RR-022: a queued job never reached `mark_running`, so it never had
+    a pid at all — `None`, not `False` (a queued job's process cannot be
+    "confirmed dead"; there never was one to check)."""
     _create(job_store)
     result = reconcile_jobs(job_store)
-    assert result == [("job_1", False)]
+    assert result == [("job_1", None)]
     assert job_store.get("job_1").state == JobState.LOST
 
 
@@ -70,10 +73,12 @@ def test_at_h031_a_clean_reconciliation_logs_nothing(
 
 
 def test_reconcile_marks_starting_job_lost(job_store: JobStore) -> None:
+    """RR-022: `starting` precedes `mark_running` too, so this job never
+    had a pid either — `None`, same reasoning as the `queued` case."""
     _create(job_store)
     job_store.mark_starting("job_1")
     result = reconcile_jobs(job_store)
-    assert result == [("job_1", False)]
+    assert result == [("job_1", None)]
     assert job_store.get("job_1").state == JobState.LOST
 
 
@@ -111,6 +116,26 @@ def test_reconcile_flags_a_running_job_whose_pid_is_still_alive(job_store: JobSt
     finally:
         proc.terminate()
         proc.wait(timeout=5)
+
+
+def test_rr022_pid_never_known_is_distinguished_from_pid_confirmed_dead(
+    job_store: JobStore,
+) -> None:
+    """RR-022's actual defect: before the fix, both of these collapsed to
+    the identical `("<id>", False)` — discarding the "cannot verify,
+    might still be orphaned" signal for the never-started job by making
+    it indistinguishable from the confirmed-not-running one."""
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])  # noqa: S603
+    proc.wait(timeout=5)  # exited and reaped — pid is now genuinely dead
+
+    _create(job_store, "job_never_started")  # stays `queued`: no pid ever recorded
+    _create(job_store, "job_confirmed_dead")
+    job_store.mark_running("job_confirmed_dead", pid=proc.pid)
+
+    result = dict(reconcile_jobs(job_store))
+    assert result["job_never_started"] is None
+    assert result["job_confirmed_dead"] is False
+    assert result["job_never_started"] is not result["job_confirmed_dead"]
 
 
 def test_reconcile_handles_multiple_jobs_independently(job_store: JobStore) -> None:

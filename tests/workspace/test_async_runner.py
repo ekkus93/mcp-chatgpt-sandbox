@@ -19,6 +19,15 @@ from dev_workspace_mcp.repositories import RepositoryRecord
 from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
 from tests.workspace.conftest import KEEP_ALIVE_RUN_KWARGS, TEST_IMAGE
 
+#: RR-022's own empirical setup (`docs/REMEDIATION_TODO.md`'s R16
+#: write-up) found `Pid: 0` on a single, unretried `exec_inspect` in 6 of
+#: 30 (20%) trials. Repeating the same number of trials here means this
+#: test fails with overwhelming probability on the unfixed code
+#: (1 - 0.8**30 ≈ 99%) rather than merely "sometimes" — a real,
+#: non-deterministic race can't be pinned to a single deterministic
+#: repro the way a byte-boundary or line-count defect can.
+_PID_RACE_TRIALS = 30
+
 
 def _runner(
     docker_client: docker.DockerClient, db: sqlite3.Connection
@@ -187,3 +196,31 @@ async def test_at_h031_an_unexpected_drain_failure_is_logged_not_silent(
     assert matching, f"no matching log record; got: {[r.message for r in caplog.records]}"
     assert matching[0].levelname == "ERROR"
     assert matching[0].exc_info is not None  # the traceback was captured, not discarded
+
+
+async def test_rr022_pid_of_reliably_reports_a_pid_immediately_after_exec_start(
+    manager: DockerWorkspaceManager,
+    docker_client: docker.DockerClient,
+    repository: RepositoryRecord,
+) -> None:
+    """RR-022 (`docs/REMEDIATION_SPEC.md` §15): reproduces the exact race
+    the fix targets — a fresh `exec_start` whose `exec_inspect` does not
+    yet report a pid. See `_PID_RACE_TRIALS`'s comment for why 30 trials,
+    all required to succeed, is the right bar for a non-deterministic
+    race rather than a single deterministic reproduction."""
+    workspace = manager.ensure_workspace(
+        repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
+    )
+    execution = ExecutionService(docker_client)
+    for _ in range(_PID_RACE_TRIALS):
+        exec_id, stream, pid = await asyncio.to_thread(
+            execution.start_and_open_stream,
+            workspace.container_id,
+            ["true"],
+            cwd="/",
+            user="",
+            env=None,
+        )
+        assert pid is not None
+        for _out, _err in stream:  # drain; `true` exits immediately
+            pass

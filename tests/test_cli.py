@@ -118,11 +118,56 @@ def test_serve_reconciles_non_terminal_jobs_and_warns(
     assert result.exit_code == 0
     assert "job_orphan" in result.output
     assert "lost" in result.output
+    assert "check and clean up by hand" in result.output
     mock_run.assert_called_once()
 
     db = open_db(minimal_config_dict["state_db_path"])
     row = db.execute("SELECT state FROM job WHERE id = 'job_orphan'").fetchone()
     assert row["state"] == "lost"
+
+
+def test_serve_warns_to_check_by_hand_when_a_lost_jobs_pid_was_never_recorded(
+    tmp_path: Path, minimal_config_dict: dict[str, Any]
+) -> None:
+    """RR-022 (`docs/REMEDIATION_SPEC.md` §15): `reconcile_jobs` reports
+    `None`, not `False`, for a job that never reached `mark_running` at
+    all — the CLI must warn the operator to check by hand for that case
+    too, the same as a confirmed-alive pid, since "never recorded"
+    cannot be told apart from "still running unattended" without
+    looking."""
+    config_path = _write_config(tmp_path, minimal_config_dict)
+
+    db = open_db(minimal_config_dict["state_db_path"])
+    db.execute("INSERT INTO repository (id, canonical_path) VALUES ('repo_test', '/repo')")
+    db.execute(
+        """
+        INSERT INTO workspace
+            (id, repository_id, mode, workspace_path, state, created_at, last_used_at)
+        VALUES ('ws_test', 'repo_test', 'persistent', '/workspace', 'running',
+                '2026-01-01', '2026-01-01')
+        """
+    )
+    db.commit()
+    JobStore(db).create(
+        job_id="job_never_started",
+        workspace_id="ws_test",
+        command="make",
+        cwd="/workspace",
+        stdout_log_path="/state/jobs/job_never_started/stdout.log",
+        stderr_log_path="/state/jobs/job_never_started/stderr.log",
+    )
+    db.close()  # left `queued` — no `mark_running` call, so no pid ever recorded
+
+    with (
+        patch("dev_workspace_mcp.cli.docker_available", return_value=True),
+        patch("dev_workspace_mcp.cli.run_server") as mock_run,
+    ):
+        result = CliRunner().invoke(main, ["serve", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    assert "job_never_started" in result.output
+    assert "check and clean up by hand" in result.output
+    mock_run.assert_called_once()
 
 
 def test_serve_terminates_an_orphaned_ssh_agent_for_a_no_longer_running_workspace(

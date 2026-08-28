@@ -49,20 +49,31 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def reconcile_jobs(job_store: JobStore) -> list[tuple[str, bool]]:
+def reconcile_jobs(job_store: JobStore) -> list[tuple[str, bool | None]]:
     """Marks every non-terminal job `lost` (§15.4). Returns `(job_id,
-    pid_still_alive)` for every job it touched — the second element flags
-    a job whose host process may still be running unattended, so a caller
-    (`serve()`) can warn specifically about that rather than reporting an
-    ordinary "lost" uniformly; the daemon itself has no way left to reach
-    or reap that process (see module docstring)."""
-    results: list[tuple[str, bool]] = []
+    pid_status)` for every job it touched, so a caller (`serve()`) can
+    warn specifically about a job whose host process may still be
+    running unattended, rather than reporting an ordinary "lost"
+    uniformly; the daemon itself has no way left to reach or reap that
+    process (see module docstring).
+
+    RR-022 (`docs/REMEDIATION_SPEC.md` §15): `pid_status` is `True` when
+    the job had a recorded pid and it is still alive, `False` when it had
+    one and it is confirmed dead, and `None` when no pid was ever
+    recorded for the job at all (`ExecutionService.pid_of` exhausted its
+    retries — see its docstring). Collapsing `None` into `False`, as this
+    used to, silently discarded exactly the "cannot verify, might still
+    be orphaned" signal this return value exists to carry: a job whose
+    pid was never known is not the same as one whose pid is confirmed
+    not running, and only the former needs the same "check by hand"
+    warning as a confirmed-alive pid."""
+    results: list[tuple[str, bool | None]] = []
     for job in job_store.list_by_state(*NON_TERMINAL_STATES):
-        pid_alive = job.pid is not None and _pid_alive(job.pid)
+        pid_status = _pid_alive(job.pid) if job.pid is not None else None
         job_store.mark_lost(job.id)
-        results.append((job.id, pid_alive))
+        results.append((job.id, pid_status))
         _logger.warning(
-            "job %s: marked lost at startup (host process still alive: %s)", job.id, pid_alive
+            "job %s: marked lost at startup (host process still alive: %s)", job.id, pid_status
         )
     if results:
         _logger.info("job reconciliation: %d non-terminal job(s) marked lost", len(results))

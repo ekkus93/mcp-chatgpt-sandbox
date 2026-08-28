@@ -70,20 +70,6 @@ def test_mark_running_sets_pid_and_started_at(job_store: JobStore) -> None:
     assert record.started_at is not None
 
 
-def test_update_output_counts_reflects_progress(job_store: JobStore) -> None:
-    _create(job_store)
-    job_store.mark_running("job_1", pid=1)
-    record = job_store.update_output_counts(
-        "job_1", stdout_total_bytes=1024, stderr_total_bytes=16, output_truncated=False
-    )
-    assert record.stdout_total_bytes == 1024
-    assert record.stderr_total_bytes == 16
-    assert record.output_truncated is False
-    # A job in progress is not finished.
-    assert record.state == JobState.RUNNING
-    assert record.finished_at is None
-
-
 @pytest.mark.parametrize(
     "state", [JobState.SUCCEEDED, JobState.FAILED, JobState.CANCELED, JobState.TIMED_OUT]
 )
