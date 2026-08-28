@@ -37,7 +37,7 @@ Both are ticked checkboxes in `docs/HARDENING_TODO.md`. Do these first.
 
 ### R1 — Configuration discovery expands includes ✅
 **Satisfies:** RR-001 · **Verified by:** RAT-001, RAT-002
-**Commit:** `c469a12`
+**Commit:** `2e83fcc`
 
 - [x] Add `--includes` to both `git config --list` probes (`--local`, `--worktree`)
 - [x] Add `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_VALUE_<n>`,
@@ -106,7 +106,7 @@ before asserting the mediated call suppresses it.
 
 ### R2 — The push goes to the validated URL ✅ (partial — see below)
 **Satisfies:** RR-002, RR-003 · **Verified by:** RAT-003, RAT-004
-**Commit:** `46905f1`
+**Commit:** `652a6d7`
 
 - [x] Substitute the resolved, validated URL into the push invocation instead of
       passing the remote name (`git/push.py:109`) — **superseded, see below**
