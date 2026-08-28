@@ -1894,17 +1894,105 @@ or test changes were needed — this task closes as a verification sweep, per
 its own framing ("most are folded into R3–R17; this task is the sweep that
 confirms none was missed"), not a one-time correction.
 
-### R24 — Reverting a fix fails a test
+### R24 — Reverting a fix fails a test ✅
 **Satisfies:** RR-027
+**Commit:** `PLACEHOLDER`
 
 Each is implemented but unconstrained — deleting the fix leaves the suite green:
 
-- [ ] `--end-of-options` placement (`git/diff.py:125`, `git/log.py:96`) — every
+- [x] `--end-of-options` placement (`git/diff.py:125`, `git/log.py:96`) — every
       existing test uses a leading-`-` value, which trips
       `validate_revision_argument` first, so the second layer is never reached
-- [ ] `patch_file`'s `expected_sha256` pass-through (`tools/filesystem.py:255-257`)
-- [ ] Tracked cache-volume removal (`conftest.py:123-125`)
-- [ ] `git_push` success-record `refspec` / `remote_protection_status` (R2)
+- [x] `patch_file`'s `expected_sha256` pass-through (`tools/filesystem.py:255-257`)
+- [x] Tracked cache-volume removal (`conftest.py:123-125`)
+- [x] `git_push` success-record `refspec` / `remote_protection_status` (R2)
+
+**All four already implemented; only tests were missing.** Every item in this
+task closes with a new test and zero production-code changes — the "fix"
+each one asks to constrain already exists (`--end-of-options` was already
+placed correctly, `patch_file` already threaded `expected_sha256` through,
+volume removal already ran, the audit metadata already carried both fields);
+what was missing was a test that would fail if any of them were ever
+deleted. Confirmed for each below by actually deleting the corresponding
+line(s) and rerunning the new test.
+
+**1. `--end-of-options` placement.** Every existing `validate_revision_argument`
+test uses a leading-`-` value, which the first (denylist) layer already
+rejects — the second, load-bearing layer was never actually exercised.
+`test_rr027_end_of_options_precedes_base_and_head_in_the_real_argv`
+(`tests/git/test_diff.py`) and `test_rr027_end_of_options_precedes_ref_in_the_real_argv`
+(`tests/git/test_log.py`) spy on the real `subprocess.run` call (via
+`monkeypatch.setattr(git_service.subprocess, "run", _spy)`), using an
+ordinary, non-hostile revision (a real commit sha; `"HEAD"`) so the first
+layer passes and the second is what's actually under test — asserting
+`"--end-of-options"` appears immediately before the revision value in the
+real argv `run_git_host_side` executes. Deleting `cmd.append(END_OF_OPTIONS)`
+from either `git/diff.py` or `git/log.py`: both new tests failed, each on
+the exact assertion (found `_discover_code_executing_overrides`'s own
+preceding `git config --list` calls captured too, since the spy is
+module-global — fixed by filtering to the captured call actually containing
+`"diff"`/`"log"`, not assuming index `0`).
+
+**2. `patch_file`'s `expected_sha256` pass-through.** No existing test's
+`patch_file` call ever races a concurrent write.
+`test_rr027_patch_file_expected_sha256_pass_through_rejects_a_concurrent_write`
+(`tests/tools/test_filesystem.py`) monkeypatches `FilesystemService.
+read_file` to make a real, independent modification to the file on disk
+right after computing the real read result but before returning it — the
+same observable effect a genuine concurrent writer landing in that window
+would have — then confirms `patch_file` raises `FILE_CONFLICT` rather than
+silently overwriting the concurrent change. Reverting the pass-through
+(`expected_sha256=current.sha256` → `expected_sha256=None`): the tool call
+that should have raised silently succeeded instead, overwriting the
+concurrent writer's content.
+
+**3. Tracked cache-volume removal.** Every existing volume test (including
+R21's `test_rr024_*`) only ever proves the "untracked/pre-existing volume
+survives" direction.
+`test_rr027_a_genuinely_created_volume_is_removed_by_teardown`
+(`tests/workspace/test_conftest_teardown.py`) mounts a not-yet-existing
+named volume from a tracked container run (so `_tracking_run` observes and
+tracks its creation, per R21), confirms it exists, calls
+`remove_tracked_docker_resources`, and confirms it's now gone. Deleting
+`client.volumes.get(volume_name).remove(force=True)` from `conftest.py`:
+the volume survived teardown — `DID NOT RAISE NotFound`.
+
+**4. `git_push` success-record `refspec`/`remote_protection_status`.** No
+existing test ever reaches a successful push through the *structured*
+`git_push` tool — every push test either denies before Git runs, or uses
+raw `exec` (AT-031's own docstring: "unmediated by remote validation"),
+which never touches this audit call at all.
+`test_rr027_git_push_success_record_carries_the_real_refspec_and_remote_protection_status`
+(`tests/workspace/test_audit_logging.py`) intercepts only the actual `git
+push` network call (`ExecutionService.start`/`.consume`, identified by
+`"push"` in its real argv, returning a canned successful `ExecResult`) —
+remote validation, the in-container push-URL re-resolution (§20.2/HR-014,
+genuinely no network contact), refspec construction, and the audit write
+itself all run for real, against `octocat/Hello-World` (the same public
+demo repository `test_git_push_reaches_the_real_github_auth_stage_cleanly`
+already uses). Deleting either `"refspec": refspec,` or
+`"remote_protection_status": remote_protection.status,` from the audit
+metadata dict: the corresponding assertion failed with `KeyError`, tested
+independently for each field.
+
+**Full relevant suite.** `tests/git/ tests/tools/ tests/workspace/
+test_audit_logging.py tests/workspace/test_conftest_teardown.py`: 229
+passed. Full unscoped suite: 965 passed. One Docker volume leftover found
+during the leftover check (`mcp-test-r19-<hash>`) — not reproducible (R19's
+own `test_rr030_*` re-run cleanly, no leak, three times in isolation),
+concluded to be a stale artifact from earlier in this session's many
+ad-hoc/background runs rather than a defect introduced by this task;
+removed by hand.
+
+**New tests.** `tests/git/test_diff.py`:
+`test_rr027_end_of_options_precedes_base_and_head_in_the_real_argv`.
+`tests/git/test_log.py`: `test_rr027_end_of_options_precedes_ref_in_the_real_argv`.
+`tests/tools/test_filesystem.py`:
+`test_rr027_patch_file_expected_sha256_pass_through_rejects_a_concurrent_write`.
+`tests/workspace/test_conftest_teardown.py`:
+`test_rr027_a_genuinely_created_volume_is_removed_by_teardown`.
+`tests/workspace/test_audit_logging.py`:
+`test_rr027_git_push_success_record_carries_the_real_refspec_and_remote_protection_status`.
 
 ### R25 — The contract check is order-insensitive and monotonic
 **Satisfies:** RR-028

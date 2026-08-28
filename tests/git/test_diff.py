@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import dev_workspace_mcp.git.service as git_service
 from dev_workspace_mcp.errors import InvalidArgumentError
 from dev_workspace_mcp.git.diff import _trim_incomplete_trailing_char, read_git_diff
 
@@ -389,3 +390,49 @@ def test_rr016_pagination_with_an_invalid_byte_for_every_max_bytes_from_1_to_64(
             offset = chunk.next_offset
         else:
             pytest.fail(f"max_bytes={max_bytes}: pagination did not terminate")
+
+
+def test_rr027_end_of_options_precedes_base_and_head_in_the_real_argv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RR-027 (`docs/REMEDIATION_SPEC.md` §27): every existing test for
+    `validate_revision_argument` uses a leading-`-` value, which trips
+    that (first, denylist) layer before the second, load-bearing one
+    (`--end-of-options`, placed immediately before `base`/`head` in the
+    real argv `run_git_host_side` executes) is ever reached — deleting
+    the `cmd.append(END_OF_OPTIONS)` line left the whole suite green.
+    Spies on the real `subprocess.run` call, using an ordinary,
+    non-hostile revision (`"main"`) specifically so
+    `validate_revision_argument` passes and the second layer is what
+    this test actually exercises."""
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "a.txt").write_text("v1\n")
+    first_sha = _commit_all(repo, "v1")
+    (repo / "a.txt").write_text("v2\n")
+    _commit_all(repo, "v2")
+
+    captured_argv: list[list[str]] = []
+    real_run = subprocess.run
+
+    def _spy(argv: list[str], *args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured_argv.append(list(argv))
+        return real_run(argv, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(git_service.subprocess, "run", _spy)
+
+    # `base` is a real commit sha (a normal, non-hostile revision, unlike
+    # every existing `validate_revision_argument` test's leading-`-`
+    # value) and `head` is left to default to `HEAD` — both non-empty,
+    # both exercising the argv shape end to end.
+    result = read_git_diff(repo, base=first_sha)
+    assert "+v2" in result.content  # sanity: the read actually succeeded
+
+    # `_discover_code_executing_overrides` (HR-002) makes its own,
+    # preceding `git config --list` calls through the same spy — the
+    # actual `diff` invocation is whichever captured call is a `diff`.
+    diff_argvs = [argv for argv in captured_argv if "diff" in argv]
+    assert diff_argvs, f"no 'diff' invocation captured; got: {captured_argv}"
+    argv = diff_argvs[0]
+    base_index = argv.index(first_sha)
+    assert argv[base_index - 1] == "--end-of-options"
+    assert argv[base_index + 1] == "HEAD"  # head defaults to HEAD, right after base

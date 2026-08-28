@@ -14,6 +14,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from dev_workspace_mcp.config.models import FilesystemConfig, RepositoryConfig, ServerConfig
 from dev_workspace_mcp.db import open_db
+from dev_workspace_mcp.filesystem.service import FilesystemService
 from dev_workspace_mcp.server import create_server
 
 
@@ -185,6 +186,53 @@ async def test_patch_file_still_works_normally_below_both_limits(
 
     assert result.structured_content["applied"] is True
     assert (tmp_path / "work" / "example" / "f.txt").read_text() == "one\nTWO\nthree\n"
+
+
+async def test_rr027_patch_file_expected_sha256_pass_through_rejects_a_concurrent_write(
+    minimal_config: ServerConfig, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RR-027 (`docs/REMEDIATION_SPEC.md` §27): `patch_file`'s internal
+    `svc.write_file(..., expected_sha256=current.sha256)` call — passing
+    the sha256 it just read through as the write's own optimistic-
+    concurrency guard, independent of whether the *client* supplied one
+    (HR-004) — was implemented but unconstrained: nothing in the
+    existing suite would fail if that pass-through were dropped, since
+    no test's `patch_file` call ever races a concurrent write (unlike
+    `test_at_018_stale_expected_sha_is_a_tool_error` above, which only
+    exercises the *client*-supplied `expected_sha256` on a plain
+    `write_file` call). Monkeypatches `FilesystemService.read_file` to
+    make a real, independent modification to the file on disk right
+    after it computes the real result but before returning it — the same
+    observable effect a genuine concurrent writer landing in that window
+    would have — then confirms `patch_file` refuses to silently overwrite
+    it with a patch computed against the now-stale content."""
+    config, workspace_id = _workspace_with_repo(minimal_config, tmp_path / "work" / "example")
+    file_path = tmp_path / "work" / "example" / "f.txt"
+    file_path.write_text("one\ntwo\nthree\n")
+    server = create_server(config)
+
+    real_read_file = FilesystemService.read_file
+
+    def _racing_read_file(self: FilesystemService, *args: object, **kwargs: object) -> object:
+        result = real_read_file(self, *args, **kwargs)  # type: ignore[arg-type]
+        file_path.write_text("one\nCONCURRENTLY-CHANGED\nthree\n")
+        return result
+
+    monkeypatch.setattr(FilesystemService, "read_file", _racing_read_file)
+
+    with pytest.raises(ToolError, match="FILE_CONFLICT"):
+        await server.call_tool(
+            "patch_file",
+            {
+                "workspace_id": workspace_id,
+                "path": "f.txt",
+                "diff": "@@ -2,1 +2,1 @@\n-two\n+TWO\n",
+            },
+        )
+
+    # The concurrent writer's content survives untouched — not silently
+    # overwritten by a patch computed against the stale read.
+    assert file_path.read_text() == "one\nCONCURRENTLY-CHANGED\nthree\n"
 
 
 async def test_delete_file_tool(minimal_config: ServerConfig, tmp_path: Path) -> None:

@@ -238,3 +238,37 @@ def test_rr024_a_production_shaped_volume_survives_being_referenced_by_a_tracked
         subprocess.run(
             ["docker", "volume", "rm", "-f", production_volume_name], capture_output=True
         )
+
+
+def test_rr027_a_genuinely_created_volume_is_removed_by_teardown(
+    docker_client: docker.DockerClient, real_docker_client: docker.DockerClient
+) -> None:
+    """RR-027 (`docs/REMEDIATION_SPEC.md` §27): every volume test above
+    (and R21's `test_rr024_*` above) only ever proves the "untracked/
+    pre-existing volume survives" direction — nothing proved the other
+    direction: a volume this run genuinely *creates* (not merely
+    references, R21's own distinction) is actually removed by teardown,
+    not silently left behind forever. Deleting `remove_tracked_docker_
+    resources`'s `client.volumes.get(volume_name).remove(force=True)`
+    line left the whole suite green."""
+    volume_name = f"mcp-test-r24-{uuid.uuid4().hex[:12]}"
+    # Not created via `docker volume create` directly: mounting a
+    # not-yet-existing named volume from a tracked run is what makes
+    # Docker create it, and is what `_tracking_run` needs to observe in
+    # order to track it as "created" (R21) in the first place.
+    mount = docker.types.Mount(target="/data", source=volume_name, type="volume")
+    tracked = docker_client.containers.run(
+        "alpine:3.20",
+        ["sleep", "3600"],
+        labels={LABEL_MANAGED: "true"},
+        mounts=[mount],
+        detach=True,
+    )
+    assert tracked.id is not None
+    # sanity: the volume really was created by that call, before teardown.
+    assert real_docker_client.volumes.get(volume_name) is not None
+
+    remove_tracked_docker_resources(docker_client)
+
+    with pytest.raises(docker.errors.NotFound):
+        real_docker_client.volumes.get(volume_name)

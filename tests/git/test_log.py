@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import dev_workspace_mcp.git.service as git_service
 from dev_workspace_mcp.errors import InvalidArgumentError
 from dev_workspace_mcp.git.log import read_git_log
 
@@ -142,3 +143,41 @@ def test_at_hat019_a_subject_containing_the_record_separator_does_not_break_pars
 
     assert len(entries) == 1  # not mis-split into two broken records
     assert entries[0].subject == "evil\x1esubject with a record separator"
+
+
+def test_rr027_end_of_options_precedes_ref_in_the_real_argv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RR-027 (`docs/REMEDIATION_SPEC.md` §27): every existing test for
+    `validate_revision_argument` uses a leading-`-` value (see
+    `ref=f"--output={target}"` above), which trips that (first,
+    denylist) layer before the second, load-bearing one
+    (`--end-of-options`, placed immediately before `ref` in the real
+    argv `run_git_host_side` executes) is ever reached — deleting the
+    `cmd.append(END_OF_OPTIONS)` line left the whole suite green. Spies
+    on the real `subprocess.run` call, using an ordinary, non-hostile
+    revision (`"HEAD"`) specifically so `validate_revision_argument`
+    passes and the second layer is what this test actually exercises."""
+    repo = _init_repo(tmp_path / "repo")
+    _commit(repo, "a.txt", "first")
+
+    captured_argv: list[list[str]] = []
+    real_run = subprocess.run
+
+    def _spy(argv: list[str], *args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured_argv.append(list(argv))
+        return real_run(argv, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(git_service.subprocess, "run", _spy)
+
+    entries = read_git_log(repo, ref="HEAD")
+    assert entries  # sanity: the read actually succeeded
+
+    # `_discover_code_executing_overrides` (HR-002) makes its own,
+    # preceding `git config --list` calls through the same spy — the
+    # actual `log` invocation is whichever captured call is a `log`.
+    log_argvs = [argv for argv in captured_argv if "log" in argv]
+    assert log_argvs, f"no 'log' invocation captured; got: {captured_argv}"
+    argv = log_argvs[0]
+    ref_index = argv.index("HEAD")
+    assert argv[ref_index - 1] == "--end-of-options"

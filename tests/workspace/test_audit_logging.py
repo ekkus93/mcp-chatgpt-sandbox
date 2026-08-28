@@ -33,8 +33,17 @@ from mcp.server.mcpserver.exceptions import ToolError
 import docker
 from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
 from dev_workspace_mcp.db import open_db
+from dev_workspace_mcp.execution.service import ExecResult, ExecutionService
 from dev_workspace_mcp.server import create_server
 from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager
+
+#: GitHub's own tiny, effectively-permanent demo repository — a real,
+#: resolvable `github.com` identity so remote validation (§20.2) and the
+#: in-container push-URL re-resolution (§20.2/HR-014, no network contact
+#: — pure local git config resolution) both succeed for real; only the
+#: actual `git push` network call itself is intercepted below.
+_PUBLIC_REMOTE_URL = "https://github.com/octocat/Hello-World.git"
+_PUBLIC_REMOTE_IDENTITY = "octocat/Hello-World"
 
 
 def _configured(
@@ -309,6 +318,77 @@ async def test_git_push_policy_denial_is_audited_with_policy_decision_deny(
     assert denials[0]["workspace_id"] == workspace_id
     assert denials[0]["metadata"]["policy_decision"] == "deny"
     assert denials[0]["metadata"]["error_code"] == "POLICY_DENIED"
+
+
+async def test_rr027_git_push_success_record_carries_the_real_refspec_and_remote_protection_status(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RR-027 (`docs/REMEDIATION_SPEC.md` §27): `git_push`'s success audit
+    record is implemented but unconstrained — nothing in the existing
+    suite ever reaches a successful push through the structured tool
+    (every push test either denies before Git runs, or reroutes through
+    raw `exec`, which never touches this audit call at all), so deleting
+    `"refspec": refspec` or `"remote_protection_status": remote_protection
+    .status` from the metadata dict left the whole suite green.
+
+    Only the actual `git push` network call is intercepted (via
+    `ExecutionService.start`/`.consume`, identified by `"push"` appearing
+    in its real argv) — remote validation, the in-container push-URL
+    re-resolution (§20.2/HR-014, genuinely no network contact), refspec
+    construction, and the audit write itself all run for real."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(
+        minimal_config, default_image_tag, repo_path, github=_PUBLIC_REMOTE_IDENTITY
+    )
+    _set_remote(repo_path, _PUBLIC_REMOTE_URL)
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    real_start = ExecutionService.start
+    real_consume = ExecutionService.consume
+    _PUSH_SENTINEL = "rr027-fake-push-exec-id"
+
+    def _start_intercepting_push(
+        self: ExecutionService, container_id: str, argv: list[str], **kwargs: object
+    ) -> str:
+        if "push" in argv:
+            return _PUSH_SENTINEL
+        return real_start(self, container_id, argv, **kwargs)  # type: ignore[arg-type]
+
+    def _consume_intercepting_push(
+        self: ExecutionService, exec_id: str, **kwargs: object
+    ) -> ExecResult:
+        if exec_id == _PUSH_SENTINEL:
+            return ExecResult(
+                exit_code=0,
+                stdout_tail="",
+                stderr_tail="",
+                stdout_truncated=False,
+                stderr_truncated=False,
+                stdout_total_bytes=0,
+                stderr_total_bytes=0,
+            )
+        return real_consume(self, exec_id, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(ExecutionService, "start", _start_intercepting_push)
+    monkeypatch.setattr(ExecutionService, "consume", _consume_intercepting_push)
+
+    result = await server.call_tool("git_push", {"workspace_id": workspace_id, "branch": "main"})
+    assert result.structured_content["remote_protection"]["status"] == "unverified"  # sanity
+
+    events = _read_events(config.audit.path)
+    successes = [e for e in events if e["operation"] == "git_push" and e["result"] == "success"]
+    assert len(successes) == 1
+    assert successes[0]["metadata"]["refspec"] == "refs/heads/main:refs/heads/main"
+    # No GitHub credential is configured in `minimal_config` — real
+    # `verify_remote_protection` (run during `workspace_open`, stored,
+    # and read back here — not re-verified at push time) degrades to
+    # this value rather than raising, per its own docstring.
+    assert successes[0]["metadata"]["remote_protection_status"] == "unverified"
 
 
 async def test_git_pull_remote_rejection_is_audited_as_a_failure_not_a_policy_denial(
