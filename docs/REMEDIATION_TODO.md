@@ -1389,13 +1389,14 @@ per the empirical 20% single-trial failure rate) rather than a single
 deterministic reproduction, since a genuine Docker API race can't be pinned to
 one.
 
-### R17 — Transport classification separates auth from local failure
+### R17 — Transport classification separates auth from local failure ✅
 **Satisfies:** RR-023 · **Verified by:** RAT-019
+**Commit:** `PLACEHOLDER`
 
-- [ ] Anchor `is_auth_failure` on wording that genuinely indicates a rejected
+- [x] Anchor `is_auth_failure` on wording that genuinely indicates a rejected
       credential — OpenSSH's parenthetical (`Permission denied (publickey)`), or
       SSH context — not the bare substring
-- [ ] Test a local `Permission denied` is *not* classified as auth failure
+- [x] Test a local `Permission denied` is *not* classified as auth failure
 
 **Defect (reproduced — introduced by H32).**
 
@@ -1414,6 +1415,44 @@ error.
 The precedent was already in the codebase and was cited as the model:
 `git/pull.py`'s `is_non_fast_forward_failure` docstring explicitly warns against
 misclassifying a command's *other* failure modes.
+
+**Defect reproduced.** Beyond the three hand-typed lines above (confirmed
+directly against `is_auth_failure`), reproduced for real: a real bare remote,
+a real clone, `.git` chmod'd `0o555` (read+execute only, matching what
+`git_dir_mode: read-only` actually does to the mount), then a real
+`git fetch` against it. Real stderr: `error: cannot open '.git/FETCH_HEAD':
+Permission denied` — identical to the spec's own example, not assumed —
+and `is_auth_failure` on it was `True` before the fix.
+
+**Implementation.** `_AUTH_FAILURE_MARKERS`'s `"Permission denied"` entry
+(`git/transport.py`) became `"Permission denied ("` — OpenSSH's own wording
+always appends a parenthetical listing the auth methods tried
+(`(publickey)`, `(publickey,password)`, ...); a local `errno`-derived
+message (the three examples above, and the real-fetch reproduction) never
+does. The open paren is exactly the distinguishing feature, so anchoring on
+it (rather than, say, requiring `ssh:`/`fatal:` prefixes, which vary more)
+needed no other wording changes. `"Authentication failed"` (GitHub's HTTPS
+rejection wording) was already unambiguous and is untouched. Docstrings on
+the marker tuple and `is_auth_failure` itself now explain why.
+
+**Verified the tests catch the regression.** Backed up `git/transport.py`,
+reverted to `HEAD` (confirmed via `grep -c '"Permission denied ("'` — `0`),
+reran the new tests: all 4 failed — the three hand-typed lines and the real
+fetch reproduction all came back `is_auth_failure(...) is True` instead of
+`False`. Restored (same marker back to `1`); all 16 tests in the file pass
+again. No Docker leftovers.
+
+**Full relevant suite.** `tests/git/ tests/tools/`: 207 passed. Full
+unscoped suite: 947 passed. No Docker leftovers.
+
+**New tests.** `tests/git/test_transport.py`:
+`test_is_auth_failure_false_for_a_local_permission_failure` (parametrized
+over the spec's exact three lines) and
+`test_a_real_local_permission_failure_during_fetch_is_not_classified_as_auth`
+(a real bare remote, a real clone with `.git` made unwritable, a real
+`git fetch` — reproducing the defect from an actual Git invocation rather
+than hand-typed stderr, mirroring this file's existing real-DNS-failure and
+real-refused-connection tests).
 
 ---
 

@@ -24,14 +24,24 @@ from __future__ import annotations
 
 #: OpenSSH's own wording when the transport connects but the presented
 #: credential has no access — real text is "Permission denied
-#: (publickey)."; matched as a prefix substring the same way
-#: `git/pull.py`'s `NON_FAST_FORWARD_MARKER` is, since the exact
-#: parenthetical (which auth methods were tried) can vary.
+#: (publickey)." RR-023 (`docs/REMEDIATION_SPEC.md` §16): matched
+#: including the open paren, not as the bare "Permission denied" prefix
+#: this used to be — a *local* filesystem failure (`git_dir_mode:
+#: read-only`, §18.2: `.git` itself is unwritable) produces plain
+#: `... Permission denied` with no parenthetical from Git/the OS, not
+#: from SSH, and used to be misclassified as a rejected credential by
+#: the bare substring (reproduced empirically: "error: cannot open
+#: '.git/FETCH_HEAD': Permission denied", "fatal: could not create
+#: leading directories: Permission denied", "warning: unable to unlink
+#: .git/x: Permission denied" — none of these are auth failures). The
+#: open paren is OpenSSH's own auth-methods-tried annotation
+#: ("publickey", "publickey,password", ...) and is not something a
+#: local `errno`-derived message ever appends.
 #: "Authentication failed" is GitHub's own wording for a rejected HTTPS
 #: credential (verified empirically against a real `https://` push with
 #: a bad token: "fatal: Authentication failed for '...'").
 _AUTH_FAILURE_MARKERS = (
-    "Permission denied",
+    "Permission denied (",
     "Authentication failed",
 )
 
@@ -50,7 +60,12 @@ _NETWORK_FAILURE_MARKERS = (
 
 def is_auth_failure(stderr: str) -> bool:
     """True for a Git transport failure caused by a rejected credential
-    — `GIT_AUTH_FAILED` (§31), not a generic `COMMAND_FAILED`."""
+    — `GIT_AUTH_FAILED` (§31), not a generic `COMMAND_FAILED`.
+
+    RR-023: a local filesystem failure (an unwritable `.git`, say) SHALL
+    NOT be classified as one just because its message happens to end in
+    the same three words SSH uses — see `_AUTH_FAILURE_MARKERS`'s
+    comment for why the open paren is what actually distinguishes them."""
     return any(marker in stderr for marker in _AUTH_FAILURE_MARKERS)
 
 
