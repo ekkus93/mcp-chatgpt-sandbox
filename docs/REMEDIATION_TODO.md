@@ -674,7 +674,7 @@ existing test's exact-path assertion updated for the new query string.
 
 ### R8 — Job-scoped tools re-check authorization ✅
 **Satisfies:** RR-010, RR-011 · **Verified by:** RAT-011
-**Commit:** `PLACEHOLDER`
+**Commit:** `caadabd`
 
 - [x] Re-check in `exec_status_tool`, `exec_output_tool`, `exec_cancel_tool` —
       resolve `job_id` → `workspace_id` → `get_authorized`
