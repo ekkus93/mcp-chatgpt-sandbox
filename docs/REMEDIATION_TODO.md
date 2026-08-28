@@ -1896,7 +1896,7 @@ confirms none was missed"), not a one-time correction.
 
 ### R24 — Reverting a fix fails a test ✅
 **Satisfies:** RR-027
-**Commit:** `PLACEHOLDER`
+**Commit:** `8627294`
 
 Each is implemented but unconstrained — deleting the fix leaves the suite green:
 
