@@ -1,9 +1,10 @@
 # Development Workspace MCP Server — Specification
 
 **Status:** Draft  
-**Version:** 0.2 — incorporates the sixteen amendments from
-`docs/HARDENING_SPEC.md` §9 (H34, `docs/HARDENING_TODO.md`)  
-**Date:** 2026-08-27
+**Version:** 0.3 — incorporates the sixteen amendments from
+`docs/HARDENING_SPEC.md` §9 (H34, `docs/HARDENING_TODO.md`), and the four
+amendments from `docs/REMEDIATION_SPEC.md` §16 (R26, `docs/REMEDIATION_TODO.md`)  
+**Date:** 2026-08-28
 
 ## 1. Purpose
 
@@ -1582,7 +1583,20 @@ following:
    `diff.*.textconv`, `core.hooksPath`, `core.fsmonitor`, `credential.helper`,
    and the rest of §4.1's list in `docs/HARDENING_SPEC.md`) — complete with
    respect to what can actually run, since a driver not present in
-   configuration cannot be invoked.
+   configuration cannot be invoked. RR-001 (`docs/REMEDIATION_SPEC.md` §1):
+   this enumeration SHALL be performed with include expansion enabled
+   (`git config --list --includes`, for both the `--local` and
+   `--worktree` scopes) — `include.path`/`includeIf.*.path` are
+   configuration mechanisms too, and a driver defined only through one
+   (itself reachable via a container-writable `.git/config`) is reachable
+   the same as one written directly; without `--includes`, `--list`
+   verifiably does not expand them, so the enumeration silently misses
+   it. The enumeration probe itself is a host-side Git invocation and
+   SHALL run under the same `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM`
+   exclusion and environment scrubbing items 3 and 4 below require of
+   every other one — what it reads back SHALL depend only on the
+   repository's own configuration, the same as any other read performed
+   on the client's behalf.
 3. **External configuration exclusion.** Host-side reads SHALL run with
    `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_SYSTEM=/dev/null`, so
    host-global Git configuration cannot influence a read performed on the
@@ -1931,6 +1945,19 @@ URL because that is what the operation actually contacts and what its audit
 record SHALL name, and the fetch URL because it is not otherwise checked
 elsewhere (HR-014, `docs/HARDENING_SPEC.md` §8).
 
+RR-002 (`docs/REMEDIATION_SPEC.md` §2): resolving and validating a push URL
+host-side is not, by itself, sufficient — the daemon SHALL also push to a
+URL it has confirmed the operation will actually contact, not merely to the
+plain remote name. Passing the remote name to `git push` lets Git resolve
+it independently, inside the container, which can disagree with the
+daemon's own host-side resolution (a container-writable `.git/config`,
+reachable through `exec` under §20.1, can redirect `insteadOf`/`pushurl`
+between the two resolutions). The push SHALL re-resolve the URL
+*in-container*, immediately before pushing, confirm that value also
+normalizes to the already-validated identity, and push to that
+freshly-confirmed URL — refusing rather than pushing if the container's own
+view disagrees with what was validated host-side.
+
 ### 20.3 Refspec Construction
 
 Structured push does not accept a refspec. The daemon constructs one from the
@@ -2265,10 +2292,15 @@ Events actually emitted, as `operation`:
   (or denied/failed) in the same record, including `policy` (§20.7) and,
   on a remote-identity mismatch, the mismatch details.
 
-Container create/rebuild/delete, a file write, a file delete, and a job
-cancellation are logged operationally (§13, HR-031) but not currently
-audited as a distinct `operation` — a real gap, not implemented, tracked as
-future work rather than claimed as already covered.
+Only container lifecycle (`workspace/manager.py`), job reconciliation
+(`jobs/reconcile.py`), ssh-agent lifecycle (`workspace/ssh_agent.py`), and a
+structured-tool policy denial (`tools/git.py`) are logged operationally
+(§13, HR-031) — none of them as a distinct audited `operation` either. A
+file write, a file delete, and a job cancellation are logged nowhere at
+all: `tools/filesystem.py`, `filesystem/service.py`, and
+`tools/execution.py` contain no logger. This is a real gap, not
+implemented, tracked as future work rather than claimed as already
+covered.
 
 Audit records SHOULD include:
 
@@ -2375,7 +2407,14 @@ The server SHOULD detect and report:
   `OOMKilled` state on reconcile, and reported as a distinct `oom_killed`
   field on `workspace_open`/`workspace_info`, alongside `container_state`
   (which alone cannot distinguish an OOM kill from any other crash landing
-  in `failed`);
+  in `failed`). `oom_killed` is the *current* container's state, not a
+  sticky history flag: it SHALL be recomputed on every transition that
+  changes which container the record describes (`start`, `stop`,
+  `restart`, and `rebuild`/`reset`'s replacement container), and cleared
+  once that container is cleanly observed running or stopped — a
+  workspace whose container was OOM-killed and then successfully reopened
+  or rebuilt SHALL report `oom_killed: false`, not the prior container's
+  stale value;
 - disk exhaustion — not detected;
 - process limit exhaustion (`pids_limit`) — not detected.
 

@@ -2064,18 +2064,19 @@ not simulated.
 
 ## Phase 7 — Documentation truth
 
-### R26 — Apply the `REMEDIATION_SPEC.md` §16 amendments
+### R26 — Apply the `REMEDIATION_SPEC.md` §16 amendments ✅
 **Satisfies:** RR-032, RR-033
+**Commit:** `PLACEHOLDER`
 
-- [ ] `SPEC.md` §24 — state that only container lifecycle, job reconciliation,
+- [x] `SPEC.md` §24 — state that only container lifecycle, job reconciliation,
       ssh-agent lifecycle, and policy denials are logged; list the rest as
       unimplemented
-- [ ] `SPEC.md` §20.2, §18.7, §26 — per the §16 table
-- [ ] `HARDENING_SPEC.md` HR-002, HR-014, HR-016, HR-018, HR-026 — per the §16 table
-- [ ] `HARDENING_TODO.md` H35 table — remove the S31/H32 mis-citation; restate
+- [x] `SPEC.md` §20.2, §18.7, §26 — per the §16 table
+- [x] `HARDENING_SPEC.md` HR-002, HR-014, HR-016, HR-018, HR-026 — per the §16 table
+- [x] `HARDENING_TODO.md` H35 table — remove the S31/H32 mis-citation; restate
       the S9/S10 "fails open" row as an error-classification gap
-- [ ] `TODO.md` S15 correction — it asserts the `pid=None` race does not exist; it does
-- [ ] Bump `SPEC.md` to 0.3 and note in `HARDENING_SPEC.md` §2 which points this
+- [x] `TODO.md` S15 correction — it asserts the `pid=None` race does not exist; it does
+- [x] Bump `SPEC.md` to 0.3 and note in `HARDENING_SPEC.md` §2 which points this
       document governed and have now returned
 
 **Defect (verified).** H34's §24 amendment states a file write, a file delete,
@@ -2089,6 +2090,75 @@ H35's table carried an S31 row citing H32 for pid-exhaustion detection (H32 neve
 addressed it) and an S9/S10 row calling rule 3 "fails open" when the request is in
 fact still refused, just with a less specific code. Both were transcribed rather
 than re-run.
+
+**Re-verified before writing, not transcribed.** Confirmed empirically (`grep`
+for `_logger`/`logging.getLogger`) that `tools/filesystem.py`,
+`filesystem/service.py`, and `tools/execution.py` genuinely have no logger,
+while `workspace/manager.py`, `jobs/reconcile.py`, `workspace/ssh_agent.py`, and
+`tools/git.py` (policy denial) do — matching the §16 table's claim exactly.
+HR-016 was found already corrected (R8/RR-011, an earlier task) — left as-is,
+noted in the write-up below rather than re-applied.
+
+**Implementation, by document:**
+- **`SPEC.md` §24** (audit logging): corrected the overclaim to name exactly
+  which four things are logged operationally and confirm the other three have
+  no logger at all.
+- **`SPEC.md` §20.2** (remote identity validation): added RR-002's requirement
+  that the push SHALL re-resolve the URL in-container immediately before
+  pushing and use that freshly-confirmed value, not merely have validated
+  some URL earlier — matching what `tools/git.py`'s real push flow actually
+  does (re-resolve, confirm the container's own view still matches the
+  validated identity, then push to that).
+- **`SPEC.md` §18.7** (hooks/host-side execution): added RR-001's `--includes`
+  requirement to the dynamic-driver-neutralization item, and noted the
+  enumeration probe itself SHALL run under the same env-scrubbing items 3/4
+  already require of every other host-side read.
+- **`SPEC.md` §26** (resource controls / `oom_killed`): added the
+  current-state clarification — recomputed on every container-identity
+  transition (`start`/`stop`/`restart`/`rebuild`), cleared on clean
+  observation, not a sticky history flag.
+- **`HARDENING_SPEC.md` HR-002**: corrected the "complete with respect to what
+  can actually run" claim to require `--includes`, citing RR-001.
+- **`HARDENING_SPEC.md` HR-014**: replaced the "or" framing (presenting
+  resolving the URL and using it as independent alternatives) with RR-002's
+  finding that resolving alone is insufficient.
+- **`HARDENING_SPEC.md` HR-016**: already correct (R8/RR-011); no change.
+- **`HARDENING_SPEC.md` HR-018**: added a paragraph on the broader property
+  RR-012 found still didn't hold (cache-volume removal, ssh-agent
+  termination — both could raise between container removal and row
+  deletion) and how it's now fixed (both moved to best-effort, after the
+  atomic delete).
+- **`HARDENING_SPEC.md` HR-026**: corrected "targets an identity this process
+  itself observed being created" to note this was false for volumes prior to
+  R21/RR-024's fix, and is genuinely true now — not simply downgrading the
+  claim to "referenced" (which would describe the pre-fix, no-longer-accurate
+  state), since R21 (this same ralph loop, task R21) already closed the gap
+  the §16 table was written against.
+- **`HARDENING_TODO.md` H35 table**: the S31 row no longer cites H32; the
+  S9/S10 row restates "fails open" as the narrower `PATH_GIT_METADATA`
+  classification gap it actually is, citing H37 — both to match the
+  corrected analysis the same section's own prose, directly below the table,
+  already reached.
+- **`TODO.md` S15 correction**: replaced the "re-verified... nothing left to
+  correct" claim (itself found wrong) with the real finding — RR-022's
+  `pid_of` race, closed by R16 (this ralph loop) — since `mark_running` being
+  the only call site never meant the value it receives was always a real pid.
+- **Version bump and precedence notes**: `SPEC.md` bumped to 0.3.
+  `HARDENING_SPEC.md` §2 gained a paragraph (mirroring its own existing H34
+  paragraph) noting `REMEDIATION_SPEC.md` governed five of its points until
+  R26; `REMEDIATION_SPEC.md` §2 gained the parallel note that its own §16
+  amendments are now applied and precedence has returned — not itself listed
+  in the checklist, but the same correction its own §2 statement demands of
+  itself, left stale would be exactly the kind of documentation-truth defect
+  this task exists to close.
+
+**Verification.** Docs-only — no `src/`/`tests/` changes, so there is no
+revert-verification step in the usual sense (nothing to revert). Confirmed no
+test asserts on these files' literal content/version
+(`tests/test_docs_tools.py`, `tests/test_acceptance_test_coverage.py`,
+`tests/test_schema_export.py`: 16 passed, unaffected). Full unscoped suite not
+re-run for the same reason R23 didn't: zero code/test diff to verify against.
+No Docker leftovers (no Docker-adjacent code touched).
 
 ---
 

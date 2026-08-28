@@ -32,6 +32,15 @@ every point §9 addressed — §5.3, §8.4, §11, §12.1, §14.2, §14.4, §15.5
 exists and what defect it closed; consult it for rationale, `docs/SPEC.md`
 for the current normative text.
 
+**`docs/REMEDIATION_SPEC.md` (a subsequent review of the hardening work
+itself) governed five points *this* document states — HR-002, HR-014,
+HR-016 (already restated as restart-scoped by R8/RR-011, before this
+document's own R26), HR-018, and HR-026 — until its own §16 amendments were
+applied (R26, `docs/REMEDIATION_TODO.md`). Precedence has returned to this
+document for all five; each `HR-nnn` section above now carries the
+corrected text directly, with a citation to the `RR-nnn` requirement that
+found and closed the gap.
+
 Requirements here are numbered `HR-nnn` and acceptance tests `HAT-nnn`, to avoid
 collision with `docs/SPEC.md`'s `FR-nnn` and `AT-nnn`.
 
@@ -109,11 +118,17 @@ SHALL apply all four of the following:
 1. **Static flags.** Diff-producing reads SHALL pass `--no-ext-diff
    --no-textconv`.
 2. **Dynamic driver neutralization.** Before invoking Git, the daemon SHALL
-   enumerate the repository's own configuration (`git config --list --local`,
-   and the worktree scope where applicable) and pass `-c <key>=` for every key
-   matching a code-executing pattern (§4.1 below). This is complete with
-   respect to what can actually run, because a driver that is not defined in
-   configuration cannot be invoked.
+   enumerate the repository's own configuration (`git config --list --includes
+   --local`, and the worktree scope where applicable) and pass `-c <key>=` for
+   every key matching a code-executing pattern (§4.1 below). RR-001
+   (`docs/REMEDIATION_SPEC.md` §1): `--includes` is required, not optional —
+   without it, `--list` does not expand `include.path`/`includeIf.*.path`
+   (verified against git 2.43.0), so a driver defined only through one of
+   those (itself reachable via a container-writable `.git/config`) is
+   invisible to the enumeration and reaches Git unneutralized. With
+   `--includes`, this is complete with respect to what can actually run,
+   because a driver that is not defined in configuration — directly or
+   through an included file — cannot be invoked.
 3. **External configuration exclusion.** Host-side reads SHALL run with
    `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_SYSTEM=/dev/null`, so that
    host-global Git configuration cannot influence a read performed on the
@@ -329,8 +344,11 @@ correctly showed `[REDACTED]`.
 
 Remote validation SHALL resolve the URL that `git push` will actually use —
 `git remote get-url --push <name>`, which accounts for `remote.<name>.pushurl`
-and `url.<base>.pushInsteadOf` — or the daemon SHALL push to the validated URL
-string rather than to the remote name.
+and `url.<base>.pushInsteadOf`. RR-002 (`docs/REMEDIATION_SPEC.md` §2):
+resolving that URL host-side is necessary but not sufficient by itself —
+these are not independent, alternative remedies, and the daemon SHALL also
+push *to the URL it actually contacts*, not to the plain remote name, which
+Git would otherwise resolve again, independently, inside the container.
 
 Where fetch and push URLs differ, **both** SHALL be validated.
 
@@ -420,6 +438,21 @@ dependent rows in the correct order within one transaction.
 `sqlite3.IntegrityError`, leaving the container gone and the row stuck in
 `deleting` forever, surfaced as a bare traceback.
 
+This section's underlying property is broader than the one specific
+`IntegrityError` above: no failure point SHALL be able to leave the
+container removed and the row stuck in `deleting`, regardless of which
+step raises. RR-012 (`docs/REMEDIATION_SPEC.md` §10) found this did not
+yet hold for two *other* steps `delete()` also performs — cache-volume
+removal (§4.2) and ssh-agent termination (§19.2) — both of which, at the
+time, ran *between* container removal and row deletion and could raise
+(a cache volume genuinely still in use by another workspace of the same
+repository; a `PermissionError` unlinking the agent's socket), wedging
+the row the identical way the original `IntegrityError` did. Fixed the
+same way: both now run only *after* the container and both rows are
+already gone, and are best-effort (logged, never raised) on top of
+that — neither is what makes a workspace "deleted," so neither can come
+between anything that does.
+
 ### HR-019 Migrations SHALL be atomic
 
 Schema migrations SHALL run inside an explicit transaction. Python's `sqlite3`
@@ -506,9 +539,24 @@ never by a global name filter.
 every container ID and referenced volume name as they're created, and
 teardown removes exactly those. This is stricter than a shared label or name
 prefix would be (nothing is inferred from a naming convention; each removal
-targets an ID this process itself observed being created) and was chosen over
-threading a session token through container/volume naming because it
-requires no change to production naming at all.
+targets an identity this process itself observed being created) and was
+chosen over threading a session token through container/volume naming
+because it requires no change to production naming at all.
+
+RR-024 (`docs/REMEDIATION_SPEC.md` §17): "each removal targets an identity
+this process itself observed being *created*" was false for volumes as H1
+originally shipped it — a volume-type mount's `Source` was read, and
+tracked for removal, purely because a `run()` call *referenced* it, whether
+that call created it or not. Because `cache_volume_name` is deterministic
+and every test uses the same fixed repository id, a real deployment's own
+cache volume for a repository sharing that id was reachable and would have
+been destroyed by a suite run — the same class of incident the label/prefix
+rewrite this section describes already fixed for containers, recurring one
+layer down for volumes. Fixed by checking each mount's volume for existence
+*before* the `run()` call: a volume already present at that instant can
+only ever be referenced by the call, never created by it, so it is never
+tracked for removal — closing the gap and making the claim above true for
+volumes too, not only containers.
 
 *Defect:* `tests/workspace/conftest.py:61–70` removes **every** container
 carrying the production `managed` label and **every** `mcp-cache-` volume on the

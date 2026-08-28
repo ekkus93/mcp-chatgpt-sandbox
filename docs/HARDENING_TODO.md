@@ -3261,7 +3261,7 @@ the claim back.
 | S2 | §19.1 invariant unguarded for `shared_key` (H7); §73 step 7 unimplemented (H30); invalid YAML escapes as `TypeError` (H30) |
 | S3 | Migrations not atomic (H17); no concurrency configuration (H17) |
 | S6 | §69 reconciliation reaches `absent` but never recovers (H15) |
-| S9 / S10 | `max_patch_bytes` unenforced and `patch_file` truncation destroys data (H5); `delete_file("")` wipes the repository (H4); §12.1 rule 3 fails open when only `repositories[]` is configured |
+| S9 / S10 | `max_patch_bytes` unenforced and `patch_file` truncation destroys data (H5); `delete_file("")` wipes the repository (H4); §12.1 rule 3 loses its specific `PATH_GIT_METADATA` classification (a generic `PATH_OUTSIDE_REPOSITORY` instead) when only `repositories[]` is configured — the request is still correctly refused, this is a classification gap, not a bypass (H37) |
 | S12 | `cwd` check bypassable, timeout unclamped, no Docker error handling (H19, H30) |
 | S15 | "no race between running and having a pid" is false ~95% of the time; `update_output_counts` is dead code |
 | S21 | Argument injection (H2); bounded-diff offsets break on non-ASCII (H24) |
@@ -3269,7 +3269,7 @@ the claim back.
 | S24 | "Pinned GitHub host keys" ships zero keys (H32) |
 | S28 | Rulesets never queried (H32) |
 | S29 | Redaction covers `details` only (H11); denial fidelity below §20.7 (H13) |
-| S31 | OOM reporting absent; pid exhaustion has no daemon-side detection (H32) |
+| S31 | OOM reporting absent; pid exhaustion has no daemon-side detection — genuinely unimplemented, uncredited to any H-task (H32's own nine items do not address it; the prior citation of H32 here was itself inaccurate) |
 | S33 | AT-037 has no test, AT-021's scenario is unreachable, coverage audit self-satisfies (H25, H26) |
 
 S32's deferral was verified as accurate against §22.1, §22.2, §20.6 and §34.3 —

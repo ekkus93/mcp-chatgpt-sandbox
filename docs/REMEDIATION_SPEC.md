@@ -33,6 +33,14 @@ Where this document and either of the others disagree on a point this document
 addresses, **this document governs until §16's amendments are applied**, after
 which those documents govern again.
 
+**R26 (`docs/REMEDIATION_TODO.md`) applied all four §16 amendments** —
+`docs/SPEC.md` §24, §20.2, §18.7, §26 (bumping it to version 0.3), and
+`docs/HARDENING_SPEC.md`'s HR-002, HR-014, HR-018, HR-026 (HR-016 was
+already corrected earlier, by R8/RR-011). Precedence has returned to both
+documents for every point §16 addressed; this document's own `RR-nnn`
+numbering remains the reference for *why* each amendment exists and what
+defect it closed.
+
 Requirements here are numbered `RR-nnn` and acceptance tests `RAT-nnn`, to avoid
 collision with `docs/SPEC.md`'s `FR-nnn`/`AT-nnn` and `docs/HARDENING_SPEC.md`'s
 `HR-nnn`/`HAT-nnn`.

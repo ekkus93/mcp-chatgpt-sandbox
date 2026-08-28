@@ -560,13 +560,20 @@ review flagged two findings against this task's own work — re-checked
 against the *current* code, not accepted from the review's summary alone:
 
 - "no race between running and having a pid" was called false ~95% of the
-  time. **Re-verified directly and found accurate as things stand today:**
-  `AsyncJobRunner.start_job` calls `job_store.mark_running(job_id,
-  pid=pid)` exactly once, with the real pid `start_and_open_stream`
-  already returned — `mark_running` is the only call site in the codebase,
-  and no path calls it with `pid=None`. Whatever version of the code the
-  review evaluated, the shipped one does not have this race; not
-  corrected here because there is nothing left to correct.
+  time. **This correction was itself wrong — the race is real** (RR-022,
+  `docs/REMEDIATION_SPEC.md` §15, closed by R16): a single, unretried
+  `exec_inspect` right after `exec_start` reported `Pid: 0` in 6 of 30
+  (20%) trials against a real Docker daemon, even once the exec's own
+  output stream was already producing data, and that falsy value did
+  reach `mark_running(job_id, pid=None)` — `mark_running` being the only
+  call site does not mean the value it receives is always a real pid, and
+  the code as it stood here did not retry. Fixed by retrying `pid_of` up
+  to 5 times, 10ms apart, before treating an absence as genuine and
+  logging it rather than passing it through silently; `reconcile_jobs`
+  now also distinguishes "pid was never known" from "pid confirmed dead"
+  (previously both collapsed to `False`, the same underlying gap this
+  bullet's original 95%-false claim named accurately, before this very
+  paragraph talked it back down to "nothing to correct").
 - `JobStore.update_output_counts` (`jobs/store.py`) is genuinely dead code
   — it has its own direct unit test (`test_store.py`) but zero production
   call sites; `AsyncJobRunner` tracks live output progress in-memory
