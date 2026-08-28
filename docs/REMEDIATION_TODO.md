@@ -245,7 +245,7 @@ untracked and nothing is staged afterward) and
 
 ### R4 — A failed commit restores the index ✅
 **Satisfies:** RR-005 · **Verified by:** RAT-006
-**Commit:** `PLACEHOLDER`
+**Commit:** `91af43a`
 
 - [x] Restore each path's **prior index state**, not `HEAD`
 - [x] Where the prior state cannot be restored faithfully, do not perform a
