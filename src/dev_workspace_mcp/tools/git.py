@@ -1290,6 +1290,50 @@ async def run_git_diff(
     )
 
 
+async def run_git_log(
+    workspace_id: str,
+    max_entries: int,
+    paths: list[str] | None,
+    ref: str | None,
+    *,
+    manager: DockerWorkspaceManager,
+    execution_service: ExecutionService,
+    registry: RepositoryRegistry,
+    db: sqlite3.Connection,
+    container_config: ContainerConfig,
+    execution_config: ExecutionConfig,
+) -> list[GitLogEntryOutput]:
+    """§17.3: the `git_log` tool's full body — module-level (R27), the
+    same reason `run_git_status`/`run_git_diff` above are. `register()`'s
+    `git_log_tool` is a thin wrapper: check Docker reachability, then
+    call this."""
+    record = get_authorized(manager, workspace_id, registry)
+    if record.state != WorkspaceState.RUNNING:
+        raise WorkspaceNotRunningError(
+            f"workspace {workspace_id!r} is not running (state: {record.state.value})",
+            details={"workspace_id": workspace_id, "state": record.state.value},
+        )
+    assert record.container_id is not None  # implied by state == RUNNING
+    touch_last_used(db, workspace_id)  # §8.1: post-H36, real container usage
+
+    repo_path = resolve_repository_root(db, workspace_id, registry)
+    entries = await read_git_log(
+        repo_path,
+        container_id=record.container_id,
+        workspace_path=record.workspace_path,
+        execution_service=execution_service,
+        container_config=container_config,
+        execution_config=execution_config,
+        max_entries=max_entries,
+        paths=paths,
+        ref=ref,
+    )
+    return [
+        GitLogEntryOutput(sha=e.sha, author=e.author, date=e.date, subject=e.subject)
+        for e in entries
+    ]
+
+
 def register(
     server: MCPServer,
     *,
@@ -1373,12 +1417,23 @@ def register(
         paths: list[str] | None = None,
         ref: str | None = None,
     ) -> list[GitLogEntryOutput]:
-        repo_path = resolve_repository_root(db, workspace_id, registry)
-        entries = read_git_log(repo_path, max_entries=max_entries, paths=paths, ref=ref)
-        return [
-            GitLogEntryOutput(sha=e.sha, author=e.author, date=e.date, subject=e.subject)
-            for e in entries
-        ]
+        if manager is None or execution_service is None or docker_client is None:
+            raise ContainerRuntimeFailedError(
+                "Docker is not reachable; the server is running in a degraded "
+                "state (§73) and cannot log"
+            )
+        return await run_git_log(
+            workspace_id,
+            max_entries,
+            paths,
+            ref,
+            manager=manager,
+            execution_service=execution_service,
+            registry=registry,
+            db=db,
+            container_config=container_config,
+            execution_config=execution_config,
+        )
 
     @server.tool(
         name="git_commit",

@@ -1,12 +1,12 @@
 """S21: `git_diff`/`git_log` through the real MCP tool layer.
 
-H36 (`docs/HARDENING_TODO.md`, 3/8 for `git_diff`): runs in-container now
+H36 (`docs/HARDENING_TODO.md`, 3/8 and 4/8): both run in-container now
 (§20.1, as amended) — a real Docker daemon and a *running* workspace are
 both needed, the same as every other structured Git tool. Before H36
-these ran host-side and needed neither. `test_git_diff_requires_docker`
-and `test_git_diff_requires_a_running_workspace` cover the new
-requirement for `git_diff`; `git_log`'s own equivalents land with its
-own migration step.
+these ran host-side and needed neither;
+`test_git_diff_requires_docker`/`test_git_log_requires_docker` and
+`test_git_diff_requires_a_running_workspace`/`test_git_log_requires_a_
+running_workspace` cover the new requirement.
 """
 
 import subprocess
@@ -147,6 +147,47 @@ async def test_git_log_reports_the_initial_commit(
     entries = result.structured_content["result"]
     assert len(entries) == 1
     assert entries[0]["subject"] == "initial"
+
+
+async def test_git_log_requires_docker(minimal_config: ServerConfig) -> None:
+    """H36: `git_log` now runs in-container — one of the tools that
+    cannot possibly work without Docker, and SHALL say so plainly (§73's
+    degraded state)."""
+    degraded_server = MCPServer(name="degraded")
+    git_tools.register(
+        degraded_server,
+        db=open_db(minimal_config.state_db_path),
+        docker_client=None,
+        registry=RepositoryRegistry(minimal_config),
+        container_config=minimal_config.container,
+        execution_config=minimal_config.execution,
+        git_policy_config=minimal_config.git_policy,
+        github_config=minimal_config.github,
+        audit_config=minimal_config.audit,
+    )
+    with pytest.raises(ToolError, match="Docker is not reachable"):
+        await degraded_server.call_tool("git_log", {"workspace_id": "ws_example"})
+
+
+async def test_git_log_requires_a_running_workspace(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """H36: same requirement `git_status`/`git_diff`/`git_commit`/
+    `git_pull`/`git_push`/`exec` already have, extended to `git_log`."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+    opened = await server.call_tool("workspace_open", {"repository_id": "example"})
+    workspace_id = opened.structured_content["workspace_id"]
+
+    db = open_db(config.state_db_path)
+    DockerWorkspaceManager(docker_client, db).stop(workspace_id)
+
+    with pytest.raises(ToolError, match="WORKSPACE_NOT_RUNNING"):
+        await server.call_tool("git_log", {"workspace_id": workspace_id})
 
 
 # --- HAT-001 (docs/HARDENING_SPEC.md §15): option injection through the real ----
