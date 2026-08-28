@@ -483,7 +483,7 @@ back to a single unbounded `os.pread`.
 
 ### R6 — Enumeration survives any unreadable entry ✅
 **Satisfies:** RR-007 · **Verified by:** RAT-008
-**Commit:** `PLACEHOLDER`
+**Commit:** `6cf1b06`
 
 - [x] Catch `RuntimeError` (ELOOP) alongside the existing `WorkspaceError`
       handlers at `service.py:116-117` and `search.py:100-109`
