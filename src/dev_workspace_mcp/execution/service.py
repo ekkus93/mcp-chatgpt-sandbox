@@ -78,6 +78,22 @@ class ExecResult:
     stderr_total_bytes: int
 
 
+@dataclass(frozen=True, slots=True)
+class CapturedOutput:
+    """`capture`'s result: the full output, head-truncated at `max_bytes`
+    — never tail-cropped the way `consume`'s `response_tail_lines` is.
+    H36 (`docs/HARDENING_TODO.md`): the in-container Git reads
+    (`git/service.py`'s `run_git_in_container`) need the *beginning* of a
+    command's output to do their own pagination/parsing over it (e.g.
+    `git_diff`'s `offset`-based windowing, §46) — "the last N lines for a
+    human to skim", `consume`'s own contract, is the wrong shape for
+    that, not merely a smaller version of it."""
+
+    exit_code: int
+    stdout: str
+    stderr: str
+
+
 class ExecutionService:
     def __init__(self, docker_client: docker.DockerClient) -> None:
         self._docker = docker_client
@@ -143,6 +159,49 @@ class ExecutionService:
             stderr_truncated=stderr_total > max_output_bytes,
             stdout_total_bytes=stdout_total,
             stderr_total_bytes=stderr_total,
+        )
+
+    def capture(self, exec_id: str, *, max_bytes: int) -> CapturedOutput:
+        """Like `consume`, but returns the full captured stdout/stderr —
+        head-truncated at `max_bytes` (the first `max_bytes`, matching
+        what a caller doing its own byte-offset pagination on top needs),
+        not tail-cropped to `response_tail_lines`. See `CapturedOutput`'s
+        docstring for why `consume` itself is the wrong shape for this
+        caller rather than being extended with another parameter.
+
+        Deliberately does not track `_total`/`_truncated` the way
+        `consume` does: this method's only caller (`run_git_in_container`)
+        picks `max_bytes` generously (`execution_config.max_output_bytes`,
+        already an order of magnitude larger than any single Git read's
+        own default cap), and the *caller's* pagination logic — not this
+        method — is what a client-visible `truncated` flag SHALL reflect
+        (H36); a second, lower-fidelity truncation signal here would only
+        invite confusing the two.
+
+        Call via `asyncio.to_thread`, same as `consume`."""
+        api = self._docker.api
+        stream = api.exec_start(exec_id, stream=True, demux=True)
+
+        stdout_chunks: list[bytes] = []
+        stderr_chunks: list[bytes] = []
+        stdout_captured = stderr_captured = 0
+
+        for out_chunk, err_chunk in stream:
+            if out_chunk and stdout_captured < max_bytes:
+                stdout_chunks.append(out_chunk)
+                stdout_captured += len(out_chunk)
+            if err_chunk and stderr_captured < max_bytes:
+                stderr_chunks.append(err_chunk)
+                stderr_captured += len(err_chunk)
+
+        exit_code = api.exec_inspect(exec_id).get("ExitCode")
+        stdout_bytes = b"".join(stdout_chunks)[:max_bytes]
+        stderr_bytes = b"".join(stderr_chunks)[:max_bytes]
+
+        return CapturedOutput(
+            exit_code=exit_code if exit_code is not None else -1,
+            stdout=stdout_bytes.decode("utf-8", errors="replace"),
+            stderr=stderr_bytes.decode("utf-8", errors="replace"),
         )
 
     def start_and_open_stream(

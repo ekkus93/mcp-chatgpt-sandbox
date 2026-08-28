@@ -1,25 +1,30 @@
 """Git execution plumbing (§20.1, §18.7, §44.4) — S19.
 
-Two execution modes, matching §20.1 exactly:
+**H36 (`docs/HARDENING_TODO.md`): every structured Git invocation now
+runs in-container**, through `run_git_in_container` — the *same*
+execution service `exec` already uses (S12/S15), not a second execution
+path with a second credential (§20.1's rationale). This applies uniformly
+to the read tools (`git_status`/`git_diff`/`git_log`, S20/S21) and the
+mutating ones (`git_commit`/`git_pull`/`git_push`, S22/S26/S27) alike —
+there is no longer a host-side/in-container split. `run_git_host_side`,
+this module's pre-H36 host-side path (hook-/fsmonitor-neutralized so a
+read could not execute repository-supplied code under the *daemon's*
+identity, §18.7/HR-002), is retired: in-container execution accepts
+repository-code execution as an already-scoped risk (`exec` already gives
+the client arbitrary shell in the container by design, §19.7/§20.1), so
+there is nothing that four-part neutralization protected against that
+`exec` doesn't already expose. See H36's own write-up for the full
+before/after.
 
-- host-side reads (`git_status` / `git_diff` / `git_log`, S20/S21) run as
-  the daemon uid, hook- and fsmonitor-neutralized so a read cannot
-  execute repository-supplied code under the daemon's identity (§18.7);
-- every mutating structured tool (`git_commit`, `git_pull`, `git_push`,
-  S22/S26/S27) runs in-container, as the container user, through the
-  *same* execution service `exec` already uses (S12/S15) — not a second
-  execution path with a second credential (§20.1's rationale). There is
-  therefore no "in-container git runner" here: a structured tool that
-  mutates state calls `ExecutionService`/`AsyncJobRunner` directly with
-  a `["git", ...]` argv, exactly as `exec("git ...")` would.
-
-`detect_interrupted_operation` is host-side too (§44.4) — it only reads
+`detect_interrupted_operation` stays host-side (§44.4) — it only reads
 marker files Git itself already maintains, the same ones `git status`
-reports on; it never runs a Git process.
+reports on, directly off the bind-mounted working tree; it never runs a
+Git process at all, in or out of a container.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import subprocess
@@ -28,7 +33,17 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+from dev_workspace_mcp.config.models import ContainerConfig, ExecutionConfig
 from dev_workspace_mcp.errors import InvalidArgumentError
+from dev_workspace_mcp.execution.service import ExecutionService
+from dev_workspace_mcp.workspace.container_config import resolve_exec_user
+
+#: H36, in progress (`docs/HARDENING_TODO.md`): `run_git_host_side` below
+#: (and everything it depends on — `_discover_code_executing_overrides`,
+#: `_host_side_git_env`, the two scrub tuples) is retired module by
+#: module as each of its callers migrates to `run_git_in_container`; it
+#: is deleted, along with `os`/`subprocess`/`tempfile` above, once none
+#: remain.
 
 #: HR-002 (`docs/HARDENING_SPEC.md` §4.1): repository configuration keys
 #: that make Git execute an external command as a side effect of an
@@ -248,6 +263,65 @@ def sanitize_for_client(value: str) -> str:
     `run_git_host_side`'s own result stays lossless, since not every
     caller necessarily hands it straight to client output."""
     return value.encode("utf-8", errors="surrogateescape").decode("utf-8", errors="replace")
+
+
+async def run_git_in_container(
+    args: list[str],
+    *,
+    container_id: str,
+    workspace_path: str,
+    execution_service: ExecutionService,
+    container_config: ContainerConfig,
+    execution_config: ExecutionConfig,
+) -> GitCommandResult:
+    """Runs `git <args>` in-container (§20.1, H36), as the container
+    user, through the *same* execution service `exec`/`git_commit`/
+    `git_pull`/`git_push` already use — not a second execution path with
+    a second credential. Unlike `run_git_host_side` (retiring, see module
+    docstring), applies no HR-002 neutralization: in-container
+    repository-code execution is an already-accepted, already-scoped
+    risk, so there is nothing left here that `exec` doesn't already
+    expose.
+
+    `GIT_OPTIONAL_LOCKS=0` is kept even though every other host-side
+    neutralization is dropped — not a security control, a read simply
+    has no business taking the index lock, in a container any more than
+    on the host.
+
+    `max_output_bytes=execution_config.max_output_bytes` (not any of the
+    smaller, read-specific defaults like `git/diff.py`'s
+    `DEFAULT_MAX_DIFF_BYTES`) is deliberately generous: this is `capture`
+    the caller does its *own* pagination/truncation on top of (§46), not
+    the client-visible cap — a smaller value here would silently mean a
+    caller's own `total_bytes`/pagination reasons about less than the
+    command's true output. A single Git read exceeding
+    `execution_config.max_output_bytes` (10 MiB by default — an order of
+    magnitude past `DEFAULT_MAX_DIFF_BYTES`) is the one case this can
+    still under-report the true total; accepted as a known, generous
+    limit rather than an unbounded capture, consistent with every other
+    container-output capture in this codebase.
+
+    Returns `GitCommandResult` — the exact same shape `run_git_host_side`
+    returned — so every caller's parsing logic (the actual point of each
+    of these functions) needed no change, only the invocation beneath it.
+    """
+    user = resolve_exec_user(container_config)
+    exec_id = await asyncio.to_thread(
+        execution_service.start,
+        container_id,
+        ["git", *args],
+        cwd=workspace_path,
+        user=user,
+        env={"GIT_OPTIONAL_LOCKS": "0"},
+    )
+    captured = await asyncio.to_thread(
+        execution_service.capture,
+        exec_id,
+        max_bytes=execution_config.max_output_bytes,
+    )
+    return GitCommandResult(
+        returncode=captured.exit_code, stdout=captured.stdout, stderr=captured.stderr
+    )
 
 
 def run_git_host_side(repo_path: Path, args: list[str]) -> GitCommandResult:
