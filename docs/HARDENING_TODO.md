@@ -3141,13 +3141,111 @@ applied here) that the extraction regex found at least 20 names at all,
 so a broken pattern matching zero rows can't make the other two tests
 pass vacuously.
 
-### H34 — Apply the `docs/SPEC.md` amendments
+### H34 — Apply the `docs/SPEC.md` amendments ✅
 **Satisfies:** HD2, `HARDENING_SPEC.md` §9
+**Commit:** `be8abee`
 
-- [ ] Apply all sixteen amendments in `HARDENING_SPEC.md` §9
-- [ ] Bump `docs/SPEC.md`'s version and date
-- [ ] Note in `HARDENING_SPEC.md` §2 that precedence has returned to
+- [x] Apply all sixteen amendments in `HARDENING_SPEC.md` §9
+- [x] Bump `docs/SPEC.md`'s version and date
+- [x] Note in `HARDENING_SPEC.md` §2 that precedence has returned to
       `docs/SPEC.md` for each amended point
+
+A documentation-only task (no `src/`/`tests/` change) — each of the sixteen
+`HARDENING_SPEC.md` §9 rows was applied to the exact `docs/SPEC.md` section
+it names, re-verified against the actual current implementation before
+being written (not transcribed from the amendment table's own summary
+column, which is a defect description, not amendment prose ready to paste
+in) — several amendments turned out to need correction against what the
+code actually does, caught only by checking:
+
+- **§5.3** — the root refusal now explicitly covers `.mcp-workspace.yml`
+  `environment:` (HR-006's `MCP_UID` bypass), not only `container.user`.
+- **§8.4** — `reset`/`rebuild` given the real operational distinction H32
+  implemented (pull-first vs. not; both re-run `setup` steps).
+- **§11** — the "per workspace/repository/global" `SHALL` downgraded to
+  what's actually implemented (per-repository only); HR-009's
+  collision-free naming and the "no trusted-executable-input" property
+  both stated explicitly, where before neither was.
+- **§12.1** — repository-root and nested-`.git` refusals for `delete_file`
+  added, checked against `filesystem/service.py` directly: the root case is
+  `INVALID_ARGUMENT`, *not* `PATH_GIT_METADATA` as first drafted (the code
+  raises `PathGitMetadataError` only for the *nested* case) — caught by
+  reading `delete_file`'s actual raise sites rather than assuming.
+- **§14.2/§14.4** — normalized-path cwd containment and client-timeout
+  clamping, matching H30's fix (the amendment table's own suggested HR-030
+  citation for the cwd fix turned out to be wrong — HR-030 is "adversarial
+  coverage," unrelated; there is no dedicated HR number for this specific
+  row, only the §9 table entry itself and H30's commit, so that's what's
+  cited instead of a fabricated-sounding one).
+- **§15.5** — the 64 KiB response default stated explicitly, distinguished
+  from §15.6's on-disk capture limits by name.
+- **§18.5** — the unified rules endpoint and the confirmed-absent-vs-
+  not-visible distinction from H32 stated (this section already said
+  "rulesets," so the defect was narrower than the table's summary implies
+  — the missing piece was the confirmed/unverified distinction, not the
+  word "rulesets" itself).
+- **§18.7** — replaced with HR-002's actual four-part control, checked
+  against `git/service.py`'s real neutralization list rather than
+  reconstructed from memory, plus the "governs where any future mechanism
+  falls short" framing the amendment specifically asks for.
+- **§19.1** — the key-file refusal now explicitly covers `ssh.shared_key`,
+  not only per-repository `ssh_key` (HR-007).
+- **§20.1** — HR-001/HR-002 cited explicitly, and `workspace_open`/
+  `workspace_info`'s own path through `read_basic_git_state` named as
+  reaching the same host-side read code, not only the three read tools.
+- **§20.2** — HR-014's `pushurl`/`pushInsteadOf` push-destination
+  resolution added, including the "both SHALL be validated when they
+  differ" nuance (verified against `git/remote.py`'s actual
+  `validate_remote_identity_for_push` docstring, which validates both, not
+  the push URL alone as a first-draft reading of the amendment summary
+  might suggest).
+- **§20.7** — `policy` added to the example audit record.
+- **§24** — rewritten from an aspirational "recommended events" list to
+  what is actually emitted (`workspace_opened`, `workspace_stopped_idle`,
+  `repository_authorization_failure`, `exec`, `ssh_auth`, `git_commit`/
+  `git_pull`/`git_push`), with file-write/file-delete/container-lifecycle/
+  cancellation audit events named as a real, undone gap rather than
+  claimed — the amendment's own "or amend AT-021 to a scenario the system
+  can actually produce" alternative turned out unnecessary: AT-021 ("run a
+  command containing a configured secret, verify audit output doesn't
+  expose it") is already satisfied by the `exec` audit event H26 added,
+  confirmed by reading that event's own code comment, which cites AT-021
+  by name. §24.1's redaction layer described as fixed, not configurable —
+  `redact_secrets` has no config knob, confirmed by reading it.
+- **§26** — OOM given its real reporting surface from H32
+  (`oom_killed`); disk/pid exhaustion stated plainly as undetected, not
+  downgraded to a vague "SHOULD" that implies partial coverage.
+- **§44.1** — reordered to match §73's real sequence (jobs → containers →
+  agents, confirmed against `cli.py`'s actual `serve()` body, not assumed
+  from the amendment table's one-line summary), and step "6" (inspect
+  running jobs) folded into the single unconditional "mark lost" step it
+  actually is — `reconcile_jobs`' own pid-liveness check informs a log
+  message, not the job's resulting state, so describing it as two
+  separable steps (inspect, then decide) misstated what the code does.
+
+`docs/SPEC.md` bumped **0.1 → 0.2**, dated 2026-08-27, with a version-line
+pointer to this task. `docs/HARDENING_SPEC.md` §2 gained an explicit
+"precedence has returned to `docs/SPEC.md`" note naming all sixteen
+sections.
+
+**Revert-verification:** not applicable in the usual sense — this task
+changed no executable code or test, only prose, so there is no source
+behavior for a revert to break a test against. Verified instead by
+`tests/test_acceptance_test_coverage.py` (which parses `docs/SPEC.md` for
+every `AT-nnn` heading and cross-references citations) and `tests/
+test_docs_tools.py` continuing to pass unmodified — confirming no `###
+AT-nnn`/tool-table structure this task's prose edits sit alongside was
+accidentally disturbed — plus a direct structural check (`## \d+\.` header
+count: 78, sequential 1-78, matching before and after) that no section was
+duplicated, dropped, or renumbered by an editing mistake.
+
+No Docker leftovers (this task touched no Docker-adjacent code, but the
+established discipline's own checks were still run). `ruff check`, `ruff
+format --check`, `mypy src` clean — unaffected, since no `src/` file
+changed. Full unscoped `tests/` background run completed cleanly, same
+876 passed as H33 left it (this task added no new tests of its own, since
+there is no new behavior to test — only existing structural checks
+re-confirmed).
 
 ### H35 — Reconcile the checkboxes
 **Satisfies:** HR-033

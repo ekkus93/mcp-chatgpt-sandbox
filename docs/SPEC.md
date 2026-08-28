@@ -1,8 +1,9 @@
 # Development Workspace MCP Server — Specification
 
 **Status:** Draft  
-**Version:** 0.1  
-**Date:** 2026-08-26
+**Version:** 0.2 — incorporates the sixteen amendments from
+`docs/HARDENING_SPEC.md` §9 (H34, `docs/HARDENING_TODO.md`)  
+**Date:** 2026-08-27
 
 ## 1. Purpose
 
@@ -225,7 +226,15 @@ container:
   user-namespace remapping is active, so that container uid 0 maps to an
   unprivileged host uid. Without remapping it would reintroduce root-owned host
   files, and the daemon SHALL fail workspace creation with
-  `CONTAINER_CREATE_FAILED` rather than proceed.
+  `CONTAINER_CREATE_FAILED` rather than proceed. The refusal SHALL apply to the
+  container's *effective* identity however it is ultimately determined —
+  `container.user` alone is not the only path to it: `.mcp-workspace.yml`'s
+  `environment:` block is repository-supplied and, through `exec` plus a
+  container-writable `.git/`, effectively client-authorable, so a value such
+  as `MCP_UID: "0"` reaching the container's identity computation the same
+  way an explicit `container.user: root` would SHALL be refused identically.
+  Repository-supplied configuration SHALL NOT be able to influence this
+  refusal's outcome by any path (HR-006, `docs/HARDENING_SPEC.md` §6).
 
 Under `host`, the `safe.directory` entry in §18.2 is unnecessary for the container
 user, but SHALL still be written because `sudo git ...` runs as root and Git's
@@ -590,9 +599,26 @@ Unexpected Docker state SHALL be reconciled on the next workspace operation.
 These are distinct semantics, and the daemon SHALL implement them internally:
 
 - `restart`: restart the existing container;
-- `rebuild`: rebuild the container while preserving the repository;
-- `reset`: discard environment state and recreate from configuration;
+- `rebuild`: pull the configured image fresh, then recreate the container from
+  it while preserving the repository — picking up an upstream change to a
+  mutable tag that `reset` deliberately does not;
+- `reset`: discard environment state and recreate from configuration, from
+  whichever image is already cached locally — no image pull;
 - `delete`: remove workspace/container metadata.
+
+The image pull `rebuild` performs is best-effort, not fail-closed: an image
+built only locally (never pushed to any registry — the project's own default
+image, or a hand-built `.mcp-workspace.yml image`) SHALL fail the pull
+attempt harmlessly and fall back to the locally cached image with a warning,
+rather than refusing the operation the operator explicitly asked for.
+
+Both `rebuild` and `reset` hand back a container with no `.mcp-workspace.yml`
+`setup` step ever run against it. The daemon SHALL re-run `setup` against the
+freshly recreated container as part of the same operation — not deferred to
+the workspace's next open, which has no way to distinguish "a genuinely fresh
+container that has never been provisioned" from "an existing workspace id
+being reused," and would otherwise leave the workspace silently,
+permanently half-provisioned.
 
 None is exposed as an MCP tool in the MVP (§34.3). They are reached as operator
 actions — a CLI subcommand on the host — and by the daemon itself, which uses
@@ -730,15 +756,32 @@ $HOME/.gradle
 Cache volumes SHALL be owned by the container user's uid so that toolchains
 installed without `sudo` can write to them.
 
-Cache behavior SHALL be configurable as:
+Cache behavior is per-repository: a `.mcp-workspace.yml` `caches[]` entry
+resolves to one Docker volume per `(repository_id, cache_name)` pair, shared
+by every workspace opened for that repository regardless of mode, and never
+shared across repositories. Per-workspace and shared-globally scopes are not
+implemented; this downgrades the MVP's earlier "SHALL be configurable as: per
+workspace; per repository; shared globally" to what actually exists —
+per-repository isolation, the scope favoring the "cross-project contamination
+may affect reproducibility" concern that motivated offering a choice at all.
+A future task MAY add the other two scopes as additional `caches[]` options
+rather than a behavior change to the existing one.
 
-- per workspace;
-- per repository;
-- shared globally.
+The volume name derived from a repository id and cache name SHALL be
+collision-free across repositories — HR-009 (`docs/HARDENING_SPEC.md` §4.2):
+hash-derived from the `(repository_id, cache_name)` pair rather than plain
+string concatenation, which is genuinely ambiguous (`repository_id: my-app` +
+`cache_name: cargo` and `repository_id: my` + `cache_name: app-cargo` both
+concatenate to the identical name).
 
-The default SHOULD favor isolation where cross-project contamination may affect reproducibility.
-
-The server SHALL NOT treat a cache as trusted executable input merely because it is persistent.
+The server SHALL NOT treat a cache as trusted executable input merely because
+it is persistent: no mechanism in this system reads or executes cache content
+on the daemon's own behalf, or with any privilege the daemon itself holds — a
+cache volume is mounted writable into the container exactly like any other
+container-local path, subject to the same container/host trust boundary (§4)
+as the rest of the container's filesystem, and grants no capability the
+client's already-arbitrary `exec` access (§19.7, §20.1) does not already
+have.
 
 ---
 
@@ -791,6 +834,18 @@ Rule 3 matters for linked worktrees and submodules, whose Git directories live
 outside the checkout (§76). The daemon SHALL resolve the gitfile on workspace open,
 record the resolved Git directory in the workspace record, and treat it as
 protected for the workspace's lifetime.
+
+The repository root itself bypasses rules 1 and 2 above: its relative path is
+empty, so the "`.git` path component" check they describe never has anything
+to match against, even though deleting the root necessarily deletes `.git`
+along with it. `delete_file` SHALL therefore refuse a path that resolves to
+the repository root, with `INVALID_ARGUMENT`, regardless of whether the
+request is recursive — HR-003 (`docs/HARDENING_SPEC.md` §3). A recursive
+delete SHALL additionally refuse to descend into any directory containing a
+`.git` entry at any depth (a nested repository, submodule, or vendored
+checkout), rather than relying on rules 1/2's own path-component check,
+which the same bypass affects for a `.git` nested several levels below an
+otherwise-ordinary directory being recursively removed.
 
 `exec` is not covered by this rule. Under the default `git_dir_mode: read-write`
 (§18.2) `exec` can write `.git`, and this exclusion is therefore hygiene rather than
@@ -951,6 +1006,13 @@ Argv form avoids quoting ambiguity and SHOULD be preferred where practical.
 The working directory SHALL default to `/workspace`.
 
 A requested working directory SHALL remain inside allowed container paths.
+This SHALL be enforced against the *normalized* path (`.`/`..` resolved),
+not a raw string-prefix comparison against the allowed root: a prefix test
+alone accepts `/workspace/../etc` outright, since it textually starts with
+`/workspace/` even though it resolves entirely outside the workspace
+(`docs/HARDENING_SPEC.md` §9's own §14.2 row). This is a container-side path
+and SHALL be normalized as one (POSIX rules) regardless of the daemon's own
+host OS.
 
 ### 14.3 Environment
 
@@ -969,7 +1031,13 @@ Example use cases:
 - `python --version`;
 - `cargo fmt --check` for small repositories.
 
-The synchronous execution path SHOULD have a strict maximum duration.
+The synchronous execution path SHOULD have a strict maximum duration
+(configured, `execution.sync_timeout_seconds`). A client-supplied
+`timeout_seconds` SHALL be clamped to this maximum, not honored unbounded —
+the configured value is a real ceiling on every request, not merely the
+default used only when a client omits the parameter. The same clamping rule
+applies to a background job's timeout against
+`execution.default_job_timeout_seconds` (§15.3).
 
 If the command exceeds the synchronous threshold, the server MAY convert it to a
 background job. `exec` therefore has two response shapes — a completed result, or a
@@ -1067,6 +1135,16 @@ Recommended behavior:
 Full logs SHOULD be retrievable incrementally.
 
 This prevents multi-megabyte compiler output from consuming MCP context unnecessarily.
+
+This response default (`execution.default_output_response_bytes`) is
+distinct from, and SHALL NOT be derived from, §15.6's on-disk capture
+limits (`max_output_bytes`/`tail_keep_bytes`) — those bound what stays
+*captured*, on the order of megabytes, and a response default set to their
+sum (or either alone) defeats this section's own stated purpose just as
+surely as no limit at all. The response default SHALL be on the order of
+64 KiB. The full on-disk capture SHALL remain reachable, just only through
+an explicit ranged request (`exec_output`'s `offset`/`max_bytes`), never by
+default.
 
 ### 15.6 Job Log Storage
 
@@ -1442,6 +1520,20 @@ posture, not as someone else's problem:
 Without an API credential, `remote_protection.status` SHALL be `unverified`, and
 `deny` SHALL be treated as `warn` with the reason reported.
 
+Rulesets are queried through GitHub's unified rules endpoint (`GET
+/repos/{owner}/{repo}/rules/branches/{branch}`), not the classic
+branch-protection-only endpoint — rulesets are the *sole* mechanism
+available on a GitHub Free private repository, where the classic endpoint
+404s unconditionally regardless of whether protection actually exists.
+`remote_protection.status: missing` SHALL be reported only for a *confirmed*
+absence — a successful, credentialed query that positively found no
+applicable rule — never for a query that failed or was refused; the latter
+SHALL be reported as `unverified` with the reason ("not visible to this
+token" or similar), the same degrade-honestly treatment an absent
+credential already gets. A `404` from the rules endpoint has no documented
+"not protected" meaning and SHALL be treated as the latter case, not the
+former.
+
 ### 18.6 Tier 3 — Advisory
 
 The following are reachable from `exec` by design:
@@ -1472,11 +1564,40 @@ SHALL NOT disable them by default.
 `git_commit` and `git_push` MAY accept a `no_verify: true` parameter to skip hooks
 for a single operation, matching `--no-verify`.
 
-Hooks are never executed by the daemon on the host. The daemon runs no Git
-commands against the checkout that could trigger them; the structured `git_status`
-and `git_diff` reads it performs host-side (§20.1) SHALL be invoked with
-`-c core.hooksPath=<empty-dir> -c core.fsmonitor=` so that a read cannot execute
-repository-supplied code under the daemon's identity.
+Hooks are never executed by the daemon on the host. The property this SHALL
+achieve — a host-side read cannot execute repository-supplied code under the
+daemon's identity — is broader than `core.hooksPath`/`core.fsmonitor` alone
+can guarantee: `diff.external`, `textconv` drivers, and `filter.*` all
+execute too, and `git status` is affected, not only `git_diff`/`git_status`
+as a narrower reading might suggest (`workspace_open`/`workspace_info`
+reach this same code path through `read_basic_git_state`, §20.1). Every Git
+invocation the daemon runs on the host SHALL apply all four of the
+following:
+
+1. **Static flags.** Diff-producing reads SHALL pass `--no-ext-diff
+   --no-textconv`.
+2. **Dynamic driver neutralization.** Before invoking Git, the daemon SHALL
+   enumerate the repository's own configuration and pass `-c <key>=` for
+   every key matching a code-executing pattern (`filter.*.clean`,
+   `diff.*.textconv`, `core.hooksPath`, `core.fsmonitor`, `credential.helper`,
+   and the rest of §4.1's list in `docs/HARDENING_SPEC.md`) — complete with
+   respect to what can actually run, since a driver not present in
+   configuration cannot be invoked.
+3. **External configuration exclusion.** Host-side reads SHALL run with
+   `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_SYSTEM=/dev/null`, so
+   host-global Git configuration cannot influence a read performed on the
+   client's behalf.
+4. **Environment scrubbing.** The inherited environment SHALL have
+   `GIT_EXTERNAL_DIFF`, `GIT_PAGER`, `GIT_EDITOR`, `GIT_SEQUENCE_EDITOR`,
+   `GIT_SSH`, `GIT_SSH_COMMAND`, `GIT_ASKPASS`, `GIT_PROXY_COMMAND`, and
+   `GIT_TEMPLATE_DIR` removed.
+
+This four-part control is exhaustive against what is known to execute today,
+not a permanent guarantee: the property stated above — a host-side read
+cannot execute repository-supplied code — is what governs, and any future
+Git mechanism found to execute repository-supplied configuration SHALL be
+added to it, the same way `filter.*.clean` (found to affect `git status`,
+not only `git diff`) was.
 
 ### 18.8 Submodules
 
@@ -1568,7 +1689,12 @@ The key provisioned into a workspace SHALL be:
 - **revocable** — removable from GitHub without affecting any other access;
 - **never the human's personal key** — the host user's `~/.ssh` is never mounted
   (§19.4), and the daemon SHALL refuse to provision a key file that resolves to a
-  path under the host user's home `.ssh` directory.
+  path under the host user's home `.ssh` directory. This refusal SHALL apply to
+  every configuration path that can name a key, not only the per-repository
+  `ssh_key` — `ssh.shared_key` (`scope: shared`, below) names a key file exactly
+  as directly, and a value such as `"../fakehome/.ssh/id_ed25519"` there resolves
+  to the host user's personal key the same way an equivalent `ssh_key` value
+  would.
 
 ```yaml
 ssh:
@@ -1758,10 +1884,14 @@ starting a container:
 
 - `git_status`, `git_diff`, `git_log`.
 
-Host-side reads SHALL be invoked with `-c core.hooksPath=<empty-dir>
--c core.fsmonitor=` (§18.7) and SHALL NOT take the index lock
-(`GIT_OPTIONAL_LOCKS=0`). Host-side reads run as the daemon uid, which is the
-checkout owner (§40).
+Host-side reads SHALL apply §18.7's full four-part control (`docs/
+HARDENING_SPEC.md` HR-002), not `core.hooksPath`/`core.fsmonitor` alone, and
+SHALL NOT take the index lock (`GIT_OPTIONAL_LOCKS=0`). Client-supplied
+revision parameters reaching these reads (`git_diff`'s `base`/`head`,
+`git_log`'s `ref`) SHALL be protected against option injection per HR-001.
+Host-side reads run as the daemon uid, which is the checkout owner (§40).
+`workspace_open`/`workspace_info` reach this same host-side read path too,
+through `read_basic_git_state` — not only the three tools named above.
 
 ### 20.2 Remote Identity Validation
 
@@ -1786,6 +1916,20 @@ at a repository the key is not installed on fails at GitHub.
 
 The daemon SHALL reject any client-supplied `--upload-pack`, `--receive-pack`, or
 `--exec` value on structured operations.
+
+For a push operation specifically, `git remote get-url <name>` alone is not
+sufficient — `git push` can resolve to a different destination than the plain
+fetch URL, through `remote.<name>.pushurl` or `url.<base>.pushInsteadOf`
+(both container-writable via `.git/config` under the default `git_dir_mode`,
+so reachable through `exec` with no structured tool involved) — and
+validating only the fetch URL means a conforming implementation can validate
+one destination while actually pushing to another. Validation for `git_push`
+SHALL additionally resolve and validate the actual push destination
+(`git remote get-url --push <name>`, which accounts for `pushInsteadOf`).
+Where the fetch and push URLs differ, **both** SHALL be validated — the push
+URL because that is what the operation actually contacts and what its audit
+record SHALL name, and the fetch URL because it is not otherwise checked
+elsewhere (HR-014, `docs/HARDENING_SPEC.md` §8).
 
 ### 20.3 Refspec Construction
 
@@ -1928,6 +2072,7 @@ Each structured Git operation SHALL emit an audit record:
   "workspace_id": "...",
   "repository_id": "...",
   "operation": "git_push",
+  "policy": "push",
   "remote_repository": "ekkus93/chatgpt_ralph_loop_tools",
   "refspec": "refs/heads/master:refs/heads/master",
   "policy_decision": "allow",
@@ -1936,6 +2081,13 @@ Each structured Git operation SHALL emit an audit record:
   "resulting_sha": "def456..."
 }
 ```
+
+`policy` names the specific `git_policy` key that governed the decision
+(`push`, `force_push`, `delete_remote_branch`, ...) — §24's "denials SHALL be
+audited with the same fidelity as successes, including the policy key that
+produced the denial" requires this on a denial record; it is shown here on a
+success record too, since a client comparing the two SHALL be able to tell
+they concern the same governing key.
 
 Under `ssh.mode: agent`, the daemon SHALL additionally emit an `ssh_auth` record
 for every signature request the agent serves:
@@ -2098,20 +2250,25 @@ A job MAY outlive the MCP request that created it.
 
 The daemon SHOULD create append-only structured audit records.
 
-Recommended events:
+Events actually emitted, as `operation`:
 
-- workspace opened;
-- container created/rebuilt/deleted;
-- file written;
-- file deleted;
-- command started;
-- command canceled;
-- Git commit created;
-- Git push attempted;
-- Git push completed;
-- elevated operation denied;
-- repository authorization failure;
-- remote mismatch detected.
+- `workspace_opened` — including on a policy `deny` (§18.5's remote-protection
+  gate, §18.9's structured-tool policies);
+- `workspace_stopped_idle` (§8.1);
+- `repository_authorization_failure`;
+- `exec` — the command actually invoked (`argv`/`shell`/`cwd`), redacted
+  (§24.1) — this is the event AT-021 exercises;
+- `ssh_auth`, under `ssh.mode: agent` (§19.2's own audit record, distinct
+  shape, documented separately below);
+- `git_commit` / `git_pull` / `git_push` — one record per attempt, `result:
+  success | denied | failure` covering both "attempted" and "completed"
+  (or denied/failed) in the same record, including `policy` (§20.7) and,
+  on a remote-identity mismatch, the mismatch details.
+
+Container create/rebuild/delete, a file write, a file delete, and a job
+cancellation are logged operationally (§13, HR-031) but not currently
+audited as a distinct `operation` — a real gap, not implemented, tracked as
+future work rather than claimed as already covered.
 
 Audit records SHOULD include:
 
@@ -2137,7 +2294,11 @@ Audit logs SHALL NOT intentionally contain:
 - authorization headers;
 - secret environment values.
 
-A configurable secret-redaction layer SHOULD inspect command metadata and output.
+A fixed, pattern-based secret-redaction layer SHALL inspect command metadata,
+audit record `details`/`metadata`, and client-facing error messages before
+any of them are written or returned — not a configurable layer with knobs an
+operator tunes; the same `redact_secrets` pass applies uniformly everywhere
+a value of unknown provenance could reach an audit record or a response.
 
 ---
 
@@ -2210,9 +2371,16 @@ Ephemeral validation workspaces MAY use stricter limits.
 
 The server SHOULD detect and report:
 
-- OOM termination;
-- disk exhaustion;
-- process limit exhaustion.
+- OOM termination — detected from the container's own Docker-reported
+  `OOMKilled` state on reconcile, and reported as a distinct `oom_killed`
+  field on `workspace_open`/`workspace_info`, alongside `container_state`
+  (which alone cannot distinguish an OOM kill from any other crash landing
+  in `failed`);
+- disk exhaustion — not detected;
+- process limit exhaustion (`pids_limit`) — not detected.
+
+Disk and process-limit exhaustion remain a documented gap, not a silent one:
+no mechanism in this implementation currently observes either condition.
 
 ---
 
@@ -2811,20 +2979,30 @@ and sets `require_remote_protection: deny` (§18.5).
 
 ### 44.1 Daemon Restart
 
-On startup, the daemon SHOULD:
+§73's numbered startup sequence is the authoritative order — job
+reconciliation before container reconciliation, before ssh-agent
+reconciliation — and this section's own list previously stated a different
+order (containers, then agents, then jobs); §73 governs, and this list is
+reordered to match it:
 
-1. load workspace records;
-2. inspect Docker containers carrying the server's labels;
-3. reconcile missing/extra containers;
-4. for each running workspace under `ssh.mode: agent`, start a fresh
+1. every job left `queued`, `starting`, or `running` at the previous
+   shutdown is marked `lost` (§15.4) — unconditionally, not only "where
+   inspection finds it unrecoverable": a host pid liveness check
+   (`os.kill(pid, 0)`) runs for each one, but only to flag whether the host
+   process may still be running unattended for an operator to investigate,
+   not to decide the job's own resulting state. Resuming a still-running
+   job "where feasible" (§15.4's own SHOULD) is not implemented — every
+   non-terminal job becomes `lost`, full stop;
+2. load workspace records;
+3. inspect Docker containers carrying the server's labels;
+4. reconcile missing/extra containers;
+5. for each running workspace under `ssh.mode: agent`, start a fresh
    `ssh-agent`, load its key, and re-bind the socket at the path the container
    already has as `SSH_AUTH_SOCK` — the previous agent died with the daemon, and
    until this step the container's key is silently unusable;
-5. terminate any orphaned agent processes carrying the daemon's labels whose
+6. terminate any orphaned agent processes carrying the daemon's labels whose
    workspace is not running;
-6. inspect running jobs if possible;
-7. mark unrecoverable jobs as `lost`;
-8. preserve repository state.
+7. preserve repository state.
 
 ### 44.2 Container Crash
 

@@ -24,6 +24,14 @@ the authority for the defects listed here, and where the two disagree on a
 point this document addresses, **this document governs until the amendments in
 §9 are applied to `docs/SPEC.md`**, after which `docs/SPEC.md` governs again.
 
+**H34 (`docs/HARDENING_TODO.md`) applied all sixteen §9 amendments to
+`docs/SPEC.md` (version 0.2).** Precedence has returned to `docs/SPEC.md` for
+every point §9 addressed — §5.3, §8.4, §11, §12.1, §14.2, §14.4, §15.5,
+§18.5, §18.7, §19.1, §20.1, §20.2, §20.7, §24, §26, §44.1. This document's own
+`HR-nnn`/`HAT-nnn` numbering remains the reference for *why* each amendment
+exists and what defect it closed; consult it for rationale, `docs/SPEC.md`
+for the current normative text.
+
 Requirements here are numbered `HR-nnn` and acceptance tests `HAT-nnn`, to avoid
 collision with `docs/SPEC.md`'s `FR-nnn` and `AT-nnn`.
 
