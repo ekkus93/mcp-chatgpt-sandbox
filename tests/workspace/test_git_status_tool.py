@@ -1,9 +1,12 @@
 """S20: `git_status` through the real MCP tool layer.
 
-Host-side (§20.1) — no Docker container is actually needed for
-`git_status` itself, but `workspace_open` (to get a `workspace_id`) does
-need one, so this still lives alongside the other real-Docker workspace
-tests for consistency with how a real client would reach the tool.
+H36 (`docs/HARDENING_TODO.md`, 2/8): runs in-container now (§20.1, as
+amended) — a real Docker daemon and a *running* workspace are both
+needed, the same as every other structured Git tool. Before H36 this ran
+host-side and needed neither; `test_git_status_requires_docker` and
+`test_git_status_requires_a_running_workspace` below replace the old
+`test_git_status_does_not_require_docker`, which asserted exactly the
+behavior this migration removes.
 """
 
 import subprocess
@@ -19,6 +22,7 @@ from dev_workspace_mcp.db import open_db
 from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.server import create_server
 from dev_workspace_mcp.tools import git as git_tools
+from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
 
 
 def _configured(
@@ -92,32 +96,46 @@ async def test_git_status_on_unknown_workspace_raises_not_found(
         await server.call_tool("git_status", {"workspace_id": "ws_does_not_exist"})
 
 
-async def test_git_status_does_not_require_docker(
+async def test_git_status_requires_docker(minimal_config: ServerConfig) -> None:
+    """H36: `git_status` now runs in-container — it is one of the tools
+    that cannot possibly work without Docker, and SHALL say so plainly
+    (§73's degraded state) rather than hang or crash with an unrelated
+    error. Replaces the old `test_git_status_does_not_require_docker`,
+    which asserted the opposite — the exact behavior this migration
+    removes."""
+    degraded_server = MCPServer(name="degraded")
+    git_tools.register(
+        degraded_server,
+        db=open_db(minimal_config.state_db_path),
+        docker_client=None,
+        registry=RepositoryRegistry(minimal_config),
+        container_config=minimal_config.container,
+        execution_config=minimal_config.execution,
+        git_policy_config=minimal_config.git_policy,
+        github_config=minimal_config.github,
+        audit_config=minimal_config.audit,
+    )
+    with pytest.raises(ToolError, match="Docker is not reachable"):
+        await degraded_server.call_tool("git_status", {"workspace_id": "ws_example"})
+
+
+async def test_git_status_requires_a_running_workspace(
     minimal_config: ServerConfig,
     default_image_tag: str,
     docker_client: docker.DockerClient,
     tmp_path: Path,
 ) -> None:
-    """§20.1's whole point: a host-side read works even when the
-    container/Docker path is unavailable, as long as the workspace row
-    (and its checkout) already exists."""
+    """H36: same requirement `git_commit`/`git_pull`/`git_push`/`exec`
+    already have, extended to `git_status` now that it too runs
+    in-container."""
     repo_path = tmp_path / "work" / "example"
     config = _configured(minimal_config, default_image_tag, repo_path)
     server = create_server(config)
     opened = await server.call_tool("workspace_open", {"repository_id": "example"})
     workspace_id = opened.structured_content["workspace_id"]
 
-    degraded_server = MCPServer(name="degraded")
-    git_tools.register(
-        degraded_server,
-        db=open_db(config.state_db_path),
-        docker_client=None,
-        registry=RepositoryRegistry(config),
-        container_config=config.container,
-        execution_config=config.execution,
-        git_policy_config=config.git_policy,
-        github_config=config.github,
-        audit_config=config.audit,
-    )
-    result = await degraded_server.call_tool("git_status", {"workspace_id": workspace_id})
-    assert result.structured_content["branch"] == "main"
+    db = open_db(config.state_db_path)
+    DockerWorkspaceManager(docker_client, db).stop(workspace_id)
+
+    with pytest.raises(ToolError, match="WORKSPACE_NOT_RUNNING"):
+        await server.call_tool("git_status", {"workspace_id": workspace_id})

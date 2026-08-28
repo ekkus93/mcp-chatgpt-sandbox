@@ -12,7 +12,21 @@ need its own escaping logic for exotic filenames.
 Reports conflicts and interrupted operations rather than repairing them
 (§44.4, AT-020): a merge conflict shows up in `conflicted` and
 `interrupted_operation` untouched, never auto-resolved.
-"""
+
+H36 (`docs/HARDENING_TODO.md`, 2/8): `read_git_status` runs in-container
+now, through `run_git_in_container` — `async`, and needs a running
+workspace's container context, not just `repo_path`. `repo_path` is
+still needed too, for `detect_interrupted_operation`'s direct read of
+`.git`'s marker files — that part never ran Git at all and stays
+host-side regardless (see `git/service.py`'s module docstring).
+
+The porcelain-v2 parsing itself is split into its own pure function,
+`parse_git_status_output` — deliberately, so it stays testable with a
+canned string and no Docker, the same way it was testable with no
+subprocess at all pre-H36 (`read_git_status` used to be this parser
+*plus* a direct host subprocess call; now it is this parser plus an
+in-container one — the parsing logic itself never changed by a single
+line across that migration, only what produces its input)."""
 
 from __future__ import annotations
 
@@ -20,11 +34,13 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from dev_workspace_mcp.config.models import ContainerConfig, ExecutionConfig
 from dev_workspace_mcp.errors import CommandFailedError
+from dev_workspace_mcp.execution.service import ExecutionService
 from dev_workspace_mcp.git.service import (
     InterruptedOperation,
     detect_interrupted_operation,
-    run_git_host_side,
+    run_git_in_container,
     sanitize_for_client,
 )
 
@@ -49,16 +65,42 @@ class GitStatus:
     interrupted_operation: InterruptedOperation | None = None
 
 
-def read_git_status(repo_path: Path) -> GitStatus:
-    result = run_git_host_side(
-        repo_path, ["status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z"]
+async def read_git_status(
+    repo_path: Path,
+    *,
+    container_id: str,
+    workspace_path: str,
+    execution_service: ExecutionService,
+    container_config: ContainerConfig,
+    execution_config: ExecutionConfig,
+) -> GitStatus:
+    result = await run_git_in_container(
+        ["status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z"],
+        container_id=container_id,
+        workspace_path=workspace_path,
+        execution_service=execution_service,
+        container_config=container_config,
+        execution_config=execution_config,
     )
     if not result.ok:
         raise CommandFailedError(
             f"git status failed: {result.stderr.strip()}",
             details={"path": str(repo_path), "stderr": result.stderr},
         )
+    return parse_git_status_output(
+        result.stdout, interrupted_operation=detect_interrupted_operation(repo_path)
+    )
 
+
+def parse_git_status_output(
+    stdout: str, *, interrupted_operation: InterruptedOperation | None
+) -> GitStatus:
+    """The pure parse: `git status --porcelain=v2 --branch
+    --untracked-files=all -z`'s stdout -> `GitStatus`. Takes
+    `interrupted_operation` as a parameter rather than computing it
+    itself (`detect_interrupted_operation` needs a host `repo_path`,
+    which a caller testing this parser directly has no reason to set up
+    a real repository for)."""
     branch: str | None = None
     head_sha: str | None = None
     upstream: str | None = None
@@ -70,7 +112,7 @@ def read_git_status(repo_path: Path) -> GitStatus:
     untracked: list[str] = []
     conflicted: list[str] = []
 
-    tokens = result.stdout.split("\0")
+    tokens = stdout.split("\0")
     index = 0
     while index < len(tokens):
         token = tokens[index]
@@ -150,7 +192,7 @@ def read_git_status(repo_path: Path) -> GitStatus:
         unstaged=unstaged,
         untracked=untracked,
         conflicted=conflicted,
-        interrupted_operation=detect_interrupted_operation(repo_path),
+        interrupted_operation=interrupted_operation,
     )
 
 

@@ -1,10 +1,21 @@
-"""S20: `git_status`'s structured output (§17.2, §44.4, AT-020)."""
+"""S20: `git_status`'s structured output (§17.2, §44.4, AT-020).
+
+H36 (`docs/HARDENING_TODO.md`, 2/8): `read_git_status` itself now needs a
+running workspace's container context (it runs `git status` in-container)
+— these tests exercise `parse_git_status_output`, the pure parser it
+calls, directly instead, via `_status_of` below: a real host-side
+`git status --porcelain=v2 ...` (never itself the point of H36 — no
+concern this test suite tests for depends on *where* Git ran) feeds the
+same parser `read_git_status` does, keeping every one of these fast,
+Docker-free, and exercising the exact parsing logic production code
+runs. `tests/workspace/test_git_status_tool.py` covers `read_git_status`
+end-to-end, in-container."""
 
 import subprocess
 from pathlib import Path
 
-from dev_workspace_mcp.git.service import InterruptedOperation
-from dev_workspace_mcp.git.status import head_sha_matches, read_git_status
+from dev_workspace_mcp.git.service import InterruptedOperation, detect_interrupted_operation
+from dev_workspace_mcp.git.status import GitStatus, head_sha_matches, parse_git_status_output
 
 
 def _init_repo(path: Path) -> Path:
@@ -13,6 +24,27 @@ def _init_repo(path: Path) -> Path:
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=path, check=True)
     subprocess.run(["git", "config", "user.name", "Test"], cwd=path, check=True)
     return path
+
+
+def _status_of(repo: Path) -> GitStatus:
+    # `errors="replace"`, not the default strict UTF-8 decoding — a
+    # repository-tracked filename is not guaranteed to be valid UTF-8
+    # (HR-022, `docs/HARDENING_SPEC.md` §10), and this needs to match
+    # `execution/service.py`'s `capture`, the decoding `parse_git_status_
+    # output`'s real (post-H36, in-container) caller actually hands it,
+    # so this test exercises the parser against the same shape of input
+    # production does.
+    result = subprocess.run(
+        ["git", "status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        errors="replace",
+        check=True,
+    )
+    return parse_git_status_output(
+        result.stdout, interrupted_operation=detect_interrupted_operation(repo)
+    )
 
 
 def _commit_all(path: Path, message: str) -> str:
@@ -28,7 +60,7 @@ def test_status_on_a_clean_repo(tmp_path: Path) -> None:
     (repo / "a.txt").write_text("hello\n")
     head_sha = _commit_all(repo, "initial")
 
-    status = read_git_status(repo)
+    status = _status_of(repo)
 
     assert status.branch == "main"
     assert status.head_sha == head_sha
@@ -52,7 +84,7 @@ def test_status_reports_staged_and_unstaged_and_untracked(tmp_path: Path) -> Non
     (repo / "b.txt").write_text("two\nunstaged-change\n")
     (repo / "c.txt").write_text("new\n")
 
-    status = read_git_status(repo)
+    status = _status_of(repo)
 
     assert status.clean is False
     assert status.staged == ["a.txt"]
@@ -69,7 +101,7 @@ def test_status_reports_a_path_both_staged_and_unstaged(tmp_path: Path) -> None:
     subprocess.run(["git", "add", "a.txt"], cwd=repo, check=True)
     (repo / "a.txt").write_text("one\nstaged\nunstaged\n")
 
-    status = read_git_status(repo)
+    status = _status_of(repo)
     assert status.staged == ["a.txt"]
     assert status.unstaged == ["a.txt"]
 
@@ -87,7 +119,7 @@ def test_status_on_a_renamed_staged_file(tmp_path: Path) -> None:
     _commit_all(repo, "initial")
     subprocess.run(["git", "mv", "a.txt", "a-renamed.txt"], cwd=repo, check=True)
 
-    status = read_git_status(repo)
+    status = _status_of(repo)
     assert status.staged == ["a-renamed.txt", "a.txt"]
     assert status.unstaged == []
     # The parser must have consumed the origPath token correctly — a bug
@@ -134,7 +166,7 @@ def test_status_reports_ahead_and_behind(tmp_path: Path) -> None:
     )
     subprocess.run(["git", "fetch", "-q"], cwd=local, check=True)
 
-    status = read_git_status(local)
+    status = _status_of(local)
     assert status.upstream is not None
     assert status.ahead == 1
     assert status.behind == 1
@@ -146,7 +178,7 @@ def test_status_on_detached_head(tmp_path: Path) -> None:
     head_sha = _commit_all(repo, "initial")
     subprocess.run(["git", "checkout", "-q", head_sha], cwd=repo, check=True)
 
-    status = read_git_status(repo)
+    status = _status_of(repo)
     assert status.detached_head is True
     assert status.branch is None
     assert status.head_sha == head_sha
@@ -154,7 +186,7 @@ def test_status_on_detached_head(tmp_path: Path) -> None:
 
 def test_status_on_an_unborn_branch(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path / "repo")
-    status = read_git_status(repo)
+    status = _status_of(repo)
     assert status.head_sha is None
     assert status.branch == "main"
 
@@ -175,7 +207,7 @@ def test_status_reports_merge_conflict_rather_than_repairing_it(tmp_path: Path) 
 
     subprocess.run(["git", "merge", "-q", "feature"], cwd=repo, check=False)  # expected to conflict
 
-    status = read_git_status(repo)
+    status = _status_of(repo)
     assert status.conflicted == ["a.txt"]
     assert status.interrupted_operation == InterruptedOperation.MERGE
     assert status.clean is False
@@ -195,7 +227,7 @@ def test_at_hat019_a_non_utf8_filename_is_listed_untracked_and_json_safe(
     hostile_name = os.fsdecode(b"bad-\xff\xfe-name.txt")
     (repo / hostile_name).write_bytes(b"hi")
 
-    status = read_git_status(repo)
+    status = _status_of(repo)
 
     assert len(status.untracked) == 1
     assert "bad-" in status.untracked[0]

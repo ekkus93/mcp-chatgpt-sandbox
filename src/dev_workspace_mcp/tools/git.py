@@ -343,7 +343,14 @@ async def run_git_commit(
             details={"workspace_id": workspace_id, "interrupted_operation": interrupted.value},
         )
 
-    status = read_git_status(repo_path)
+    status = await read_git_status(
+        repo_path,
+        container_id=container_id,
+        workspace_path=record.workspace_path,
+        execution_service=execution_service,
+        container_config=container_config,
+        execution_config=execution_config,
+    )
 
     # HR-023 (`docs/HARDENING_SPEC.md` §11): `detect_interrupted_operation`
     # alone is not enough — it only reads marker files (`MERGE_HEAD`,
@@ -516,7 +523,14 @@ async def run_git_commit(
             },
         )
 
-    new_status = read_git_status(repo_path)
+    new_status = await read_git_status(
+        repo_path,
+        container_id=container_id,
+        workspace_path=record.workspace_path,
+        execution_service=execution_service,
+        container_config=container_config,
+        execution_config=execution_config,
+    )
     assert new_status.head_sha is not None  # a commit just succeeded
     # HR-024: `files_committed` SHALL report what Git actually
     # committed, not the request echo — a directory path legitimately
@@ -586,7 +600,14 @@ async def run_git_pull(
             details={"workspace_id": workspace_id, "interrupted_operation": interrupted.value},
         )
 
-    status = read_git_status(repo_path)
+    status = await read_git_status(
+        repo_path,
+        container_id=container_id,
+        workspace_path=record.workspace_path,
+        execution_service=execution_service,
+        container_config=container_config,
+        execution_config=execution_config,
+    )
 
     if expected_branch is not None and status.branch != expected_branch:
         raise GitHeadChangedError(
@@ -722,7 +743,14 @@ async def run_git_pull(
             },
         )
 
-    new_status = read_git_status(repo_path)
+    new_status = await read_git_status(
+        repo_path,
+        container_id=container_id,
+        workspace_path=record.workspace_path,
+        execution_service=execution_service,
+        container_config=container_config,
+        execution_config=execution_config,
+    )
     assert new_status.head_sha is not None  # the integration step just succeeded
 
     # A real fast-forward, verified rather than inferred from
@@ -818,7 +846,14 @@ async def run_git_push(
             details={"workspace_id": workspace_id, "interrupted_operation": interrupted.value},
         )
 
-    status = read_git_status(repo_path)
+    status = await read_git_status(
+        repo_path,
+        container_id=container_id,
+        workspace_path=record.workspace_path,
+        execution_service=execution_service,
+        container_config=container_config,
+        execution_config=execution_config,
+    )
     target_branch = branch if branch is not None else status.branch
     if target_branch is None:
         raise InvalidArgumentError(
@@ -1145,6 +1180,63 @@ async def run_git_push(
     )
 
 
+async def run_git_status(
+    workspace_id: str,
+    *,
+    manager: DockerWorkspaceManager,
+    execution_service: ExecutionService,
+    registry: RepositoryRegistry,
+    db: sqlite3.Connection,
+    container_config: ContainerConfig,
+    execution_config: ExecutionConfig,
+) -> GitStatusOutput:
+    """§17.2: the `git_status` tool's full body — module-level (R27,
+    `docs/REMEDIATION_TODO.md`), the same pattern `run_git_commit`/
+    `run_git_pull`/`run_git_push` above already use. Pre-H36 this was a
+    thin pass-through R27 deliberately left alone; H36
+    (`docs/HARDENING_TODO.md`) moved the read in-container, which means
+    it now needs a `WorkspaceRecord` (state, container id) the way every
+    other in-container tool does — no longer a trivial wrapper.
+    `register()`'s `git_status_tool` is a thin wrapper: check Docker
+    reachability, then call this."""
+    record = get_authorized(manager, workspace_id, registry)
+    if record.state != WorkspaceState.RUNNING:
+        raise WorkspaceNotRunningError(
+            f"workspace {workspace_id!r} is not running (state: {record.state.value})",
+            details={"workspace_id": workspace_id, "state": record.state.value},
+        )
+    assert record.container_id is not None  # implied by state == RUNNING
+    # §8.1: post-H36 this reads through the container, same as every
+    # other in-container Git tool — real usage, not idle.
+    touch_last_used(db, workspace_id)
+
+    repo_path = resolve_repository_root(db, workspace_id, registry)
+    status = await read_git_status(
+        repo_path,
+        container_id=record.container_id,
+        workspace_path=record.workspace_path,
+        execution_service=execution_service,
+        container_config=container_config,
+        execution_config=execution_config,
+    )
+    return GitStatusOutput(
+        branch=status.branch,
+        head_sha=status.head_sha,
+        upstream=status.upstream,
+        ahead=status.ahead,
+        behind=status.behind,
+        detached_head=status.detached_head,
+        clean=status.clean,
+        staged=status.staged,
+        unstaged=status.unstaged,
+        untracked=status.untracked,
+        conflicted=status.conflicted,
+        interrupted_operation=(
+            status.interrupted_operation.value if status.interrupted_operation is not None else None
+        ),
+    )
+
+
 def register(
     server: MCPServer,
     *,
@@ -1167,28 +1259,19 @@ def register(
     )
     @translate_workspace_errors
     async def git_status_tool(workspace_id: str) -> GitStatusOutput:
-        # Read-only, host-side, never touches the container — deliberately
-        # does not call `touch_last_used` (§8.1's idle-stop is measured
-        # against container usage; this tool never uses the container).
-        repo_path = resolve_repository_root(db, workspace_id, registry)
-        status = read_git_status(repo_path)
-        return GitStatusOutput(
-            branch=status.branch,
-            head_sha=status.head_sha,
-            upstream=status.upstream,
-            ahead=status.ahead,
-            behind=status.behind,
-            detached_head=status.detached_head,
-            clean=status.clean,
-            staged=status.staged,
-            unstaged=status.unstaged,
-            untracked=status.untracked,
-            conflicted=status.conflicted,
-            interrupted_operation=(
-                status.interrupted_operation.value
-                if status.interrupted_operation is not None
-                else None
-            ),
+        if manager is None or execution_service is None or docker_client is None:
+            raise ContainerRuntimeFailedError(
+                "Docker is not reachable; the server is running in a degraded "
+                "state (§73) and cannot report status"
+            )
+        return await run_git_status(
+            workspace_id,
+            manager=manager,
+            execution_service=execution_service,
+            registry=registry,
+            db=db,
+            container_config=container_config,
+            execution_config=execution_config,
         )
 
     @server.tool(
