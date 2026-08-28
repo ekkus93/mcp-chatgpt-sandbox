@@ -11,7 +11,12 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 import docker
 from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
+from dev_workspace_mcp.db import open_db
+from dev_workspace_mcp.execution.service import ExecutionService
+from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.server import create_server
+from dev_workspace_mcp.tools import git as git_tools
+from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
 
 
 def _configured(
@@ -67,6 +72,57 @@ async def test_git_commit_creates_a_commit_from_explicit_paths(
         ["git", "log", "-1", "--pretty=%s"], cwd=repo_path, capture_output=True, text=True
     )
     assert log.stdout.strip() == "add new.txt"
+
+
+async def test_rr027_run_git_commit_is_directly_callable_without_a_server(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """R27 (`docs/REMEDIATION_TODO.md`): `run_git_commit` — the
+    module-level extraction of `git_commit_tool`'s ~264-line body —
+    called directly, with no `server.call_tool("git_commit", ...)`
+    anywhere in the chain, only its real dependencies constructed
+    directly. `create_server`/`workspace_open`/`write_file` are still
+    used to get a real running container with real uncommitted content
+    to commit — this test is about the commit tool body's own
+    testability, not about reproducing workspace creation too."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+    workspace_id = await _open(server)
+    await server.call_tool(
+        "write_file", {"workspace_id": workspace_id, "path": "new.txt", "content": "hi\n"}
+    )
+
+    db = open_db(config.state_db_path)
+    registry = RepositoryRegistry(config)
+    manager = DockerWorkspaceManager(docker_client, db)
+    execution_service = ExecutionService(docker_client)
+
+    result = await git_tools.run_git_commit(
+        workspace_id,
+        "add new.txt",
+        ["new.txt"],
+        None,
+        None,
+        False,
+        False,
+        False,
+        manager=manager,
+        execution_service=execution_service,
+        registry=registry,
+        db=db,
+        container_config=config.container,
+        execution_config=config.execution,
+        git_policy_config=config.git_policy,
+        audit_config=config.audit,
+    )
+
+    assert result.commit_sha is not None
+    assert result.branch == "main"
+    assert result.files_committed == ["new.txt"]
 
 
 async def test_git_commit_stages_exactly_the_given_paths(

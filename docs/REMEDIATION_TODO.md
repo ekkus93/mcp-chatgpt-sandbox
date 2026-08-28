@@ -2179,7 +2179,7 @@ tested service method gains nothing from the extra ceremony).
       `workspace_open`/`workspace_info`), `get_server_info`,
       `load_stored_remote_protection`/`store_remote_protection`/
       `load_image_provenance`
-- [ ] `tools/git.py` — `git_push_tool` (306 lines), `git_pull_tool` (~213 lines),
+- [x] `tools/git.py` — `git_push_tool` (306 lines), `git_pull_tool` (~213 lines),
       `git_commit_tool` (~264 lines); `git_status_tool`/`git_diff_tool`/
       `git_log_tool` are thin enough to leave as-is
 - [ ] `tools/execution.py` — `exec_tool`, `exec_start_tool`; `exec_status_tool`/
@@ -2228,6 +2228,53 @@ mount really does require it.
 
 **Commit:** `a1269a6` (workspace.py module; further modules land as
 separate commits, each updating this checklist)
+
+**`tools/git.py` (done).** Extracted `run_git_commit`, `run_git_pull`,
+`run_git_push` (the full bodies of `git_commit_tool`/`git_pull_tool`/
+`git_push_tool` — 264/213/306 lines respectively, the three largest and
+most security-critical tool bodies in the codebase: remote validation,
+refspec construction, every `git_policy` check, audit logging) and
+`load_stored_remote_protection` to module level, taking their dependencies
+(`manager`, `execution_service`, `registry`, `db`, and the relevant config
+objects — `docker_client` itself turned out unneeded by any of the three
+bodies, only by each tool's own degraded-state check) as explicit
+parameters. Each nested per-call helper the original bodies already had
+(`git_commit_tool`'s `run_git`, `git_pull_tool`'s `exec_git`) moved with its
+parent function unchanged — those only ever captured *local* variables
+already in scope, never anything from `register()` itself, so they needed
+no signature change. `register()`'s three closures are now thin: the
+Docker-degraded check, then a call to the module-level function.
+`git_status_tool`/`git_diff_tool`/`git_log_tool` were left untouched, per
+the checklist's own assessment — confirmed correct on reading them: each is
+a direct pass-through to an already-independently-tested pure function
+(`read_git_status`/`read_git_diff`/`read_git_log`), with no inline logic of
+its own to gain testability from extracting. Pure refactor — no behavior
+change.
+
+**Verification.** Full unscoped suite: 967 passed (966 baseline + the
+`tools/workspace.py` module's own new test, 0 failures — no repeat of the
+earlier `apt-get` flake this run). Broader relevant suite (`tests/workspace/
+test_git_commit_tool.py tests/workspace/test_git_pull_tool.py
+tests/workspace/test_git_push_tool.py tests/workspace/test_git_status_tool.py
+tests/workspace/test_audit_logging.py tests/git/`, rerun separately since
+this task's own new test was written *while* the full-suite run above was
+already in progress and so wasn't part of its collection — confirmed by the
+passed-count arithmetic, not assumed): 269 passed. No Docker leftovers.
+`ruff check`, `ruff format --check` (one pass needed after the extraction —
+module-level indentation let several lines that used to need wrapping at
+`register()`'s closure depth fit on one line, and vice versa for one call
+site), `mypy src` clean.
+
+**New test.** `tests/workspace/test_git_commit_tool.py`:
+`test_rr027_run_git_commit_is_directly_callable_without_a_server` —
+constructs `run_git_commit`'s dependencies directly and calls it with no
+`server.call_tool("git_commit", ...)` anywhere in the chain (still uses
+`create_server`/`workspace_open`/`write_file` to get a real running
+container with real content to commit — this test is about the commit
+tool body's own testability, not about reproducing workspace creation
+too, mirroring `tools/workspace.py`'s own new test's scope discipline).
+
+**Commit:** `PLACEHOLDER`
 
 ---
 
