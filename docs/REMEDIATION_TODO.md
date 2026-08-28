@@ -764,7 +764,7 @@ test.
 
 ### R9 — `delete` cannot wedge a workspace ✅
 **Satisfies:** RR-012 · **Verified by:** RAT-012
-**Commit:** `PLACEHOLDER`
+**Commit:** `a6c378c`
 
 - [x] Move cache-volume removal and ssh-agent termination so they cannot sit
       between container removal and row deletion
