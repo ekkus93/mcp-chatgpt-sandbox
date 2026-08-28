@@ -1615,7 +1615,7 @@ pattern rather than unit-testing the script in isolation.
 
 ### R20 — Every daemon-controlled variable is merged last ✅
 **Satisfies:** RR-031
-**Commit:** `PLACEHOLDER`
+**Commit:** `ed47839`
 
 - [x] Compute `MCP_CACHE_PATHS` inside `build_workspace_run_kwargs` and merge it
       with the other `MCP_*` variables, not through `extra_env`
