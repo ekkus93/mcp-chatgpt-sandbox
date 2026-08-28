@@ -502,12 +502,21 @@ class DockerWorkspaceManager:
             record.container_name,
             image,
         )
+        # RR-021: recomputed, not left stale — see `start()`'s own
+        # comment above. Reachable via `_recreate` (`rebuild`/`reset`)
+        # too, where `record` at this point still carries whatever
+        # `oom_killed` value the *old*, just-removed container had —
+        # reproduced empirically that a rebuild/reset after an OOM kill
+        # otherwise stamped that stale `True` onto the brand-new
+        # container's own record, which cannot possibly have OOM'd yet.
+        container.reload()
         return self._save(
             replace(
                 record,
                 container_id=container.id,
                 image=image,
                 state=WorkspaceState.RUNNING,
+                oom_killed=_oom_killed_from_docker_container(container),
                 last_used_at=_now(),
             )
         )
@@ -529,7 +538,26 @@ class DockerWorkspaceManager:
                 f"failed to start container for workspace {workspace_id!r}: {exc}"
             ) from exc
         _logger.info("workspace %s: container started", workspace_id)
-        return self._save(replace(record, state=WorkspaceState.RUNNING, last_used_at=_now()))
+        # RR-021 (`docs/REMEDIATION_SPEC.md` §15): `oom_killed` recomputed
+        # from the container's own current state, not left as whatever
+        # `record` (read at the top, before this transition) happened to
+        # carry — reproduced empirically that a workspace which OOM'd,
+        # then successfully restarted, kept reporting `oom_killed: true`
+        # indefinitely. `container.start()` does not itself refresh
+        # `container.attrs` (confirmed empirically — `Running` still read
+        # `False` immediately after a successful `start()` without this),
+        # so `reload()` is required before `_oom_killed_from_docker_container`
+        # can see the field's *current* value rather than a stale snapshot
+        # from before this call.
+        container.reload()
+        return self._save(
+            replace(
+                record,
+                state=WorkspaceState.RUNNING,
+                oom_killed=_oom_killed_from_docker_container(container),
+                last_used_at=_now(),
+            )
+        )
 
     def stop(self, workspace_id: str) -> WorkspaceRecord:
         record = self._get_or_raise(workspace_id)
@@ -548,13 +576,28 @@ class DockerWorkspaceManager:
                 f"failed to stop container for workspace {workspace_id!r}: {exc}"
             ) from exc
         _logger.info("workspace %s: container stopped", workspace_id)
+        # RR-021: recomputed, not left stale — see `start()`'s own
+        # comment above. `stop()` specifically also covers the case
+        # where `container` was *already* stopped (an OOM kill that
+        # happened before this call, `.stop()` on it a safe no-op): the
+        # reload here correctly *preserves* `oom_killed: true` for that
+        # case rather than assuming a successful `stop()` call always
+        # means "we ourselves stopped a healthy container."
+        container.reload()
         # §8.1/§19.2: the key comes out of the agent whenever the
         # workspace stops, including this idle stop's own caller — the
         # agent process itself is left running (`unload_key`'s own
         # docstring explains why).
         if self._ssh_agents is not None:
             self._ssh_agents.unload_key(workspace_id)
-        return self._save(replace(record, state=WorkspaceState.STOPPED, last_used_at=_now()))
+        return self._save(
+            replace(
+                record,
+                state=WorkspaceState.STOPPED,
+                oom_killed=_oom_killed_from_docker_container(container),
+                last_used_at=_now(),
+            )
+        )
 
     def _list_running_persistent(self) -> list[WorkspaceRecord]:
         rows = self._db.execute(
@@ -620,7 +663,16 @@ class DockerWorkspaceManager:
             raise ContainerRuntimeFailedError(
                 f"failed to restart container for workspace {workspace_id!r}: {exc}"
             ) from exc
-        return self._save(replace(record, state=WorkspaceState.RUNNING, last_used_at=_now()))
+        # RR-021: recomputed, not left stale — see `start()`'s own comment.
+        container.reload()
+        return self._save(
+            replace(
+                record,
+                state=WorkspaceState.RUNNING,
+                oom_killed=_oom_killed_from_docker_container(container),
+                last_used_at=_now(),
+            )
+        )
 
     def rebuild(
         self, workspace_id: str, *, image: str, run_kwargs: dict[str, Any] | None = None

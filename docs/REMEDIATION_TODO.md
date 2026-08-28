@@ -1215,12 +1215,13 @@ actually exercise the intended boundary).
 
 ## Phase 4 — State reporting (regressions introduced by H32–H35)
 
-### R15 — `oom_killed` reflects the current container
+### R15 — `oom_killed` reflects the current container ✅
 **Satisfies:** RR-021 · **Verified by:** RAT-018
+**Commit:** `PLACEHOLDER`
 
-- [ ] Recompute or clear `oom_killed` on every transition that changes which
+- [x] Recompute or clear `oom_killed` on every transition that changes which
       container the record describes — `start`, `stop`, `restart`, `_recreate`
-- [ ] Test the OOM → successful-reopen path, not only OOM → reconcile
+- [x] Test the OOM → successful-reopen path, not only OOM → reconcile
 
 **Defect (reproduced against real Docker).** Only `reconcile` and the
 Docker-failure paths set it; the lifecycle transitions preserve whatever was
@@ -1234,6 +1235,60 @@ AFTER SUCCESSFUL REOPEN: state=running  oom_killed=True    <- stale
 A healthy running workspace reports `oom_killed: true` indefinitely, contradicting
 the field's own docstring and `docs/SPEC.md` §26. Both H32 tests covered only the
 single OOM→reconcile transition.
+
+Reproduced exactly as described against a real Docker daemon (a genuine
+16 MiB-limited cgroup OOM kill, the same technique H32's own test uses),
+and separately confirmed empirically that `docker-py`'s `Container.attrs`
+does not auto-refresh after `.start()`/`.restart()`/`containers.run()` —
+`Running` still read `False` immediately after a successful `start()`
+without an explicit `.reload()` first — which is the actual mechanical
+reason these four transitions' success paths never saw the field's current
+value even if they had tried to read it inline.
+
+**Implementation.** All four transitions' success paths now call
+`container.reload()`, then compute `oom_killed=_oom_killed_from_docker_container(container)`
+instead of leaving the field untouched on the `replace(record, ...)` call
+(which otherwise silently carries forward whatever the *previous* container
+the row described last reported). `_run_container`'s create-success path
+(shared by `_create` and `_recreate`) gets the identical treatment — the
+`_recreate` (`rebuild`/`reset`) path specifically needed it, since its
+intermediate `record` still carries the *old*, just-removed container's
+`oom_killed` value onto the brand-new one, which cannot possibly have
+OOM'd yet. Recomputing from the real container (rather than hardcoding
+`False`, the "it just started, so it can't have OOM'd" simplification)
+was a deliberate choice, not just uniformity for its own sake: `stop()`
+specifically needs to *preserve* `True` for the case where `container`
+was already OOM-killed (and so already stopped) *before* `stop()` is
+called — `.stop()` on an already-stopped container is a safe no-op, and
+assuming a successful `stop()` call always means "we ourselves stopped a
+healthy container" would silently erase that real prior OOM record.
+
+**Verified the tests catch the regression.** Reverted `workspace/manager.py`
+to `HEAD`, reran the 5 new tests: all failed for the exact reproduced
+reasons — the real-OOM-then-rebuild, start, restart, and stop-on-a-healthy-
+container tests all failed with `oom_killed=True` (stale) instead of
+`False`; the stop-on-an-already-OOM'd-container test failed the *opposite*
+way (`False` instead of the correct, preserved `True`), confirming this
+isn't just `stop()` blindly clearing the field either. Restored; all 31
+tests in the file pass again. No Docker leftovers.
+
+**Full relevant suite.** `tests/workspace/`: 342 passed (first attempt was
+killed with a leftover exited container; cleaned up and retried once,
+cleanly, per this project's established fallback). Full unscoped suite:
+941 passed. No Docker leftovers.
+
+**New tests.** `tests/workspace/test_manager.py`:
+`test_rr021_a_real_oom_kill_clears_after_a_successful_reopen_via_rebuild`
+(the checklist's own ask — a genuine OOM kill, then a genuine successful
+reopen via `rebuild`, the way an operator would actually recover, rather
+than only testing `reconcile`), `test_rr021_start_recomputes_oom_killed_
+from_the_container`, `test_rr021_restart_recomputes_oom_killed_from_the_
+container`, and `test_rr021_stop_recomputes_oom_killed_from_the_container`
+(all three via a precise, deterministic DB-seeded stale-`True` row against
+a genuinely healthy container), plus `test_rr021_stop_on_an_already_oom_
+killed_container_preserves_true` (a second real OOM kill, proving the fix
+correctly distinguishes "stop a healthy container" from "no-op stop on an
+already-OOM'd one").
 
 ### R16 — A running job has a pid, or its absence is surfaced
 **Satisfies:** RR-022

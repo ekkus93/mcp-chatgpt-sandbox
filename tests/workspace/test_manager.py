@@ -589,3 +589,144 @@ def test_at_h032_a_workspace_that_exited_cleanly_is_not_reported_as_oom_killed(
     reconciled = manager.reconcile(record.id)
 
     assert reconciled.oom_killed is False
+
+
+# --- RR-021 (`docs/REMEDIATION_SPEC.md` §15): `oom_killed` reflects the
+# *current* container, not whichever one the record last described ----------
+
+
+def test_rr021_a_real_oom_kill_clears_after_a_successful_reopen_via_rebuild(
+    manager: DockerWorkspaceManager,
+    docker_client: docker.DockerClient,
+    repository: RepositoryRecord,
+) -> None:
+    """The checklist's own ask: not only OOM -> `reconcile`, but OOM ->
+    a genuine successful reopen — here, `rebuild` with a healthy memory
+    limit, the way an operator would actually recover from a real OOM
+    kill. Reproduced empirically that the *old* container's `oom_killed:
+    true` survived onto the brand-new one, which cannot possibly have
+    OOM'd yet."""
+    oom_run_kwargs = {
+        "command": ["sh", "-c", "a=$(head -c 134217728 /dev/zero | tr '\\0' 'a'); sleep 30"],
+        "mem_limit": "16m",
+        "memswap_limit": "16m",
+    }
+    record = manager.ensure_workspace(
+        repository=repository, image=TEST_IMAGE, run_kwargs=oom_run_kwargs
+    )
+    container_id = record.container_id
+    assert container_id is not None
+
+    for _ in range(30):
+        container = docker_client.containers.get(container_id)
+        if container.status != "running":
+            break
+        time.sleep(1)
+    assert container.attrs["State"]["OOMKilled"] is True  # sanity: the real kill happened
+
+    oom_confirmed = manager.reconcile(record.id)
+    assert oom_confirmed.oom_killed is True  # sanity: the stale state this test starts from
+
+    rebuilt = manager.rebuild(record.id, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS)
+
+    assert rebuilt.state == WorkspaceState.RUNNING
+    assert rebuilt.oom_killed is False
+    assert rebuilt.container_id != container_id  # genuinely a new container
+
+
+def test_rr021_start_recomputes_oom_killed_from_the_container(
+    manager: DockerWorkspaceManager,
+    docker_client: docker.DockerClient,
+    db: sqlite3.Connection,
+    repository: RepositoryRecord,
+) -> None:
+    """A precise, deterministic complement to the real-OOM test above,
+    for `start` specifically: a stale `oom_killed=true` row against a
+    container that is, in reality, perfectly healthy — reproduced
+    empirically that a successful `start()` used to preserve the stale
+    value indefinitely rather than recomputing it."""
+    record = manager.ensure_workspace(
+        repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
+    )
+    manager.stop(record.id)
+    db.execute("UPDATE workspace SET oom_killed = 1 WHERE id = ?", (record.id,))
+    db.commit()
+
+    started = manager.start(record.id)
+
+    assert started.state == WorkspaceState.RUNNING
+    assert started.oom_killed is False
+
+
+def test_rr021_restart_recomputes_oom_killed_from_the_container(
+    manager: DockerWorkspaceManager,
+    docker_client: docker.DockerClient,
+    db: sqlite3.Connection,
+    repository: RepositoryRecord,
+) -> None:
+    record = manager.ensure_workspace(
+        repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
+    )
+    db.execute("UPDATE workspace SET oom_killed = 1 WHERE id = ?", (record.id,))
+    db.commit()
+
+    restarted = manager.restart(record.id)
+
+    assert restarted.state == WorkspaceState.RUNNING
+    assert restarted.oom_killed is False
+
+
+def test_rr021_stop_recomputes_oom_killed_from_the_container(
+    manager: DockerWorkspaceManager,
+    docker_client: docker.DockerClient,
+    db: sqlite3.Connection,
+    repository: RepositoryRecord,
+) -> None:
+    """`container.stop()` on a container that is, in Docker's own
+    reality, healthy and running SHALL clear a stale `oom_killed=true`
+    row (the primary case this task fixes)."""
+    record = manager.ensure_workspace(
+        repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
+    )
+    db.execute("UPDATE workspace SET oom_killed = 1 WHERE id = ?", (record.id,))
+    db.commit()
+
+    stopped = manager.stop(record.id)
+
+    assert stopped.state == WorkspaceState.STOPPED
+    assert stopped.oom_killed is False
+
+
+def test_rr021_stop_on_an_already_oom_killed_container_preserves_true(
+    manager: DockerWorkspaceManager,
+    docker_client: docker.DockerClient,
+    repository: RepositoryRecord,
+) -> None:
+    """The converse case, proving the fix isn't just `stop()` blindly
+    clearing the field: a container already OOM-killed (and so already
+    stopped) before `stop()` is ever called on it — `container.stop()`
+    on an already-stopped container is a safe, successful no-op — SHALL
+    still correctly report `oom_killed: true`, recomputed from the
+    container's real state, not assumed `False` just because `stop()`
+    itself succeeded."""
+    oom_run_kwargs = {
+        "command": ["sh", "-c", "a=$(head -c 134217728 /dev/zero | tr '\\0' 'a'); sleep 30"],
+        "mem_limit": "16m",
+        "memswap_limit": "16m",
+    }
+    record = manager.ensure_workspace(
+        repository=repository, image=TEST_IMAGE, run_kwargs=oom_run_kwargs
+    )
+    container_id = record.container_id
+    assert container_id is not None
+
+    for _ in range(30):
+        container = docker_client.containers.get(container_id)
+        if container.status != "running":
+            break
+        time.sleep(1)
+    assert container.attrs["State"]["OOMKilled"] is True  # sanity: the real kill happened
+
+    stopped = manager.stop(record.id)  # a no-op stop() on an already-exited container
+
+    assert stopped.oom_killed is True
