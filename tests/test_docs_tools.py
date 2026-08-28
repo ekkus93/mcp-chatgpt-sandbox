@@ -25,8 +25,12 @@ _DOCS_PATH = Path(__file__).resolve().parent.parent / "docs" / "TOOLS.md"
 
 #: The same shape `.github/workflows/ci.yml`'s `grep -oP` pattern matches:
 #: a markdown table row whose first cell is a single backtick-quoted tool
-#: name — `| `tool_name` | ... |`.
-_TOOL_ROW = re.compile(r"^\| `([a-z_]+)` \|", re.MULTILINE)
+#: name — `| `tool_name` | ... |`. RR-028 (`docs/REMEDIATION_SPEC.md`
+#: §28): `[a-z0-9_]+`, not `[a-z_]+` — every character an actual tool
+#: name can contain, not just the ones today's names happen to use, so a
+#: future digit-containing name (still a correctly-formatted row) is
+#: matched rather than silently excluded and reported as missing/stale.
+_TOOL_ROW = re.compile(r"^\| `([a-z0-9_]+)` \|", re.MULTILINE)
 
 
 def _documented_tool_names() -> set[str]:
@@ -56,3 +60,15 @@ def test_the_regex_actually_matches_something() -> None:
     above vacuously pass — this is what H30's own "coverage checks SHALL
     NOT satisfy themselves" lesson (HR-027) looks like applied here."""
     assert len(_documented_tool_names()) >= 20  # 21 as of H33; >= tolerates a future addition
+
+
+def test_rr028_a_tool_name_containing_a_digit_is_matched() -> None:
+    """RR-028: the old `[a-z_]+` pattern excludes a digit — a future
+    tool name containing one is still a correctly-formatted row, but
+    would silently fail to match, making the two round-trip tests above
+    report it as missing/stale rather than correctly reconciled. Not
+    hypothetical: `.github/workflows/ci.yml`'s `grep -oP` pattern
+    mirrors this one exactly (this file's own docstring) and would fail
+    the same way on a real CI run."""
+    sample = "| `git_oauth2_refresh` | some description |\n"
+    assert _TOOL_ROW.findall(sample) == ["git_oauth2_refresh"]

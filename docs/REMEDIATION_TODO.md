@@ -1994,14 +1994,71 @@ removed by hand.
 `tests/workspace/test_audit_logging.py`:
 `test_rr027_git_push_success_record_carries_the_real_refspec_and_remote_protection_status`.
 
-### R25 — The contract check is order-insensitive and monotonic
+### R25 — The contract check is order-insensitive and monotonic ✅
 **Satisfies:** RR-028
+**Commit:** `PLACEHOLDER`
 
-- [ ] Sort the tool array by name before diffing (`jq -S` sorts object keys only,
+- [x] Sort the tool array by name before diffing (`jq -S` sorts object keys only,
       so a pure reordering falsely demands a bump)
-- [ ] Reject a non-increasing `contract_version`
-- [ ] Widen `docs/TOOLS.md`'s drift-check pattern beyond `[a-z_]+` so a future
+- [x] Reject a non-increasing `contract_version`
+- [x] Widen `docs/TOOLS.md`'s drift-check pattern beyond `[a-z_]+` so a future
       tool name with a digit does not produce a spurious failure
+
+**Defect reproduced.** Built two synthetic `tools.json` pairs and ran the CI
+step's exact shell logic (extracted into a standalone script, since a GitHub
+Actions YAML step has no pytest harness of its own): a pure reorder of the
+`.tools` array (identical entries, different order) diffed as `DIFFERENT`
+under the unfixed `jq -S .tools` comparison — a false positive that would
+have demanded a bump for a no-op change. Separately confirmed `sort_by(.name)`
+makes the same pair diff identical. `[a-z_]+` confirmed to silently drop a
+digit-containing tool name (`git_oauth2_refresh`) from both the CI `grep -oP`
+extraction and the mirrored Python regex in `tests/test_docs_tools.py`
+(that file's own docstring already documents the CI step "mirrors" it) — the
+row would be reported as *missing* from the docs despite being present and
+correctly formatted.
+
+**Implementation.**
+- `.github/workflows/ci.yml`'s "contract_version bump check": `OLD_TOOLS`/
+  `NEW_TOOLS` now `jq -S '.tools | sort_by(.name)'` instead of `jq -S .tools`
+  — `-S` alone only sorts object *keys* within each array element, never
+  reorders the array itself. A second, new check rejects a `contract_version`
+  decrease unconditionally (independent of whether the tools changed at all,
+  since the existing check only ever asks "did it change", never "did it
+  move the right direction"): `sort -V` (version sort, correct for a semver
+  string like `0.7.5` — a plain string/numeric comparison can't order it) on
+  the two values, and the higher one SHALL be the new one.
+- `.github/workflows/ci.yml`'s "docs/TOOLS.md drift check" and
+  `tests/test_docs_tools.py`'s mirrored `_TOOL_ROW` regex: `[a-z_]+` →
+  `[a-z0-9_]+` in both places, matching every character an actual tool name
+  can contain rather than just the ones today's names happen to use.
+
+**Verified the tests catch the regression.** The two CI-YAML checks (not
+independently pytest-testable) were verified via a standalone script running
+the exact extracted shell logic against 5 synthetic scenarios: pure reorder/
+same version → no error (was: false-positive error, now fixed); real change/
+no bump → error (unchanged); real change/bumped up → no error (unchanged);
+version decreased/tools unchanged → error (new); version decreased/tools
+changed → error (new, still caught). The grep pattern was verified directly:
+the old pattern matched only `git_status` from a two-row sample, the new one
+matched both rows including the digit-containing name.
+
+For the Python-level regex (`tests/test_docs_tools.py`, genuinely
+pytest-testable): backed up the file, reverted `_TOOL_ROW` to `[a-z_]+`
+(confirmed via `grep -n "_TOOL_ROW = re.compile"`), reran the new test —
+failed exactly as reproduced (`assert [] == ['git_oauth2_refresh']`).
+Restored; all 4 tests in the file pass again. No Docker leftovers (this task
+touches no Docker-facing code).
+
+**Full relevant suite.** `tests/test_docs_tools.py tests/test_schema_export.py`:
+13 passed. Full unscoped suite: 966 passed. No Docker leftovers.
+
+**New tests.** `tests/test_docs_tools.py`:
+`test_rr028_a_tool_name_containing_a_digit_is_matched`. The two CI-YAML
+checks have no pytest equivalent (GitHub Actions shell steps, not Python) —
+verified via the standalone-script method described above instead, which is
+not itself committed (ephemeral, scratch-only), matching how the CI
+workflow's own shell logic is exercised: for real, against real `jq`/`sort`,
+not simulated.
 
 ---
 
