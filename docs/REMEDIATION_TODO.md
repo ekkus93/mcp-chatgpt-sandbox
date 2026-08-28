@@ -1536,7 +1536,7 @@ corrected.
 
 ### R19 — The entrypoint rejects malformed cache entries and does not follow symlinks ✅
 **Satisfies:** RR-029, RR-030
-**Commit:** `PLACEHOLDER`
+**Commit:** `7be30f7`
 
 - [x] Reject any entry containing a newline (`IFS=':' read -ra` consumes only the
       first line and silently drops the rest)
