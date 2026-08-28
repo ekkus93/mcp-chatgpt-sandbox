@@ -571,7 +571,7 @@ pass.
 
 ### R7 — A diagnostic cannot fail the operation it annotates ✅
 **Satisfies:** RR-008 · **Verified by:** RAT-009
-**Commit:** `PLACEHOLDER`
+**Commit:** `3498181`
 
 - [x] Guard the response type in `_query_branch_rules` / `verify_remote_protection`
 - [x] Degrade to `unverified` with a reason for any unexpected shape
