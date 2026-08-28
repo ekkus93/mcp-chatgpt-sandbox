@@ -194,6 +194,28 @@ suite is real-Docker/real-git throughout (3 of 66 test files use any mock at
 all), and a mocked "success" would prove nothing about the actual metadata
 construction. Tracked as genuinely open, not silently dropped.
 
+**Correction (H36, `docs/HARDENING_TODO.md`):** this task's whole narrative is
+built on "host-side" vs "in-container" as two distinct execution contexts —
+`resolve_remote_url`/`resolve_remote_push_url` (the "host-side validation
+view" this section describes) run in-container now, same as
+`git_push_tool`'s own already-in-container re-verification read. The
+*security property* this task actually established — validate the identity
+once, early; re-resolve and compare again immediately before the real push;
+refuse on any disagreement — is unaffected and re-verified passing
+(`test_at_rr002_container_side_push_insteadof_redirect_is_rejected`,
+`tests/workspace/test_git_push_tool.py`): that property was always about
+*timing* (validate-then-re-verify), not about one read being host-side. One
+specific detail in the "false positive" story above no longer reproduces
+identically: it depended on the host-side read blanking `GIT_CONFIG_SYSTEM`
+while the in-container one legitimately saw S24's `/etc/gitconfig` rewrite —
+both reads see the same in-container view now, so that particular
+disagreement can no longer arise the same way. Comparing by *normalized*
+identity rather than raw string, this task's actual fix, remains correct and
+necessary regardless (a scheme or `.git`-suffix difference can still make two
+URLs normalize identically without any host/container split involved). See
+`git/remote.py`'s own module docstring and `docs/TODO.md`'s S25 correction
+for the current mechanics.
+
 ---
 
 ## Phase 1 — High: data loss and client-visible correctness
@@ -2112,7 +2134,10 @@ noted in the write-up below rather than re-applied.
 - **`SPEC.md` §18.7** (hooks/host-side execution): added RR-001's `--includes`
   requirement to the dynamic-driver-neutralization item, and noted the
   enumeration probe itself SHALL run under the same env-scrubbing items 3/4
-  already require of every other host-side read.
+  already require of every other host-side read. **Superseded by H36**
+  (`docs/HARDENING_TODO.md`): this whole four-part mechanism, `--includes`
+  included, was deleted along with `run_git_host_side` — §18.7 now describes
+  it as historical background, not a current requirement.
 - **`SPEC.md` §26** (resource controls / `oom_killed`): added the
   current-state clarification — recomputed on every container-identity
   transition (`start`/`stop`/`restart`/`rebuild`), cleared on clean

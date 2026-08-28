@@ -328,6 +328,12 @@ now `Optional` throughout; `workspace_open`/`workspace_info` fail clearly with
 `ContainerRuntimeFailedError` when Docker is unreachable, while `server_info`
 degrades gracefully and reports `docker_available: false` rather than raising.
 
+**Correction (H36, `docs/HARDENING_TODO.md`):** `git_state.py` is no longer a
+*host-side* Git reader — it runs in-container now, and requires a running
+workspace; `workspace_info`'s `git` block is `None` for a workspace that
+exists but isn't currently running, not the real host-read values this task
+originally shipped. See S19's own correction for the full before/after.
+
 ### S12 — Synchronous `exec` ✅
 **Spec:** §14, §16 · **Satisfies:** FR-012, FR-013 · **Commit:** 7e8d20b
 
@@ -845,6 +851,32 @@ above (both proven, not assumed), exit-code/stdout/stderr plumbing, the
 every §44.4 state plus the clean-repo, non-repo, and linked-worktree
 cases.
 
+**Correction (H36, `docs/HARDENING_TODO.md`):** this task's central design —
+a host-side execution path (`run_git_host_side`) for `git_status`/`git_diff`/
+`git_log`, hardened by exactly the four-part hook/fsmonitor/config/env
+control this section describes — was reversed, on explicit request. Three
+of this task's own checkboxes describe a mechanism that no longer exists:
+"`git_status`/`git_diff`/`git_log` MAY run host-side for speed", the
+`core.hooksPath`/`core.fsmonitor` override checkbox, and AT-025 as stated
+here (retargeted in `docs/SPEC.md` to the *inverse* property — a
+`core.fsmonitor` script now genuinely executes, in-container, rather than
+being suppressed). `run_git_host_side` and its whole neutralization
+apparatus (`_discover_code_executing_overrides`, the env-scrub lists) are
+deleted from `git/service.py`; `tests/git/test_service.py` no longer has
+15 host-side-specific tests — see H36's own write-up for what replaced
+them. One exception survives, permanently: `detect_default_branch`
+(`git/commit.py`, S22) still runs host-side, through the new, narrower
+`run_git_metadata_read` — not for speed, but because `open_workspace`'s
+§18.5 remote-protection check needs it *before* any container exists, and
+`git symbolic-ref` (its only command) invokes no repository-configured code
+for the four-part control to have ever needed to protect against. Every
+other structured Git tool this task and S20-S27 built now runs
+in-container, as the container user, through the *same* execution service
+`git_commit`/`git_pull`/`git_push` already used — not a second path with a
+second credential, which was always this task's own §20.1 rationale;
+H36 just applied it uniformly rather than carving out an exception. See
+`docs/SPEC.md` §20.1/§18.7 (version 0.4) for the current, normative text.
+
 ### S20 — `git_status` ✅
 **Spec:** §17.2, §22.3 · **Satisfies:** FR-018 · **Verified by:** AT-020 · **Commit:** `20a3e23`
 
@@ -897,6 +929,17 @@ confirming the tool works even when Docker itself is unreachable —
 
 `schemas/tools.json` re-exported (`git_status` is a new tool);
 `CONTRACT_VERSION` bumped `0.2.1` → `0.3.0` per §33.2 (minor).
+
+**Correction (H36, `docs/HARDENING_TODO.md`):** `git_status` runs in-container
+now — see S19's own correction. Every claim above tied to "host-side only"
+no longer holds: `register()` now takes `docker_client`/`container_config`/
+`execution_config` like every other structured Git tool; `touch_last_used`
+*is* called (real container usage now, not a host-side no-op); and the tool
+requires a running workspace, failing with `WORKSPACE_NOT_RUNNING` or a clear
+degraded-Docker error rather than working "even when Docker itself is
+unreachable" as this section originally described. No contract change
+(`git_status`'s own response shape is untouched), so no schema re-export was
+needed for H36.
 
 ### S21 — `git_diff` and `git_log` ✅
 **Spec:** §17.3, §46 · **Satisfies:** FR-019 · **Commit:** `bc2c76d`
@@ -960,6 +1003,15 @@ hardening review found in this task's own work, each now fixed:
   detecting and trimming a truncated trailing UTF-8 sequence before
   returning that chunk, with a `next_offset` field so a follow-up request
   resumes from the trimmed boundary, not the naive one).
+
+**Correction (H36, `docs/HARDENING_TODO.md`):** "Both are host-side only
+(§20.1)... no Docker dependency" no longer holds — `git_diff`/`git_log` run
+in-container now, same as `git_status` (S20's own correction), and require a
+running workspace. `read_git_diff`/`read_git_log` were each split into a
+pure argv-builder/output-parser pair plus the in-container invocation, which
+is what let `tests/git/test_diff.py`/`test_log.py` stay Docker-free despite
+the migration — they now exercise the pure functions directly, against real
+host-side `git` output, rather than the (now in-container) tools themselves.
 
 ### S22 — `git_commit` ✅
 **Spec:** §17.4, §20.6, §45, §65, §18.9 · **Satisfies:** FR-020, FR-024 · **Verified by:** AT-008, AT-019 · **Commit:** `43abc8c`
@@ -1062,6 +1114,19 @@ hardening review found in this task's own work, each now fixed:
   <same literal pathspecs>` before raising, undoing exactly what this
   call's own `git add` staged, leaving any other already-staged path
   untouched).
+
+**Correction (H36, `docs/HARDENING_TODO.md`):** "§20.6's preconditions run
+host-side, before the container is asked to do anything" is no longer
+accurate — the status/interrupted-operation read this precondition chain
+starts from now runs in-container (S19/S20's corrections), so the container
+*is* asked to do something before these checks can even evaluate.
+`is_head_published`/`read_committed_files` (`git/commit.py`) moved
+in-container with it; `detect_default_branch` is the sole exception
+(unaffected by this correction — see S19's own note for why). None of this
+changes what the preconditions actually check or when they run relative to
+the *mutating* `git add`/`git commit` commands themselves — "fail closed
+before mutating anything" still holds, just no longer "before the container
+is asked to do anything at all".
 
 ---
 
@@ -1385,6 +1450,23 @@ blocked by D3) don't exist yet:
   module. Noted here as a design constraint to carry into S26, not
   something to re-verify at this layer.
 
+**Correction (H36, `docs/HARDENING_TODO.md`):** `resolve_remote_url`/
+`resolve_remote_push_url` (and, through them, `validate_remote_identity`)
+run in-container now, not via `run_git_host_side` (deleted) — always called
+from within `git_pull`/`git_push`, which already require a running
+workspace, so there's no pre-container call site to preserve host-side here
+(unlike `git/commit.py`'s `detect_default_branch`). RR-002's two-read
+TOCTOU structure (validate early, `git_push_tool` re-verifies the push URL
+immediately before pushing, refuse on disagreement) is unchanged — both
+reads are in-container now, but still two distinct invocations at two
+distinct points; see `git/remote.py`'s own module docstring. A real,
+empirically-found gap: `tests/git/test_remote.py`'s rewrite to stay
+Docker-free no longer calls the real async functions at all, only local
+replicas of their small, stable resolve logic — real coverage of the
+migrated functions is the pre-existing Docker-based
+`tests/workspace/test_git_pull_tool.py`/`test_git_push_tool.py` suite,
+confirmed still passing.
+
 ### S26 — `git_pull` ✅
 **Spec:** §20.5, §18.8 · **Satisfies:** FR-021 · **Verified by:** AT-010
 
@@ -1463,6 +1545,13 @@ remains deferred to S23.
 
 `schemas/tools.json` gained `git_pull`'s schema; `CONTRACT_VERSION`
 bumped `0.5.0` → `0.6.0` (§33.2: new tool, minor).
+
+**Correction (H36, `docs/HARDENING_TODO.md`):** "§20.6 preconditions
+host-side" overstates it post-H36 — interrupted-operation detection is the
+only one of them that's still literally host-side (§44.4, unaffected by
+H36); the `expected_branch`/`expected_head_sha` guards depend on
+`read_git_status`, which runs in-container now (S20's correction). See
+S25's own correction for `validate_remote_identity`'s move.
 
 ### S27 — `git_push` and refspec construction ✅
 **Spec:** §20.3, §20.5, §18.9, §20.6 · **Satisfies:** FR-022, FR-034 · **Verified by:** AT-011, AT-029, AT-031
