@@ -135,7 +135,7 @@ change; no `CONTRACT_VERSION` bump needed, as expected.
 
 ### V2 — `truncated` reflects bytes withheld, not bytes requested ✅
 **Satisfies:** VR-002 · **Verified by:** VAT-002
-**Commit:** `PLACEHOLDER`
+**Commit:** `d698f8c`
 
 - [x] `truncated` compares `min(effective_end, total_size) - start` against
       `limit`
