@@ -139,6 +139,37 @@ caller cannot detect a lossy decode from the decoded string alone (a genuine
 U+FFFD in a path is indistinguishable from a replaced byte), so the flag has
 to come from the read itself.
 
+**Both `capture_index` call sites SHALL be guarded, and they fail
+differently.** `git_commit`'s body captures the index twice, and *each*
+capture feeds a different write-back — so this is two defects sharing one
+root cause, not one defect with a redundant second site:
+
+| Site | Capture | Its data becomes | Failure when lossy |
+|---|---|---|---|
+| 1 (`tools/git.py:495`) | pre-`add` | `prior_entries` → `build_restore_index_argv` → `git update-index --cacheinfo` | writes the caller's prior blob to a **phantom** U+FFFD path; real path keeps this call's own `git add` content (the reproduction above) |
+| 2 (`tools/git.py:529`) | post-`add` | `current_entries` → `extra_paths` → `build_unstage_new_argv` → `git rm --cached --ignore-unmatch` | the corrupted path matches nothing, `--ignore-unmatch` exits **0**, so a file this call staged is left staged while `unstage_ok` reports success |
+
+*Site 2's own failure, reproduced against real git* — a **new, untracked**
+non-UTF-8 file inside the pathspec, which the pre-`add` capture cannot see:
+
+```
+PRE-add  capture: b'...many/clean.txt\x00'                        LOSSY? no   <- site 1 gate does NOT fire
+POST-add capture: b'...many/clean.txt\x00...many/new\xffname.txt\x00'  LOSSY? YES  <- only site 2 gate fires
+git rm --cached --ignore-unmatch -- ':(literal)many/new<U+FFFD>name.txt'
+  exit=0                                                          <- reported as success
+  many/new\xffname.txt still staged                               <- not unstaged
+```
+
+**Neither site's test can constrain the other's guard, and a passing
+AAT-001 SHALL NOT be read as evidence that both are fixed.** The restore is
+nested inside both gates, so failing *either* one suppresses the phantom
+entry — AAT-001 therefore passes if only site 1 is guarded, only site 2 is,
+or both. The two sites need two fixtures, because the fixture that trips one
+cannot trip the other: AAT-001's bad path is already staged pre-`add` (site 1
+fires and short-circuits), while site 2's is untracked until this call's own
+`git add` creates it (site 1's capture is clean). This is what AAT-003 is
+for — see AR-003, which is a constraint on the fix, not optional coverage.
+
 **Scope: read tools are NOT affected and SHALL NOT be changed.**
 `git_status`/`git_diff`/`git_log` decode the same way and are correct to:
 their output is *displayed*, never fed back as an argument, and
@@ -181,7 +212,7 @@ comment. `bytearray` is not, and is `bytes`'s mutable twin — exactly the type
 V5's own rationale covers. Each SHALL be either handled or recorded as a
 deliberate exclusion with its reason, in code.
 
-### AR-003 The rollback call site SHALL be covered by a parser-tripping path
+### AR-003 The post-`add` re-capture SHALL be independently constrained
 
 V1 converted **two** call sites to `capture_index` — the pre-`add` snapshot
 and the post-`add` re-capture in the failure branch — but VAT-001 commits
@@ -189,8 +220,18 @@ and the post-`add` re-capture in the failure branch — but VAT-001 commits
 a failed commit, and is covered today solely by
 `test_rr005_a_failed_commit_restores_prior_staged_content_not_head`, which
 uses an ordinary ASCII path that trips neither the line crop nor the decode.
-A test SHALL exercise the rollback call site with a path that actually
-stresses the parser.
+
+**This is a constraint on AR-001's fix, not a coverage nicety.** As AR-001
+establishes, the restore is nested inside both gates, so AAT-001 passes
+whether one site or both were guarded — it cannot tell them apart. A test
+using site 2's own fixture (a **new, untracked** non-UTF-8 file inside the
+pathspec, invisible to the pre-`add` capture) is the only thing that fails
+when site 2's guard is missing. Without it, half of AR-001's fix is
+unconstrained and a revert of it leaves the suite green — precisely the
+RR-027 anti-pattern.
+
+A test SHALL exercise the post-`add` re-capture with a path that actually
+stresses the parser, using a fixture the pre-`add` capture cannot see.
 
 ### AR-004 Every acceptance-test series SHALL be citation-audited
 
@@ -209,20 +250,25 @@ in the audit module itself as deliberate.
 
 ## 5. Acceptance tests
 
-- **AAT-001** — A failed `git_commit` naming a directory pathspec that
-  contains a non-UTF-8 path SHALL NOT add an index entry, SHALL NOT move the
-  caller's prior staged blob to a different path, and SHALL report
-  `index_left_dirty: true` (AR-001).
+- **AAT-001** *(site 1)* — A failed `git_commit` naming a directory pathspec
+  that contains a non-UTF-8 path **already staged before the call** SHALL NOT
+  add an index entry, SHALL NOT move the caller's prior staged blob to a
+  different path, and SHALL report `index_left_dirty: true` (AR-001).
 - **AAT-002** — `redact_secrets` SHALL redact a secret-shaped `bytes` value
   under a key that hints at nothing, matching the `str` branch's behavior for
   the identical content — or V5's scope SHALL be narrowed and this test
   SHALL assert the narrowed contract instead (AR-002).
-- **AAT-003** — The failed-commit rollback SHALL restore faithfully, or
-  report `index_left_dirty: true`, when the index snapshot contains a path
-  that would break a naive parse (AR-003).
+- **AAT-003** *(site 2)* — A failed `git_commit` naming a directory pathspec
+  that contains a **new, untracked** non-UTF-8 file — one this call's own
+  `git add` stages, so the pre-`add` capture never sees it — SHALL NOT leave
+  that file staged while reporting `index_left_dirty: false` (AR-001's site 2,
+  AR-003). This is the only test that fails when site 2's guard is absent;
+  see AR-001.
 - **AAT-004** — Removing every citation of one `VAT` SHALL make the coverage
-  audit fail for it, the same way `test_meta_removing_every_citation_for_an_
-  at_makes_the_audit_fail_for_it` already proves for `AT` (AR-004).
+  audit fail for it, the same way the existing meta-test
+  (`test_meta_removing_every_citation_for_an_at_makes_the_audit_fail_for_it`,
+  `tests/test_acceptance_test_coverage.py:77`) already proves for `AT`
+  (AR-004).
 
 ## 6. Amendments to other documents
 

@@ -42,22 +42,27 @@ The discipline `docs/HARDENING_TODO.md` established and
 7. One task per commit. No `Co-Authored-By` trailers.
 8. **Re-run every claim before writing it in the task's write-up** (RR-033).
 
-**Ordering.** A1 first and alone — it is the only real defect, and the only
-one that loses data. A2 is a small correctness fix plus three explicit
-type decisions. A3 and A4 are test/infrastructure work, independent of both
-and of each other.
+**Ordering.** A1 and A3 first, together — they are one fix. A1 guards two
+capture sites; A3 is the only test that constrains the second of them, and
+neither test can substitute for the other (see A1's own note). Landing A1
+without A3 ships half a fix with a green suite. A2 is a small correctness fix
+plus three explicit type decisions, independent. A4 is test infrastructure,
+independent of everything and lowest priority.
 
 ---
 
 ## A1 — A lossy capture never becomes a command argument
-**Satisfies:** AR-001 · **Verified by:** AAT-001
+**Satisfies:** AR-001 · **Verified by:** AAT-001 (site 1) + AAT-003 (site 2)
 
 - [ ] `CapturedOutput` reports whether its decoding replaced any byte
-- [ ] `git_commit`'s rollback skips the restore when the snapshot decoded
-      lossily, and reports `index_left_dirty: true`
+- [ ] **Site 1** (`tools/git.py:495`, pre-`add`) treats a lossy decode the
+      way it already treats `stdout_truncated` — `prior_entries` becomes
+      `None`, so no restore is attempted and `index_left_dirty` stays `true`
+- [ ] **Site 2** (`tools/git.py:529`, post-`add` re-capture) does the same,
+      for its own independent write-back — see the table below
 - [ ] The read tools (`git_status`/`git_diff`/`git_log`) are left unchanged
-- [ ] Test a failed commit on a directory pathspec containing a non-UTF-8
-      path
+- [ ] Test **both** sites — they need two different fixtures (A3 is site 2's;
+      it is not optional)
 
 **Defect (reproduced end-to-end through the real MCP tool).** A failed
 `git_commit` naming the directory `many`, which contains `bad\xffname.txt`
@@ -99,11 +104,37 @@ argv sent as '\udcff':   ls: cannot access '/tmp/bad'$'\357\277\275''name.txt'
 **Shape of the fix.** H36a's precedent, one property further out: the signal
 belongs at the read. Add a lossy-decode flag to `CapturedOutput` beside
 `stdout_truncated` (a caller cannot detect this from the decoded string — a
-genuine U+FFFD is indistinguishable from a replaced byte), and have
-`git_commit`'s rollback treat a lossy snapshot exactly as it already treats a
-truncated one: skip the restore, report `index_left_dirty: true`. Failing
-closed is correct here by RR-005's own principle — a leaked stage is
-recoverable, a destroyed one is not.
+genuine U+FFFD is indistinguishable from a replaced byte), and have both
+capture sites treat a lossy snapshot exactly as they already treat a
+truncated one: skip, report `index_left_dirty: true`. Failing closed is
+correct here by RR-005's own principle — a leaked stage is recoverable, a
+destroyed one is not.
+
+**Two sites, two different failures — guard both.** `git_commit` captures the
+index twice and *each* capture feeds a different write-back:
+
+| Site | Capture | Feeds | Failure when lossy |
+|---|---|---|---|
+| 1 (`:495`) | pre-`add` | `prior_entries` → `git update-index --cacheinfo` | phantom U+FFFD entry; caller's prior blob written there, real path keeps this call's `git add` content (the reproduction above) |
+| 2 (`:529`) | post-`add` | `extra_paths` → `git rm --cached --ignore-unmatch` | corrupted path matches nothing, `--ignore-unmatch` exits **0**, so a file this call staged is left staged while `unstage_ok` reports success |
+
+*Site 2's failure, reproduced against real git* — a **new, untracked**
+non-UTF-8 file inside the pathspec, which the pre-`add` capture cannot see:
+
+```
+PRE-add  capture: b'...many/clean.txt\x00'                             LOSSY? no
+POST-add capture: b'...many/clean.txt\x00...many/new\xffname.txt\x00'  LOSSY? YES
+git rm --cached --ignore-unmatch -- ':(literal)many/new<U+FFFD>name.txt'
+  exit=0                              <- reported success
+  many/new\xffname.txt still staged   <- never unstaged
+```
+
+**A passing AAT-001 does not prove both sites are fixed.** The restore is
+nested inside both gates, so failing *either* suppresses the phantom entry —
+AAT-001 passes if only site 1 is guarded, only site 2 is, or both. Revert-verify
+each guard **separately**: reverting site 1's must fail AAT-001, reverting
+site 2's must fail AAT-003. If reverting one of them leaves the suite green,
+that guard is unconstrained and the task is not done.
 
 **Do not** extend this to `git_status`/`git_diff`/`git_log`. Their
 replace-decoding is correct: their output is displayed, never fed back as an
@@ -151,11 +182,13 @@ worth fixing regardless of which way the others go.
 what is not acceptable is a claim broader than the behavior. If the scan is
 narrowed instead of extended, amend `docs/REVIEW_SPEC.md` VR-005 to match.
 
-## A3 — The rollback call site is covered by a parser-tripping path
+## A3 — The post-`add` re-capture is independently constrained
 **Satisfies:** AR-003 · **Verified by:** AAT-003
 
-- [ ] Exercise `git_commit`'s post-`add` re-capture with a path that
-      stresses the parser, not an ordinary ASCII one
+- [ ] Exercise `git_commit`'s post-`add` re-capture with a fixture the
+      pre-`add` capture cannot see — a **new, untracked** non-UTF-8 file
+      inside the directory pathspec
+- [ ] Confirm it fails when only site 2's guard is reverted
 
 **Gap.** V1 converted two call sites to `capture_index`, but VAT-001 commits
 *successfully* and so reaches only the first. The failure-branch re-capture
@@ -163,9 +196,17 @@ is covered today solely by
 `test_rr005_a_failed_commit_restores_prior_staged_content_not_head`, whose
 path trips neither the line crop nor the decode.
 
-Likely folds into A1's own test, since AAT-001 already requires a *failed*
-commit — check whether one test satisfies both before writing a second.
-Doing so is fine and preferable; leaving the site untested is not.
+**Do this task with A1, not after it — and do not fold it into A1's test.**
+An earlier draft of this task said the two "likely fold into one test" and
+suggested checking whether a single test satisfies both. That was wrong, and
+is corrected here: it is provably impossible. AAT-001's bad path is staged
+*before* the call, so site 1's gate fires and short-circuits before site 2
+runs; A3's must be untracked until this call's own `git add` stages it, so
+site 1's capture is clean and only site 2's gate can fire. One fixture cannot
+be in both states. Since the restore is nested inside both gates, AAT-001
+passes with either guard alone — so without this test, half of A1's fix is
+unconstrained and reverting it leaves the suite green (the RR-027
+anti-pattern). See A1's own table and AR-001.
 
 ## A4 — Every acceptance-test series is citation-audited
 **Satisfies:** AR-004 · **Verified by:** AAT-004
