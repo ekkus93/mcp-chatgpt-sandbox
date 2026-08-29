@@ -1431,6 +1431,20 @@ per the empirical 20% single-trial failure rate) rather than a single
 deterministic reproduction, since a genuine Docker API race can't be pinned to
 one.
 
+**Correction (V6, `docs/REVIEW_TODO.md`/`docs/REVIEW_SPEC.md` VR-006).**
+This task's own implementation paragraph is accurate as far as it goes
+("a `None` that survives every retry is logged") but incomplete: `pid_of`
+has a *second* `None`-returning path — `except docker.errors.
+DockerException: return None`, reached when the daemon call itself fails
+rather than when the exec never reports a pid — that this task's own fix
+did not touch, and it returned silently. Both paths produce the same
+`None`, and this task's own requirement ("record the absence explicitly")
+applies equally to both; only one was covered. Fixed in V6: the
+`DockerException` branch now logs at the same `WARNING` level before
+returning, so the two absences are distinguishable in the daemon's own
+logs. See V6's own write-up (`docs/REVIEW_TODO.md`) for the full defect
+and fix; new tests in `tests/execution/test_service.py`.
+
 ### R17 — Transport classification separates auth from local failure ✅
 **Satisfies:** RR-023 · **Verified by:** RAT-019
 **Commit:** `20e4d62`

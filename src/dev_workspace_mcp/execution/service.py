@@ -286,6 +286,12 @@ class ExecutionService:
             try:
                 info = self._docker.api.exec_inspect(exec_id)
             except docker.errors.DockerException:
+                # VR-006 (`docs/REVIEW_SPEC.md` §4): this used to return
+                # silently, unlike the retry-exhausted path below — both
+                # produce the same `None`, and a caller cannot tell "the
+                # exec never reported a pid" from "the daemon call itself
+                # failed" without this log distinguishing them.
+                _logger.warning("exec %s: exec_inspect failed, no pid available", exec_id)
                 return None
             pid = info.get("Pid")
             if pid:

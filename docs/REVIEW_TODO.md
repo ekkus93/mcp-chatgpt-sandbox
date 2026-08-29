@@ -461,17 +461,48 @@ in 53 files. No schema/contract change — `redact_secrets` is an
 internal defense-in-depth layer, never a tool's own JSON contract; no
 `CONTRACT_VERSION` bump.
 
-### V6 — An unexplained pid absence is logged
+### V6 — An unexplained pid absence is logged ✅
 **Satisfies:** VR-006 · **Verified by:** VAT-006
+**Commit:** `PLACEHOLDER`
 
-- [ ] `pid_of`'s `DockerException` branch logs before returning `None`
-- [ ] Test that the log record is emitted
+- [x] `pid_of`'s `DockerException` branch logs before returning `None`
+- [x] Test that the log record is emitted
 
 **Defect.** `pid_of` warns when the retry budget is exhausted but returns
 silently on `DockerException`. Both produce `None`; R16 requires an absence be
 *surfaced*, and one of the two paths is invisible in the daemon's own logs.
 
 Smallest task here. Worth doing with V1 or on its own; not worth a phase.
+
+**Implemented as described.** `execution/service.py`'s `pid_of` now logs
+`_logger.warning("exec %s: exec_inspect failed, no pid available", exec_id)`
+in the `except docker.errors.DockerException` branch, immediately before
+returning `None` — same level, same logger, as the retry-exhausted path
+directly below it, so the two absences read distinctly in the daemon's
+own logs (different message text) without one masquerading as the
+other.
+
+**New test file — Docker-free, unlike this module's other tests.**
+`tests/execution/test_service.py` (new): `ExecutionService` constructed
+with a `MagicMock` `docker.DockerClient` instead of a real one — `pid_of`
+only ever calls `self._docker.api.exec_inspect`, so no container is
+needed to exercise either branch. `test_at_vat006_a_docker_exception_
+from_exec_inspect_is_logged` (the reproduction), a baseline test pinning
+the pre-existing retry-exhaustion log (unchanged by this fix, kept as a
+guard against the two drifting apart again), and a plain
+pid-is-returned happy-path test. `docs/REMEDIATION_TODO.md`'s R16
+write-up corrected — a "Correction" paragraph, since R16's own text was
+accurate as far as it went, just incomplete about this one branch.
+
+**Revert-verified.** Backed up `service.py`, restored `HEAD`'s version,
+re-ran the reproduction test: failed with no matching log record.
+Restored the fix; `tests/execution/test_service.py`: 3 passed.
+
+**Suites.** `tests/execution/ tests/jobs/`: 61 passed. Full unscoped
+`tests/`: 994 passed, 0 failed, 525.89s, no Docker leftovers. Lint/format
+clean; `mypy src`: no issues in 53 files. No schema/contract change — an
+internal daemon log line, never client-visible; no `CONTRACT_VERSION`
+bump.
 
 ---
 
