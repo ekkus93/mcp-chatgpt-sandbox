@@ -3,7 +3,7 @@
 **Spec:** `docs/REVIEW_SPEC.md` (VR-001..VR-014, VAT-001..VAT-006)
 **Source:** code review of `docs/REMEDIATION_TODO.md` R1–R27 plus the H36/H37
 work that landed after it, 2026-08-28, against `8301c72`
-**Status:** in progress (V1-V4 done)
+**Status:** in progress (V1-V5 done)
 
 Fourteen items: six correctness defects in shipped code, four overstated
 claims, four stale references. Every one was reproduced against the running
@@ -393,7 +393,7 @@ confirmed a normal run leaves none.
 
 ### V5 — Redaction covers every container type it can encounter ✅
 **Satisfies:** VR-005 · **Verified by:** VAT-005
-**Commit:** `PLACEHOLDER`
+**Commit:** `4ad284c`
 
 - [x] Recurse `tuple`/`set`, or narrow R18's stated scope to match reality
 - [x] Redact `bytes` under a secret-flagged key
