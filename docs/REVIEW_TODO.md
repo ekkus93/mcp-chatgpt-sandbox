@@ -37,10 +37,15 @@ The discipline `docs/HARDENING_TODO.md` established and
    This document exists partly because that rule was not followed in four
    places in the document it reviews.
 
-**Ordering.** Phase 0 first (real defects, in descending reachability).
-Phase 1 and Phase 2 are documentation-only, independent of each other and of
-Phase 0, and can be done in any order — or batched, since none of them touches
-code.
+**Ordering.** Phase 0 first, in descending *consequence* — not reachability;
+the earlier wording said reachability and was wrong. The six defects are
+independent of one another, so the order is a convenience, not a dependency.
+V1 leads because it is the only one that can both crash a call untranslated and
+put R4's index-restore guarantee at risk. V2 is the most easily *reached* — no
+hostile input at all, see its own trigger condition below — but its worst case
+is a wrong boolean and a client that loops. Phase 1 and Phase 2 are
+documentation-only, independent of each other and of Phase 0, and can be done
+in any order — or batched, since none of them touches code.
 
 ---
 
@@ -106,9 +111,33 @@ byte_range=(0,1000) -> content='0123456789' truncated=True    <- complete, but f
 byte_range=(5,1000) -> content='56789'      truncated=True    <- complete, but flagged
 ```
 
-A client paging on `truncated` never terminates against a file it has already
-read in full. The default `max_read_bytes` is large enough that the ordinary
-case never trips it, which is why the existing tests pass.
+**Exact trigger, verified against the default config** (10 MiB
+`max_read_bytes`). The defect needs *both*
+`end - start > min(max_bytes, max_read_bytes)` **and**
+`total_size - start <=` that same limit — the client asking for a span wider
+than its own cap, on a file with less than a cap's worth left. Ordinary
+pagination does **not** trip it; a chunked reader's last page, including one
+whose `end` runs past EOF, was checked directly and reports correctly:
+
+```
+byte_range=(950,1050) max_bytes=100 -> got   50B, truncated=False   (correct)
+byte_range=(0,20000000)             -> got 1000B, truncated=True    <- WRONG
+```
+
+The reachable idiom is "read the rest of the file" written as a large explicit
+`end` instead of `end=None` (which resolves to `total_size` and is correct).
+A client paging on the flag then never terminates — confirmed on a 1000-byte
+file:
+
+```
+iter 0: start=   0 got=1000B truncated=True
+iter 1: start=1000 got=   0B truncated=True    <- past EOF, still flagged
+iter 2: start=1000 got=   0B truncated=True    ... forever
+```
+
+Write VAT-002 against this condition, not against the smaller `max_read_bytes`
+the original reproduction used — a test that only shrinks the config limit
+proves less than one that uses the default and an oversized explicit `end`.
 
 **Check while here:** whether `docs/SPEC.md` §12.2's description of
 `truncated` for a `byte_range` read needs the same correction, or already
@@ -165,6 +194,14 @@ a redirect into `$HOME_DIR/.ssh/config`, `chmod`, and `chown -R` — none of the
 `[ -L ]` refusals the cache loop directly above it applies. A persistent cache
 volume mounted there survives between runs, so a symlink planted in one run is
 followed by the next run's root phase.
+
+**Where the test goes.** A shell-script change needs a real container, not a
+host-side unit test. R19's own hardening left the precedent to copy:
+`tests/workspace/test_default_image.py`'s
+`test_rr030_a_symlink_planted_in_a_cache_volume_is_not_followed` — it plants a
+symlink inside a persistent cache volume on one run and asserts the next run
+refuses. VAT-004 is that test with `.ssh`/`config` substituted for the cache
+path.
 
 **Severity, stated honestly in the write-up:** under the default
 `container.sudo: true` the client already has container root through `exec`,

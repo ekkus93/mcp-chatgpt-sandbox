@@ -125,8 +125,12 @@ byte_range=(5,1000) -> content='56789'      truncated=True    <- complete, but f
 
 `truncated` SHALL compare the bytes actually withheld —
 `min(effective_end, total_size) - start` against `limit` — not the requested
-span. Note the default `max_read_bytes` is large enough that the ordinary case
-is unaffected, which is why no test caught it.
+span. The defect requires both `end - start > min(max_bytes, max_read_bytes)`
+and `total_size - start <=` that limit — the client asking for a wider span
+than its own cap, on a file with less than a cap's worth remaining. Ordinary
+pagination is unaffected, including a last page whose `end` runs past EOF
+(verified directly against the default 10 MiB limit), which is why no existing
+test caught it.
 
 ### VR-003 Daemon-controlled variables SHALL be re-asserted in every branch
 
