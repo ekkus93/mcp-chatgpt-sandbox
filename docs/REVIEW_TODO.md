@@ -3,7 +3,7 @@
 **Spec:** `docs/REVIEW_SPEC.md` (VR-001..VR-014, VAT-001..VAT-006)
 **Source:** code review of `docs/REMEDIATION_TODO.md` R1–R27 plus the H36/H37
 work that landed after it, 2026-08-28, against `8301c72`
-**Status:** in progress (V1 done)
+**Status:** in progress (V1, V2 done)
 
 Fourteen items: six correctness defects in shipped code, four overstated
 claims, four stale references. Every one was reproduced against the running
@@ -216,13 +216,14 @@ caller): 146 passed. Full unscoped `tests/`: 983 passed, 0 failed,
 53 files. No schema/contract change — `truncated`'s type is unchanged,
 only which value it reports; no `CONTRACT_VERSION` bump.
 
-### V3 — Daemon-controlled variables are re-asserted in every branch
+### V3 — Daemon-controlled variables are re-asserted in every branch ✅
 **Satisfies:** VR-003 · **Verified by:** VAT-003
+**Commit:** `PLACEHOLDER`
 
-- [ ] The root branch sets every daemon-controlled variable the non-root
+- [x] The root branch sets every daemon-controlled variable the non-root
       branch does, or its comment is corrected to say which branch it covers
-- [ ] Assess `MCP_USER`, never daemon-set in either branch
-- [ ] Test with `container.user: root` and a hostile `extra_env`
+- [x] Assess `MCP_USER`, never daemon-set in either branch
+- [x] Test with `container.user: root` and a hostile `extra_env`
 
 **Defect (reproduced)** — `container.user: root`:
 
@@ -243,6 +244,58 @@ create a user or drop privileges). If so, the correct fix is to set them to a
 value that preserves root-mode semantics, or to strip daemon-controlled keys
 from `extra_env` in both branches rather than overwrite them. Do not
 mechanically copy the non-root branch's values across.
+
+**Decision recorded: strip, don't set-to-a-value.** `MCP_UID`/`MCP_GID` have
+no "correct value" in root mode — their *absence* is the signal
+`entrypoint.sh`'s `[ -z "${MCP_UID:-}" ]` reads as "run as root" (§5.3;
+confirmed against `entrypoint.sh` directly, and against the existing test
+`test_root_mode_with_userns_remap_is_allowed`, which already asserted
+`"MCP_UID" not in kwargs["environment"]` — a contract this fix preserves,
+not introduces). There is no non-empty value that "means root mode" the
+way there is for every other daemon-controlled key, so "set them to a
+value that preserves root-mode semantics" isn't available for these two —
+only stripping is. Applied uniformly rather than case-by-case: a new
+`_DAEMON_CONTROLLED_ENV_KEYS` frozenset (`MCP_UID`, `MCP_GID`,
+`MCP_USER`, `MCP_SUDO`, `MCP_WORKSPACE_PATH`, `MCP_SSH_MODE`,
+`MCP_CACHE_PATHS`, `SSH_AUTH_SOCK`) is filtered out of `extra_env` before
+*either* branch merges it; each branch then sets only the keys it
+actually wants, same as before. A key neither branch re-adds (all six
+non-`MCP_WORKSPACE_PATH`/`MCP_CACHE_PATHS` keys, in root mode) now stays
+absent by construction rather than by an override that branch never
+performs.
+
+`MCP_USER` included even though the checklist notes no branch ever
+daemon-sets it: that was the actual gap, not a reason to leave it alone —
+ordering-based protection requires a branch to set *something*, and
+nothing ever did, so it was unprotected in host mode too, not only root
+mode. Confirmed with a host-mode test, not just a root-mode one.
+
+Corrected the module docstring's comment, which claimed extra_env is
+"merged FIRST in both branches below, every daemon-controlled variable
+LAST" — true of the non-root branch's own six keys, never true of the
+root branch's five it doesn't set, which is the defect this task fixes.
+
+**New tests, watched fail first.**
+`tests/workspace/test_container_config.py`:
+`test_at_vat003_root_mode_extra_env_cannot_inject_daemon_controlled_keys`
+(all six leak pre-fix, exactly the reproduction above plus `MCP_USER`/
+`MCP_SSH_MODE`, which weren't in the original repro but follow the same
+mechanism) and
+`test_at_vat003_host_mode_extra_env_cannot_inject_mcp_user` (host mode's
+own, previously-unprotected gap).
+
+**Revert-verified.** Backed up `container_config.py`, restored `HEAD`'s
+version, re-ran both new tests: both failed with the leaked values shown
+above. Restored the fix; `tests/workspace/test_container_config.py`: 20
+passed (18 pre-existing + 2 new).
+
+**Suites.** `tests/workspace/` (excluding the slower `test_git*` files,
+which don't touch container-identity construction): 289 passed, no
+Docker leftovers. Full unscoped `tests/`: 985 passed, 0 failed, 531.99s,
+no Docker leftovers. Lint/format clean; `mypy src`: no issues in 53
+files. No schema/contract change — this is container-startup environment
+construction, never client-visible through any tool's JSON output; no
+`CONTRACT_VERSION` bump.
 
 ### V4 — The entrypoint's `.ssh` provisioning does not follow symlinks
 **Satisfies:** VR-004 · **Verified by:** VAT-004

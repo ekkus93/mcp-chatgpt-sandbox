@@ -44,6 +44,29 @@ SSH_AGENT_SOCKET_CONTAINER_PATH = "/run/mcp/ssh/agent.sock"
 #: that convention is written down for Python to rely on too.
 DEFAULT_CONTAINER_HOME = "/home/mcpuser"
 
+#: HR-006 / VR-003 (`docs/REVIEW_SPEC.md` §4): every environment variable
+#: `entrypoint.sh`'s own contract (this module's docstring) treats as
+#: daemon-controlled — stripped from a caller's `extra_env` before either
+#: branch of `build_workspace_run_kwargs` merges it, regardless of
+#: whether that branch goes on to set its own value for a given key.
+#: `MCP_USER` is included even though no branch ever daemon-sets it:
+#: `entrypoint.sh` still reads it (default `"mcpuser"`), so an
+#: unprotected project-supplied value would be exactly the kind of
+#: daemon-controlled-variable injection this set exists to block, even
+#: though no branch below "restores" a correct value for it afterward.
+_DAEMON_CONTROLLED_ENV_KEYS = frozenset(
+    {
+        "MCP_UID",
+        "MCP_GID",
+        "MCP_USER",
+        "MCP_SUDO",
+        "MCP_WORKSPACE_PATH",
+        "MCP_SSH_MODE",
+        "MCP_CACHE_PATHS",
+        "SSH_AUTH_SOCK",
+    }
+)
+
 
 def userns_remap_active(docker_client: docker.DockerClient) -> bool:
     """§5.3: whether the daemon has user-namespace remapping configured,
@@ -94,21 +117,38 @@ def build_workspace_run_kwargs(
     (`docs/REMEDIATION_SPEC.md` §32) requires it get the same
     ordering guarantee `MCP_UID`/`MCP_GID`/etc. get below.
     """
-    # HR-006 (`docs/HARDENING_SPEC.md` §6) / RR-031: `extra_env` is merged
-    # FIRST in both branches below, every daemon-controlled variable
-    # LAST — so even if the allowlist reject in `ProjectWorkspaceConfig`'s
-    # own validator (the other, independent HR-006 control) were somehow
-    # bypassed, ordering alone still stops a project-supplied `MCP_UID`/
-    # `MCP_GID`/`SSH_AUTH_SOCK`/`MCP_CACHE_PATHS`/etc. from overriding the
-    # values the daemon just computed. Neither control is sufficient
-    # alone. `MCP_CACHE_PATHS` is *always* set here (`""` when there are
-    # no caches, matching what leaving it unset means to `entrypoint.sh`)
-    # rather than only when `cache_paths` is non-empty — an unconditional
-    # override is what actually gives it the same guarantee as
-    # `MCP_UID`/`MCP_GID`, which are never conditionally omitted either;
-    # merging it in only when truthy would leave a project with no caches
-    # configured today with no override at all if `extra_env` carried a
-    # value regardless.
+    # HR-006 (`docs/HARDENING_SPEC.md` §6) / RR-031 / VR-003
+    # (`docs/REVIEW_SPEC.md` §4): `extra_env` has every daemon-controlled
+    # key stripped *before* either branch below merges it — not merged
+    # first and overridden last, the way this comment used to describe.
+    # Ordering-alone override only protects a key the branch that runs
+    # goes on to set explicitly, and the root branch does not set
+    # `MCP_UID`/`MCP_GID`/`MCP_SUDO`/`MCP_SSH_MODE`/`SSH_AUTH_SOCK` at
+    # all — `MCP_UID`/`MCP_GID` in particular have no "correct value" to
+    # override with in root mode, since their *absence* (not any
+    # particular value) is what `entrypoint.sh`'s
+    # `[ -z "${MCP_UID:-}" ]` reads as "run as root" (§5.3). Stripping
+    # first makes both branches correct by construction: a key neither
+    # branch re-adds simply stays absent, regardless of what `extra_env`
+    # tried to inject. `MCP_USER` is included even though no branch ever
+    # daemon-sets it (`entrypoint.sh`'s own default, "mcpuser", is never
+    # overridden anywhere in this codebase, per this module's own
+    # docstring) — exactly why it needs stripping instead of overriding:
+    # there is no branch-side value that would have protected it before.
+    #
+    # `MCP_CACHE_PATHS` is *always* set in both branches (`""` when
+    # there are no caches, matching what leaving it unset means to
+    # `entrypoint.sh`) rather than only when `cache_paths` is non-empty —
+    # an unconditional override is what actually gives it the same
+    # guarantee as `MCP_UID`/`MCP_GID`, which are never conditionally
+    # omitted either; merging it in only when truthy would leave a
+    # project with no caches configured today with no override at all if
+    # `extra_env` carried a value regardless.
+    stripped_extra_env = {
+        key: value
+        for key, value in (extra_env or {}).items()
+        if key not in _DAEMON_CONTROLLED_ENV_KEYS
+    }
     cache_env = {"MCP_CACHE_PATHS": ":".join(cache_paths) if cache_paths else ""}
     if container_config.user == "root":
         if not userns_remap_active(docker_client):
@@ -118,7 +158,7 @@ def build_workspace_run_kwargs(
                 details={"container_user": "root"},
             )
         environment = {
-            **(extra_env or {}),
+            **stripped_extra_env,
             "MCP_WORKSPACE_PATH": workspace_path,
             **cache_env,
         }
@@ -126,7 +166,7 @@ def build_workspace_run_kwargs(
         uid = os.getuid() if checkout_uid is None else checkout_uid
         gid = os.getgid() if checkout_gid is None else checkout_gid
         environment = {
-            **(extra_env or {}),
+            **stripped_extra_env,
             "MCP_UID": str(uid),
             "MCP_GID": str(gid),
             "MCP_SUDO": "true" if container_config.sudo else "false",

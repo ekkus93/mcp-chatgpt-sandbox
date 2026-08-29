@@ -158,6 +158,62 @@ def test_at_hat005_root_mode_extra_env_cannot_override_workspace_path() -> None:
     assert kwargs["environment"]["MCP_WORKSPACE_PATH"] == "/workspace"
 
 
+def test_at_vat003_root_mode_extra_env_cannot_inject_daemon_controlled_keys() -> None:
+    """VR-003 (`docs/REVIEW_SPEC.md` §4): the root branch used to set
+    only `MCP_WORKSPACE_PATH`/`MCP_CACHE_PATHS`, so `MCP_UID`/`MCP_GID`/
+    `MCP_SUDO`/`MCP_SSH_MODE`/`SSH_AUTH_SOCK` passed through from
+    `extra_env` unopposed — the docstring's "ordering alone still stops
+    a project-supplied `MCP_UID`/`MCP_GID`/`SSH_AUTH_SOCK`" claim was
+    false in this branch, since the daemon never set them here for
+    ordering to act on. `MCP_UID`/`MCP_GID`'s *absence* is what signals
+    root mode to `entrypoint.sh` (`[ -z "${MCP_UID:-}" ]`) — there is no
+    value that "means root mode" the way there is for the other keys, so
+    the fix strips every daemon-controlled key from `extra_env` before
+    either branch merges it, rather than copying the non-root branch's
+    values across."""
+    client = _fake_client(["name=userns"])  # userns active, root permitted
+    config = ContainerConfig(user="root")
+    kwargs = build_workspace_run_kwargs(
+        container_config=config,
+        docker_client=client,
+        ssh_config=_SSH_CONFIG,
+        extra_env={
+            "MCP_UID": "0",
+            "MCP_GID": "0",
+            "MCP_USER": "evil",
+            "MCP_SUDO": "true",
+            "MCP_SSH_MODE": "file",
+            "SSH_AUTH_SOCK": "/evil",
+        },
+    )
+    environment = kwargs["environment"]
+    assert "MCP_UID" not in environment
+    assert "MCP_GID" not in environment
+    assert "MCP_USER" not in environment
+    assert "MCP_SUDO" not in environment
+    assert "MCP_SSH_MODE" not in environment
+    assert "SSH_AUTH_SOCK" not in environment
+
+
+def test_at_vat003_host_mode_extra_env_cannot_inject_mcp_user() -> None:
+    """`MCP_USER` is never daemon-set in either branch (entrypoint.sh's
+    own default, "mcpuser", is never overridden anywhere in this
+    codebase — `container_config.py`'s own module docstring says so) —
+    but that is a reason to strip it from `extra_env`, not a reason it
+    was safe to leave unprotected by ordering."""
+    client = _fake_client([])
+    config = ContainerConfig(user="host", sudo=False)
+    kwargs = build_workspace_run_kwargs(
+        container_config=config,
+        docker_client=client,
+        ssh_config=_SSH_CONFIG,
+        checkout_uid=1000,
+        checkout_gid=1000,
+        extra_env={"MCP_USER": "evil"},
+    )
+    assert "MCP_USER" not in kwargs["environment"]
+
+
 # --- RR-031 (docs/REMEDIATION_SPEC.md §32): MCP_CACHE_PATHS gets the same
 # ordering guarantee as every other daemon-controlled variable above -----------
 
