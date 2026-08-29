@@ -3,7 +3,7 @@
 **Spec:** `docs/REVIEW_SPEC.md` (VR-001..VR-014, VAT-001..VAT-006)
 **Source:** code review of `docs/REMEDIATION_TODO.md` R1–R27 plus the H36/H37
 work that landed after it, 2026-08-28, against `8301c72`
-**Status:** in progress (Phase 0 + V7 done)
+**Status:** complete (V1-V8 done)
 
 Fourteen items: six correctness defects in shipped code, four overstated
 claims, four stale references. Every one was reproduced against the running
@@ -581,7 +581,7 @@ Also documentation-only. Also reasonably **one commit**.
 
 ### V8 — Annotate what H36 superseded ✅
 **Satisfies:** VR-011, VR-012, VR-013, VR-014
-**Commit:** `PLACEHOLDER`
+**Commit:** `ef29601`
 
 - [x] **R1** — add the supersession note it lacks. H36 deleted
       `run_git_host_side`, `_discover_code_executing_overrides`,
