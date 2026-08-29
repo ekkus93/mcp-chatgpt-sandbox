@@ -3,7 +3,7 @@
 **Spec:** `docs/REVIEW_SPEC.md` (VR-001..VR-014, VAT-001..VAT-006)
 **Source:** code review of `docs/REMEDIATION_TODO.md` R1–R27 plus the H36/H37
 work that landed after it, 2026-08-28, against `8301c72`
-**Status:** not started
+**Status:** in progress (V1 done)
 
 Fourteen items: six correctness defects in shipped code, four overstated
 claims, four stale references. Every one was reproduced against the running
@@ -53,7 +53,7 @@ in any order — or batched, since none of them touches code.
 
 ### V1 — A line-cropped capture never reaches a strict parser ✅
 **Satisfies:** VR-001 · **Verified by:** VAT-001
-**Commit:** `PLACEHOLDER`
+**Commit:** `4b6395c`
 
 - [x] `git_commit`'s pre-`add` index snapshot no longer parses a
       line-cropped `stdout_tail`
