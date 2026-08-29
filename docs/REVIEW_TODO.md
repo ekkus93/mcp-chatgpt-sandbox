@@ -133,12 +133,13 @@ before this change, 23 after, all the same pattern the file already had —
 is not part of the `mypy src` gate CI actually runs). No schema/contract
 change; no `CONTRACT_VERSION` bump needed, as expected.
 
-### V2 — `truncated` reflects bytes withheld, not bytes requested
+### V2 — `truncated` reflects bytes withheld, not bytes requested ✅
 **Satisfies:** VR-002 · **Verified by:** VAT-002
+**Commit:** `PLACEHOLDER`
 
-- [ ] `truncated` compares `min(effective_end, total_size) - start` against
+- [x] `truncated` compares `min(effective_end, total_size) - start` against
       `limit`
-- [ ] Test a `byte_range` end past EOF with a `limit` smaller than the
+- [x] Test a `byte_range` end past EOF with a `limit` smaller than the
       requested span
 
 **Defect (reproduced)** — `max_read_bytes=500`, 10-byte file:
@@ -179,6 +180,41 @@ proves less than one that uses the default and an oversized explicit `end`.
 **Check while here:** whether `docs/SPEC.md` §12.2's description of
 `truncated` for a `byte_range` read needs the same correction, or already
 says what the fixed code will do.
+
+**`docs/SPEC.md` checked, no change needed.** §12.2 and §13.2 only say a
+read's output "SHOULD identify truncation" — neither states `truncated`'s
+precise semantics (bytes withheld vs. bytes requested), so there was
+nothing there to contradict the old behavior or need updating for the new.
+
+**Implemented as described.** `read_file`'s `byte_range` branch
+(`filesystem/service.py`) now computes
+`available_len = max(min(effective_end, total_size) - start, 0)` and
+`truncated = available_len > limit` — exactly the formula VR-002
+specifies. `read_len`/`span_bytes` (what's actually read and returned)
+were already correct; only the flag was wrong.
+
+**New tests, watched fail first.** `tests/filesystem/test_service.py`:
+`test_at_vat002_byte_range_truncated_reflects_bytes_withheld_not_requested`
+(a 10-byte file, default 10 MiB `max_read_bytes`, `byte_range=(0,
+20_000_000)` — pre-fix `truncated=True` on complete content, matching the
+reproduction above; also asserts the documented `end=None` idiom was
+never broken) and
+`test_at_vat002_byte_range_truncated_still_true_when_bytes_are_genuinely_withheld`
+(the flag SHALL still fire when content really was withheld — this
+already passed pre-fix, confirming the fix narrows the flag rather than
+disabling it).
+
+**Revert-verified.** Backed up `filesystem/service.py`, restored `HEAD`'s
+version, re-ran the new tests: the first failed with the identical
+`assert True is False` on `truncated`; the second still passed (as
+expected — it isn't the regressed path). Restored the fix.
+
+**Suites.** `tests/filesystem/`: 118 passed. `tests/filesystem/
+tests/workspace/test_async_execution_tools.py` (the other `byte_range`
+caller): 146 passed. Full unscoped `tests/`: 983 passed, 0 failed,
+532.64s. No Docker leftovers. Lint/format clean; `mypy src`: no issues in
+53 files. No schema/contract change — `truncated`'s type is unchanged,
+only which value it reports; no `CONTRACT_VERSION` bump.
 
 ### V3 — Daemon-controlled variables are re-asserted in every branch
 **Satisfies:** VR-003 · **Verified by:** VAT-003

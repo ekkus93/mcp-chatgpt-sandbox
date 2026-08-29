@@ -172,6 +172,52 @@ def test_read_file_byte_range(tmp_path: Path) -> None:
     assert result.size == len("fn main() {}\n")  # full size, not the range
 
 
+def test_at_vat002_byte_range_truncated_reflects_bytes_withheld_not_requested(
+    tmp_path: Path,
+) -> None:
+    """VR-002 (`docs/REVIEW_SPEC.md` §4): the old code computed
+    `truncated = span_len > limit` from the *requested* span
+    (`end - start`), not from how much of the file actually remained. A
+    client whose `end` runs past EOF, or who omits a client-side
+    `max_bytes` cap smaller than the requested span, got `truncated:
+    True` on content that was already complete — reproduced here with a
+    10-byte file and a huge explicit `end` standing in for "the rest of
+    the file" (the documented, correct way to get that is `end=None`)."""
+    root = _repo(tmp_path)
+    (root / "small.txt").write_text("0123456789")
+    svc = _service(root)  # default max_read_bytes: 10 MiB
+
+    result = svc.read_file("small.txt", byte_range=(0, 20_000_000))
+    assert result.content == "0123456789"
+    assert result.truncated is False
+
+    # The documented idiom for "to EOF" already worked correctly — this
+    # asserts the fix didn't regress it.
+    result_end_none = svc.read_file("small.txt", byte_range=(0, None))
+    assert result_end_none.truncated is False
+
+
+def test_at_vat002_byte_range_truncated_still_true_when_bytes_are_genuinely_withheld(
+    tmp_path: Path,
+) -> None:
+    """The other half of VR-002: `truncated` SHALL still be `True` when
+    content actually was withheld — the fix narrows the flag to bytes
+    withheld, it does not weaken it to never firing."""
+    root = _repo(tmp_path)
+    (root / "small.txt").write_text("0123456789")
+    svc = _service(root, config=FilesystemConfig(max_read_bytes=5))
+
+    result = svc.read_file("small.txt", byte_range=(0, 20_000_000))
+    assert result.content == "01234"
+    assert result.truncated is True
+
+    # A requested span narrower than the withheld remainder is also still
+    # correctly flagged.
+    result_narrow = svc.read_file("small.txt", byte_range=(0, 8), max_bytes=3)
+    assert result_narrow.content == "012"
+    assert result_narrow.truncated is True
+
+
 def test_read_file_line_range(tmp_path: Path) -> None:
     root = _repo(tmp_path)
     (root / "multi.txt").write_text("a\nb\nc\nd\n")

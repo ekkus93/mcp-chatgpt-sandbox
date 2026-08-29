@@ -278,7 +278,16 @@ class FilesystemService:
                     read_len = min(span_len, limit)
                     f.seek(start)
                     span_bytes = f.read(read_len) if read_len > 0 else b""
-                    truncated = span_len > limit
+                    # VR-002 (`docs/REVIEW_SPEC.md` §4): `truncated`
+                    # SHALL compare bytes actually withheld against
+                    # `limit`, not the requested span (`span_len`) —
+                    # `end` past `total_size` (or `end=None`'s own
+                    # resolution, before this line ever runs) made the
+                    # old `span_len > limit` flag `True` on content that
+                    # was already complete, because it never looked at
+                    # how much of the file actually existed past `start`.
+                    available_len = max(min(effective_end, total_size) - start, 0)
+                    truncated = available_len > limit
                     # A split character at the client's own chosen
                     # start/end is tolerated the same way it always was —
                     # `errors="replace"`, not a rejection: unlike the
