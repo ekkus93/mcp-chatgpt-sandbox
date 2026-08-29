@@ -512,28 +512,66 @@ All four are `docs/REMEDIATION_TODO.md` describing itself inaccurately. No
 code changes. Reasonable to land as **one commit** — they are the same class
 of correction and splitting them adds ceremony without adding review value.
 
-### V7 — Correct the four overstatements
+### V7 — Correct the four overstatements ✅
 **Satisfies:** VR-007, VR-008, VR-009, VR-010
+**Commit:** `PLACEHOLDER`
 
-- [ ] **R21 checkbox 2** — untick or reword. `tests/workspace/conftest.py`'s
+- [x] **R21 checkbox 2** — untick or reword. `tests/workspace/conftest.py`'s
       `repository` fixture still hard-codes `id="example"`; R21's own body
       says the rename was "considered and deliberately not done". The
       reasoning is sound and stays; the tick goes.
-- [ ] **R23's "exact"** — RR-026 specifies *unreachable Docker daemon*; the
+- [x] **R23's "exact"** — RR-026 specifies *unreachable Docker daemon*; the
       cited test removes the container so `exec_inspect` 404s. Restate as the
       substitution it is. The substitute is arguably stronger — say that too,
       rather than only conceding the mismatch.
-- [ ] **R27's closing paragraph** — "without constructing a running
+- [x] **R27's closing paragraph** — "without constructing a running
       `MCPServer`" holds for `open_workspace` and `run_patch_file`, not for
       `run_exec` or `run_git_commit` (both call `create_server`). Scope it to
       the two it holds for; the per-module write-ups above it are already
       accurate and need no change.
-- [ ] **R25 checkbox 2** — "Reject a **non-increasing** `contract_version`";
+- [x] **R25 checkbox 2** — "Reject a **non-increasing** `contract_version`";
       CI rejects only a *decrease*, which is correct behavior (an unchanged
       version must pass). Reword to "decrease". The CI step's own comment is
       already accurate.
-- [ ] Amend `docs/REMEDIATION_SPEC.md` RR-028's wording (V10's half) and
-      RR-026's failed-termination row (V8's half) to match
+- [x] Amend `docs/REMEDIATION_SPEC.md` RR-028's wording (VR-010's half) and
+      RR-026's failed-termination row (VR-008's half) to match
+
+**Implemented as described, all five bullets.** R21 checkbox 2 unticked
+with an inline note pointing at the "considered and deliberately not
+done" reasoning it already carried (VR-007). R23's "all seven" line
+corrected to "six of seven", with the failed-termination row restated
+as an accepted, arguably-stronger substitution rather than a mismatch
+conceded and left at that (VR-008) — the same correction also applied
+to `docs/REMEDIATION_SPEC.md`'s RR-026 table row itself, not only
+R23's prose. R27's closing paragraph split into the sentence that still
+holds (all four modules' bodies no longer need a
+`server.call_tool(...)` round trip to exercise) and a Correction
+explaining precisely which two modules' *tests* also construct no
+server at all, quoting `run_git_commit`'s own already-accurate
+per-module note as the model the generalizing summary should have
+matched (VR-009). R25 checkbox 2 reworded to "decrease", with
+`docs/REMEDIATION_SPEC.md`'s RR-028 wording corrected the same way
+(VR-010) — its old "reject a non-increasing version" would have failed
+every no-op commit, since an *unchanged* version is not an increase.
+
+No code changes, as expected — every edit above is to `docs/REMEDIATION_
+TODO.md` or `docs/REMEDIATION_SPEC.md`. Re-read each corrected section
+against the code/CI step it describes before writing this up (RR-033):
+confirmed `conftest.py`'s `repository` fixture still hard-codes
+`id="example"` (VR-007); confirmed `test_rr013_failed_termination_via_
+a_real_exec_inspect_failure` removes a container rather than mocking an
+unreachable daemon (VR-008); confirmed `test_rr027_run_git_commit_is_
+directly_callable_without_a_server` and (by the same shape)
+`tools/execution.py`'s equivalent both call `create_server` for setup
+(VR-009); confirmed `.github/workflows/ci.yml`'s `sort -V | tail -1`
+step rejects only a decrease, and its own inline comment already says
+so (VR-010).
+
+**Suites.** None run — no source or test file changed, only
+documentation. Docs-consistency test
+(`tests/test_acceptance_test_coverage.py` and the `REVIEW_SPEC.md`/
+`REVIEW_TODO.md` cross-checks used for V1–V6) re-run anyway, since it's
+fast and touches these files indirectly: passes.
 
 ---
 

@@ -1774,8 +1774,11 @@ and R19's three new tests updated to inject `MCP_CACHE_PATHS` via the new
 **Commit:** `b20d720`
 
 - [x] Track volume *creation*, not reference (`conftest.py:78-80`)
-- [x] Until then, give each run a unique repository id so the deterministic
-      volume name cannot collide with production
+- [ ] Until then, give each run a unique repository id so the deterministic
+      volume name cannot collide with production — **considered and
+      deliberately not done** (see the Implementation note below); left
+      unticked per VR-000b (`docs/REVIEW_SPEC.md`) rather than marked
+      done for work that was weighed and skipped
 - [x] Test that a volume matching the production name for a repository the suite
       also uses survives a full run
 
@@ -1945,10 +1948,21 @@ Most are folded into R3–R17; this task is the sweep that confirms none was mis
 
 **Swept, not re-implemented.** Checked each of the 7 rows against
 `docs/REMEDIATION_SPEC.md` §26's own "Test uses / SHALL use" table by reading
-the actual test in question, not assuming R3–R14 already closed it — all
+the actual test in question, not assuming R3–R14 already closed it — six of
 seven were already exercising the exact adversarial input class the table
 demands, done as part of the R-task named alongside each row (R12/R13/R14 in
-this session; R3/R4/R6/R10 in an earlier one):
+this session; R3/R4/R6/R10 in an earlier one). **Correction (V7,
+`docs/REVIEW_TODO.md`/`docs/REVIEW_SPEC.md` VR-008):** the seventh —
+"Failed termination, unreachable Docker daemon" — is not exact. RR-026's
+table specifies an *unreachable Docker daemon*; the cited test,
+`test_rr013_failed_termination_via_a_real_exec_inspect_failure`, instead
+removes the container so `exec_inspect` returns a real 404. The
+substitute is arguably stronger than the specified input — a real 404
+from a real Docker daemon beats a mocked unreachable one — but it is a
+substitution, not the exact input class the table names, and the
+original "all seven" wording overstated the match. The table row itself
+(`docs/REMEDIATION_SPEC.md` RR-026) is annotated separately to record
+this as an accepted substitution rather than a gap.
 
 | Property | Test | Location |
 |---|---|---|
@@ -2074,7 +2088,12 @@ removed by hand.
 
 - [x] Sort the tool array by name before diffing (`jq -S` sorts object keys only,
       so a pure reordering falsely demands a bump)
-- [x] Reject a non-increasing `contract_version`
+- [x] Reject a **decrease** in `contract_version` — corrected from "non-increasing"
+      (V7, `docs/REVIEW_TODO.md` VR-010): CI rejects only a decrease
+      (`sort -V | tail -1`), and that is the correct behavior, since an
+      *unchanged* version must pass or every no-op commit would fail. The
+      CI step's own comment already said "decrease" accurately; only this
+      checkbox and RR-028's wording (corrected there too) overstated it.
 - [x] Widen `docs/TOOLS.md`'s drift-check pattern beyond `[a-z_]+` so a future
       tool name with a digit does not produce a spurious failure
 
@@ -2433,8 +2452,28 @@ matching the pattern H32's `run_setup_steps` established; `tools/
 repository.py` was assessed and correctly has nothing to extract. Every
 extraction was a pure refactor verified against the full existing test
 suite (no behavior change), plus one new test per module proving the
-specific property this task exists to establish — the tool body is now
-unit-testable without constructing a running `MCPServer`.
+specific property this task exists to establish.
+
+**Correction (V7, `docs/REVIEW_TODO.md`/`docs/REVIEW_SPEC.md` VR-009):**
+the sentence above used to end "the tool body is now unit-testable
+without constructing a running `MCPServer`", stated as a property of all
+four modules. That holds for `open_workspace` (`tools/workspace.py`) and
+`run_patch_file` (`tools/filesystem.py`) — both new tests genuinely
+construct no server. It does **not** hold for `run_exec`
+(`tools/execution.py`) or `run_git_commit` (`tools/git.py`): both new
+tests call `create_server`/`server.call_tool` first, to get a real
+running container with real content to act on, before calling the
+extracted function directly with no server call in *that* part of the
+chain. Each per-module write-up above already discloses this
+accurately (see `run_git_commit`'s own note: *"`create_server`/
+`workspace_open`/`write_file` are still used to get a real running
+container... this test is about the commit tool body's own testability,
+not about reproducing workspace creation too"*) — only this generalizing
+closing summary overstated it. The actual, correctly-scoped property
+every module shares is narrower: the tool body's own logic no longer
+requires a `server.call_tool("git_commit"/"exec"/etc, ...)` round trip
+to exercise — it is callable as a plain function — not that its test
+setup never touches a server at all.
 
 ---
 

@@ -605,7 +605,7 @@ strengthened:
 | Character-safe pagination (RR-016) | valid UTF-8 only | content with invalid bytes (H19's own `surrogateescape` case) |
 | Index rollback (RR-005) | an untracked file | a path with prior staged content |
 | Pathspec literalization (RR-004) | `:/`, `:(glob)**` | `""`, `"."`, `"./"` |
-| Failed termination (RR-013) | monkeypatched `os.killpg` | unreachable Docker daemon |
+| Failed termination (RR-013) | monkeypatched `os.killpg` | unreachable Docker daemon — **accepted substitution** (V7, `docs/REVIEW_TODO.md`/`docs/REVIEW_SPEC.md` VR-008): the test that closed this row (`test_rr013_failed_termination_via_a_real_exec_inspect_failure`) removes the container so a real `exec_inspect` 404s, rather than mocking an unreachable daemon — a real failure from a real Docker daemon, arguably a stronger adversarial input than the one named here, not a gap |
 | Enumeration resilience (RR-007) | escaping symlink | symlink loop, permission error |
 | Tail correctness (RR-019) | whole-file reads (`read_from == 0`) | a nonzero backward offset |
 | Text/binary classification (RR-018) | ASCII only | multi-byte character at the limit boundary |
@@ -628,7 +628,12 @@ suite green. Each SHALL gain a test that fails on the reverted code:
 `.github/workflows/ci.yml:102-104` uses `jq -S .tools`, which sorts object keys
 but preserves array order, so a pure reordering of the tool array falsely demands
 a version bump. A version *downgrade* also passes. The comparison SHALL sort the
-array by tool name, and the check SHALL reject a non-increasing version.
+array by tool name, and the check SHALL reject a **decrease** in version.
+(**Corrected wording** — V7, `docs/REVIEW_TODO.md`/`docs/REVIEW_SPEC.md`
+VR-010: this requirement previously said "reject a non-increasing version",
+which would also reject an *unchanged* version and fail every no-op commit.
+Rejecting only a decrease — what the shipped `sort -V | tail -1` check and
+R25's implementation both actually do — is the correct requirement.)
 
 ---
 
