@@ -918,3 +918,47 @@ async def test_at_hr025_nothing_to_commit_maps_to_a_specific_error_code(
             "git_commit",
             {"workspace_id": workspace_id, "message": "no-op", "paths": ["README.md"]},
         )
+
+
+async def test_at_vat001_a_line_cropped_index_snapshot_does_not_crash_the_commit(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """VR-001 (`docs/REVIEW_SPEC.md` §4): `git_commit`'s pre-`add` index
+    snapshot is read through `ExecutionService.consume`, which crops
+    `stdout_tail` to the last `response_tail_lines` (200) **lines**.
+    `ExecResult.stdout_truncated` reflects only the *byte* cap, so it is
+    `False` while the data is already line-cropped, and
+    `parse_index_entries` — called unconditionally, before this call's
+    own `git add` even runs — raises an untranslated `ValueError` on the
+    cropped fragment.
+
+    More than `response_tail_lines` newline-bearing paths, already
+    staged, reproduce it: `git ls-files -z --stage` embeds a literal
+    newline inside each such path (git does not escape `-z` output —
+    R4's stated "no newlines to split on" rationale was wrong), so 220
+    such entries already exceed 200 *lines* well before 200 *entries*."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path)
+
+    many_dir = repo_path / "many"
+    many_dir.mkdir()
+    for i in range(220):
+        (many_dir / f"a\nb_{i}.txt").write_text("x")
+    subprocess.run(["git", "add", "-A", "--", ":(literal)many"], cwd=repo_path, check=True)
+
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    result = await server.call_tool(
+        "git_commit",
+        {
+            "workspace_id": workspace_id,
+            "message": "add many newline-bearing paths",
+            "paths": ["many"],
+        },
+    )
+    assert result.structured_content["commit_sha"] is not None
+    assert len(result.structured_content["files_committed"]) == 220

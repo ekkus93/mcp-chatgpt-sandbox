@@ -56,7 +56,7 @@ from dev_workspace_mcp.errors import (
     WorkspaceNotRunningError,
     translate_workspace_errors,
 )
-from dev_workspace_mcp.execution.service import ExecResult, ExecutionService
+from dev_workspace_mcp.execution.service import CapturedOutput, ExecResult, ExecutionService
 from dev_workspace_mcp.git.commit import (
     build_add_argv,
     build_capture_index_argv,
@@ -457,6 +457,32 @@ async def run_git_commit(
             response_tail_lines=execution_config.response_tail_lines,
         )
 
+    async def capture_index(cmd: list[str]) -> CapturedOutput:
+        """VR-001 (`docs/REVIEW_SPEC.md` §4): the index snapshot
+        `parse_index_entries` parses is read through `capture`, not
+        `run_git`/`consume` — `consume`'s `response_tail_lines` line-crop
+        can cut a NUL-delimited `-z --stage` entry in half whenever a
+        staged path contains an embedded newline (git does not escape
+        newlines in `-z` output, unlike the NUL delimiter itself; a real
+        path can contain one), and `ExecResult.stdout_truncated` reflects
+        only the *byte* cap, so it stays `False` while the data is
+        already cropped. `capture`'s `stdout_truncated` is the right
+        signal here: this is a whole listing being handed to a strict
+        parser, not a human-readable tail."""
+        exec_id = await asyncio.to_thread(
+            execution_service.start,
+            container_id,
+            cmd,
+            cwd=record.workspace_path,
+            user=user,
+            env=None,
+        )
+        return await asyncio.to_thread(
+            execution_service.capture,
+            exec_id,
+            max_bytes=execution_config.max_output_bytes,
+        )
+
     # RR-005 (`docs/REMEDIATION_SPEC.md` §5): the pre-`add` snapshot a
     # failed commit needs in order to restore what's about to be
     # staged, rather than resetting to HEAD — those are different
@@ -466,9 +492,9 @@ async def run_git_commit(
     # checked, not assumed false — a truncated capture is not a
     # faithful snapshot and must not be trusted for a
     # destructive-adjacent restore.
-    capture_result = await run_git(build_capture_index_argv(paths))
+    capture_result = await capture_index(build_capture_index_argv(paths))
     prior_entries: list[tuple[str, str, str]] | None = (
-        parse_index_entries(capture_result.stdout_tail)
+        parse_index_entries(capture_result.stdout)
         if capture_result.exit_code == 0 and not capture_result.stdout_truncated
         else None
     )
@@ -500,9 +526,9 @@ async def run_git_commit(
         index_left_dirty = True
         if prior_entries is not None:
             with contextlib.suppress(Exception):
-                current_result = await run_git(build_capture_index_argv(paths))
+                current_result = await capture_index(build_capture_index_argv(paths))
                 if current_result.exit_code == 0 and not current_result.stdout_truncated:
-                    current_entries = parse_index_entries(current_result.stdout_tail)
+                    current_entries = parse_index_entries(current_result.stdout)
                     prior_paths = {path for _, _, path in prior_entries}
                     extra_paths = sorted({path for _, _, path in current_entries} - prior_paths)
                     unstage_ok = True

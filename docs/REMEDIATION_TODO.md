@@ -362,6 +362,26 @@ not by a forced-failure integration test — legitimately triggering a
 corrupting the repository out from under the rest of the suite, wasn't
 found. Tracked honestly rather than left silently unverified.
 
+**Correction (V1, `docs/REVIEW_TODO.md`/`docs/REVIEW_SPEC.md` VR-001).**
+This write-up's implementation paragraph claimed *"a NUL-separated
+listing has no newlines to split on, so a large listing is truncated only
+by the (10 MiB default) byte cap, never silently by line count."* That is
+false: git does not escape newlines in `-z` output, so a path containing
+one still breaks `ExecResult`'s tail-based, newline-delimited
+`response_tail_lines` crop mid-entry — reproduced with 220 newline-bearing
+staged paths (verified against real git, `od -c` showed a literal
+newline inside a path), which raised an untranslated `ValueError` out of
+`parse_index_entries` before this call's own `git add` even ran. Fixed:
+the pre-`add` and post-`add` index snapshots are now both read through
+`ExecutionService.capture` (never line-cropped) instead of `consume`,
+matching H36a's precedent that the truncation signal belongs at the read.
+`git ls-files -z`'s NUL delimiter is still what makes entries
+unambiguous regardless of what a path contains — that half of the
+original claim was correct; only the line-count half was wrong.
+`tests/workspace/test_git_commit_tool.py`'s
+`test_at_vat001_a_line_cropped_index_snapshot_does_not_crash_the_commit`
+covers it. See V1's own write-up for the full defect and fix.
+
 ### R5 — Every filesystem error is a typed `WorkspaceError` ✅
 **Satisfies:** RR-006 · **Verified by:** RAT-007
 **Commit:** `2aeff82`

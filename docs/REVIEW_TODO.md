@@ -51,16 +51,17 @@ in any order — or batched, since none of them touches code.
 
 ## Phase 0 — Correctness defects in shipped code
 
-### V1 — A line-cropped capture never reaches a strict parser
+### V1 — A line-cropped capture never reaches a strict parser ✅
 **Satisfies:** VR-001 · **Verified by:** VAT-001
+**Commit:** `PLACEHOLDER`
 
-- [ ] `git_commit`'s pre-`add` index snapshot no longer parses a
+- [x] `git_commit`'s pre-`add` index snapshot no longer parses a
       line-cropped `stdout_tail`
-- [ ] The unguarded `parse_index_entries` call cannot raise an untranslated
+- [x] The unguarded `parse_index_entries` call cannot raise an untranslated
       exception
-- [ ] Correct R4's "no newlines in `-z` output" rationale in
+- [x] Correct R4's "no newlines in `-z` output" rationale in
       `docs/REMEDIATION_TODO.md`
-- [ ] Test with >`response_tail_lines` newline-bearing paths
+- [x] Test with >`response_tail_lines` newline-bearing paths
 
 **Defect (reproduced).** `consume` crops `stdout_tail` to the last
 `response_tail_lines` (200) **lines**; `stdout_truncated` reflects only the
@@ -95,6 +96,42 @@ is chosen.
 commit restores the caller's staged work or honestly reports
 `index_left_dirty`, and swallowing the parse error silently would trade a
 crash for the data-loss R4 exists to prevent.
+
+**Implemented as described.** Added `capture_index` (`tools/git.py`), a
+sibling to the existing `run_git` closure that reads through
+`ExecutionService.capture` instead of `consume` — used at both call sites
+(`build_capture_index_argv`'s pre-`add` and post-`add` reads). `capture`
+was already the right shape (H36a made it truthful, never line-crops); no
+new capture path was needed. Corrected the false claim in
+`git/commit.py`'s `build_capture_index_argv` docstring and in
+`docs/REMEDIATION_TODO.md`'s R4 write-up (a "Correction" paragraph, per
+this project's convention — the checkbox was accurate when written, R1's
+own tick stays).
+
+**New test, watched fail first.** `tests/workspace/test_git_commit_tool.py`:
+`test_at_vat001_a_line_cropped_index_snapshot_does_not_crash_the_commit` —
+220 newline-bearing paths staged under one directory, a normal (not
+forced-to-fail) `git_commit` call. Pre-fix: `UnexpectedToolError` wrapping
+`ValueError: not enough values to unpack (expected 3, got 1)` at
+`git/commit.py:123`, exactly the reproduction above, and exactly the "SDK
+crash handling applies to it" `translate_workspace_errors` warns of for a
+non-`WorkspaceError`. Post-fix: passes, `files_committed` lists all 220
+paths.
+
+**Revert-verified.** Backed up the two changed `src/` files, restored
+`HEAD`'s versions, re-ran the new test alone: failed with the identical
+`UnexpectedToolError`/`ValueError` trace. Restored the fix; test passes
+again.
+
+**Suites.** `tests/workspace/test_git_commit_tool.py tests/git/`: 211
+passed. Full unscoped `tests/`: 981 passed, 0 failed, 532.66s. No Docker
+leftovers (`docker ps -a --filter name=mcp-dev-` empty after the run).
+Lint/format clean on the three changed `src`/test files; `mypy src`: no
+issues in 53 files (the test file's pre-existing, out-of-CI-gate
+`InputRequiredResult`/`structured_content` `union-attr` noise — 21 errors
+before this change, 23 after, all the same pattern the file already had —
+is not part of the `mypy src` gate CI actually runs). No schema/contract
+change; no `CONTRACT_VERSION` bump needed, as expected.
 
 ### V2 — `truncated` reflects bytes withheld, not bytes requested
 **Satisfies:** VR-002 · **Verified by:** VAT-002

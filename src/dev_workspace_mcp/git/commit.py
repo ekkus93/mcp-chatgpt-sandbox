@@ -97,11 +97,17 @@ def build_capture_index_argv(paths: list[str]) -> list[str]:
     held prior staged content distinct from HEAD; reproduced empirically
     that a plain `git reset -- <paths>` silently destroys it). `-z`
     matches the NUL-delimited convention `read_committed_files` already
-    uses — unlike a newline, a NUL cannot appear in a real path, and
-    `tail_text`'s line-based truncation only ever sees this whole
-    listing as a single "line" as a result, so a large listing is
-    truncated only by the (10 MiB default) byte cap, never silently by
-    line count."""
+    uses — a NUL cannot appear in a real path, so entries are
+    unambiguously delimited regardless of what a path itself contains.
+
+    **Correction (VR-001, `docs/REVIEW_SPEC.md` §4):** this docstring
+    used to also claim a large listing is "truncated only by the byte
+    cap, never silently by line count" — false. Git does not escape
+    newlines in `-z` output, so a path containing one still breaks a
+    line-based crop mid-entry. `tools/git.py`'s `capture_index` reads
+    this argv's output through `ExecutionService.capture`, which is not
+    line-cropped, specifically so this listing can be handed whole to
+    `parse_index_entries` regardless of what a path contains."""
     return ["git", "ls-files", "-z", "--stage", "--", *_literal_pathspecs(paths)]
 
 
