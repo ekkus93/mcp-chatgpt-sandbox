@@ -194,7 +194,27 @@ fi
 # unrecognized or substituted host key fails the connection outright
 # rather than prompting (there is nothing to prompt on a non-interactive
 # exec anyway) or silently trusting it.
+#
+# VR-004 (docs/REVIEW_SPEC.md §4): the same symlink refusal the cache
+# loop above already applies (RR-030) is needed here too — `caches[].path`
+# can resolve to `.ssh` or `.` ($HOME itself; verified: both normalize to
+# themselves), so a project can mount a persistent, container-writable
+# cache volume over this exact path, plant `config -> <target>` in an
+# unprivileged run, and have this block's own `mkdir -p`/redirect/`chmod`
+# follow it in the *next* run's root phase — before the identity drop.
+# `.ssh` itself is refused if it is already a symlink (mirroring the
+# cache loop's own mount-point check); `config` is refused the same way
+# before it is ever opened for writing, since `mkdir -p` alone would not
+# have caught a symlinked *file* one level down.
+if [ -L "$HOME_DIR/.ssh" ]; then
+    echo "entrypoint: $HOME_DIR/.ssh is a symlink, refusing to provision SSH config through it" >&2
+    exit 1
+fi
 mkdir -p "$HOME_DIR/.ssh"
+if [ -L "$HOME_DIR/.ssh/config" ]; then
+    echo "entrypoint: $HOME_DIR/.ssh/config is a symlink, refusing to write through it" >&2
+    exit 1
+fi
 {
     echo "Host github.com"
     echo "    User git"

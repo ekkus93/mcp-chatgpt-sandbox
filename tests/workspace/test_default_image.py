@@ -229,6 +229,71 @@ def test_rr030_a_symlink_planted_in_a_cache_volume_is_not_followed(
         )
 
 
+def test_at_vat004_a_symlinked_ssh_config_planted_in_a_cache_volume_is_not_followed(
+    docker_client: docker.DockerClient, default_image_tag: str, ssh_config: SSHConfig
+) -> None:
+    """VR-004 (`docs/REVIEW_SPEC.md` §4): `caches[].path` reaches
+    `$HOME/.ssh` (`_home_relative_path` accepts both `.ssh` and `.`,
+    $HOME itself). Unlike the cache loop above — hardened by RR-030 —
+    the SSH block below it wrote into `$HOME/.ssh/config` with a plain
+    redirect and `chmod`, both of which follow a symlink, as root,
+    before the identity drop. Same two-real-container-runs-sharing-one-
+    persisted-volume shape as `test_rr030_*` above: the first run's
+    unprivileged command plants `config -> /etc/hostname` inside the
+    mounted `.ssh`; the second run's entrypoint (root phase) must refuse,
+    not truncate and `chmod 600` whatever `config` points at. The plant
+    target is a plain file, not a directory: a symlink to a directory
+    hits the shell redirect's own "Is a directory" error regardless of
+    this fix, which would make a pre-fix run fail for the wrong reason."""
+    volume_name = f"mcp-test-vr004-{uuid.uuid4().hex[:12]}"
+    mount = docker.types.Mount(
+        target="/home/mcpuser/.ssh", source=volume_name, type="volume", read_only=False
+    )
+    config = ContainerConfig(user="host", sudo=False)
+
+    plant_kwargs = build_workspace_run_kwargs(
+        ssh_config=ssh_config,
+        container_config=config,
+        docker_client=docker_client,
+        checkout_uid=1234,
+        checkout_gid=1234,
+        cache_paths=[".ssh"],
+    )
+    docker_client.containers.run(
+        default_image_tag,
+        # `-f`: entrypoint.sh's own root phase already wrote a real
+        # `config` file into the cache-mounted `.ssh` on *this* run,
+        # before dropping to this unprivileged command — unlike
+        # `.cargo/registry` above, nothing else ever populates that
+        # path, but `.ssh/config` is written on every run. Forcing
+        # replaces it with the symlink the *next* run's root phase must
+        # refuse to follow.
+        ["sh", "-c", "ln -sf /etc/hostname /home/mcpuser/.ssh/config"],
+        remove=True,
+        labels={LABEL_MANAGED: "true"},
+        environment=plant_kwargs["environment"],
+        mounts=[mount],
+    )
+
+    reach_kwargs = build_workspace_run_kwargs(
+        ssh_config=ssh_config,
+        container_config=config,
+        docker_client=docker_client,
+        checkout_uid=1234,
+        checkout_gid=1234,
+        cache_paths=[".ssh"],
+    )
+    with pytest.raises(docker.errors.ContainerError, match="symlink"):
+        docker_client.containers.run(
+            default_image_tag,
+            ["sh", "-c", "id -u"],
+            remove=True,
+            labels={LABEL_MANAGED: "true"},
+            environment=reach_kwargs["environment"],
+            mounts=[mount],
+        )
+
+
 def test_at_014_sudo_apt_get_install_works_as_non_root(
     docker_client: docker.DockerClient, default_image_tag: str, ssh_config: SSHConfig
 ) -> None:

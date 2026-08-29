@@ -297,14 +297,15 @@ files. No schema/contract change — this is container-startup environment
 construction, never client-visible through any tool's JSON output; no
 `CONTRACT_VERSION` bump.
 
-### V4 — The entrypoint's `.ssh` provisioning does not follow symlinks
+### V4 — The entrypoint's `.ssh` provisioning does not follow symlinks ✅
 **Satisfies:** VR-004 · **Verified by:** VAT-004
+**Commit:** `PLACEHOLDER`
 
-- [ ] The `.ssh` block refuses a symlinked `$HOME/.ssh`, matching the cache
+- [x] The `.ssh` block refuses a symlinked `$HOME/.ssh`, matching the cache
       loop R19 already hardened
-- [ ] Or `caches[].path` rejects collisions with daemon-managed home
+- [x] Or `caches[].path` rejects collisions with daemon-managed home
       subdirectories
-- [ ] Test with a cache volume mounted at `.ssh` containing a symlinked
+- [x] Test with a cache volume mounted at `.ssh` containing a symlinked
       `config`
 
 **Defect (reproduced).** `caches[].path` is project-authored and reaches
@@ -335,6 +336,60 @@ so this grants nothing new. Under `container.sudo: false` — supported, and
 listed in §74 — it is a real escalation to container root. Contained within
 the container either way; not a host escape. Say this plainly rather than
 inflating or dismissing it.
+
+**Implemented as described** (option 1: refuse a symlinked `.ssh`,
+matching the cache loop). `docker/default/entrypoint.sh`'s `.ssh` block
+now refuses outright if `$HOME_DIR/.ssh` is already a symlink (mirroring
+the cache loop's own mount-point check directly above it), and again if
+`$HOME_DIR/.ssh/config` is already a symlink, before it is ever opened
+for writing — `mkdir -p` alone does not catch a symlinked *file* one
+level down, which is the actually-reachable case (`.ssh` itself is
+usually a real, cache-mounted directory; `config` inside it is what a
+prior unprivileged run can replace). `chmod`/`chown -R` are unchanged;
+the fix is entirely the two new refusals ahead of them.
+
+**New test, watched fail first — and revised once.**
+`tests/workspace/test_default_image.py`:
+`test_at_vat004_a_symlinked_ssh_config_planted_in_a_cache_volume_is_not_followed`,
+modeled directly on `test_rr030_*`: a persistent named volume mounted at
+`.ssh`, planted with `config -> /etc/hostname` by an unprivileged run,
+then a second run with the same `cache_paths=[".ssh"]` expected to
+refuse. Two things the RR-030 precedent didn't need, found while writing
+this one:
+
+- The plant command needed `ln -sf`, not `ln -s`: entrypoint.sh's own
+  root phase already writes a real `config` file into `.ssh` on *every*
+  run, including the plant run itself, so a bare `ln -s` failed with
+  "File exists" before the interesting part of the test ever ran.
+- The plant target needed to be a file (`/etc/hostname`), not a
+  directory (`/etc`, `test_rr030_*`'s own choice): a symlink-to-directory
+  makes the shell's `>` redirect fail with its own "Is a directory"
+  error regardless of this fix, which made an early revert-verification
+  pass fail for the wrong reason before this was caught and corrected.
+
+**Revert-verified — twice, for the two reasons above.** First pass (bad
+plant command): failed on the *plant* step, before the assertion even
+ran — not the intended failure. Fixed the plant command
+(`ln -sf`), re-verified: this time the plant step succeeded but the
+*reach* step's `pytest.raises(..., match="symlink")` failed with `DID
+NOT RAISE` — the reverted entrypoint silently wrote through the symlink
+and exited 0, exactly the defect described (silent success, not a
+crash). Restored the fix: passes again.
+
+**Suites.** `tests/workspace/test_default_image.py`: 11 passed. Also ran
+with `shellcheck` on `entrypoint.sh`: one pre-existing warning (`SC2034`,
+unused `GROUP_NAME`, line 66, untouched by this change) — no new
+warnings from the added block.
+`tests/workspace/test_default_image.py tests/workspace/test_caches.py
+tests/workspace/test_container_config.py`: 48 passed. Full unscoped
+`tests/`: 986 passed, 0 failed, 525.89s, no Docker leftovers. One stale volume
+(`mcp-test-vr004-*`) found before the broader run, from an earlier
+manual invocation made before the plant-command fix above (that
+invocation's own test failure happened inside `pytest.raises`'
+`with`-block, so `docker_client`'s teardown fixture still ran — the
+volume's absence from that teardown is unexplained, not reproduced
+again across several subsequent clean runs); removed by hand and
+confirmed a normal run leaves none.
 
 ### V5 — Redaction covers every container type it can encounter
 **Satisfies:** VR-005 · **Verified by:** VAT-005
