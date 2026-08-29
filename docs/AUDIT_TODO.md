@@ -332,12 +332,13 @@ AAT-001's *original* draft fixture (before A3 was written) would have
 proven nothing about site 1 in isolation, exactly the mirror-image mistake
 this task exists to prevent for site 2.
 
-## A4 — Every acceptance-test series is citation-audited
+## A4 — Every acceptance-test series is citation-audited ✅
 **Satisfies:** AR-004 · **Verified by:** AAT-004
+**Commit:** `PLACEHOLDER`
 
-- [ ] Extend `tests/test_acceptance_test_coverage.py` to `HAT`/`RAT`/`VAT`,
+- [x] Extend `tests/test_acceptance_test_coverage.py` to `HAT`/`RAT`/`VAT`,
       or record the omission in that module as deliberate
-- [ ] Extend the existing meta-test (citation-scrubbing) to whatever is added
+- [x] Extend the existing meta-test (citation-scrubbing) to whatever is added
 
 **Gap.** The audit reads `docs/SPEC.md` and matches `### AT-(\d{3})` only.
 All six `VAT`s are cited today — verified — but nothing would catch a
@@ -348,6 +349,113 @@ listed because the audit surfaced it and no other document owns it. If the
 `HAT`/`RAT` series turn out to have uncited entries from earlier phases,
 **record them rather than back-filling tests under this task** — that is a
 separate body of work and folding it in would make this task unbounded.
+
+**A real, pre-existing citation-format inconsistency, found while
+generalizing.** The old `AT` regex (`AT[-_]0*{n}(?!\d)`) requires a `-`/`_`
+between the prefix and the digits — deliberately, per its own comment, since
+bare "AT" is common English and HR-027's own history is a real accidental
+self-citation bug. Applying that same shape to `HAT`/`RAT`/`VAT` would have
+under-counted real coverage: this codebase's own test names cite them with
+**no** separator at all (`test_at_vat005_...`, `test_at_hat019_...`), not
+`vat_005`/`hat_019`. Verified this isn't a false-positive risk for the
+three-letter prefixes (no accidental "…hat123"/"…rat456"/"…vat789"-shaped
+matches anywhere in the real `tests/` corpus) before relying on it, so each
+`_Series`' citation regex makes the separator optional for `HAT`/`RAT`/`VAT`
+specifically, `AT` unchanged.
+
+**Two genuine, pre-existing gaps found, recorded rather than back-filled —
+exactly as this task's own text above anticipated.** Checked every `HAT`/
+`RAT` number against the real corpus (not assumed):
+
+- `HAT`: 20 of 22 already cited. `HAT-012`/`HAT-018` are not — both
+  properties are tested (`HR-014`'s push-destination test,
+  `HR-023`/`HR-024`'s conflict/pathspec tests), just under the
+  *requirement* number, never the *acceptance-test* number.
+- `RAT`: only `RAT-020` is cited (by number); `RAT-001` through `RAT-019`
+  are not. `RR` (33 requirements) and `RAT` (20 acceptance tests) aren't
+  1:1, and this codebase's tests cite `RR-NNN` throughout
+  (`docs/REMEDIATION_SPEC.md` requirements), essentially never the `RAT-NNN`
+  acceptance-test number itself. The underlying properties are almost
+  certainly well-tested (`docs/REMEDIATION_TODO.md`'s R-tasks were tested
+  rigorously); the `RAT` identifier specifically just was never propagated
+  into test code.
+
+Recorded as an explicit `known_uncited` allowlist per series, in code, with
+a docstring explaining why — not silently passed over, and not backfilled
+(19 `RAT` citations plus 2 `HAT` ones is the separate body of work this
+task's own text says not to fold in). A **third** new test
+(`test_the_known_uncited_allowlist_does_not_understate_real_coverage`)
+keeps that allowlist honest going forward: if a number in it gets a real
+citation later without the allowlist being shrunk, that test fails.
+
+**Implemented as described (extended, not narrowed).** `tests/
+test_acceptance_test_coverage.py` rewritten around a small `_Series`
+dataclass (prefix, spec path, heading regex, expected total, optional
+`known_uncited`) and a 4-tuple of instances — `AT`/`HAT`/`RAT`/`VAT` — with
+the count-sanity check, the "everything's cited" check, and the
+new-not-stale allowlist check all iterating the table instead of being
+hand-written per series. The existing `AT`-specific tests
+(`test_the_spec_defines_exactly_37_acceptance_tests`,
+`test_meta_removing_every_citation_for_an_at_makes_the_audit_fail_for_it`)
+kept as their own named tests, unchanged in what they assert, so `AT`'s
+already-proven behavior isn't disturbed by the generalization.
+
+**New meta-test, proving the generalization actually detects a failure
+(HR-027), not just that it happens to pass today.**
+`test_meta_removing_every_citation_for_a_vat_makes_the_audit_fail_for_it` —
+the same self-verification the `AT` meta-test already does, run once against
+one of the three newly-audited series. `VAT` chosen because it has zero
+pre-existing gaps, so scrubbing VAT-001 has nothing else to interact with.
+
+**Verified against three independent, real regressions — not only the
+meta-tests' own internal scrub.**
+1. Renamed every `vat002` citation in `tests/filesystem/test_service.py`
+   (a real file, not a scrubbed in-memory copy) — `test_every_acceptance_
+   test_is_cited_somewhere_under_tests` failed with exactly `VAT-[2]`,
+   nothing else. Restored (`git show HEAD:… >`), reconfirmed clean.
+2. Appended a fake `# rat001 test citation added here` comment to the same
+   file — `test_the_known_uncited_allowlist_does_not_understate_real_
+   coverage` failed with exactly `RAT-[1]`. Restored.
+3. (Incidentally, before either deliberate check above:) a first attempt at
+   step 1 used a `sed` that also touched a second, unrelated test name in
+   the same file — the audit caught *that* too (`VAT-[1, 2]` instead of the
+   intended `[1]`), which is what prompted redoing the check with a single,
+   isolated rename. Left in this write-up because it's real evidence the
+   audit doesn't need to be told what broke to catch it.
+
+**Suites — full coverage, but split across two runs, and honestly reported
+including three environment-caused false alarms along the way.**
+`tests/test_acceptance_test_coverage.py`: 6 passed. `pytest --collect-only`
+across all of `tests/`: 1003 collected, no errors. `tests/`, excluding
+`tests/workspace/`/`tests/git/`: 438 passed. `tests/workspace/ tests/git/`
+(the Docker-heavy remainder — 438 + 565 = 1003, matching the collection
+count exactly, so this is the same coverage a single unscoped run would
+give, just split in two): 565 passed. No Docker leftovers on the clean run.
+
+**Three single-unscoped-run attempts, each killed by the environment before
+completing — recorded, not glossed over.** The host this session runs on
+was under heavy, unrelated contention while this task was worked (`uptime`
+load average 7.3; `df /` at 98–99% full; `ps aux` showed several other
+repositories' own test suites running concurrently) — nothing to do with
+this repository or this task. Attempt 1 completed and reported 2 failures:
+`test_at_034_substituted_host_key_fails_closed_no_prompt` (the same
+apt-get-install `COMMAND_TIMEOUT` R27's own write-up already documents as a
+pre-existing, unrelated flake) and
+`test_rr013_failed_termination_via_a_real_exec_inspect_failure`, which
+passed 3/3 rerun in isolation immediately after, and which had already
+passed cleanly in this session's two immediately-prior full-suite runs (997
+passed under A1+A3, 1000 under A2) — neither of which touches
+`async_runner.py`/`kill`/`drain_stream`, the code that test exercises.
+Attempts 2 and 3 were killed by the environment before reaching a summary
+at all (confirmed via `ps aux` mid-run, not assumed). Given A4 touches zero
+`src/` files, the split-run coverage above was the actual verification;
+these three attempts are recorded as the honest record of what was tried
+first, not silently dropped once a working approach was found.
+
+No Docker leftovers after the clean split runs. Lint/format clean; `mypy
+src`: no issues in 53 files. No schema/contract change — an internal
+test-suite audit, never a tool's own JSON contract; no `CONTRACT_VERSION`
+bump.
 
 ---
 
