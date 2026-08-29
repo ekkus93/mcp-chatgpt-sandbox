@@ -3,7 +3,7 @@
 **Spec:** `docs/REVIEW_SPEC.md` (VR-001..VR-014, VAT-001..VAT-006)
 **Source:** code review of `docs/REMEDIATION_TODO.md` R1–R27 plus the H36/H37
 work that landed after it, 2026-08-28, against `8301c72`
-**Status:** in progress (V1, V2, V3 done)
+**Status:** in progress (V1-V4 done)
 
 Fourteen items: six correctness defects in shipped code, four overstated
 claims, four stale references. Every one was reproduced against the running
@@ -299,7 +299,7 @@ construction, never client-visible through any tool's JSON output; no
 
 ### V4 — The entrypoint's `.ssh` provisioning does not follow symlinks ✅
 **Satisfies:** VR-004 · **Verified by:** VAT-004
-**Commit:** `PLACEHOLDER`
+**Commit:** `305150f`
 
 - [x] The `.ssh` block refuses a symlinked `$HOME/.ssh`, matching the cache
       loop R19 already hardened
