@@ -3,7 +3,7 @@
 **Spec:** `docs/AUDIT_SPEC.md` (AR-001..AR-004, AAT-001..AAT-004)
 **Source:** code review of `docs/REVIEW_TODO.md` V1–V8, 2026-08-29, against
 `d894b4e`
-**Status:** not started
+**Status:** in progress (A1+A3 done)
 
 Four items: one high-severity correctness defect, one incomplete fix, and
 two coverage gaps. Every one was reproduced against the running code before
@@ -53,7 +53,7 @@ independent of everything and lowest priority.
 
 ## A1 — A lossy capture never becomes a command argument ✅
 **Satisfies:** AR-001 · **Verified by:** AAT-001 (site 1) + AAT-003 (site 2)
-**Commit:** `PLACEHOLDER`
+**Commit:** `e95505c`
 
 - [x] `CapturedOutput` reports whether its decoding replaced any byte
 - [x] **Site 1** (`tools/git.py:495`, pre-`add`) treats a lossy decode the
@@ -253,7 +253,7 @@ narrowed instead of extended, amend `docs/REVIEW_SPEC.md` VR-005 to match.
 
 ## A3 — The post-`add` re-capture is independently constrained ✅
 **Satisfies:** AR-003 · **Verified by:** AAT-003
-**Commit:** `PLACEHOLDER`
+**Commit:** `e95505c`
 
 - [x] Exercise `git_commit`'s post-`add` re-capture with a fixture the
       pre-`add` capture cannot see — a **new, untracked** non-UTF-8 file
