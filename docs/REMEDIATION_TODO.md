@@ -1576,6 +1576,24 @@ hint`; `test_at_hat011_a_non_string_scalar_under_a_sensitive_key_is_
 redacted` renamed to `..._is_not_stringified` with its expectation
 corrected.
 
+**Correction (V5, `docs/REVIEW_TODO.md`/`docs/REVIEW_SPEC.md` VR-005).**
+This write-up's implementation paragraph claimed *"only a string
+literally *can be* a secret"* as the reason a non-string scalar is never
+redacted. That is false for `bytes`: a token or key can be handed
+through as raw bytes just as easily as `str`. Reproduced:
+`{'token': b'ghp_abc'}` passed through completely unredacted, and
+separately, `tuple`/`set` (never recursed at all, unlike `dict`/`list`)
+also leaked a secret-flagged member: `{'secret': ('hunter2',)}`. Fixed:
+`_redact` now recurses `tuple`/`set` (type-preserved, matching this
+task's own precedent for non-string scalars) and redacts a
+secret-flagged `bytes` value to the same `"[REDACTED]"` string literal
+the `str` branch already returns. The type-preservation reasoning this
+task established still holds for every genuinely non-textual scalar
+(`bool`/`int`/`float`/`None`) — only `bytes`, which the original claim
+incorrectly grouped with them, was wrong. See V5's own write-up
+(`docs/REVIEW_TODO.md`) for the full defect and fix; new tests in
+`tests/test_errors.py` (`test_at_vat005_*`).
+
 ### R19 — The entrypoint rejects malformed cache entries and does not follow symlinks ✅
 **Satisfies:** RR-029, RR-030
 **Commit:** `7be30f7`

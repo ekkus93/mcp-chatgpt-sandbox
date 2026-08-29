@@ -301,16 +301,35 @@ def _redact(value: Any, *, key: str | None = None, inherited_secret: bool = Fals
         # every item under a sensitive key inherits that key's verdict,
         # same as `inherited_secret` does for a dict's values.
         return [_redact(v, key=key, inherited_secret=key_flags_secret) for v in value]
+    # VR-005 (`docs/REVIEW_SPEC.md` §4): `tuple`/`set` recurse the same
+    # way `list` does, just type-preserved rather than coerced to a
+    # `list` — R18's own "preserve type" precedent, applied to the
+    # container itself, not only to a non-redacted scalar inside it.
+    # `frozenset` deliberately not included: nothing in this codebase
+    # constructs one for `details`/audit `metadata` today, and adding a
+    # case with no reproducible caller would be untested by construction.
+    if isinstance(value, tuple):
+        return tuple(_redact(v, key=key, inherited_secret=key_flags_secret) for v in value)
+    if isinstance(value, set):
+        return {_redact(v, key=key, inherited_secret=key_flags_secret) for v in value}
 
     if isinstance(value, str):
         if key_flags_secret or _looks_like_secret(value):
             return "[REDACTED]"
         return _URL_USERINFO_RE.sub(r"\1[REDACTED]@", value)
-    # RR-009: a non-string scalar (`{"ssh_key_present": True}`,
+    # VR-005: R18's own "only a string literally can be a secret" is
+    # false for `bytes` — a token or key can be handed through as raw
+    # bytes just as easily as `str`, so a secret-hinted key still
+    # redacts it, to the same `"[REDACTED]"` string literal the `str`
+    # branch above returns. `bytes` with no secret hint (e.g. arbitrary
+    # binary command output) is left untouched, same as any other
+    # non-redacted value.
+    if isinstance(value, bytes):
+        return "[REDACTED]" if key_flags_secret else value
+    # RR-009: a non-string, non-bytes scalar (`{"ssh_key_present": True}`,
     # `{"key_count": 3}`) carries no free-text secret material of its
-    # own — a real secret is always textual (a token, a password, key
-    # material) — so it is never redacted on a substring key hint alone.
-    # This used to silently turn every `bool`/`int` under any `*key*`-ish
+    # own — so it is never redacted on a substring key hint alone. This
+    # used to silently turn every `bool`/`int` under any `*key*`-ish
     # field name into the string `"[REDACTED]"`, corrupting `details`'
     # and audit `metadata`'s types for no actual secrecy gained; the type
     # is now always preserved by simply never touching it.

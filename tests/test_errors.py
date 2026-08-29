@@ -184,6 +184,42 @@ def test_rr009_non_string_scalars_keep_their_type_even_nested_under_a_secret_hin
     }
 
 
+def test_at_vat005_a_secret_flagged_tuple_recurses() -> None:
+    """VR-005 (`docs/REVIEW_SPEC.md` §4): `_redact` used to recurse into
+    `dict`/`list` only — a `tuple` under a secret-hinted key passed
+    through completely unredacted."""
+    assert redact_secrets({"secret": ("hunter2",)}) == {"secret": ("[REDACTED]",)}
+
+
+def test_at_vat005_a_secret_flagged_set_recurses() -> None:
+    assert redact_secrets({"secret": {"hunter2"}}) == {"secret": {"[REDACTED]"}}
+
+
+def test_at_vat005_tuple_recursion_preserves_the_container_type() -> None:
+    """Matching R18's own "preserve type" precedent for non-string
+    scalars: recursing a `tuple` still returns a `tuple`, not a `list`,
+    and a non-secret element inside it is left untouched."""
+    redacted = redact_secrets({"secret": ("hunter2", 42)})
+    assert redacted == {"secret": ("[REDACTED]", 42)}
+    assert isinstance(redacted["secret"], tuple)
+
+
+def test_at_vat005_a_secret_flagged_bytes_value_is_redacted() -> None:
+    """VR-005: R18's own rationale for never redacting a non-string
+    scalar — "only a string literally *can be* a secret" — is false for
+    `bytes`: a token or key can be handed through as `bytes` just as
+    easily as `str`. Redacted to the same `"[REDACTED]"` string literal
+    the `str` branch already returns, not `b"[REDACTED]"` — nothing
+    downstream needs a `bytes` value out of a redaction."""
+    assert redact_secrets({"secret": b"ghp_abc"}) == {"secret": "[REDACTED]"}
+
+
+def test_at_vat005_a_non_secret_bytes_value_is_left_untouched() -> None:
+    """The type-preservation half, mirrored from R18: `bytes` with no
+    secret-hinted key stays `bytes`, unredacted and untouched."""
+    assert redact_secrets({"payload": b"\x00\x01\x02"}) == {"payload": b"\x00\x01\x02"}
+
+
 def test_at_hat011_url_userinfo_is_redacted_even_under_an_unrelated_key() -> None:
     """`scheme://user:pass@host` embedded credentials — a plain password
     (not GitHub-token-shaped) matches none of the value patterns and the

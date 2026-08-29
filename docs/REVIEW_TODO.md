@@ -391,12 +391,13 @@ volume's absence from that teardown is unexplained, not reproduced
 again across several subsequent clean runs); removed by hand and
 confirmed a normal run leaves none.
 
-### V5 — Redaction covers every container type it can encounter
+### V5 — Redaction covers every container type it can encounter ✅
 **Satisfies:** VR-005 · **Verified by:** VAT-005
+**Commit:** `PLACEHOLDER`
 
-- [ ] Recurse `tuple`/`set`, or narrow R18's stated scope to match reality
-- [ ] Redact `bytes` under a secret-flagged key
-- [ ] Test both
+- [x] Recurse `tuple`/`set`, or narrow R18's stated scope to match reality
+- [x] Redact `bytes` under a secret-flagged key
+- [x] Test both
 
 **Defect (reproduced):**
 
@@ -410,6 +411,55 @@ R18's rationale — "only a string literally *can be* a secret" — is false for
 **narrowing R18's claim is an acceptable outcome** if recursion turns out to
 cost more than it buys; what is not acceptable is leaving the claim broader
 than the behavior.
+
+**Implemented as described (chose recursion, not narrowing).** `_redact`
+(`errors.py`) gained two new branches, both before the `str` check:
+`tuple` recurses element-wise and rebuilds a `tuple` (type-preserved,
+matching R18's own precedent for non-string scalars — not coerced to a
+`list`); `set` recurses the same way into a `set` comprehension.
+`bytes` is handled alongside the existing scalar fallback: redacted to
+the literal string `"[REDACTED]"` (matching what the `str` branch
+already returns, not `b"[REDACTED]"` — nothing downstream needs a
+`bytes` value out of a redaction) when `key_flags_secret`, left
+completely untouched otherwise. `frozenset` deliberately excluded — no
+caller in this codebase constructs one for `details`/audit `metadata`
+today, and adding a branch with no reproducible caller would be
+untested by construction; noted in-code so a future need is a one-line
+addition, not a rediscovery.
+
+R18's "only a string literally can be a secret" claim corrected in
+`docs/REMEDIATION_TODO.md` (a "Correction" paragraph, per this
+project's convention) — narrowing was available as an alternative per
+this task's own text, but recursion/redaction turned out to cost only a
+few lines, so the fuller fix was taken instead of the narrower claim.
+
+**New tests, watched fail first.** `tests/test_errors.py`:
+`test_at_vat005_a_secret_flagged_tuple_recurses`,
+`test_at_vat005_a_secret_flagged_set_recurses`,
+`test_at_vat005_tuple_recursion_preserves_the_container_type` (asserts
+`isinstance(..., tuple)`, not just equality — a `list` would compare
+equal-by-value to nothing here since the assertion is against a tuple
+literal, but this test exists specifically to catch a fix that
+recursed by coercing to `list` instead), `test_at_vat005_a_secret_
+flagged_bytes_value_is_redacted`, and
+`test_at_vat005_a_non_secret_bytes_value_is_left_untouched` (the
+type-preservation half, mirrored from R18 — this one already passed
+pre-fix, confirming it as a baseline guard rather than a fresh
+reproduction).
+
+**Revert-verified.** Backed up `errors.py`, restored `HEAD`'s version,
+re-ran the four new reproduction tests: all four failed with the leaked
+values shown above. Restored the fix; `tests/test_errors.py`: 62 passed
+(57 pre-existing + 5 new).
+
+**Suites.** `errors.py` is used across most of the test tree, same as
+R18 found — ran everything except the Docker-backed `tests/workspace/`
+and `tests/git/` (which don't exercise redaction any differently) as a
+fast proxy: 429 passed. Full unscoped `tests/`: 991 passed, 0 failed,
+528.00s, no Docker leftovers. Lint/format clean; `mypy src`: no issues
+in 53 files. No schema/contract change — `redact_secrets` is an
+internal defense-in-depth layer, never a tool's own JSON contract; no
+`CONTRACT_VERSION` bump.
 
 ### V6 — An unexplained pid absence is logged
 **Satisfies:** VR-006 · **Verified by:** VAT-006
