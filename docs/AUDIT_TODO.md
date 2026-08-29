@@ -3,7 +3,7 @@
 **Spec:** `docs/AUDIT_SPEC.md` (AR-001..AR-004, AAT-001..AAT-004)
 **Source:** code review of `docs/REVIEW_TODO.md` V1–V8, 2026-08-29, against
 `d894b4e`
-**Status:** in progress (A1+A3 done)
+**Status:** in progress (A1-A3 done)
 
 Four items: one high-severity correctness defect, one incomplete fix, and
 two coverage gaps. Every one was reproduced against the running code before
@@ -213,7 +213,7 @@ faithfully"); no `CONTRACT_VERSION` bump.
 
 ## A2 — Redaction's content scan covers every type it redacts by key ✅
 **Satisfies:** AR-002 · **Verified by:** AAT-002
-**Commit:** `PLACEHOLDER`
+**Commit:** `5551728`
 
 - [x] Run the value-pattern scan against `bytes`, or narrow V5's stated scope
       to key-flagged only
