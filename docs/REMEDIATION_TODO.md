@@ -104,6 +104,26 @@ tainted daemon environment (`monkeypatch.setenv`), proven against a real
 baseline subprocess call that confirms the injection mechanism itself works
 before asserting the mediated call suppresses it.
 
+**Correction (V8, `docs/REVIEW_TODO.md`/`docs/REVIEW_SPEC.md` VR-011):**
+this task's entire implementation is gone. H36 (`docs/HARDENING_TODO.md`)
+deleted `run_git_host_side` and, with it, `_discover_code_executing_
+overrides`, `_host_side_git_env`, `_CODE_EXECUTING_CONFIG_KEY_RE`, both
+env-scrub tuples (`_ENV_VARS_TO_SCRUB`/`_ENV_VAR_PREFIXES_TO_SCRUB`), and
+all four of this task's own new tests — confirmed by grepping `src/` for
+each name: none remain except in docstring/comment prose recounting the
+history. R2 and R26 already carry a note explaining what superseded
+them; R1 — the most completely superseded task in this document — did
+not, until now. The property this task established (repository-supplied
+code SHALL NOT execute under the daemon's own identity during a
+structured Git read) is not preserved by a like-for-like successor the
+way R2's timing property was: H36's own rationale is that in-container
+execution makes this class of neutralization moot, since `exec` already
+gives a client arbitrary code execution *in the container* by design
+(§19.7/§20.1) — the property this task protected against no longer
+needs protecting against, rather than being re-implemented elsewhere.
+See `git/service.py`'s module docstring and `docs/HARDENING_TODO.md`'s
+H36 write-up for the full before/after.
+
 ### R2 — The push goes to the validated URL ✅ (partial — see below)
 **Satisfies:** RR-002, RR-003 · **Verified by:** RAT-003, RAT-004
 **Commit:** `652a6d7`
@@ -1928,6 +1948,22 @@ usual revert-a-fix step):
 unscoped suite: 960 passed (unchanged from before this task — no new tests,
 only strengthened existing assertions). No Docker leftovers.
 
+**Correction (V8, `docs/REVIEW_TODO.md`/`docs/REVIEW_SPEC.md` VR-013):**
+`test_run_git_host_side_neutralizes_diff_external` (the second checklist
+item's test, described above) no longer exists — H36 deleted
+`run_git_host_side` and every test written against it, this one
+included. The property this checklist item strengthened —
+`diff.external`/`textconv` genuinely not executing, verified against a
+real failure mode rather than an ambiguous absence-of-marker — survives
+in `test_diff_external_still_does_not_execute` and
+`test_textconv_still_does_not_execute`
+(`tests/workspace/test_in_container_execution_accepts_repository_code.py`),
+the in-container successors H36 wrote: both still assert the read
+*succeeds* with correct content (not just that a marker is absent),
+carrying this task's own fix forward rather than losing it. The
+log-capture half of this task (the first checklist item) is unaffected
+and still current.
+
 **New tests.** None — both changes strengthen existing tests' assertions
 rather than adding new ones, per the checklist's own framing.
 
@@ -2020,6 +2056,21 @@ the exact assertion (found `_discover_code_executing_overrides`'s own
 preceding `git config --list` calls captured too, since the spy is
 module-global — fixed by filtering to the captured call actually containing
 `"diff"`/`"log"`, not assuming index `0`).
+
+**Correction (V8, `docs/REVIEW_TODO.md`/`docs/REVIEW_SPEC.md` VR-013):**
+neither named test exists under this name any more, and the
+`subprocess.run`-spy mechanism described above is gone along with
+`run_git_host_side`. H36 split every Git argv builder into a pure
+function (`build_diff_argv`/`build_log_argv`), which made the property
+directly inspectable without spying on a subprocess call at all — the
+successors, `test_end_of_options_precedes_base_and_head_in_the_argv`
+(`tests/git/test_diff.py`) and `test_end_of_options_precedes_ref_in_
+the_argv` (`tests/git/test_log.py`), call the pure builder and assert
+`"--end-of-options"` sits immediately before the revision value in its
+return value — the same property this task established, verified more
+directly, not lost. Each successor's own docstring already says so
+("no subprocess spying needed the way the pre-H36 version of this test
+required").
 
 **2. `patch_file`'s `expected_sha256` pass-through.** No existing test's
 `patch_file` call ever races a concurrent write.

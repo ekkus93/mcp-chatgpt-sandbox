@@ -579,31 +579,79 @@ fast and touches these files indirectly: passes.
 
 Also documentation-only. Also reasonably **one commit**.
 
-### V8 — Annotate what H36 superseded
+### V8 — Annotate what H36 superseded ✅
 **Satisfies:** VR-011, VR-012, VR-013, VR-014
+**Commit:** `PLACEHOLDER`
 
-- [ ] **R1** — add the supersession note it lacks. H36 deleted
+- [x] **R1** — add the supersession note it lacks. H36 deleted
       `run_git_host_side`, `_discover_code_executing_overrides`,
       `_host_side_git_env`, `_CODE_EXECUTING_CONFIG_KEY_RE`, both env-scrub
       tuples, and all four of R1's tests. R1's implementation is entirely
       gone; R2 and R26 already carry notes, R1 — the most completely
       superseded task in the document — does not.
-- [ ] **`tests/git/test_remote.py`** — its docstring justifies importing a
+- [x] **`tests/git/test_remote.py`** — its docstring justifies importing a
       private helper by citing `_discover_code_executing_overrides` as
       precedent. That function no longer exists: H36 step 7 wrote the
       justification, H36 step 8 deleted its referent. Self-inflicted during
       H36 and worth fixing on those grounds alone.
-- [ ] **R22 checkbox 2 / R24 item 1** — both describe tests H36 deleted or
+- [x] **R22 checkbox 2 / R24 item 1** — both describe tests H36 deleted or
       rewrote (`run_git_host_side`'s `diff.external` test; the
       `test_rr027_*_in_the_real_argv` `subprocess.run`-spy pair, replaced by
       direct argv inspection). Both properties survive in successors.
       Annotate the way R2 and R26 already are.
-- [ ] **`docs/HARDENING_TODO.md` H35 prose** — still asserts S15's pid race
+- [x] **`docs/HARDENING_TODO.md` H35 prose** — still asserts S15's pid race
       "was re-checked … and found accurate today … there is nothing left to
       correct", two paragraphs below the table R26 corrected in that same
       file, and contradicting `docs/TODO.md`'s R26-corrected text. §16 scoped
       R26 to `docs/TODO.md`, so this is outside R26's letter — but it leaves a
       disproven claim standing in a file R26 edited.
+
+**Implemented as described, all four.** Each is a "Correction (V8, ...)"
+paragraph appended after the stale text it corrects — never rewriting or
+unticking the original (all four described work that was accurate, or
+at least not the object of correction, when written), matching the
+convention R2/R26/H26/H35 already established in these files. Re-read
+each claim against the current code before writing the correction
+(RR-033), not transcribed from the review's own summary:
+
+- **R1** (`docs/REMEDIATION_TODO.md`): grepped `src/` for
+  `run_git_host_side`, `_discover_code_executing_overrides`,
+  `_host_side_git_env`, `_CODE_EXECUTING_CONFIG_KEY_RE` — none remain
+  except in docstring/comment prose recounting the history. Note
+  explains what superseded the property (H36's own rationale: in-
+  container `exec` already grants the code-execution risk this task
+  neutralized, so there is nothing left to re-implement) rather than
+  just pointing elsewhere.
+- **`tests/git/test_remote.py`**: confirmed no other test file in the
+  suite imports a private (`_`-prefixed) name — the "precedent" the
+  docstring cited no longer has anything to point at, since H36 deleted
+  the one example. Rewrote the justification to stand on its own
+  (importing `_validate_url_identity` avoids the public wrappers' own
+  container-context requirement) rather than leaving a claim with a
+  now-empty referent.
+- **R22 checkbox 2 / R24 item 1** (`docs/REMEDIATION_TODO.md`):
+  confirmed `test_run_git_host_side_neutralizes_diff_external` and
+  `test_rr027_end_of_options_precedes_{base_and_head,ref}_in_the_real_
+  argv` no longer exist under those names; found and named the actual
+  successors — `test_diff_external_still_does_not_execute`/`test_
+  textconv_still_does_not_execute`
+  (`tests/workspace/test_in_container_execution_accepts_repository_
+  code.py`, confirmed both still assert real content, not just marker
+  absence) and `test_end_of_options_precedes_{base_and_head,ref}_in_
+  the_argv` (`tests/git/test_diff.py`/`test_log.py`, confirmed direct
+  pure-function argv inspection, no subprocess spy).
+- **H35 prose** (`docs/HARDENING_TODO.md`): confirmed `docs/TODO.md`'s
+  S15 entry already carries the correct, R16-citing account, and that
+  H35's own prose two paragraphs below its corrected table still says
+  the opposite. Correction paragraph added directly under the stale
+  bullet, explaining the contradiction and why R26's own edit (scoped
+  to `docs/TODO.md`) never touched it.
+
+**Suites.** None run — no source or test file's *behavior* changed,
+only docstrings/documentation
+(`tests/git/test_remote.py`'s edit is a docstring only). Re-ran
+`tests/git/test_remote.py` anyway since it was the one test file
+touched: 36 passed. Docs-consistency tests: 7 passed.
 
 ---
 

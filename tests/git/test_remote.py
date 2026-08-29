@@ -17,11 +17,21 @@ container context (they run `git remote get-url` in-container).
 `_resolve_url_of`/`_resolve_push_url_of` below read the same
 configuration directly, host-side, real `git remote get-url [--push]`
 calls — these tests are about the *validation* logic
-(`_validate_url_identity`, imported directly the same way this test
-suite already imports other underscore-prefixed internals like
-`git/service.py`'s `_discover_code_executing_overrides`), not about
-where the URL read happens, so replicating that one trivial read
-host-side keeps the whole suite fast and Docker-free.
+(`_validate_url_identity`, imported directly rather than exercised only
+through the public `validate_remote_identity`/`validate_remote_
+identity_for_push` wrappers, since the wrappers' own container-context
+requirement is exactly what these tests are written to avoid needing),
+not about where the URL read happens, so replicating that one trivial
+read host-side keeps the whole suite fast and Docker-free.
+
+**Correction (V8, `docs/REVIEW_TODO.md`/`docs/REVIEW_SPEC.md` VR-012):**
+this paragraph used to justify the `_validate_url_identity` import by
+citing `git/service.py`'s `_discover_code_executing_overrides` as
+precedent for "this test suite already imports other underscore-
+prefixed internals". H36 deleted that function along with
+`run_git_host_side`; no other test file in this suite imports a
+private name. The justification above is corrected to stand on its own
+rather than point at a precedent that no longer exists.
 `tests/workspace/test_git_pull_tool.py`/`test_git_push_tool.py` cover
 `validate_remote_identity`/`validate_remote_identity_for_push`
 end-to-end, in-container.

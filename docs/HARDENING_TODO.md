@@ -3318,6 +3318,24 @@ unchanged:
   `pid=None`. Whatever version the review evaluated had this race; the
   shipped one does not. Documented as re-verified-and-accurate rather
   than corrected, since there is nothing left to correct.
+
+  **Correction (V8, `docs/REVIEW_TODO.md`/`docs/REVIEW_SPEC.md`
+  VR-014):** this bullet is wrong, and was already disproven two H-tasks
+  after it shipped — `docs/REMEDIATION_SPEC.md`'s RR-022 (closed by R16,
+  `docs/REMEDIATION_TODO.md`) reproduced the exact race this bullet
+  called absent: a single, unretried `exec_inspect` right after
+  `exec_start` reported `Pid: 0` in 6 of 30 (20%) trials against a real
+  Docker daemon, that falsy value did reach `mark_running(pid=None)`,
+  and the pre-R16 code did not retry. `mark_running` being the only call
+  site — the fact this bullet's own re-check actually confirmed — was
+  never the question; whether the value it receives is always a real
+  pid was, and it was not. `docs/TODO.md`'s own S15 entry already
+  carries the correct account (a `**Correction (H35, ...)**` paragraph
+  citing R16 by name); this file's prose, two paragraphs below the
+  table this same H35 task corrected in that same file, was never
+  brought in line with it. §16 scoped R26's own edit to `docs/TODO.md`
+  specifically, so fixing this was outside R26's letter — but it left a
+  disproven claim standing in a file R26 edited, until now.
 - **S31's table citation of H32 for "pid exhaustion has no daemon-side
   detection" is itself inaccurate** — checked against H32's actual nine
   items (`docs/HARDENING_TODO.md`, this file), none of which address pid
