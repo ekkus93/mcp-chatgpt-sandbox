@@ -3,6 +3,7 @@ structured *mutating* Git tool, running in-container (§20.1) against a
 real Docker daemon.
 """
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -896,6 +897,107 @@ async def test_rr005_a_failed_commit_restores_prior_staged_content_not_head(
         "exec", {"workspace_id": workspace_id, "shell": "git show :a.txt"}
     )
     assert staged.structured_content["stdout_tail"] == "v2-prior-staged\n"
+
+
+async def test_at_aat001_a_non_utf8_path_present_only_pre_add_is_not_restored_as_a_phantom(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """AR-001 site 1 (`docs/AUDIT_SPEC.md` §4), isolated from site 2.
+
+    `git_commit`'s rollback is nested inside *two* lossy-decode gates (the
+    pre-`add` capture that produces `prior_entries`, and the post-`add`
+    re-capture that produces `current_entries`) — `build_restore_index_argv
+    (prior_entries)` only ever runs if *both* gates pass. A fixture where
+    the bad path is present in *both* captures trips both gates at once and
+    proves nothing about site 1 alone (confirmed empirically while writing
+    this: reverting only site 1's guard left such a test passing, because
+    site 2's still caught the same corrupted path first).
+
+    Isolating site 1 needs a fixture only the *pre*-`add` capture sees: a
+    non-UTF-8 path already tracked, then deleted from the working tree
+    before this call — so this call's own `git add` stages the deletion,
+    and the *post*-`add` capture no longer contains it at all. Site 2's
+    gate is then irrelevant (nothing left to decode lossily); only site
+    1's guard stands between `prior_entries` and a corrupted restore."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    many_dir = repo_path / "many"
+    many_dir.mkdir()
+    bad_path = many_dir / os.fsdecode(b"bad\xffname.txt")
+    bad_path.write_bytes(b"v1\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "add bad"], cwd=repo_path, check=True)
+
+    hooks_dir = repo_path / ".git" / "hooks"
+    (hooks_dir / "pre-commit").write_text("#!/bin/sh\nexit 1\n")
+    (hooks_dir / "pre-commit").chmod(0o755)
+
+    # Still tracked (present pre-add), but gone from the working tree —
+    # this call's own `git add -- many` stages the removal, so it is
+    # absent from the post-add capture entirely.
+    bad_path.unlink()
+
+    with pytest.raises(ToolError, match="COMMAND_FAILED") as excinfo:
+        await server.call_tool(
+            "git_commit", {"workspace_id": workspace_id, "message": "blocked", "paths": ["many"]}
+        )
+    assert '"index_left_dirty": true' in str(excinfo.value)
+
+    index = subprocess.run(
+        ["git", "ls-files", "-z", "--stage"], cwd=repo_path, capture_output=True
+    ).stdout
+    entries = [e for e in index.split(b"\0") if e]
+    assert not any(b"bad" in e for e in entries), (
+        f"no phantom restore of the deleted path: {entries}"
+    )
+
+
+async def test_at_aat003_a_new_non_utf8_path_the_calls_own_add_stages_is_left_honestly_dirty(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """AR-001 site 2 / AR-003 (`docs/AUDIT_SPEC.md` §4): the post-`add`
+    re-capture's `extra_paths` feeds its own write-back, `git rm --cached
+    --ignore-unmatch` — independent of site 1's, and needs a fixture site
+    1's capture cannot see: a path that is *untracked* until this call's
+    own `git add` stages it, so the pre-`add` capture is clean and only
+    the post-`add` one decodes lossily. Old unguarded behavior: the
+    corrupted path matches nothing, `--ignore-unmatch` exits 0, and
+    `index_left_dirty` is reported `false` even though the file is still
+    staged."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    many_dir = repo_path / "many"
+    many_dir.mkdir()
+    (many_dir / "clean.txt").write_text("v1\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "add clean"], cwd=repo_path, check=True)
+
+    hooks_dir = repo_path / ".git" / "hooks"
+    (hooks_dir / "pre-commit").write_text("#!/bin/sh\nexit 1\n")
+    (hooks_dir / "pre-commit").chmod(0o755)
+
+    # Untracked until this call's own `git add` stages it — the pre-`add`
+    # capture (site 1) sees only clean.txt and decodes cleanly.
+    new_path = many_dir / os.fsdecode(b"new\xffname.txt")
+    new_path.write_bytes(b"new\n")
+
+    with pytest.raises(ToolError, match="COMMAND_FAILED") as excinfo:
+        await server.call_tool(
+            "git_commit", {"workspace_id": workspace_id, "message": "blocked", "paths": ["many"]}
+        )
+    assert '"index_left_dirty": true' in str(excinfo.value)
 
 
 async def test_at_hr025_nothing_to_commit_maps_to_a_specific_error_code(

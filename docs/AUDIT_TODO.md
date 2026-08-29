@@ -51,17 +51,18 @@ independent of everything and lowest priority.
 
 ---
 
-## A1 — A lossy capture never becomes a command argument
+## A1 — A lossy capture never becomes a command argument ✅
 **Satisfies:** AR-001 · **Verified by:** AAT-001 (site 1) + AAT-003 (site 2)
+**Commit:** `PLACEHOLDER`
 
-- [ ] `CapturedOutput` reports whether its decoding replaced any byte
-- [ ] **Site 1** (`tools/git.py:495`, pre-`add`) treats a lossy decode the
+- [x] `CapturedOutput` reports whether its decoding replaced any byte
+- [x] **Site 1** (`tools/git.py:495`, pre-`add`) treats a lossy decode the
       way it already treats `stdout_truncated` — `prior_entries` becomes
       `None`, so no restore is attempted and `index_left_dirty` stays `true`
-- [ ] **Site 2** (`tools/git.py:529`, post-`add` re-capture) does the same,
+- [x] **Site 2** (`tools/git.py:529`, post-`add` re-capture) does the same,
       for its own independent write-back — see the table below
-- [ ] The read tools (`git_status`/`git_diff`/`git_log`) are left unchanged
-- [ ] Test **both** sites — they need two different fixtures (A3 is site 2's;
+- [x] The read tools (`git_status`/`git_diff`/`git_log`) are left unchanged
+- [x] Test **both** sites — they need two different fixtures (A3 is site 2's;
       it is not optional)
 
 **Defect (reproduced end-to-end through the real MCP tool).** A failed
@@ -142,6 +143,74 @@ argument, and `sanitize_for_client` already makes exactly this substitution
 so the SDK's JSON serialization does not crash. Changing them would be an
 over-correction, and AR-001's own scope note says so.
 
+**Implemented as described.** `execution/service.py` gained a module-level
+`decode_utf8_lossy(data: bytes) -> tuple[str, bool]` (beside `tail_text`):
+strict decode attempted first, `errors="replace"` only on
+`UnicodeDecodeError`, so a genuine U+FFFD already present in the source
+bytes is never mistaken for one this function substituted. `CapturedOutput`
+gained `stdout_lossy`/`stderr_lossy: bool = False`; `capture()` sets both via
+the new helper. `tools/git.py`'s two `capture_index` call sites each gained
+`and not <result>.stdout_lossy` alongside their existing
+`not <result>.stdout_truncated` check — site 1 (line ~507) gates
+`prior_entries`, site 2 (line ~557) gates the whole `current_entries`/
+`extra_paths`/restore block, exactly mirroring how each already gates on
+truncation.
+
+**A genuine finding while writing the tests, not anticipated by the plan:**
+this task's own draft checklist item ("Test both sites — they need two
+different fixtures") undersold how tightly coupled the two guards are.
+`build_restore_index_argv(prior_entries)` — the call that actually performs
+the corrupting write — sits nested inside *both* `if` blocks, so my first
+AAT-001 fixture (the one already written into this document: the *same* bad
+path staged both before and after `add`) got caught by *either* guard and
+proved nothing about site 1 in isolation. Revert-verifying site 1 alone
+left it passing. Redesigned AAT-001 around a fixture only the pre-`add`
+capture can see — a tracked non-UTF-8 path staged, then **deleted** from
+the working tree before the call, so this call's own `git add` stages the
+removal and the post-`add` re-capture no longer contains it at all. That
+isolates site 1's guard as the *only* thing standing between `prior_entries`
+and a corrupted restore. Documented in the test's own docstring so the next
+reader doesn't repeat the mistake.
+
+**New tests, watched fail first — and revised once, for real reasons.**
+`tests/execution/../workspace/test_git_service_container.py` (primitive
+level, alongside `test_capture_reports_truncation`):
+`test_capture_reports_lossy_decode` — a real container `printf`s a literal
+`\377` byte via `printf`'s own `\NNN` escape, `capture()` asserted
+`stdout_lossy: true`, `stdout_truncated: false` (well under the byte cap),
+and a clean `echo` asserted `stdout_lossy: false`.
+`tests/workspace/test_git_commit_tool.py`:
+
+- `test_at_aat001_a_non_utf8_path_present_only_pre_add_is_not_restored_as_a_phantom`
+  — the isolating fixture above (staged-then-deleted). Asserts
+  `index_left_dirty: true` and no phantom entry in the post-failure index.
+- `test_at_aat003_a_new_non_utf8_path_the_calls_own_add_stages_is_left_honestly_dirty`
+  — AR-003's own fixture: a **new, untracked** non-UTF-8 file inside the
+  directory pathspec, invisible to the pre-`add` capture, staged only by
+  this call's own `git add`. Asserts `index_left_dirty: true`.
+
+**Revert-verified each guard separately, per this task's own instruction —
+not just once.**
+1. Reverted site 1's `and not capture_result.stdout_lossy` alone
+   (site 2 intact): AAT-001 failed with `"index_left_dirty": false` — the
+   exact lie AR-001 describes. AAT-003 still passed, confirming it is
+   genuinely independent of site 1.
+2. Restored, confirmed both pass. Reverted site 2's
+   `and not current_result.stdout_lossy` alone (site 1 intact): AAT-003
+   failed the same way; AAT-001 still passed.
+3. Restored fully (diffed against the pre-task backup: clean). Both new
+   tests, plus `test_rr005_a_failed_commit_restores_prior_staged_content_
+   not_head` and `test_at_vat001_a_line_cropped_index_snapshot_does_not_
+   crash_the_commit`, pass together.
+
+**Suites.** `tests/workspace/test_git_commit_tool.py
+tests/workspace/test_git_service_container.py tests/git/`: 223 passed, no
+Docker leftovers. Full unscoped `tests/`: 997 passed, 0 failed, 537.80s, no
+Docker leftovers. Lint/format clean; `mypy src`: no issues in 53 files. No
+schema/contract change — `index_left_dirty`'s type and meaning are
+unchanged (§17.4 already defines it as "the index could not be restored
+faithfully"); no `CONTRACT_VERSION` bump.
+
 ## A2 — Redaction's content scan covers every type it redacts by key
 **Satisfies:** AR-002 · **Verified by:** AAT-002
 
@@ -182,13 +251,14 @@ worth fixing regardless of which way the others go.
 what is not acceptable is a claim broader than the behavior. If the scan is
 narrowed instead of extended, amend `docs/REVIEW_SPEC.md` VR-005 to match.
 
-## A3 — The post-`add` re-capture is independently constrained
+## A3 — The post-`add` re-capture is independently constrained ✅
 **Satisfies:** AR-003 · **Verified by:** AAT-003
+**Commit:** `PLACEHOLDER`
 
-- [ ] Exercise `git_commit`'s post-`add` re-capture with a fixture the
+- [x] Exercise `git_commit`'s post-`add` re-capture with a fixture the
       pre-`add` capture cannot see — a **new, untracked** non-UTF-8 file
       inside the directory pathspec
-- [ ] Confirm it fails when only site 2's guard is reverted
+- [x] Confirm it fails when only site 2's guard is reverted
 
 **Gap.** V1 converted two call sites to `capture_index`, but VAT-001 commits
 *successfully* and so reaches only the first. The failure-branch re-capture
@@ -207,6 +277,16 @@ be in both states. Since the restore is nested inside both gates, AAT-001
 passes with either guard alone — so without this test, half of A1's fix is
 unconstrained and reverting it leaves the suite green (the RR-027
 anti-pattern). See A1's own table and AR-001.
+
+**Landed as one commit with A1, per this task's own instruction above** —
+`test_at_aat003_a_new_non_utf8_path_the_calls_own_add_stages_is_left_
+honestly_dirty` (`tests/workspace/test_git_commit_tool.py`) is A1's own
+AAT-003, and both checklists here point at the same implementation, tests,
+and revert-verification described under A1. See A1's write-up for the full
+account, including the correction this task's own warning above predicted:
+AAT-001's *original* draft fixture (before A3 was written) would have
+proven nothing about site 1 in isolation, exactly the mirror-image mistake
+this task exists to prevent for site 2.
 
 ## A4 — Every acceptance-test series is citation-audited
 **Satisfies:** AR-004 · **Verified by:** AAT-004

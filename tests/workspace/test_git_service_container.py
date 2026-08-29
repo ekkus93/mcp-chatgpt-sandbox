@@ -221,6 +221,41 @@ async def test_capture_reports_truncation(
     assert execution_service.capture(exec_id, max_bytes=256).stdout_truncated is False
 
 
+async def test_capture_reports_lossy_decode(
+    minimal_config: ServerConfig, default_image_tag: str, docker_client, tmp_path: Path
+) -> None:
+    """AR-001 (`docs/AUDIT_SPEC.md` §4): `capture` SHALL say when its
+    decode replaced a byte — distinct from `stdout_truncated`, which
+    stays `False` here (well under the byte cap)."""
+    config = _tiny_capture(
+        _configured(minimal_config, default_image_tag, tmp_path / "w" / "example")
+    )
+    server = create_server(config)
+    record, execution_service = await _running_container(server, docker_client, config)
+
+    # printf's own \xNN escape writes the literal byte, not valid UTF-8.
+    exec_id = execution_service.start(
+        record.container_id,
+        ["printf", "bad\\377name"],
+        cwd=record.workspace_path,
+        user="",
+        env=None,
+    )
+    captured = execution_service.capture(exec_id, max_bytes=256)
+    assert captured.stdout_truncated is False
+    assert captured.stdout_lossy is True
+    assert "�" in captured.stdout
+
+    exec_id = execution_service.start(
+        record.container_id,
+        ["echo", "small"],
+        cwd=record.workspace_path,
+        user="",
+        env=None,
+    )
+    assert execution_service.capture(exec_id, max_bytes=256).stdout_lossy is False
+
+
 async def test_run_git_in_container_raises_typed_error_on_truncation(
     minimal_config: ServerConfig, default_image_tag: str, docker_client, tmp_path: Path
 ) -> None:

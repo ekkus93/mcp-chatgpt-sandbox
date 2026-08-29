@@ -492,10 +492,24 @@ async def run_git_commit(
     # checked, not assumed false — a truncated capture is not a
     # faithful snapshot and must not be trusted for a
     # destructive-adjacent restore.
+    #
+    # AR-001 (`docs/AUDIT_SPEC.md` §4): `stdout_lossy` is checked
+    # alongside it, for the same reason — a non-UTF-8 staged path
+    # decodes to U+FFFD, and `build_restore_index_argv` would then
+    # write this call's prior content to that *corrupted* path
+    # instead of the real one, leaving a phantom index entry while
+    # `index_left_dirty` reports `false`. There is no faithful decode
+    # to fall back to here (the Docker exec boundary is JSON and
+    # cannot carry a non-UTF-8 byte — verified against a real
+    # container, `docs/AUDIT_SPEC.md` §4), so a lossy snapshot is
+    # treated exactly like a truncated one: not a faithful snapshot,
+    # `prior_entries` stays `None`, no restore is attempted.
     capture_result = await capture_index(build_capture_index_argv(paths))
     prior_entries: list[tuple[str, str, str]] | None = (
         parse_index_entries(capture_result.stdout)
-        if capture_result.exit_code == 0 and not capture_result.stdout_truncated
+        if capture_result.exit_code == 0
+        and not capture_result.stdout_truncated
+        and not capture_result.stdout_lossy
         else None
     )
 
@@ -526,8 +540,26 @@ async def run_git_commit(
         index_left_dirty = True
         if prior_entries is not None:
             with contextlib.suppress(Exception):
+                # AR-001 (`docs/AUDIT_SPEC.md` §4): this re-capture has its
+                # own, independent failure mode when lossy — distinct from
+                # site 1's above. Its `current_entries` feeds `extra_paths`
+                # (paths newly staged by this call's own `git add`, to be
+                # unstaged) via set difference against `prior_paths`. A
+                # non-UTF-8 path that decodes to the *same* U+FFFD on both
+                # captures cancels out of that difference and is silently
+                # never unstaged; one that decodes lossily only here
+                # produces a corrupted path `build_unstage_new_argv` passes
+                # to `git rm --cached --ignore-unmatch`, which matches
+                # nothing and exits 0 — reporting `unstage_ok` (and so
+                # `index_left_dirty`) as if the real file had been
+                # unstaged, when it was not. Checked the same way site 1
+                # is: not a faithful snapshot, skip using it.
                 current_result = await capture_index(build_capture_index_argv(paths))
-                if current_result.exit_code == 0 and not current_result.stdout_truncated:
+                if (
+                    current_result.exit_code == 0
+                    and not current_result.stdout_truncated
+                    and not current_result.stdout_lossy
+                ):
                     current_entries = parse_index_entries(current_result.stdout)
                     prior_paths = {path for _, _, path in prior_entries}
                     extra_paths = sorted({path for _, _, path in current_entries} - prior_paths)

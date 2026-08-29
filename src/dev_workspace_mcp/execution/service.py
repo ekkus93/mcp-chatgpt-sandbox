@@ -98,13 +98,31 @@ class CapturedOutput:
     it) and `git_diff` report `truncated: false` on an incomplete diff.
     A caller cannot infer truncation from the returned text — `len(stdout)
     == max_bytes` is equally consistent with output that happened to end
-    exactly there — so the flag has to come from the read itself."""
+    exactly there — so the flag has to come from the read itself.
+
+    `stdout_lossy`/`stderr_lossy` (AR-001, `docs/AUDIT_SPEC.md` §4) report
+    whether decoding actually replaced a byte — not merely that the *cap*
+    was reached (`stdout_truncated` already covers that), but that some
+    byte within the *captured* range was not valid UTF-8 and became
+    U+FFFD. `git_commit`'s index-restore rollback feeds this string back
+    into a `git update-index --cacheinfo`/`git rm --cached` argument; a
+    caller cannot infer lossiness from the decoded text alone — a
+    genuine U+FFFD in a repository path is indistinguishable from a
+    replaced byte — so, same as truncation, the flag has to come from
+    the read itself. Detected via a strict decode attempted first,
+    falling back to `errors="replace"` only on failure, rather than
+    scanning the replace-decoded string for U+FFFD afterward: a
+    genuine U+FFFD in the source bytes would round-trip through
+    `errors="replace"` unchanged and be indistinguishable from a
+    substituted one that way."""
 
     exit_code: int
     stdout: str
     stderr: str
     stdout_truncated: bool = False
     stderr_truncated: bool = False
+    stdout_lossy: bool = False
+    stderr_lossy: bool = False
 
 
 class ExecutionService:
@@ -212,13 +230,17 @@ class ExecutionService:
         exit_code = api.exec_inspect(exec_id).get("ExitCode")
         stdout_bytes = b"".join(stdout_chunks)[:max_bytes]
         stderr_bytes = b"".join(stderr_chunks)[:max_bytes]
+        stdout_text, stdout_lossy = decode_utf8_lossy(stdout_bytes)
+        stderr_text, stderr_lossy = decode_utf8_lossy(stderr_bytes)
 
         return CapturedOutput(
             exit_code=exit_code if exit_code is not None else -1,
-            stdout=stdout_bytes.decode("utf-8", errors="replace"),
-            stderr=stderr_bytes.decode("utf-8", errors="replace"),
+            stdout=stdout_text,
+            stderr=stderr_text,
             stdout_truncated=stdout_total > max_bytes,
             stderr_truncated=stderr_total > max_bytes,
+            stdout_lossy=stdout_lossy,
+            stderr_lossy=stderr_lossy,
         )
 
     def start_and_open_stream(
@@ -356,3 +378,16 @@ def tail_text(data: bytes, max_lines: int) -> str:
     text = data.decode("utf-8", errors="replace")
     lines = text.splitlines(keepends=True)
     return "".join(lines[-max_lines:])
+
+
+def decode_utf8_lossy(data: bytes) -> tuple[str, bool]:
+    """AR-001 (`docs/AUDIT_SPEC.md` §4): decodes `data`, reporting whether
+    the decode was lossy — a strict decode is attempted first, falling
+    back to `errors="replace"` only on `UnicodeDecodeError`, so a
+    genuine U+FFFD already present in `data` is never mistaken for one
+    this function substituted (see `CapturedOutput`'s own docstring for
+    why that distinction matters to `capture`'s callers)."""
+    try:
+        return data.decode("utf-8"), False
+    except UnicodeDecodeError:
+        return data.decode("utf-8", errors="replace"), True
