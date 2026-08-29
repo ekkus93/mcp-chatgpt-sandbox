@@ -3,7 +3,7 @@
 **Spec:** `docs/AUDIT_SPEC.md` (AR-001..AR-004, AAT-001..AAT-004)
 **Source:** code review of `docs/REVIEW_TODO.md` V1–V8, 2026-08-29, against
 `d894b4e`
-**Status:** in progress (A1-A3 done)
+**Status:** complete (A1-A4 done)
 
 Four items: one high-severity correctness defect, one incomplete fix, and
 two coverage gaps. Every one was reproduced against the running code before
@@ -334,7 +334,7 @@ this task exists to prevent for site 2.
 
 ## A4 — Every acceptance-test series is citation-audited ✅
 **Satisfies:** AR-004 · **Verified by:** AAT-004
-**Commit:** `PLACEHOLDER`
+**Commit:** `6b87e60`
 
 - [x] Extend `tests/test_acceptance_test_coverage.py` to `HAT`/`RAT`/`VAT`,
       or record the omission in that module as deliberate
