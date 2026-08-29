@@ -308,6 +308,13 @@ def _redact(value: Any, *, key: str | None = None, inherited_secret: bool = Fals
     # `frozenset` deliberately not included: nothing in this codebase
     # constructs one for `details`/audit `metadata` today, and adding a
     # case with no reproducible caller would be untested by construction.
+    #
+    # AR-002 (`docs/AUDIT_SPEC.md` §4): a `namedtuple` degrades to a
+    # plain `tuple` here — `tuple(...)` on a `_fields`-carrying subclass
+    # doesn't reconstruct it. Deliberately not special-cased for the
+    # same reason as `frozenset`: no caller in this codebase constructs
+    # one for `details`/audit `metadata` today. Content is still
+    # correctly redacted; only the field names are lost.
     if isinstance(value, tuple):
         return tuple(_redact(v, key=key, inherited_secret=key_flags_secret) for v in value)
     if isinstance(value, set):
@@ -317,15 +324,27 @@ def _redact(value: Any, *, key: str | None = None, inherited_secret: bool = Fals
         if key_flags_secret or _looks_like_secret(value):
             return "[REDACTED]"
         return _URL_USERINFO_RE.sub(r"\1[REDACTED]@", value)
-    # VR-005: R18's own "only a string literally can be a secret" is
-    # false for `bytes` — a token or key can be handed through as raw
-    # bytes just as easily as `str`, so a secret-hinted key still
-    # redacts it, to the same `"[REDACTED]"` string literal the `str`
-    # branch above returns. `bytes` with no secret hint (e.g. arbitrary
-    # binary command output) is left untouched, same as any other
-    # non-redacted value.
-    if isinstance(value, bytes):
-        return "[REDACTED]" if key_flags_secret else value
+    # AR-002 (`docs/AUDIT_SPEC.md` §4): `bytes`/`bytearray` get the same
+    # *two* checks `str` gets above — a secret-hinted key **or**
+    # secret-shaped content — not the key hint alone. V5 (`docs/REVIEW_
+    # SPEC.md` VR-005) added the key-hint half only, leaving a
+    # secret-shaped `bytes` value under an unrelated key (e.g. raw
+    # command output containing a token) unredacted while the identical
+    # `str` was caught; reproduced before this fix, corrected here.
+    # `_looks_like_secret`'s patterns are ASCII-shaped (a GitHub token,
+    # a PEM header, SSH key material), so decoding with
+    # `errors="replace"` first is safe for pattern-matching purposes —
+    # a genuine secret matching these patterns is always valid ASCII,
+    # and an unrelated non-UTF-8 byte sequence simply won't match
+    # anything regardless of how the un-matched bytes decode.
+    # `bytearray` is `bytes`'s mutable twin, handled identically;
+    # `memoryview` is deliberately excluded, same reasoning as
+    # `frozenset`/`namedtuple` above — no caller constructs one for
+    # `details`/audit `metadata` today.
+    if isinstance(value, (bytes, bytearray)):
+        if key_flags_secret or _looks_like_secret(bytes(value).decode("utf-8", errors="replace")):
+            return "[REDACTED]"
+        return value
     # RR-009: a non-string, non-bytes scalar (`{"ssh_key_present": True}`,
     # `{"key_count": 3}`) carries no free-text secret material of its
     # own — so it is never redacted on a substring key hint alone. This

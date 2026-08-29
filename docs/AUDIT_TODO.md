@@ -211,15 +211,16 @@ schema/contract change — `index_left_dirty`'s type and meaning are
 unchanged (§17.4 already defines it as "the index could not be restored
 faithfully"); no `CONTRACT_VERSION` bump.
 
-## A2 — Redaction's content scan covers every type it redacts by key
+## A2 — Redaction's content scan covers every type it redacts by key ✅
 **Satisfies:** AR-002 · **Verified by:** AAT-002
+**Commit:** `PLACEHOLDER`
 
-- [ ] Run the value-pattern scan against `bytes`, or narrow V5's stated scope
+- [x] Run the value-pattern scan against `bytes`, or narrow V5's stated scope
       to key-flagged only
-- [ ] Decide `bytearray` explicitly — handle it or record the exclusion
+- [x] Decide `bytearray` explicitly — handle it or record the exclusion
       in code, as `frozenset` already is
-- [ ] Decide `memoryview` and namedtuple-type-preservation the same way
-- [ ] Test whichever contract is chosen
+- [x] Decide `memoryview` and namedtuple-type-preservation the same way
+- [x] Test whichever contract is chosen
 
 **Defect (reproduced):**
 
@@ -250,6 +251,49 @@ worth fixing regardless of which way the others go.
 **Narrowing is an acceptable outcome** for any of these, as it was for V5:
 what is not acceptable is a claim broader than the behavior. If the scan is
 narrowed instead of extended, amend `docs/REVIEW_SPEC.md` VR-005 to match.
+
+**Chose extension over narrowing, for `bytes`/`bytearray`; chose deliberate
+exclusion for `memoryview`/namedtuple.** `_redact` (`errors.py`) now checks
+`isinstance(value, (bytes, bytearray))` as one branch: redacts on
+`key_flags_secret` **or** `_looks_like_secret(bytes(value).decode("utf-8",
+errors="replace"))` — the same two-check shape `str` already has, closing
+the exact asymmetry AR-002 describes. Decoding with `errors="replace"`
+before pattern-matching is safe: every `_SECRET_VALUE_PATTERNS` entry
+(GitHub token prefixes, a PEM header, SSH key material) is pure ASCII, so a
+genuine match survives the decode unchanged, and unrelated non-UTF-8 bytes
+simply match nothing either way. Not redacted, the value is returned
+unchanged — `bytearray` stays `bytearray`, matching R18's own
+type-preservation precedent.
+
+`memoryview` and namedtuple's tuple-degradation are recorded as deliberate
+exclusions **in code**, next to `frozenset`'s existing one and using the
+same reasoning: no caller in this codebase constructs either for
+`details`/audit `metadata` today, and a caseless branch would be untested
+by construction. Namedtuple content is still correctly redacted — only its
+field names are lost when `tuple(...)` reconstructs it as a plain tuple.
+
+**New tests, watched fail first.** `tests/test_errors.py`:
+`test_at_aat002_a_secret_shaped_bytes_value_is_redacted_under_an_unrelated_key`
+(a `ghp_`-shaped token, both as `str` and as `bytes`, under a key that
+hints at nothing — the exact asymmetry reproduced),
+`test_at_aat002_a_secret_shaped_bytearray_value_is_redacted` (content scan
+and key hint, both), and
+`test_at_aat002_a_non_secret_bytearray_value_is_left_untouched` (the
+type-preservation half — asserts `isinstance(..., bytearray)`, not just
+value equality).
+
+**Revert-verified.** Backed up `errors.py`, restored `HEAD`'s version,
+re-ran the two reproduction tests: both failed with the bytes/bytearray
+value returned unchanged instead of `"[REDACTED]"`. Restored the fix;
+`tests/test_errors.py`: 65 passed (62 pre-existing + 3 new).
+
+**Suites.** `tests/test_errors.py`: 65 passed. Broader non-Docker suite
+(`tests/` excluding `tests/workspace/`/`tests/git/`, same proxy V5 used
+since `errors.py` is used across most of the tree): 435 passed. Full
+unscoped `tests/`: 1000 passed, 0 failed, 543.31s, no Docker leftovers.
+Lint/format clean; `mypy src`: no issues in 53 files. No schema/contract
+change — `redact_secrets` is an internal defense-in-depth layer, never a
+tool's own JSON contract; no `CONTRACT_VERSION` bump.
 
 ## A3 — The post-`add` re-capture is independently constrained ✅
 **Satisfies:** AR-003 · **Verified by:** AAT-003

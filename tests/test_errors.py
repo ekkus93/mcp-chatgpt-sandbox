@@ -220,6 +220,34 @@ def test_at_vat005_a_non_secret_bytes_value_is_left_untouched() -> None:
     assert redact_secrets({"payload": b"\x00\x01\x02"}) == {"payload": b"\x00\x01\x02"}
 
 
+def test_at_aat002_a_secret_shaped_bytes_value_is_redacted_under_an_unrelated_key() -> None:
+    """AR-002 (`docs/AUDIT_SPEC.md` §4): `bytes` only ever redacted on the
+    key hint (VR-005/V5) — the value-pattern content scan `str` gets
+    (`_looks_like_secret`) never ran on `bytes`, so a secret-*shaped*
+    `bytes` value under a key that hints at nothing leaked, unlike the
+    identical `str`. Both SHALL be caught the same way."""
+    token = "ghp_" + "a" * 20
+    assert redact_secrets({"blob": token}) == {"blob": "[REDACTED]"}
+    assert redact_secrets({"blob": token.encode()}) == {"blob": "[REDACTED]"}
+
+
+def test_at_aat002_a_secret_shaped_bytearray_value_is_redacted() -> None:
+    """`bytearray` is `bytes`'s mutable twin — same content scan, same
+    key-hint check, on both counts."""
+    token = ("ghp_" + "a" * 20).encode()
+    assert redact_secrets({"blob": bytearray(token)}) == {"blob": "[REDACTED]"}
+    assert redact_secrets({"secret": bytearray(b"hunter2")}) == {"secret": "[REDACTED]"}
+
+
+def test_at_aat002_a_non_secret_bytearray_value_is_left_untouched() -> None:
+    """The type-preservation half, mirrored from R18/V5: a `bytearray`
+    with no secret hint and no secret-shaped content stays a
+    `bytearray`, unredacted and untouched."""
+    redacted = redact_secrets({"payload": bytearray(b"\x00\x01\x02")})
+    assert redacted == {"payload": bytearray(b"\x00\x01\x02")}
+    assert isinstance(redacted["payload"], bytearray)
+
+
 def test_at_hat011_url_userinfo_is_redacted_even_under_an_unrelated_key() -> None:
     """`scheme://user:pass@host` embedded credentials — a plain password
     (not GitHub-token-shaped) matches none of the value patterns and the
