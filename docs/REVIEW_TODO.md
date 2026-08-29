@@ -3,7 +3,7 @@
 **Spec:** `docs/REVIEW_SPEC.md` (VR-001..VR-014, VAT-001..VAT-006)
 **Source:** code review of `docs/REMEDIATION_TODO.md` R1–R27 plus the H36/H37
 work that landed after it, 2026-08-28, against `8301c72`
-**Status:** in progress (Phase 0 complete: V1-V6 done)
+**Status:** in progress (Phase 0 + V7 done)
 
 Fourteen items: six correctness defects in shipped code, four overstated
 claims, four stale references. Every one was reproduced against the running
@@ -514,7 +514,7 @@ of correction and splitting them adds ceremony without adding review value.
 
 ### V7 — Correct the four overstatements ✅
 **Satisfies:** VR-007, VR-008, VR-009, VR-010
-**Commit:** `PLACEHOLDER`
+**Commit:** `b20cf52`
 
 - [x] **R21 checkbox 2** — untick or reword. `tests/workspace/conftest.py`'s
       `repository` fixture still hard-codes `id="example"`; R21's own body
