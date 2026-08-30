@@ -3,7 +3,7 @@
 **Spec:** `docs/GAP2_SPEC.md` (G2R-001..G2R-022, G2AT-001..G2AT-018)
 **Source:** code review of `docs/GAP_TODO.md` G1–G9 plus a general review
 of the four largest source modules, 2026-08-30, against `9bc44fd`
-**Status:** in progress — X1–X11 complete (11/22); X12–X22 remaining
+**Status:** in progress — X1–X12 complete (12/22); X13–X22 remaining
 
 Twenty-two tasks. One is a live privilege-drop bypass reproduced against
 the shipped image; two are regressions the `GAP_TODO.md` pass itself
@@ -635,11 +635,11 @@ design change, not this task; this task only stops the substitute from
 failing its host request.
 
 ### X12 — Setup steps run whenever a container is newly provisioned
-**Satisfies:** G2R-012 · **Verified by:** G2AT-012
+**Satisfies:** G2R-012 · **Verified by:** G2AT-012 · **Commit:** `181c18a`
 
-- [ ] Setup re-runs after a failed run
-- [ ] Setup runs when a container is recreated behind an existing row
-- [ ] Completion is recorded on the workspace, not inferred
+- [x] Setup re-runs after a failed run
+- [x] Setup runs when a container is recreated behind an existing row
+- [x] Completion is recorded on the workspace, not inferred
 
 **Defect.** `tools/workspace.py:451-456` computes `was_created` from
 **database row existence** before `ensure_workspace`; `:484` runs setup
