@@ -3,7 +3,7 @@
 **Spec:** `docs/GAP2_SPEC.md` (G2R-001..G2R-022, G2AT-001..G2AT-018)
 **Source:** code review of `docs/GAP_TODO.md` G1–G9 plus a general review
 of the four largest source modules, 2026-08-30, against `9bc44fd`
-**Status:** in progress — X1–X15 complete (15/22); X16–X22 remaining
+**Status:** in progress — X1–X16 complete (16/22); X17–X22 remaining
 
 Twenty-two tasks. One is a live privilege-drop bypass reproduced against
 the shipped image; two are regressions the `GAP_TODO.md` pass itself
@@ -729,11 +729,14 @@ to the size cap, so the cap under-counts and prunes still-tracked jobs
 instead of the orphans.
 
 ### X16 — The setup-step timeout path handles kill failures as `run_exec` does
-**Satisfies:** G2R-016 · **Verified by:** G2AT-016
+**Satisfies:** G2R-016 · **Verified by:** G2AT-016 · **Commit:** `9c935f9`
 
-- [ ] A kill failure during setup timeout returns a typed error
-- [ ] The two timeout-and-kill blocks no longer diverge
-- [ ] The two grace-period constants are reconciled
+- [x] A kill failure during setup timeout returns a typed error
+- [x] The two timeout-and-kill blocks no longer diverge
+- [x] The two grace-period constants are reconciled — note: verified
+      they had NOT actually diverged in value (both 2.0); the TODO's
+      claim they had was wrong. What had diverged was the OSError
+      handling itself.
 
 **Defect.** `tools/workspace.py:199-206` kills a timed-out setup step
 with no exception handling. `ExecutionService.kill`
