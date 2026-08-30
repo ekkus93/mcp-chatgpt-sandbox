@@ -1,0 +1,47 @@
+#!/bin/sh
+# GR-002 (docs/GAP_SPEC.md): runs the same three commands CI runs
+# (.github/workflows/ci.yml), via `uv run` specifically — never a bare
+# `ruff`/`mypy` on PATH, which can be a different version with a
+# different verdict (G1, docs/GAP_TODO.md: a bare ruff 0.12.0 actively
+# rewrote an import block into an order the project-pinned 0.16.4 then
+# rejected in CI). Deliberately just these three, matching
+# docs/DEVELOPMENT.md's own documented set minus `pytest` — the full
+# suite is Docker-heavy and multi-minute, too slow to run on every
+# commit; it stays a separate, undocumented-by-this-hook step.
+#
+# Not tracked as an actual git hook by git itself — `.git/hooks/` is
+# per-clone, not version-controlled. Activated once per clone via
+# `git config core.hooksPath .githooks` (docs/DEVELOPMENT.md's own
+# Setup section documents this).
+#
+# `git commit --no-verify` still bypasses this, as it does any git
+# hook — that is git's own design, not a gap this hook can close.
+# Enforcing means "on by default for anyone who ran the one-time setup
+# step," not "physically impossible to skip."
+
+set -eu
+
+fail=0
+
+echo "pre-commit: uv run ruff format --check ."
+if ! uv run ruff format --check .; then
+    fail=1
+fi
+
+echo "pre-commit: uv run ruff check ."
+if ! uv run ruff check .; then
+    fail=1
+fi
+
+echo "pre-commit: uv run mypy src"
+if ! uv run mypy src; then
+    fail=1
+fi
+
+if [ "$fail" -ne 0 ]; then
+    echo "pre-commit: one or more checks failed — commit blocked (docs/GAP_SPEC.md GR-002)." >&2
+    echo "pre-commit: fix the issue above, or bypass deliberately with 'git commit --no-verify'." >&2
+    exit 1
+fi
+
+exit 0

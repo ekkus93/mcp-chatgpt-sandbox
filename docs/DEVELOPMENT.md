@@ -4,7 +4,20 @@
 
 ```bash
 uv sync --group dev
+git config core.hooksPath .githooks
 ```
+
+The second line activates `.githooks/pre-commit` (GR-002,
+`docs/GAP_SPEC.md`) — it runs `ruff format --check`/`ruff check`/`mypy
+src` before every commit and blocks the commit if any fails, so a
+divergent local toolchain (a stray `ruff`/`mypy` on `PATH`, a different
+version than the one `uv run` resolves to) is caught here rather than in
+CI. `.git/hooks/` itself is per-clone, not version-controlled, which is
+why this is a one-time step rather than automatic — run it once per
+clone, immediately after `uv sync`. Always run the commands below through
+`uv run`, never a bare binary on `PATH`: the two can genuinely disagree
+(a bare `ruff` once passed something the project-pinned version, what CI
+actually runs, rejected — `docs/GAP_TODO.md` G1).
 
 ## Running checks
 
@@ -16,7 +29,9 @@ uv run mypy src
 ```
 
 All four SHALL pass before a commit, per `docs/TODO.md`'s task loop and
-`docs/SPEC.md` §71 (CI).
+`docs/SPEC.md` §71 (CI). The `.githooks/pre-commit` hook above runs the
+last three automatically; `pytest` is Docker-heavy and multi-minute, so
+it stays a separate, manual step the hook does not run on every commit.
 
 ## Running the server locally
 
