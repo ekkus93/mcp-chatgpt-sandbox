@@ -24,8 +24,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from dev_workspace_mcp.workspace.naming import WorkspaceMode
 from docker.models.containers import Container
+
+from dev_workspace_mcp.workspace.naming import WorkspaceMode
 
 
 class WorkspaceState(StrEnum):

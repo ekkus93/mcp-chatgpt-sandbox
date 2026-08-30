@@ -22,6 +22,10 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
+from docker.errors import DockerException
+from docker.errors import NotFound as DockerNotFound
+from docker.models.containers import Container
+
 from dev_workspace_mcp.audit import write_audit_event
 from dev_workspace_mcp.config.models import AuditConfig
 from dev_workspace_mcp.errors import (
@@ -46,9 +50,6 @@ from dev_workspace_mcp.workspace.records import (
     _oom_killed_from_docker_container,
     _state_from_docker_container,
 )
-from docker.errors import DockerException
-from docker.errors import NotFound as DockerNotFound
-from docker.models.containers import Container
 
 _logger = logging.getLogger(__name__)
 

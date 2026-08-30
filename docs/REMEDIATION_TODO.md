@@ -905,7 +905,7 @@ reproducible the way the volume one is).
 try:
     info = self._docker.api.exec_inspect(exec_id)
 except docker.errors.DockerException:
-    return                                   # <- silent success
+    return  # <- silent success
 ```
 
 The docstring three lines above states "HR-020 requires a failed signal be
