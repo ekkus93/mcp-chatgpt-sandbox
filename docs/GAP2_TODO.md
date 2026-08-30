@@ -3,7 +3,7 @@
 **Spec:** `docs/GAP2_SPEC.md` (G2R-001..G2R-022, G2AT-001..G2AT-018)
 **Source:** code review of `docs/GAP_TODO.md` G1–G9 plus a general review
 of the four largest source modules, 2026-08-30, against `9bc44fd`
-**Status:** in progress — X1–X13 complete (13/22); X14–X22 remaining
+**Status:** in progress — X1–X14 complete (14/22); X15–X22 remaining
 
 Twenty-two tasks. One is a live privilege-drop bypass reproduced against
 the shipped image; two are regressions the `GAP_TODO.md` pass itself
@@ -683,13 +683,13 @@ RUNNING without touching Docker images, so nothing pulls it and
 `images.get` raises.
 
 ### X14 — A workspace's reported image and digest describe the same image
-**Satisfies:** G2R-014 · **Verified by:** G2AT-014
+**Satisfies:** G2R-014 · **Verified by:** G2AT-014 · **Commit:** `ea7004e`
 
-- [ ] `image_digest` is the digest of the image the container actually
+- [x] `image_digest` is the digest of the image the container actually
       runs
-- [ ] A configured-image change without a rebuild is reported, not
+- [x] A configured-image change without a rebuild is reported, not
       silently reconciled
-- [ ] Schema-drift check — this one plausibly does change an output shape
+- [x] Schema-drift check — this one plausibly does change an output shape
 
 **Defect.** `tools/workspace.py:476-482` writes the digest of
 `effective_image` into the workspace row **unconditionally**, but
