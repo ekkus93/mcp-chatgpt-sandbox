@@ -3,8 +3,7 @@
 **Spec:** `docs/GAP2_SPEC.md` (G2R-001..G2R-022, G2AT-001..G2AT-018)
 **Source:** code review of `docs/GAP_TODO.md` G1–G9 plus a general review
 of the four largest source modules, 2026-08-30, against `9bc44fd`
-**Status:** in progress — X1, X4, X5, X6, X7, X8 complete (6/22); X2, X3,
-X9–X22 remaining
+**Status:** in progress — X1–X10 complete (10/22); X11–X22 remaining
 
 Twenty-two tasks. One is a live privilege-drop bypass reproduced against
 the shipped image; two are regressions the `GAP_TODO.md` pass itself
@@ -172,12 +171,12 @@ one-task-per-commit discipline this list depends on. X1 proves the input
 never reaches a container; X3 proves the container survives it anyway.
 
 ### X2 — `environment:` cannot redirect Git's own configuration
-**Satisfies:** G2R-002 · **Verified by:** G2AT-002
+**Satisfies:** G2R-002 · **Verified by:** G2AT-002 · **Commit:** `3468acf`
 
-- [ ] `GIT_CONFIG`, `GIT_CONFIG_SYSTEM`, `GIT_CONFIG_GLOBAL`,
+- [x] `GIT_CONFIG`, `GIT_CONFIG_SYSTEM`, `GIT_CONFIG_GLOBAL`,
       `GIT_CONFIG_COUNT` rejected at validation
-- [ ] The broader `GIT_*` assessment recorded in code, not re-derived
-- [ ] Test a rejected key and an ordinary `GIT_*` key that still passes
+- [x] The broader `GIT_*` assessment recorded in code, not re-derived
+- [x] Test a rejected key and an ordinary `GIT_*` key that still passes
 
 **Defect (reproduced with git 2.43.0).** `entrypoint.sh:64` runs, as root
 before the drop:
@@ -213,13 +212,13 @@ entrypoint change that adds a root-phase `git` call against a real
 repository will be read against it.
 
 ### X3 — The entrypoint does not inherit interpreter state it cannot neutralize
-**Satisfies:** G2R-003 · **Verified by:** G2AT-003
+**Satisfies:** G2R-003 · **Verified by:** G2AT-003 · **Commit:** `af11293`
 
-- [ ] The root phase does not execute under a shell that has already
+- [x] The root phase does not execute under a shell that has already
       imported unvalidated environment state
-- [ ] The write-up states which inherited-state classes the chosen
+- [x] The write-up states which inherited-state classes the chosen
       mechanism does and does not cover
-- [ ] GR-005's "closes the mechanism regardless of what future surface
+- [x] GR-005's "closes the mechanism regardless of what future surface
       supplies the environment" is corrected — it is true of `PATH` only
 
 **Defect.** GR-005 set `PATH` *inside* the script. `BASH_ENV` is sourced
@@ -540,12 +539,12 @@ was found underneath both.
 ## Phase 2 — Correctness defects in shipped code
 
 ### X9 — Filesystem listing survives concurrent mutation
-**Satisfies:** G2R-009 · **Verified by:** G2AT-009
+**Satisfies:** G2R-009 · **Verified by:** G2AT-009 · **Commit:** `4827ba9`
 
-- [ ] `_describe`'s `stat`/`is_symlink`/`exists`/`resolve` calls tolerate
+- [x] `_describe`'s `stat`/`is_symlink`/`exists`/`resolve` calls tolerate
       a vanished entry
-- [ ] A vanished entry is skipped or reported, never propagated untyped
-- [ ] The local `stat` at `:175` no longer shadows the `stat` module
+- [x] A vanished entry is skipped or reported, never propagated untyped
+- [x] The local `stat` at `:175` no longer shadows the `stat` module
 
 **Defect.** `filesystem/service.py:175` — `stat = path.stat()`,
 unguarded. `_is_git_metadata` directly above (`:150-156`) *was* hardened
@@ -564,12 +563,12 @@ The `stat` shadowing is harmless today and one added line inside
 already being touched.
 
 ### X10 — `write_file` neither destroys content on failure nor reports an unverified hash
-**Satisfies:** G2R-010 · **Verified by:** G2AT-010
+**Satisfies:** G2R-010 · **Verified by:** G2AT-010 · **Commit:** `8f46c36`
 
-- [ ] A write that fails partway leaves previous content intact
-- [ ] The reported `sha256`/`size` describe what is on disk
-- [ ] A short `pwrite` is looped or raises
-- [ ] `dir_fd` containment is preserved by whatever replaces the current
+- [x] A write that fails partway leaves previous content intact
+- [x] The reported `sha256`/`size` describe what is on disk
+- [x] A short `pwrite` is looped or raises
+- [x] `dir_fd` containment is preserved by whatever replaces the current
       sequence
 
 **Defect.** `filesystem/service.py:469-470`:
