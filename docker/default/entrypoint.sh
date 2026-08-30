@@ -37,9 +37,21 @@ set -euo pipefail
 # check below — "am I root?" — answer "no" and skip the privilege drop
 # entirely, running the workspace command itself as root. GR-004
 # (`docs/GAP_SPEC.md`) closes today's one input path for that (project
-# `environment:`); this closes the mechanism, independently, so no
-# future config surface can reopen it by supplying `PATH` a different
-# way.
+# `environment:`).
+#
+# Correction (G2R-003, `docs/GAP2_SPEC.md`): the line below closes the
+# mechanism for `PATH` specifically, not "independently of what future
+# surface supplies the environment" as originally claimed here — an
+# exported shell function (`BASH_FUNC_<name>%%`) takes precedence over
+# `PATH` lookup entirely, so a hostile one bypasses this hardcoded value
+# the same way an inherited one would have. Reproduced: this fix alone,
+# with a `BASH_FUNC_id%%` function present, still gave the drop-bypass.
+# The actual mechanism-level defence is `entrypoint-wrapper.py`
+# (`docker/default/Dockerfile`'s real `ENTRYPOINT`), which strips
+# `BASH_ENV`/`ENV`/an exported function from the environment *before*
+# this script — or any bash process — ever starts, which is the only
+# point early enough: bash imports an exported function at its own
+# process startup, before even this script's first line runs.
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 

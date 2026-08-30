@@ -138,6 +138,47 @@ def test_at_gr005_a_hostile_path_does_not_skip_the_privilege_drop(
     assert output.strip() == "1234"
 
 
+def test_at_g2r003_an_exported_shell_function_does_not_skip_the_privilege_drop(
+    docker_client: docker.DockerClient,
+    default_image_tag: str,
+    ssh_config: SSHConfig,
+) -> None:
+    """G2R-003 (`docs/GAP2_SPEC.md`): the mechanism-level backstop for
+    G2R-001's reproduced live bypass — an exported bash function
+    (`BASH_FUNC_id%%`) shadows the real `id` and takes precedence over
+    `PATH` lookup entirely, so `test_at_gr005_*` above (a hostile
+    `PATH`) does not exercise this: `entrypoint.sh`'s own hardcoded
+    `PATH` never gets a chance to matter, since the function beats it
+    regardless of what `PATH` is set to.
+
+    Built at the same layer `test_at_gr005_*` uses (`extra_env`, which
+    still enforces nothing about environment shape) so this proves the
+    entrypoint's own defence — the wrapper in
+    `docker/default/Dockerfile`'s real `ENTRYPOINT` — holds
+    independently of X1's daemon-level validator, not that the
+    validator rejects the key (that's `test_at_g2r001_*` in
+    `tests/workspace/test_project_config_integration.py`)."""
+    run_kwargs = build_workspace_run_kwargs(
+        ssh_config=ssh_config,
+        container_config=ContainerConfig(user="host", sudo=False),
+        docker_client=docker_client,
+        checkout_uid=1234,
+        checkout_gid=1234,
+        extra_env={"BASH_FUNC_id%%": "() { echo 1000; }"},
+    )
+    output = _run_oneshot(
+        docker_client,
+        default_image_tag,
+        ["bash", "-c", "echo $EUID"],
+        environment=run_kwargs["environment"],
+    )
+    # 1234 (the checkout uid): the drop happened despite the exported
+    # function. Not "0" (drop skipped) and not "1000" (the function's
+    # own claim, which $EUID — a bash builtin, never resolved through a
+    # function lookup — cannot report).
+    assert output.strip() == "1234"
+
+
 def test_at_hat007_a_traversal_in_mcp_cache_paths_is_rejected_by_the_entrypoint(
     docker_client: docker.DockerClient, default_image_tag: str, ssh_config: SSHConfig
 ) -> None:
