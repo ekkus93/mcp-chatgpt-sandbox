@@ -92,6 +92,26 @@ def test_at_gr007_write_audit_event_does_not_crash_on_a_set_or_bytes_value(
     assert isinstance(lines[0]["metadata"]["payload"], str)
 
 
+def test_at_g2r004_write_audit_event_does_not_leak_a_secret_flagged_frozenset(
+    tmp_path: Path,
+) -> None:
+    """G2R-004 (`docs/GAP2_SPEC.md`): the audit-writer half, alongside
+    `tests/test_errors.py`'s `test_at_g2r004_*` — `frozenset`/
+    `memoryview` had no branch in `_redact` at all, so a secret-flagged
+    one reached the audit log with its contents intact, not merely
+    crashing the write the way `set`/`bytes` did before GR-007."""
+    config = AuditConfig(enabled=True, path=tmp_path / "audit.jsonl")
+    write_audit_event(
+        config,
+        operation="op",
+        result="success",
+        metadata={"secret": frozenset({"hunter2"})},
+    )  # SHALL NOT raise, SHALL NOT leak
+    lines = _read_lines(config.path)
+    assert len(lines) == 1
+    assert lines[0]["metadata"]["secret"] == "[UNREPRESENTABLE: frozenset]"
+
+
 def test_write_audit_event_defaults_metadata_to_empty_dict(tmp_path: Path) -> None:
     config = AuditConfig(enabled=True, path=tmp_path / "audit.jsonl")
     write_audit_event(config, operation="op", result="success")

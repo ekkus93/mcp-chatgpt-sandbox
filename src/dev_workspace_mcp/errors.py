@@ -290,9 +290,26 @@ def _redact(value: Any, *, key: str | None = None, inherited_secret: bool = Fals
     moment it recursed one level and leaked (`'a'` flags nothing on its
     own). Each recursive call still also checks its own `key` — a
     `password` two levels under an unrelated ancestor is still caught —
-    the two checks are OR'd, not one replacing the other."""
+    the two checks are OR'd, not one replacing the other.
+
+    G2R-004 (`docs/GAP2_SPEC.md`): `key`'s own type hint (`str | None`)
+    is not enforced by anything — `redact_secrets`' top-level `details:
+    dict[str, Any]` only constrains the outermost keys; a *nested* dict
+    reached through that `Any` can have a key of any hashable type, and
+    the dict branch just below passes each one straight through as
+    `key=k` on the way back into this function. `isinstance(key, str)`,
+    not `key is not None`, is what makes that safe: a non-`str` key
+    carries no free-text substring to hint-match in the first place, the
+    same way `None` already doesn't, so it is treated identically rather
+    than reaching `key.lower()` and raising `AttributeError`. Reproduced
+    before this fix: `redact_secrets({"outer": {1: "hunter2"}})` crashed
+    on the inner `1`; `to_tool_error` catches only `WorkspaceError`, so
+    this would have surfaced as an unstructured crash, and `audit.py`'s
+    `except OSError` would not have caught it either, exactly as GR-007
+    documented for the `TypeError` case this same fail-closed pass
+    fixed."""
     key_flags_secret = inherited_secret or (
-        key is not None and any(hint in key.lower() for hint in _SECRET_KEY_HINTS)
+        isinstance(key, str) and any(hint in key.lower() for hint in _SECRET_KEY_HINTS)
     )
     if isinstance(value, dict):
         return {k: _redact(v, key=k, inherited_secret=key_flags_secret) for k, v in value.items()}
@@ -326,11 +343,17 @@ def _redact(value: Any, *, key: str | None = None, inherited_secret: bool = Fals
     # the moment any caller puts one in `details`/`metadata`. Coerced to
     # a `list` here instead: JSON-safe, and lossless for redaction's own
     # purpose (`details`/`metadata` values are reported, never consumed
-    # back as sets). `frozenset` deliberately still excluded, same
-    # reasoning as `namedtuple`: no caller constructs one today, and
-    # `isinstance(x, set)` is `False` for one anyway, so it falls
-    # through to the plain `return value` at the bottom, unredacted —
-    # documented, not silently unhandled.
+    # back as sets).
+    #
+    # `frozenset` is NOT specially handled here (`isinstance(x, set)` is
+    # `False` for one) — it falls through to the fail-closed placeholder
+    # at the bottom of this function instead (G2R-004,
+    # `docs/GAP2_SPEC.md`). That placeholder exists specifically because
+    # this comment used to claim the fallthrough was merely "documented,
+    # not silently unhandled" — which undersold the actual consequence:
+    # a secret-flagged `frozenset` reached `json.dumps` with its
+    # contents intact. A leak, not just a crash. See the placeholder's
+    # own comment for the fix and how it was verified.
     if isinstance(value, set):
         return [_redact(v, key=key, inherited_secret=key_flags_secret) for v in value]
 
@@ -352,9 +375,10 @@ def _redact(value: Any, *, key: str | None = None, inherited_secret: bool = Fals
     # and an unrelated non-UTF-8 byte sequence simply won't match
     # anything regardless of how the un-matched bytes decode.
     # `bytearray` is `bytes`'s mutable twin, handled identically;
-    # `memoryview` is deliberately excluded, same reasoning as
-    # `frozenset`/`namedtuple` above — no caller constructs one for
-    # `details`/audit `metadata` today.
+    # `memoryview` is NOT specially handled here — same as `frozenset`
+    # above, it falls through to the fail-closed placeholder at the
+    # bottom of this function (G2R-004, `docs/GAP2_SPEC.md`) rather than
+    # being redacted for secret-shaped content the way `bytes` is.
     #
     # GR-007 (`docs/GAP_SPEC.md`): the non-secret passthrough used to
     # return `value` itself — the raw `bytes`/`bytearray` object, which
@@ -368,14 +392,41 @@ def _redact(value: Any, *, key: str | None = None, inherited_secret: bool = Fals
         if key_flags_secret or _looks_like_secret(text):
             return "[REDACTED]"
         return text
-    # RR-009: a non-string, non-bytes scalar (`{"ssh_key_present": True}`,
-    # `{"key_count": 3}`) carries no free-text secret material of its
-    # own — so it is never redacted on a substring key hint alone. This
-    # used to silently turn every `bool`/`int` under any `*key*`-ish
-    # field name into the string `"[REDACTED]"`, corrupting `details`'
-    # and audit `metadata`'s types for no actual secrecy gained; the type
-    # is now always preserved by simply never touching it.
-    return value
+    # RR-009: a non-string, non-bytes JSON *primitive*
+    # (`{"ssh_key_present": True}`, `{"key_count": 3}`, `None`) carries
+    # no free-text secret material of its own — so it is never redacted
+    # on a substring key hint alone. This used to silently turn every
+    # `bool`/`int` under any `*key*`-ish field name into the string
+    # `"[REDACTED]"`, corrupting `details`' and audit `metadata`'s types
+    # for no actual secrecy gained; the type is preserved by simply
+    # never touching it.
+    if isinstance(value, (bool, int, float)) or value is None:
+        return value
+    # G2R-004 (`docs/GAP2_SPEC.md`): every branch above explicitly
+    # handles one known-safe type. This used to be an unconditional
+    # `return value` instead — an open-by-default fallthrough, the same
+    # shape as the denylist that produced G2R-001
+    # (`docs/GAP2_TODO.md` X1) — and its actual failure mode was worse
+    # than the `set`/`bytes` crash GR-007 (`docs/GAP_SPEC.md`) fixed:
+    # neither the `frozenset` nor the `memoryview` comments above match
+    # this value, so `key_flags_secret` was never consulted for either,
+    # and a secret-flagged one reached `json.dumps` with its contents
+    # intact. Reproduced: `_redact(frozenset({'hunter2'}), key='secret')`
+    # returned the frozenset unchanged — a leak, not merely a crash.
+    #
+    # Fails closed instead: every recognized container/scalar type above
+    # is redacted or passed through deliberately; anything this function
+    # does not recognize — `frozenset`, `memoryview`, `Decimal`, `Path`,
+    # `datetime`, a dataclass, whatever a future caller reaches for next
+    # — becomes a type-named placeholder rather than reaching a caller
+    # unexamined. This can never leak a secret (an unrecognized type's
+    # contents are never inspected or serialized) and can never crash
+    # `json.dumps` (the placeholder is always a `str`). Verified every
+    # `details=`/`metadata=` call site in `src/` passes only primitives
+    # or `str(...)`-coerced values today (`grep -rn "details=" src/`),
+    # which is what makes fail-closed safe here rather than merely
+    # tidy — re-run that grep before relying on this claim staying true.
+    return f"[UNREPRESENTABLE: {type(value).__name__}]"
 
 
 def redact_secrets(details: dict[str, Any]) -> dict[str, Any]:

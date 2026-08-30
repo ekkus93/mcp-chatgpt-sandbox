@@ -280,6 +280,62 @@ def test_at_aat002_a_non_secret_bytearray_value_is_decoded_not_left_as_bytearray
     assert isinstance(redacted["payload"], str)
 
 
+def test_at_g2r004_a_secret_flagged_frozenset_does_not_leak() -> None:
+    """G2R-004 (`docs/GAP2_SPEC.md`): `frozenset` had no branch in
+    `_redact` at all, so it fell through to the old unconditional
+    `return value` — `key_flags_secret` was never consulted, and the
+    secret reached the caller with its contents intact. Reproduced
+    before this fix: `redact_secrets({"secret": frozenset({"hunter2"})})`
+    returned the frozenset unchanged, not `"[REDACTED]"` or any
+    redacted form — a leak, not merely the `json.dumps` crash GR-007
+    fixed for `set`/`bytes`."""
+    redacted = redact_secrets({"secret": frozenset({"hunter2"})})
+    assert redacted == {"secret": "[UNREPRESENTABLE: frozenset]"}
+    assert "hunter2" not in str(redacted)
+
+
+def test_at_g2r004_a_secret_flagged_memoryview_does_not_leak() -> None:
+    """The same defect, for `memoryview` — `bytes`/`bytearray` get a
+    content scan and a key-hint check; `memoryview` got neither."""
+    redacted = redact_secrets({"secret": memoryview(b"hunter2")})
+    assert redacted == {"secret": "[UNREPRESENTABLE: memoryview]"}
+
+
+def test_at_g2r004_an_unrecognized_type_under_a_non_secret_key_is_a_placeholder() -> None:
+    """Fail-closed applies regardless of the key hint — an unrecognized
+    type is never passed through untouched, even when nothing suggests
+    it's a secret, since `_redact` cannot safely inspect its contents
+    either way."""
+    from decimal import Decimal
+
+    assert redact_secrets({"count": Decimal("3.14")}) == {"count": "[UNREPRESENTABLE: Decimal]"}
+
+
+def test_at_g2r004_json_primitives_still_pass_through_unchanged() -> None:
+    """The fail-closed placeholder SHALL NOT swallow the ordinary case —
+    RR-009's own concern, re-verified after narrowing the fallthrough:
+    `bool`/`int`/`float`/`None` are still returned exactly as given."""
+    redacted = redact_secrets(
+        {"flag": True, "count": 3, "ratio": 0.5, "absent": None, "text": "ok"}
+    )
+    assert redacted == {"flag": True, "count": 3, "ratio": 0.5, "absent": None, "text": "ok"}
+
+
+def test_at_g2r004_a_non_str_dict_key_does_not_crash() -> None:
+    """G2R-004: `redact_secrets`' own `details: dict[str, Any]` hint
+    constrains only the outermost keys — a nested dict reached through
+    that `Any` can have a key of any hashable type. Reproduced before
+    this fix: `redact_secrets({"outer": {1: "hunter2"}})` raised
+    `AttributeError: 'int' object has no attribute 'lower'` from
+    `key.lower()`. A non-`str` key simply can't hint at a secret by
+    substring match, so it's treated like `key=None` — no crash, and
+    the value is still redacted if it's secret-*shaped* on its own
+    content, exercised here via the token pattern rather than the key."""
+    token = "ghp_" + "c" * 20
+    redacted = redact_secrets({"outer": {1: token}})
+    assert redacted == {"outer": {1: "[REDACTED]"}}
+
+
 def test_at_hat011_url_userinfo_is_redacted_even_under_an_unrelated_key() -> None:
     """`scheme://user:pass@host` embedded credentials — a plain password
     (not GitHub-token-shaped) matches none of the value patterns and the
@@ -345,6 +401,16 @@ def test_at_gr007_to_tool_error_does_not_crash_on_a_set_or_bytes_value() -> None
     payload = json.loads(str(to_tool_error(exc)))  # SHALL NOT raise
     assert isinstance(payload["details"]["tags"], list)
     assert isinstance(payload["details"]["payload"], str)
+
+
+def test_at_g2r004_to_tool_error_does_not_leak_a_secret_flagged_frozenset() -> None:
+    """G2R-004 (`docs/GAP2_SPEC.md`): the end-to-end half, alongside
+    `test_at_g2r004_a_secret_flagged_frozenset_does_not_leak` above —
+    through the real client-facing boundary, not `_redact` directly."""
+    exc = InvalidArgumentError("bad frozenset", details={"secret": frozenset({"hunter2"})})
+    payload = json.loads(str(to_tool_error(exc)))  # SHALL NOT raise, SHALL NOT leak
+    assert payload["details"]["secret"] == "[UNREPRESENTABLE: frozenset]"
+    assert "hunter2" not in str(payload)
 
 
 # --- @translate_workspace_errors ---------------------------------------------------
