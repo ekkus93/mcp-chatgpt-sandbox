@@ -1,6 +1,6 @@
 # Gap 2 TODO
 
-**Spec:** `docs/GAP2_SPEC.md` (G2R-001..G2R-022, G2AT-001..G2AT-016)
+**Spec:** `docs/GAP2_SPEC.md` (G2R-001..G2R-022, G2AT-001..G2AT-018)
 **Source:** code review of `docs/GAP_TODO.md` G1–G9 plus a general review
 of the four largest source modules, 2026-08-30, against `9bc44fd`
 **Status:** not started
@@ -75,19 +75,30 @@ is the precedent, and G2R-001 is the concrete demonstration that it was
 right: G2 closed the inputs it named and G3 closed `PATH`, and a bypass
 survived both. Land them as separate commits but do not stop after one.
 
+**If only one task gets done, it is X1.** X1 alone closes the reproduced
+bypass — `BASH_FUNC_id%%` fails its key pattern, so the malicious
+`environment:` block is rejected before a container exists, on the image
+as shipped. X2 closes a second, lesser input (root-owned file creation,
+not code execution). X3 is defence-in-depth for a *future* input path
+and is not required to close today's vulnerability. This ordering is
+about consequence, not about X1 being insufficient on its own.
+
 ---
 
 ## Phase 0 — Security: controls that do not hold
 
 ### X1 — `environment:` cannot supply an exported shell function
-**Satisfies:** G2R-001 · **Verified by:** G2AT-001, G2AT-003
+**Satisfies:** G2R-001 · **Verified by:** G2AT-001
 
 - [ ] A key that is not a valid POSIX environment-variable name is
       rejected at validation
+- [ ] A value beginning `() {` under an identifier-shaped key is
+      rejected at validation
 - [ ] The rejection names the offending key, matching the existing
       `blocked`/`shadowed` error shape
-- [ ] Real-container test: an exported `BASH_FUNC_id` function present in
-      the environment, privilege drop still occurs
+- [ ] End-to-end: `workspace_open` against a repository whose
+      `.mcp-workspace.yml` carries such a key fails, and no container is
+      created
 - [ ] The residual-risk paragraph at `project_config.py:162-170` is
       corrected — it names G3 as the backstop for exactly this, and G3
       does not cover it
@@ -120,27 +131,43 @@ privilege transition occurs for that flag to constrain. Contained within
 the container. **Not a host escape.** This is the same framing GR-004
 used for the same class of finding.
 
-**Shape of the fix — close the shape, not the spelling.** `BASH_FUNC_` is
-bash's *current* prefix; pre-Shellshock bash used a bare name with a
-`() {` value, so a single hardcoded prefix comparison is a denylist of
-one spelling. Reject any key that is not `^[A-Za-z_][A-Za-z0-9_]*$`. That
-is an allowlist of *shape* rather than of names, so it does not defeat
-`environment:`'s purpose the way an allowlist of permitted names would
-(the reason G2 gave for choosing a denylist, which still stands).
+**Shape of the fix — two checks, because the two spellings differ in
+which half carries the signature.** `BASH_FUNC_<name>%%` is bash's
+current export form; the `%%` makes the *key* an invalid
+environment-variable name, so rejecting any key that is not
+`^[A-Za-z_][A-Za-z0-9_]*$` closes it. Pre-Shellshock bash used a bare,
+identifier-shaped name whose *value* began `() {` — the key pattern
+cannot see that, so a second check on the value
+(`^\s*\(\s*\)\s*{`) is needed for the claim "closes the shape, not one
+spelling" to be true. Current bash does not import the bare form, so the
+value check guards a downgraded `/bin/bash` rather than the shipped one;
+it is two lines and worth having.
+
+The key pattern is an allowlist of *shape* rather than of names, so it
+does not defeat `environment:`'s purpose the way an allowlist of
+permitted names would (the reason G2 gave for choosing a denylist, which
+still stands). Verified it does not over-reject: `PATH`, `RUST_LOG`, and
+`GIT_CONFIG_SYSTEM` all match the pattern; only `BASH_FUNC_id%%` fails.
 
 **Do not** merge this into the existing `_ENTRYPOINT_CONTROL_ENV_KEYS`
 check. That set names variables whose *meaning* is dangerous; this
 rejects keys that are not variables at all. Keep them separate for the
 same reason G2 kept its check separate from HR-006's.
 
-**Where the test goes.** Validation half in `tests/test_project_config.py`
-alongside `test_at_gr004_*`. Container half in
-`tests/workspace/test_default_image.py`, modeled on
-`test_at_gr005_a_hostile_path_does_not_skip_the_privilege_drop`: build
-the hostile input via `build_workspace_run_kwargs`'s `extra_env` so it
-exercises the *entrypoint* rather than this task's own validator, and
-assert with `bash -c 'echo $EUID'` — never `id -u`, which is the exact
-thing the attack shadows.
+**Where the test goes — through the validator, not around it.**
+Validation half in `tests/test_project_config.py` alongside
+`test_at_gr004_*`. End-to-end half wherever this repository already
+drives `workspace_open` against a project config: assert the call fails
+and **no container is created**.
+
+**Do not** write X1's container test the way `test_at_gr005_*` builds
+its hostile input — via `build_workspace_run_kwargs`'s `extra_env`,
+bypassing project config. That deliberately bypasses this task's own
+validator to reach the entrypoint, which is **X3's** test (G2AT-003) and
+requires X3's fix to pass. Scoping X1's test that way would make X1
+unable to pass its own checklist until X3 also landed, breaking the
+one-task-per-commit discipline this list depends on. X1 proves the input
+never reaches a container; X3 proves the container survives it anyway.
 
 ### X2 — `environment:` cannot redirect Git's own configuration
 **Satisfies:** G2R-002 · **Verified by:** G2AT-002
@@ -201,16 +228,43 @@ either. X1/X2 close today's only reachable route (the daemon populates
 precisely so a future surface cannot reopen what a denylist misses — and
 as written it provides that for `PATH` alone.
 
-**Shape of the fix.** Re-exec through a sanitized environment as the
-script's first action — an `ENTRYPOINT` that
-`exec env -i PATH=… /entrypoint.sh "$@"`, or a `#!/bin/sh` shebang where
-the runtime shell does not import functions from the environment.
+**Not urgent, and say so in the write-up.** X1 alone closes the
+reproduced bypass — `BASH_FUNC_id%%` fails its key pattern, so the
+config is rejected before a container exists. This task is
+defence-in-depth for a future input path (a daemon-level
+`docker.environment`, an image change, a denylist that misses a
+spelling). Do not write it up as though the live vulnerability were
+still open once X1 has landed.
+
+**`env -i` is a trap — do not implement the obvious one-liner.** The
+entrypoint reads seven variables from its environment: `MCP_UID`,
+`MCP_GID`, `MCP_USER`, `MCP_SUDO`, `MCP_WORKSPACE_PATH`,
+`MCP_SSH_MODE`, `MCP_CACHE_PATHS` (verified by grep), plus
+`SSH_AUTH_SOCK` for the workspace command. A bare
+`exec env -i PATH=… /entrypoint.sh "$@"` clears all of them, and each
+falls back to its default at `entrypoint.sh:46-50`. That breaks caches
+and SSH — and, worse, **`MCP_SUDO` defaults to `true`**, so an operator
+who configured `sudo: false` would silently get passwordless root back.
+A hardening change that re-enables the privilege it was written to
+protect is worse than the gap it closes.
+
+**Shape of the fix**, in preference order:
+
+1. A `#!/bin/sh` wrapper (or `ENTRYPOINT` shim) that `unset`s
+   `BASH_ENV`, `ENV`, `SHELLOPTS`, `BASHOPTS` and every
+   `BASH_FUNC_*`-shaped variable, then `exec`s the bash script with the
+   rest of the environment intact. `dash` does not import functions from
+   the environment, so the wrapper is not itself compromised before it
+   runs.
+2. `env -i` **with every required variable explicitly re-passed** — an
+   allowlist that must track the entrypoint's own reads by hand. If
+   chosen, keep the two adjacent with a comment binding them, and assert
+   in test that each variable survives.
 
 **Verify the shell, do not assume it.** Ubuntu's `/bin/sh` is `dash`,
 which does not import environment functions — but the image is
-configurable and could change. If the `sh` route is chosen, the test
-SHALL assert the property (a function in the environment is *not*
-imported), not the shebang.
+configurable and could change. Assert the property (a function in the
+environment is *not* imported), never the shebang.
 
 **Revert-verification note.** With X1 landed, a hostile function may be
 rejected before reaching the container, which would make this test pass
@@ -225,8 +279,8 @@ and not X1's validator.
 - [ ] A secret-flagged `memoryview` is redacted
 - [ ] The comment at `errors.py:324-333` records the redaction-bypass
       consequence, not only the serialization one
-- [ ] Decide and record: recurse into remaining container types, or fail
-      closed on unrecognized ones
+- [ ] Fail closed on unrecognized types (recommended below), or recurse
+      into the remaining container types — decide and record which
 
 **Defect (reproduced).** `_redact` has no branch for `frozenset` or
 `memoryview`, so both reach the terminal `return value` at
@@ -246,6 +300,24 @@ carve-out that produced it was reasoned entirely about serializability.
 That asymmetry is the useful thing to record: the exclusion was justified
 against one consequence and shipped with a second, worse one.
 
+**Recommended: fail closed, with the JSON primitives allowlisted.**
+Recursing into `frozenset` and `memoryview` fixes the two types this
+review happened to try and leaves the next unhandled one — `Decimal`,
+`Path`, `datetime`, a dataclass — with the identical leak. The terminal
+`return value` at `errors.py:378` is the actual defect: an
+open-by-default fallthrough, the same shape as the denylist that
+produced X1. Replace it with an allowlist of the JSON primitives
+(`str`, `int`, `float`, `bool`, `None`) plus the existing container
+recursion, returning a type-named placeholder
+(`"[UNREPRESENTABLE: frozenset]"`) for anything else. That closes the
+leak, the `json.dumps` crash, and every future type in one change.
+
+The cost is that a caller passing an exotic-but-harmless value gets a
+placeholder. No caller does — every `details=`/`metadata=` site in
+`src/` passes primitives or `str(...)`-coerced values. **Re-run that
+grep before relying on it** (RR-033); it is what makes fail-closed safe
+rather than merely tidy.
+
 **In scope, if the fail-closed option is chosen.** `redact_secrets` also
 raises `AttributeError` on a non-`str` dict key (`errors.py:295`,
 `key.lower()`) — a contract violation nothing enforces at either
@@ -254,7 +326,7 @@ raises `AttributeError` on a non-`str` dict key (`errors.py:295`,
 **Do not** attempt GR-007's literal "every value SHALL be
 JSON-serializable" here. That sentence contradicts its own carve-out two
 paragraphs later; reconciling it is a correction to `docs/GAP_SPEC.md`
-(see X21), not a code change in this task.
+(see X20), not a code change in this task.
 
 ### X5 — A post-open re-check enforces every rule its pre-open resolve enforced
 **Satisfies:** G2R-005 · **Verified by:** G2AT-005
@@ -329,7 +401,7 @@ arguments.
 
 **This is a correction to G4, not a new requirement.** Record it in G4's
 write-up per the convention this family uses for superseded claims —
-alongside X19's correction of the same task's call-site count, which is a
+alongside X21's correction of the same task's call-site count, which is a
 separate error in the same audit.
 
 ### X7 — Activating this repository's hooks does not disable others
@@ -400,6 +472,17 @@ part**: a hook that stashes and dies without restoring loses the
 developer's uncommitted work, which is far worse than the bug being
 fixed. Test the interrupt path explicitly, not just the pass and fail
 paths.
+
+**Handle "nothing to stash".** When there is nothing outside the index
+to save, `git stash` creates no stash and reports "No local changes to
+save" — a `git commit --allow-empty`, or a commit where every change is
+staged and no untracked files exist, hits this. A trap that
+unconditionally pops then fails, or worse pops an *older, unrelated*
+stash off the top. Capture whether a stash was actually created (compare
+`git rev-parse -q --verify refs/stash` before and after, or check the
+push's own exit/output) and make the restore conditional on it. This is
+the failure mode most likely to bite a developer rather than CI, so test
+it directly.
 
 ---
 
@@ -627,7 +710,7 @@ too. Decide whether the extracted version widens the catch, and say
 which.
 
 ### X17 — `exec_output` rejects an inverted byte range
-**Satisfies:** G2R-017
+**Satisfies:** G2R-017 · **Verified by:** G2AT-017
 
 - [ ] `byte_end < byte_start` is an invalid-argument error
 - [ ] Schema-drift check
@@ -640,7 +723,7 @@ paging loop. The adjacent validation at `:568-576` checks negatives but
 never the ordering.
 
 ### X18 — `list_files` bounds its work by the requested limit
-**Satisfies:** G2R-018
+**Satisfies:** G2R-018 · **Verified by:** G2AT-018
 
 - [ ] Enumeration stops at the limit
 - [ ] Sorted output is preserved if it is a contract
@@ -668,35 +751,7 @@ recurse into symlinked directories, so `a/b -> ../a` terminates; do not
 
 ## Phase 3 — Test, tooling, and reference integrity
 
-### X19 — Complete and correct G4's call-site audit
-**Satisfies:** G2R-021
-
-- [ ] All eleven `run_git_in_container` sites carry an explicit
-      `strict_utf8` with justification
-- [ ] `git_state.py:76`'s silent degradation is decided deliberately
-- [ ] The correction is recorded in `docs/GAP_TODO.md`'s G4 write-up
-
-**Defect.** G4 tabulates nine call sites and states "Every one … was
-audited and set explicitly". There are **eleven** — verified: the three
-unlisted ones already existed at `ea4d4ad^`, and `ea4d4ad` never opened
-their files — and four of the eight tabulated sites are left at the
-implicit default, not set explicitly. The unaudited three:
-
-| site | consequence of the strict default |
-| --- | --- |
-| `git_state.py:76` | `workspace_info`'s `git.clean` silently becomes `null` for any repository containing a non-UTF-8 path (absorbed at `:86-87`) |
-| `tools/git_pull.py:264` | none — `merge-base --is-ancestor` stdout is always empty |
-| `tools/git_push.py:168` | none — stdout is a SHA |
-
-Two are harmless; recording them as explicit is the point, since the
-claim was that they already were. `git_state.py:76` is a real behaviour
-change nobody chose — decide it, comment it.
-
-**Land this with or after X6.** Both are corrections to G4; keeping them
-adjacent keeps the write-up coherent. Separate commits, since X6 changes
-behaviour and this changes arguments and prose.
-
-### X20 — Every acceptance-test series is audited
+### X19 — Every acceptance-test series is audited
 **Satisfies:** G2R-019
 
 - [ ] `AAT` registered in `_SERIES`
@@ -727,7 +782,7 @@ must be deliberate.
 "Removing every citation of one `VAT` SHALL make the coverage audit
 fail" — the audit's own series was the one it forgot to audit.
 
-### X21 — Correct the stale and self-contradictory references
+### X20 — Correct the stale and self-contradictory references
 **Satisfies:** G2R-020 *(the `pyproject.toml` half)* · plus the
 `docs/GAP_SPEC.md` corrections
 
@@ -778,6 +833,34 @@ in `docs/HARDENING_TODO.md` and `docs/TODO.md` are historical accounts,
 correct as history; only the rows above, all describing *current* state,
 are in scope. This is G7's own rule and it still applies.
 
+### X21 — Complete and correct G4's call-site audit
+**Satisfies:** G2R-021
+
+- [ ] All eleven `run_git_in_container` sites carry an explicit
+      `strict_utf8` with justification
+- [ ] `git_state.py:76`'s silent degradation is decided deliberately
+- [ ] The correction is recorded in `docs/GAP_TODO.md`'s G4 write-up
+
+**Defect.** G4 tabulates nine call sites and states "Every one … was
+audited and set explicitly". There are **eleven** — verified: the three
+unlisted ones already existed at `ea4d4ad^`, and `ea4d4ad` never opened
+their files — and four of the eight tabulated sites are left at the
+implicit default, not set explicitly. The unaudited three:
+
+| site | consequence of the strict default |
+| --- | --- |
+| `git_state.py:76` | `workspace_info`'s `git.clean` silently becomes `null` for any repository containing a non-UTF-8 path (absorbed at `:86-87`) |
+| `tools/git_pull.py:264` | none — `merge-base --is-ancestor` stdout is always empty |
+| `tools/git_push.py:168` | none — stdout is a SHA |
+
+Two are harmless; recording them as explicit is the point, since the
+claim was that they already were. `git_state.py:76` is a real behaviour
+change nobody chose — decide it, comment it.
+
+**Land this with or after X6.** Both are corrections to G4; keeping them
+adjacent keeps the write-up coherent. Separate commits, since X6 changes
+behaviour and this changes arguments and prose.
+
 ### X22 — Concurrent suite runs do not silently collide
 **Satisfies:** G2R-022
 
@@ -826,7 +909,7 @@ triggering request; setup steps run whenever a container is newly
 provisioned; every acceptance-test series is audited; import
 classification is unambiguous; G4's call-site audit is complete and its
 overstatement corrected; `docs/GAP_SPEC.md` carries its four corrections;
-G2AT-001..G2AT-016 all pass; the full suite passes with no
+G2AT-001..G2AT-018 all pass; the full suite passes with no
 Docker-dependent test skipped and no foreign Docker state left behind,
 **run with no concurrent Docker activity**; and no claim in this file was
 written without being re-run against the code first.

@@ -3,7 +3,7 @@
 **Source:** code review of `docs/GAP_TODO.md` G1–G9 plus a general review of
 the four largest source modules, 2026-08-30, against `9bc44fd`.
 
-**Series:** `G2R-001`..`G2R-022` (requirements), `G2AT-001`..`G2AT-016`
+**Series:** `G2R-001`..`G2R-022` (requirements), `G2AT-001`..`G2AT-018`
 (acceptance tests).
 
 All nine `GAP_TODO.md` tasks are genuinely implemented, committed one per
@@ -93,11 +93,31 @@ to constrain. Contained within the container. **Not a host escape.**
 **Requirement.** `ProjectWorkspaceConfig.environment` SHALL reject keys
 that define exported shell functions. `BASH_FUNC_` is bash's current
 prefix; the check SHALL NOT be a single hardcoded prefix comparison
-where a general shape is available, since the historical prefix has
-changed before (pre-Shellshock bash used a bare name with a `() {`
-value). Rejecting any key that is not a valid POSIX environment-variable
-name (`^[A-Za-z_][A-Za-z0-9_]*$`) satisfies this and closes the shape
-rather than one spelling of it.
+where a general shape is available, since the spelling has changed
+before. **Two checks are needed, because the two spellings differ in
+which half carries the signature:**
+
+- Modern bash exports `BASH_FUNC_<name>%%`. The `%%` makes the key an
+  invalid environment-variable name, so rejecting any key that does not
+  match `^[A-Za-z_][A-Za-z0-9_]*$` closes it. Verified:
+  `BASH_FUNC_id%%` fails that pattern; `PATH`, `RUST_LOG`, and
+  `GIT_CONFIG_SYSTEM` all match it, so ordinary keys are unaffected.
+- Pre-Shellshock bash exported a **bare, identifier-shaped name** whose
+  *value* began `() {`. The key pattern above cannot see that, since the
+  key is a legal identifier. Rejecting a value matching `^\s*\(\s*\)\s*{`
+  closes it.
+
+Current bash does not import the bare form, so the second check guards a
+downgraded or patched `/bin/bash` rather than the shipped one — it is
+cheap, and without it the claim "closes the shape rather than one
+spelling" is false.
+
+**This requirement alone closes the reproduced bypass.** Because
+`BASH_FUNC_id%%` fails the key pattern, the malicious `environment:`
+block is rejected before any container is created, on the image as
+shipped. G2R-003 is genuine defence-in-depth against a *future* input
+path, not a co-requisite for closing today's vulnerability — see its own
+section, which states this from the other side.
 
 Verified by G2AT-001.
 
@@ -144,16 +164,47 @@ reachable route through the daemon (`extra_env` is populated solely from
 future config surface cannot reopen what a denylist misses, and as
 written it does not provide that for anything but `PATH`.
 
+**Priority note.** G2R-001 alone closes the reproduced bypass, because
+`BASH_FUNC_id%%` fails its key pattern and is rejected before a
+container exists. This requirement is defence-in-depth for a future
+input path — a daemon-level `docker.environment`, an image change, or a
+denylist that misses a spelling — and SHALL NOT be described as required
+to close the live vulnerability.
+
 **Requirement.** The container SHALL NOT execute
 `docker/default/entrypoint.sh`'s root phase under a shell that has
 already imported unvalidated interpreter state from the environment.
-Re-executing the script through a sanitized environment as its first
-action satisfies this — for example an `ENTRYPOINT` that
-`exec env -i PATH=… /entrypoint.sh "$@"`, or a non-bash `#!/bin/sh`
-shebang where the runtime shell does not import functions from the
-environment (SHALL be verified against the image's actual `/bin/sh`, not
-assumed — Ubuntu's is `dash`, which does not, but the image could
-change).
+
+**`env -i` is not a usable mechanism here, and SHALL NOT be adopted
+without the caveat below.** The entrypoint reads seven variables from
+its environment — `MCP_UID`, `MCP_GID`, `MCP_USER`, `MCP_SUDO`,
+`MCP_WORKSPACE_PATH`, `MCP_SSH_MODE`, `MCP_CACHE_PATHS` — plus
+`SSH_AUTH_SOCK` for the workspace command. A bare
+`exec env -i PATH=… /entrypoint.sh "$@"` clears all of them, and each
+then falls back to its default at `entrypoint.sh:46-50`. That does not
+merely break caches and SSH: **`MCP_SUDO` defaults to `true`**, so an
+operator who deliberately configured `sudo: false` would silently get
+passwordless root back. A hardening change that re-enables the privilege
+it was written to protect is worse than the gap it closes.
+
+Acceptable mechanisms, in preference order:
+
+1. A `#!/bin/sh` wrapper (or `ENTRYPOINT` shim) that `unset`s
+   `BASH_ENV`, `ENV`, `SHELLOPTS`, `BASHOPTS` and every
+   `BASH_FUNC_*`-shaped variable, then `exec`s the bash script with the
+   rest of the environment intact. `dash` does not import functions from
+   the environment, so the wrapper itself is not compromised before it
+   runs.
+2. `env -i` **with every required variable explicitly re-passed**. This
+   is an allowlist that must be kept in sync with the entrypoint's own
+   reads by hand; if chosen, the two SHALL be adjacent in the file with
+   a comment binding them, and a test SHALL assert that each variable
+   survives.
+
+Whichever is chosen, the shell's behaviour SHALL be asserted by test —
+that a function present in the environment is *not* imported — never
+inferred from the shebang. Ubuntu's `/bin/sh` is `dash` today; the image
+is configurable.
 
 The write-up SHALL state plainly which inherited-state classes the
 chosen mechanism does and does not cover, replacing GR-005's
@@ -188,6 +239,27 @@ redacted, or `_redact` SHALL fail closed on a type it does not
 recognize. The in-code comment at `errors.py:324-333` SHALL be corrected:
 it documents the serialization consequence of the exclusions and not the
 redaction-bypass consequence, which is the more serious of the two.
+
+**Recommended: fail closed, with the JSON primitives allowlisted.**
+Recursing into `frozenset` and `memoryview` fixes the two types this
+review happened to try, and leaves the next unhandled type — `Decimal`,
+`Path`, `datetime`, a dataclass — with the same leak. The terminal
+`return value` at `errors.py:378` is the actual defect: it is an
+open-by-default fallthrough, the same shape as the denylist that
+produced G2R-001. Replacing it with an allowlist of the JSON primitives
+(`str`, `int`, `float`, `bool`, `None`) plus the existing container
+recursion, and returning a type-named placeholder
+(`"[UNREPRESENTABLE: frozenset]"`) for everything else, closes the leak,
+the `json.dumps` crash, and every future type at once — and is the only
+option that makes GR-007's literal "every value … SHALL be
+JSON-serializable" true rather than requiring the carve-out it
+contradicts.
+
+The cost is that a caller who today passes an exotic-but-harmless value
+sees a placeholder instead. No caller does; `details=`/`metadata=` sites
+in `src/` all pass primitives or `str(...)`-coerced values, verified by
+grep. Record that verification in the write-up, since it is what makes
+fail-closed safe here.
 
 Note that `redact_secrets` also raises `AttributeError` on a non-`str`
 dict key (`errors.py:295`, `key.lower()`), a contract violation nothing
@@ -702,15 +774,22 @@ line number: `test_rr016_…` is at `tests/git/test_diff.py:382`, not
 
 ## Acceptance tests
 
-Each SHALL be an automated test. G2R-017 through G2R-022 carry no
-`G2AT`: G2R-017/018 are verified by the tests their own requirements
-imply and are folded into G2AT-009's file; G2R-019 through G2R-022 are
-tooling and reference corrections verified by inspection and by the
-existing coverage audit agreeing with them.
+Each SHALL be an automated test. G2R-019 through G2R-022 carry no
+`G2AT`: they are tooling and reference corrections verified by
+inspection and by the existing coverage audit agreeing with them.
 
-- **G2AT-001** — A `ProjectWorkspaceConfig` whose `environment:` sets
-  `BASH_FUNC_id%%` (and a plain non-identifier key) is rejected at
-  validation, naming the offending key. Host-side unit test.
+- **G2AT-001** — Two halves, both required, both belonging to G2R-001
+  and neither depending on G2R-003:
+  1. A `ProjectWorkspaceConfig` whose `environment:` sets
+     `BASH_FUNC_id%%` — and one whose value begins `() {` under an
+     identifier-shaped key — is rejected at validation, naming the
+     offending key. Host-side unit test.
+  2. A `workspace_open` against a repository whose `.mcp-workspace.yml`
+     carries such a key fails, and **no container is created**. This is
+     the end-to-end half: it proves the rejection actually prevents
+     provisioning, and it SHALL go *through* project config rather than
+     around it (contrast G2AT-003, which deliberately goes around it to
+     reach the entrypoint).
 - **G2AT-002** — The same, for `GIT_CONFIG_SYSTEM`.
 - **G2AT-003** — A container started with an exported `BASH_FUNC_id`
   function in its environment still drops privileges: the workspace
@@ -735,10 +814,8 @@ existing coverage audit agreeing with them.
 - **G2AT-008** — A file staged in a failing state is blocked by the hook
   even when the working tree has been fixed unstaged.
 - **G2AT-009** — `list_files` completes when an enumerated entry is
-  deleted before it is described; and rejects an inverted `exec_output`
-  byte range; and does not enumerate the whole tree for a small
-  `max_entries` (asserted by instrumentation or a bounded-work proxy,
-  not by wall-clock).
+  deleted between enumeration and description, rather than raising an
+  untyped `FileNotFoundError`.
 - **G2AT-010** — A `write_file` whose write fails partway leaves the
   previous content intact, and a successful `write_file`'s reported
   `sha256` matches a subsequent `read_file`.
@@ -756,6 +833,12 @@ existing coverage audit agreeing with them.
   directories.
 - **G2AT-016** — A setup step that times out against a removed
   container returns a typed error rather than an unstructured crash.
+- **G2AT-017** — `exec_output` called with `byte_end < byte_start`
+  returns an invalid-argument error, rather than empty content with
+  `truncated: true`.
+- **G2AT-018** — `list_files` with a small `max_entries` over a large
+  tree does not enumerate the whole tree. Asserted by counting work (a
+  patched or wrapped iterator), never by wall-clock.
 
 ---
 
@@ -775,7 +858,7 @@ opportunistic background work cannot fail the request that triggered it;
 setup steps run whenever a container is newly provisioned; every
 acceptance-test series is audited; import classification is unambiguous;
 G4's call-site audit is complete and its overstatement corrected;
-`docs/GAP_SPEC.md` carries the four corrections above; G2AT-001..G2AT-016
+`docs/GAP_SPEC.md` carries the four corrections above; G2AT-001..G2AT-018
 all pass; the full suite passes with no Docker-dependent test skipped and
 no foreign Docker state left behind — **run with no concurrent Docker
 activity, per G2R-022**; and no claim in `docs/GAP2_TODO.md` was written
