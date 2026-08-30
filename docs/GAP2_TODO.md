@@ -3,7 +3,7 @@
 **Spec:** `docs/GAP2_SPEC.md` (G2R-001..G2R-022, G2AT-001..G2AT-018)
 **Source:** code review of `docs/GAP_TODO.md` G1–G9 plus a general review
 of the four largest source modules, 2026-08-30, against `9bc44fd`
-**Status:** in progress — X1–X19 complete (19/22); X20–X22 remaining
+**Status:** in progress — X1–X20 complete (20/22); X21–X22 remaining
 
 Twenty-two tasks. One is a live privilege-drop bypass reproduced against
 the shipped image; two are regressions the `GAP_TODO.md` pass itself
@@ -846,13 +846,23 @@ fail" — the audit's own series was the one it forgot to audit.
 
 ### X20 — Correct the stale and self-contradictory references
 **Satisfies:** G2R-020 *(the `pyproject.toml` half)* · plus the
-`docs/GAP_SPEC.md` corrections
+`docs/GAP_SPEC.md` corrections · **Commit:** `1341495`
 
-- [ ] `pyproject.toml` declares `docker` third-party (or sets `src`)
-- [ ] Import order regenerated with the pinned tool
-- [ ] `docs/GAP_SPEC.md` carries the four corrections from
+- [x] `pyproject.toml` declares `docker` third-party (or sets `src`) —
+      set `src = ["src"]`
+- [x] Import order regenerated with the pinned tool — 39 fixes, 40 files
+- [x] `docs/GAP_SPEC.md` carries the four corrections from
       `docs/GAP2_SPEC.md`'s "Corrections" section
-- [ ] Stale line citations corrected
+- [x] Stale line citations corrected — every replacement re-verified
+      against `HEAD` directly rather than trusting this task's own
+      suggested numbers, several of which were themselves already stale
+      by the time this task ran (`errors.py:412`→`:478`,
+      `entrypoint.sh:225`/`:230`→`:237`/`:242`); one claimed citation
+      (`test_default_image.py:355`) checked and found not present, not
+      forced; two more citations in `docs/GAP2_SPEC.md`/
+      `docs/GAP2_TODO.md` broke as a side effect of this task's own
+      edits and were fixed for that reason, while citations describing
+      what a stale reference *used to say* were left as history
 
 **The `pyproject.toml` half.** The repository has a top-level `docker/`
 directory and sets neither `known-first-party` nor `src` for ruff, so
