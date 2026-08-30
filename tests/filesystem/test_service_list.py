@@ -12,6 +12,8 @@ convention (`test_search.py` already duplicates its own `_repo`, with no
 shared fixture module for it).
 """
 
+import errno
+import os
 from pathlib import Path
 
 import pytest
@@ -196,3 +198,47 @@ def test_rr007_list_files_survives_an_unreadable_subdirectory(tmp_path: Path) ->
     assert by_path["locked"].type == "directory"
     assert "locked/secret.txt" not in by_path
     assert "src/lib.rs" in by_path  # the rest of the listing is unaffected
+
+
+def test_at_g2r009_list_files_survives_an_entry_deleted_after_enumeration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """G2R-009 (`docs/GAP2_SPEC.md`): `list_files` enumerates the whole
+    directory up front (`sorted(start.rglob(...)/iterdir())` fully
+    materializes the candidate list before the loop below ever calls
+    `_describe`), so a container process (via `exec`, e.g. `rm -rf` on
+    the same bind-mounted checkout) can delete an entry in the window
+    between enumeration and its own `_describe` call. `Path.stat()` —
+    unlike `is_symlink`/`exists`/`is_dir`, which all tolerate a missing
+    target and return `False` — raises `FileNotFoundError` there, not a
+    `WorkspaceError`, so unguarded this crashed the whole listing
+    untyped over one concurrently-deleted entry. Simulated
+    deterministically by monkeypatching `Path.stat` to raise for the one
+    target file, rather than racing a real background delete against
+    this test's own timing."""
+    root = _repo(tmp_path)
+    svc = _service(root)
+    doomed = root / "doomed.txt"
+    doomed.write_text("gone before description\n")
+
+    real_stat = Path.stat
+
+    def _stat_raising_for_doomed(self: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+        if self == doomed:
+            # A properly-formed `errno=ENOENT`, not a bare constructor:
+            # `is_symlink`/`exists` call `self.stat(follow_symlinks=…)`
+            # internally and catch `OSError` themselves, but only
+            # recognize it as "missing, not a real error" by errno — an
+            # improperly-formed exception here would make *this test*
+            # crash inside `is_symlink()`, before ever reaching the
+            # `_describe`/`path.stat()` call this test targets.
+            raise FileNotFoundError(errno.ENOENT, "No such file or directory", str(self))
+        return real_stat(self, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(Path, "stat", _stat_raising_for_doomed)
+
+    entries = svc.list_files("", recursive=False)  # SHALL NOT raise
+
+    by_path = {e.path: e for e in entries}
+    assert "doomed.txt" not in by_path
+    assert "src" in by_path  # the rest of the listing is unaffected

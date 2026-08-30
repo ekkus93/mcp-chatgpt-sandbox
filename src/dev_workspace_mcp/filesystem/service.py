@@ -132,7 +132,14 @@ class FilesystemService:
                 break
             if self._is_git_metadata(candidate):
                 continue
-            entries.append(self._describe(candidate))
+            described = self._describe(candidate)
+            # G2R-009 (`docs/GAP2_SPEC.md`): `None` means `candidate`
+            # vanished between enumeration (above) and description — see
+            # `_describe`'s own docstring — not a reason to abort the
+            # rest of the listing, the same principle `_is_git_metadata`
+            # already applies to an escaping symlink or a symlink loop.
+            if described is not None:
+                entries.append(described)
         return entries
 
     def _is_git_metadata(self, path: Path) -> bool:
@@ -170,7 +177,22 @@ class FilesystemService:
             return False
         return False
 
-    def _describe(self, path: Path) -> ListEntry:
+    def _describe(self, path: Path) -> ListEntry | None:
+        """`None` means `path` no longer exists — G2R-009
+        (`docs/GAP2_SPEC.md`): `list_files` enumerates first
+        (`start.rglob`/`iterdir`), then calls this once per candidate; a
+        container process (via `exec`) can delete an entry in that
+        window, e.g. `rm -rf build/` against the same bind-mounted
+        checkout. `path.stat()` below is the one call in this method
+        that does not already tolerate that — `is_symlink`/`exists`/
+        `is_dir` all catch `OSError` internally and return `False`
+        rather than raise, but `Path.stat()` raises `FileNotFoundError`,
+        which is not a `WorkspaceError`, so unguarded this crashed the
+        whole listing untyped over one concurrently-deleted entry
+        instead of just omitting it. The caller (`list_files`) skips a
+        `None` result rather than aborting, the same principle
+        `_is_git_metadata` already applies to an escaping symlink or a
+        symlink loop."""
         relative = path.relative_to(self._security.root).as_posix()
         is_symlink = path.is_symlink()
         if is_symlink:
@@ -187,10 +209,13 @@ class FilesystemService:
                 return ListEntry(
                     path=relative, type="symlink", size=None, modified_at=None, is_symlink=True
                 )
-        stat = path.stat()
+        try:
+            file_stat = path.stat()
+        except FileNotFoundError:
+            return None
         kind = "directory" if path.is_dir() else "file"
-        modified_at = datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat()
-        size = None if kind == "directory" else stat.st_size
+        modified_at = datetime.fromtimestamp(file_stat.st_mtime, tz=UTC).isoformat()
+        size = None if kind == "directory" else file_stat.st_size
         return ListEntry(
             path=relative, type=kind, size=size, modified_at=modified_at, is_symlink=is_symlink
         )
