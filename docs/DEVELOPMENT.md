@@ -85,6 +85,44 @@ build and run real Docker containers, which is what makes the full suite
 Docker-heavy and multi-minute rather than something to run on every
 keystroke.
 
+### Run `uv run pytest` with no concurrent Docker activity
+
+G2R-022 (`docs/GAP2_SPEC.md`): `tests/workspace/`'s workspace/container
+names are deterministic (`persistent_workspace_id` is a pure function of
+`repository_id` — §59's "reopening a repository always resolves to the
+same workspace" is the point, not a bug to route around here) and every
+one of these fixtures uses the same `repository_id` (`"example"`). Two
+processes racing to open a workspace for the same repository id — a
+second concurrent `pytest tests/workspace/` run, a second reviewer's
+suite, a live `serve` instance already running against a same-id
+repository, or (on a shared self-hosted CI runner) this project's own
+CI job and a local `pytest` run landing at the same moment — collide on
+that name: `manager_lifecycle.py`'s `_adopt_or_remove_by_name` finds a
+container already there under the same `workspace_id` label and *adopts
+it* (HR-017's crash-recovery path, `docs/HARDENING_SPEC.md` §9 — the
+right behavior for its actual purpose, recovering from a crash between
+`containers.run` and persisting the result, not for two live processes
+racing) rather than creating a fresh one, so the second process's own
+container is silently shared with — and can be stopped, removed, or
+reconciled out from under — the first. `tests/workspace/conftest.py`'s
+RR-024/HR-026 resource tracking stops one test run from destroying
+*another process's* resources; it does nothing about this, since from
+the daemon's perspective it is the same, correctly-adopted workspace
+either way.
+
+**Name it — this is not flakiness.** Observed twice independently while
+producing `docs/GAP2_TODO.md`'s X1–X22 list: a full-suite run alongside
+concurrent Docker activity produced 11 failures and 2 errors, all in
+`tests/workspace/`, all `workspace_open`-related; the identical run
+immediately afterward, with nothing else touching Docker, passed clean.
+A `workspace_open`/lifecycle-shaped failure that doesn't reproduce in
+isolation is this collision, not a flaky test — before spending time
+chasing it as one, check `docker ps` and (on this project's own
+self-hosted CI) `gh run list --limit 1` for an in-progress run first.
+**A retry does not fix this** — it would only turn a loud wrong answer
+into a slow one while hiding the same collision underneath, since the
+racing process is still there and the names are still the same.
+
 ## Running the server locally
 
 Build the default workspace image first — nothing in `serve` itself does
