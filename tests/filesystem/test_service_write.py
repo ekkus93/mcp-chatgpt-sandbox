@@ -265,3 +265,66 @@ def test_at_h028_write_file_never_mkdirs_through_an_intermediate_symlink(
             service.write_file("d/nested/pwned.txt", "written by the container\n")
         assert not (outside / "nested").exists()
         assert not (outside / "nested" / "pwned.txt").exists()
+
+
+@pytest.fixture
+def _git_metadata_flipper(tmp_path: Path) -> Iterator[tuple[Path, Path]]:
+    """Same race shape as `_symlink_flipper` above, but the escape
+    target is the repository's own **in-tree** `.git` directory rather
+    than somewhere outside the repo entirely — G2R-005
+    (`docs/GAP2_SPEC.md`)'s specific gap: under the shipped default
+    `git_dir_mode: read-write`, `.git` lives *inside* `root`, so a race
+    redirected there still passes plain containment, which is exactly
+    what a containment-only post-open check cannot catch. Yields
+    `(root, d)`; `root / ".git"` is a real (if minimal) directory for
+    the duration."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    git_dir = root / ".git"
+    git_dir.mkdir()
+    d = root / "d"
+    d.mkdir()
+
+    stop = threading.Event()
+
+    def flip() -> None:
+        while not stop.is_set():
+            try:
+                if d.is_dir() and not d.is_symlink():
+                    shutil.rmtree(str(d))
+            except OSError:
+                pass
+            with contextlib.suppress(FileExistsError):
+                os.symlink(str(git_dir), str(d))
+            with contextlib.suppress(OSError):
+                os.unlink(str(d))
+            with contextlib.suppress(FileExistsError):
+                d.mkdir()
+
+    thread = threading.Thread(target=flip, daemon=True)
+    thread.start()
+    try:
+        yield root, d
+    finally:
+        stop.set()
+        thread.join(timeout=2)
+
+
+def test_at_g2r005_write_file_never_lands_inside_git_metadata(
+    _git_metadata_flipper: tuple[Path, Path],
+) -> None:
+    """G2R-005 (`docs/GAP2_SPEC.md`): the write-side reproduction of the
+    actual named consequence — a race redirecting through `.git` used
+    to pass the old containment-only post-open check cleanly and write
+    straight through it (the concrete example in the spec is
+    `.git/hooks/pre-commit`, a code-execution primitive; this test
+    writes to the top level of the flipped target, which is enough to
+    prove any write into `.git` is refused, not just that one file)."""
+    root, _d = _git_metadata_flipper
+    security = FilesystemSecurity(root, authorized_roots=[root.parent])
+    service = FilesystemService(security, FilesystemConfig())
+
+    for _ in range(2000):
+        with contextlib.suppress(Exception):
+            service.write_file("d/pwned", "written by the container\n")
+        assert not (root / ".git" / "pwned").exists()

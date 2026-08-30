@@ -287,23 +287,69 @@ class FilesystemSecurity:
     def is_within_root(self, path: Path) -> bool:
         return path == self._root or path.is_relative_to(self._root)
 
+    def verify_resolved_path(self, candidate: Path, relative_path: str) -> None:
+        """G2R-005 (`docs/GAP2_SPEC.md`): `resolve()` enforces three
+        rules against a path *string* — the external-Git-directory
+        check (rule 3), containment, and `_reject_in_tree_git_metadata`
+        (rules 1/2). The post-open re-checks below (`verify_fd_within_
+        root`, `write_file`'s own inline sequence) used to re-verify
+        containment only, on the kernel-reported real path from
+        `resolve_open_fd` — which is correct for what it checks, but
+        left rules 1–3 unchecked at the one point that actually matters
+        for them: *after* the race window `resolve()` cannot see across.
+
+        Under the shipped default `git_dir_mode: read-write`, `.git`
+        lives *inside* the repository root, so containment alone does
+        not catch a race that redirects the open into it — reproduced:
+        a container process replacing the target with a symlink into
+        `.git/config` (read) or `.git/hooks/pre-commit` (write) between
+        `resolve()` and the actual `open()` produced an fd whose real
+        path is inside root, which the old containment-only check
+        passed. This closes that gap by applying the identical rule set
+        `resolve()` applies, to the fd's real path instead of the
+        pre-open string — deliberately duplicated rather than shared
+        with `resolve()` itself (which operates on a string and raises
+        a differently-worded containment message, `"escapes"` vs.
+        `"escaped ... between validation and open"` — the post-open
+        wording is diagnostically meaningful, since it tells a caller
+        this was caught after a race rather than rejected outright, and
+        is preserved here rather than merged away).
+
+        Raises `PathGitMetadataError` or `PathOutsideRepositoryError`.
+        Never touches `fd` — callers own that lifecycle themselves,
+        matching how `is_within_root` (the predicate this replaces at
+        both call sites) already worked."""
+        if self._external_git_dir is not None and (
+            candidate == self._external_git_dir or candidate.is_relative_to(self._external_git_dir)
+        ):
+            raise PathGitMetadataError(
+                f"path resolves into the repository's Git directory: {relative_path!r}",
+                details={"path": relative_path},
+            )
+        if not self.is_within_root(candidate):
+            raise PathOutsideRepositoryError(
+                f"path escaped the repository root between validation and open: {relative_path!r}",
+                details={"path": relative_path},
+            )
+        self._reject_in_tree_git_metadata(candidate, relative_path)
+
     def verify_fd_within_root(self, fd: int, relative_path: str) -> None:
         """Public for callers with their own multi-step open sequence
         that don't need the actual escaped path (unlike `write_file`,
-        which uses `resolve_open_fd`/`is_within_root` directly — see
-        their own docstrings). Closes `fd` and raises
-        `PathOutsideRepositoryError` if it escaped, otherwise a no-op."""
+        which uses `resolve_open_fd`/`verify_resolved_path` directly —
+        see their own docstrings). Closes `fd` and raises
+        `PathOutsideRepositoryError`/`PathGitMetadataError` if it
+        escaped, otherwise a no-op."""
         try:
             actual = self.resolve_open_fd(fd)
         except OSError:
             os.close(fd)
             raise
-        if not self.is_within_root(actual):
+        try:
+            self.verify_resolved_path(actual, relative_path)
+        except (PathOutsideRepositoryError, PathGitMetadataError):
             os.close(fd)
-            raise PathOutsideRepositoryError(
-                f"path escaped the repository root between validation and open: {relative_path!r}",
-                details={"path": relative_path},
-            )
+            raise
 
     def _resolve_candidate(self, relative_path: str) -> Path:
         # A leading "/" is stripped, not honoured: pathlib's own `/`

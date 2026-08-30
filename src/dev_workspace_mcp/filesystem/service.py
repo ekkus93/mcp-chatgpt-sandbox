@@ -426,23 +426,31 @@ class FilesystemService:
             # location, and cleaning it up needs the kernel-reported real
             # path, not the racy `path` string again — the `except` block
             # below does that before raising the client-facing error.
-            # RR-006: this read (and the `is_within_root` check depending
-            # on it) now runs *inside* the `try`, not before it — `fd` is
-            # a real, just-opened descriptor, so `resolve_open_fd`
-            # reading `/proc/self/fd/<fd>` cannot fail in practice, but
-            # leaving it outside the `try` meant an OSError from it would
-            # leak `fd` uncaught rather than reach the `except` below.
-            # (`stat.S_ISDIR` used to be checked here too — genuinely
-            # dead code: opening an existing directory with `O_RDWR`
-            # above already raises `IsADirectoryError`, now classified,
-            # before this line could ever run against a directory's fd.)
+            # RR-006: this read (and the `verify_resolved_path` check
+            # depending on it) now runs *inside* the `try`, not before
+            # it — `fd` is a real, just-opened descriptor, so
+            # `resolve_open_fd` reading `/proc/self/fd/<fd>` cannot fail
+            # in practice, but leaving it outside the `try` meant an
+            # OSError from it would leak `fd` uncaught rather than reach
+            # the `except` below. (`stat.S_ISDIR` used to be checked
+            # here too — genuinely dead code: opening an existing
+            # directory with `O_RDWR` above already raises
+            # `IsADirectoryError`, now classified, before this line
+            # could ever run against a directory's fd.)
+            #
+            # G2R-005 (`docs/GAP2_SPEC.md`): `verify_resolved_path`, not
+            # the old bare `is_within_root` containment check — a race
+            # that redirects this open into `.git/hooks/pre-commit`
+            # (in-tree, the shipped default `git_dir_mode: read-write`)
+            # used to pass containment cleanly and write straight
+            # through it. `verify_resolved_path` applies the same three
+            # `resolve()` rules to `actual`, and raises
+            # `PathGitMetadataError`/`PathOutsideRepositoryError`
+            # directly — both land in the `except BaseException` below
+            # exactly like the old `PathOutsideRepositoryError` did, so
+            # no change was needed there.
             actual = self._security.resolve_open_fd(fd)
-            if not self._security.is_within_root(actual):
-                raise PathOutsideRepositoryError(
-                    f"path escaped the repository root between validation and open: "
-                    f"{relative_path!r}",
-                    details={"path": relative_path},
-                )
+            self._security.verify_resolved_path(actual, relative_path)
 
             if expected_sha256 is not None:
                 current: str | None = None
