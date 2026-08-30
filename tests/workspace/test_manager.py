@@ -58,7 +58,13 @@ def test_at_h031_container_lifecycle_transitions_are_logged(
     """H31 (`docs/HARDENING_TODO.md`, HR-031): container lifecycle
     transitions (create, delete) SHALL be logged — before this task,
     `getLogger` appeared nowhere in this module at all."""
-    with caplog.at_level("INFO", logger="dev_workspace_mcp.workspace.manager"):
+    # G9 (`docs/GAP_SPEC.md` GR-010): targets the package, not
+    # `.manager` specifically — `manager.py` itself defines no logger;
+    # the emitting `_logger`s live in `manager_core.py`/
+    # `manager_lifecycle.py`, both real children of this package. A
+    # sibling name here (e.g. `.manager`) would set an unrelated
+    # logger's level and never see either module's records.
+    with caplog.at_level("INFO", logger="dev_workspace_mcp.workspace"):
         record = manager.ensure_workspace(
             repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
         )
