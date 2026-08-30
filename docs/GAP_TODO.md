@@ -611,13 +611,13 @@ change — internal redaction, never a tool's own JSON output; no
 
 ## Phase 3 — Test, reference, and process integrity
 
-### G6 — Close the two test gaps
+### G6 — Close the two test gaps ✅
 **Satisfies:** GR-009 · **Verified by:** GAT-006, GAT-007
-**Commit:** `PLACEHOLDER`
+**Commit:** `89a0236`
 
-- [ ] Real-container test for the `.ssh` **directory** symlink refusal
+- [x] Real-container test for the `.ssh` **directory** symlink refusal
       (`entrypoint.sh:209`)
-- [ ] `isinstance` assertion on the `set` redaction branch
+- [x] `isinstance` assertion on the `set` redaction branch
 
 **Gap 1.** VR-004 required two refusals; `entrypoint.sh` implements both
 (209 for the directory, 214 for the `config` file), but VAT-004
@@ -634,6 +634,52 @@ Batching these two in one commit is deliberate: both are "a control
 asserted by an earlier requirement has no test that can fail", they are
 each a few lines, and splitting them adds ceremony without review value —
 the same reasoning V7 and V8 used for their own batches.
+
+**Implemented as described, both.**
+
+**Gap 2** (`tests/test_errors.py`): `test_at_vat005_a_secret_flagged_
+set_recurses` now also asserts `isinstance(redacted["secret"], list)`
+— G5 already made the fix return `list`, so the equality check alone was
+already type-safe in practice (`["x"] != {"x"}` / `!= frozenset({"x"})`
+in Python, unlike the old `set == frozenset` masking VR-009 named), but
+the task's own literal checklist item asks for the explicit assertion,
+matching `test_at_vat005_tuple_recursion_preserves_the_container_type`'s
+own shape immediately above it.
+
+**Gap 1** (`tests/workspace/test_default_image.py`):
+`test_at_gr009_a_symlinked_ssh_directory_planted_in_a_cache_volume_is_not_
+followed`, modeled on `test_at_vat004_*` directly, with one structural
+difference the checklist's own "model it on VAT-004" instruction didn't
+anticipate: `.ssh` *itself* cannot be replaced with a symlink through a
+cache volume mounted **at** `.ssh` (`cache_paths=[".ssh"]`, VAT-004's own
+setup) — a Docker volume mount always creates a real directory at its
+own mount point, so the mount point can never itself be a symlink.
+`cache_paths=["."]` — `.` normalizes to `$HOME` itself, per
+`entrypoint.sh`'s own docstring at that line — mounts a persistent,
+container-writable volume at `$HOME` *containing* `.ssh` as an ordinary
+subdirectory, which an unprivileged run genuinely can replace
+(`rm -rf ~/.ssh && ln -s /etc ~/.ssh`).
+
+**Revert-verified — and found a sharper finding than the checklist item
+alone implied.** Removed *only* the directory-level refusal
+(`entrypoint.sh:209`, the `config`-file refusal at :214 left intact),
+re-ran the new test: `Failed: DID NOT RAISE ContainerError` — the
+container started cleanly. Traced why: with `.ssh` a symlink to `/etc`
+and no refusal, `mkdir -p "$HOME_DIR/.ssh"` follows the symlink and
+succeeds (the target already exists as a directory); the `config`-file
+check then tests `/etc/config` — which doesn't exist as a symlink, it
+doesn't exist at all yet — so *that* check also passes cleanly, and the
+entrypoint proceeds to **write straight into `/etc/config` through the
+followed symlink**, silently. The file-level refusal alone provides no
+protection at all once the directory itself is redirected — confirming,
+concretely rather than by inference, VR-004's own precedent that neither
+control is sufficient alone. Restored the fix; passes again.
+
+**Suites.** `tests/test_errors.py tests/workspace/test_default_image.py`:
+80 passed. `pytest --collect-only`: 1019 tests (1018 + 1 new).
+Lint/format clean; `uv run mypy src`: no issues in 60 source files.
+Full unscoped `tests/`: 1019 passed, 0 failed, 529s, 0 Docker leftovers
+before and after.
 
 ### G7 — Correct references the splits invalidated
 **Satisfies:** GR-008
