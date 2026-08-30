@@ -221,6 +221,35 @@ async def test_push_policy_deny_blocks_the_whole_tool(
         await server.call_tool("git_push", {"workspace_id": workspace_id})
 
 
+async def test_at_g2r006_a_non_utf8_path_does_not_block_git_push(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """G2R-006 (`docs/GAP2_SPEC.md`): the `git_push` counterpart to
+    `test_at_g2r006_a_non_utf8_path_does_not_block_git_pull` in
+    `test_git_pull_tool.py` — this tool's own `read_git_status` call
+    only ever inspects `branch`/`head_sha`, but was left at the strict
+    default. Modeled on `test_push_policy_deny_blocks_the_whole_tool`
+    above (no real network needed — `git_policy.push: deny` blocks
+    before any push is attempted) with a non-UTF-8 file added: if the
+    regression were still present, this would fail with
+    `COMMAND_FAILED`, not `POLICY_DENIED`."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path, github="owner/example")
+    (repo_path / os.fsdecode(b"bad\xffname.txt")).write_bytes(b"content\n")
+    _set_remote(repo_path, "https://github.com/owner/example.git")
+    config = config.model_copy(
+        update={"git_policy": config.git_policy.model_copy(update={"push": "deny"})}
+    )
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    with pytest.raises(ToolError, match="POLICY_DENIED"):
+        await server.call_tool("git_push", {"workspace_id": workspace_id})
+
+
 async def test_delete_remote_branch_default_policy_denies(
     minimal_config: ServerConfig,
     default_image_tag: str,

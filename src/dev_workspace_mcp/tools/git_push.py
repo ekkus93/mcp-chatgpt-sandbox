@@ -151,6 +151,7 @@ async def run_git_push(
         execution_service=execution_service,
         container_config=container_config,
         execution_config=execution_config,
+        strict_utf8=False,  # G2R-006: only `branch`/`head_sha` are used below
     )
     target_branch = branch if branch is not None else status.branch
     if target_branch is None:

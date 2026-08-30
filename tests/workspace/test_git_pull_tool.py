@@ -24,6 +24,7 @@ Two families of test here:
   this constraint, by `tests/git/test_pull.py` against local repositories.
 """
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -93,6 +94,35 @@ async def test_at_026_ext_transport_is_rejected_before_any_fetch(
 ) -> None:
     repo_path = tmp_path / "work" / "example"
     config = _configured(minimal_config, default_image_tag, repo_path, github="owner/example")
+    _set_remote(repo_path, "ext::sh -c 'touch /tmp/pwned'")
+    server = create_server(config)
+    workspace_id = await _open(server)
+
+    with pytest.raises(ToolError, match="GIT_REMOTE_NOT_ALLOWED"):
+        await server.call_tool("git_pull", {"workspace_id": workspace_id})
+
+
+async def test_at_g2r006_a_non_utf8_path_does_not_block_git_pull(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """G2R-006 (`docs/GAP2_SPEC.md`): G4 (`docs/GAP_TODO.md`) threaded
+    `strict_utf8=False` through `git_commit`'s two `read_git_status`
+    calls, which only ever inspect `conflicted`/`branch`/`head_sha`, but
+    left `git_pull`'s identically-shaped call (this tool's own first
+    `read_git_status`, right above the remote-validation step this test
+    exercises) at the strict default — so a repository containing one
+    unrelated non-UTF-8 filename made `git_pull` fail outright with
+    `COMMAND_FAILED`/"not valid UTF-8" before ever reaching remote
+    validation. Modeled directly on `test_at_026_*` above (no real
+    network needed — an `ext::` transport is rejected before any fetch)
+    with a non-UTF-8 file added: if the regression were still present,
+    this would fail with `COMMAND_FAILED`, not `GIT_REMOTE_NOT_ALLOWED`."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path, github="owner/example")
+    (repo_path / os.fsdecode(b"bad\xffname.txt")).write_bytes(b"content\n")
     _set_remote(repo_path, "ext::sh -c 'touch /tmp/pwned'")
     server = create_server(config)
     workspace_id = await _open(server)

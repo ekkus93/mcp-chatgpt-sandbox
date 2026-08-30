@@ -106,6 +106,7 @@ async def run_git_pull(
         execution_service=execution_service,
         container_config=container_config,
         execution_config=execution_config,
+        strict_utf8=False,  # G2R-006: only `branch`/`head_sha` are used below
     )
 
     if expected_branch is not None and status.branch != expected_branch:
@@ -253,6 +254,7 @@ async def run_git_pull(
         execution_service=execution_service,
         container_config=container_config,
         execution_config=execution_config,
+        strict_utf8=False,  # G2R-006: only `head_sha` is used below
     )
     assert new_status.head_sha is not None  # the integration step just succeeded
 

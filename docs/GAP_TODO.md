@@ -507,6 +507,38 @@ no `CONTRACT_VERSION` bump, matching G1's own earlier finding about this
 file's actual contents. Full unscoped `tests/`: 1015 passed, 0 failed,
 531s, 0 Docker leftovers before and after.
 
+**Correction (X19/X21, `docs/GAP2_TODO.md`), superseding two claims
+above.** "Every one of the 9 call sites … was audited and set
+explicitly" was wrong on both counts:
+
+- There are **eleven** `run_git_in_container` call sites, not nine —
+  `git_state.py:76`, `tools/git_pull.py:264`, and `tools/git_push.py:168`
+  were never opened by this task (confirmed: all three already existed
+  at `ea4d4ad^`, and `ea4d4ad`'s own diff never touches their files).
+- Of the eight sites this task's own table *did* list, four were left
+  at the implicit `strict_utf8=True` default rather than set
+  explicitly: `git/diff.py`, `git/log.py`, `git/commit.py`'s
+  `read_committed_files`, and — the one with a real behavioral
+  consequence — `tools/git_pull.py`'s two `read_git_status` calls and
+  `tools/git_push.py`'s one, which inherited the strict default this
+  task's own fix was written to move *away* from for exactly this
+  shape of call (consuming only `branch`/`head_sha`, never a path).
+  That gap shipped as a real regression, closed separately by X6
+  (`docs/GAP2_TODO.md`) rather than here, since it is a behavior change
+  and this paragraph is a documentation-only correction.
+
+This paragraph corrects the *count and the "set explicitly" claim*
+only. `git_pull`'s two sites and `git_push`'s one now carry an explicit
+`strict_utf8=False`, closed by X6 (`docs/GAP2_TODO.md`) as a behavior
+fix, not a documentation change. The remaining gaps this correction
+surfaced — `git/diff.py`, `git/log.py`, and `git/commit.py`'s
+`read_committed_files` left at the implicit default rather than set
+explicitly, and `git_state.py:76`'s undocumented degradation
+(`workspace_info`'s `git.clean` silently becoming `null` for a
+repository containing a non-UTF-8 path) never decided at all — are
+closed separately by X21 (`docs/GAP2_TODO.md`), which is where all
+eleven sites are made explicit; not yet done as of this correction.
+
 ### G5 — Redaction output is always JSON-serializable ✅
 **Satisfies:** GR-007 · **Verified by:** GAT-005
 **Commit:** `bb919a5`
