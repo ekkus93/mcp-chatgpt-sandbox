@@ -3,7 +3,7 @@
 **Spec:** `docs/GAP2_SPEC.md` (G2R-001..G2R-022, G2AT-001..G2AT-018)
 **Source:** code review of `docs/GAP_TODO.md` G1–G9 plus a general review
 of the four largest source modules, 2026-08-30, against `9bc44fd`
-**Status:** in progress — X1–X18 complete (18/22); X19–X22 remaining
+**Status:** in progress — X1–X19 complete (19/22); X20–X22 remaining
 
 Twenty-two tasks. One is a live privilege-drop bypass reproduced against
 the shipped image; two are regressions the `GAP_TODO.md` pass itself
@@ -812,12 +812,14 @@ recurse into symlinked directories, so `a/b -> ../a` terminates; do not
 ## Phase 3 — Test, tooling, and reference integrity
 
 ### X19 — Every acceptance-test series is audited
-**Satisfies:** G2R-019
+**Satisfies:** G2R-019 · **Commit:** `585ccd8`
 
-- [ ] `AAT` registered in `_SERIES`
-- [ ] `GAT` registered in `_SERIES`
-- [ ] Uncited numbers recorded in `known_uncited` with the reason
-- [ ] The existing meta-test still proves the audit can fail
+- [x] `AAT` registered in `_SERIES`
+- [x] `GAT` registered in `_SERIES`
+- [x] Uncited numbers recorded in `known_uncited` with the reason
+- [x] The existing meta-test still proves the audit can fail — plus a
+      new one for `AAT` specifically (the series this task is about),
+      proving the registration is genuinely wired up
 
 **Defect.** `tests/test_acceptance_test_coverage.py:71-99` registers
 `AT`, `HAT`, `RAT`, `VAT`. `docs/AUDIT_SPEC.md`'s `AAT-001..004` and
