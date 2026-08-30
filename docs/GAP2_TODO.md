@@ -3,7 +3,7 @@
 **Spec:** `docs/GAP2_SPEC.md` (G2R-001..G2R-022, G2AT-001..G2AT-018)
 **Source:** code review of `docs/GAP_TODO.md` G1–G9 plus a general review
 of the four largest source modules, 2026-08-30, against `9bc44fd`
-**Status:** in progress — X1–X17 complete (17/22); X18–X22 remaining
+**Status:** in progress — X1–X18 complete (18/22); X19–X22 remaining
 
 Twenty-two tasks. One is a live privilege-drop bypass reproduced against
 the shipped image; two are regressions the `GAP_TODO.md` pass itself
@@ -776,11 +776,18 @@ paging loop. The adjacent validation at `:568-576` checks negatives but
 never the ordering.
 
 ### X18 — `list_files` bounds its work by the requested limit
-**Satisfies:** G2R-018 · **Verified by:** G2AT-018
+**Satisfies:** G2R-018 · **Verified by:** G2AT-018 · **Commit:** `296127d`
 
-- [ ] Enumeration stops at the limit
-- [ ] Sorted output is preserved if it is a contract
-- [ ] The bound is asserted by instrumentation, not wall-clock
+- [x] Enumeration stops at the limit
+- [x] Sorted output is preserved if it is a contract — checked: it is
+      not (no mention in `docs/SPEC.md` §13.1, `docs/TOOLS.md`, or any
+      existing test); dropped
+- [x] The bound is asserted by instrumentation, not wall-clock — note:
+      first draft instrumented the wrong layer (`_is_git_metadata` call
+      count, which the loop's own early break already bounded even in
+      the buggy version) and passed against both fixed and unfixed
+      code; caught by this task's own revert-verification and
+      corrected to wrap `Path.rglob` and count generator pulls
 
 **Defect.** `filesystem/service.py:114`:
 
