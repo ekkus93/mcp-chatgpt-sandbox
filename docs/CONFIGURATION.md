@@ -41,7 +41,9 @@ for the reasoning, not just the field list.
   `id` the client uses instead of a raw path, the local `path` (must be
   absolute), a `github: owner/repo` identity used to validate remotes,
   and an optional `ssh_key` filename (relative to `ssh.keys_dir`; not
-  used under `ssh.scope: shared`).
+  used under `ssh.scope: shared`). For the end-to-end steps — generating
+  that key, installing it on GitHub, adding the entry — see
+  [`docs/CONNECTING_A_REPOSITORY.md`](CONNECTING_A_REPOSITORY.md).
 - **`repository_roots`** (§7.1) — directories the daemon may
   auto-discover repositories under, as an alternative to registering
   each one individually. Entries must be absolute; discovered paths must

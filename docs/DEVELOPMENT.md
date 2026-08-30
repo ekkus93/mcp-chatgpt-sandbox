@@ -84,7 +84,10 @@ docker build -t mcp-dev-ubuntu:24.04 docker/default/
 Then write a config file. There is no bundled example file to copy —
 `docs/CONFIGURATION.md` explains why, and `docs/SPEC.md` §52 has the full
 worked example (repositories, `docker.default_image` matching the tag
-built above, SSH/GitHub/resource blocks) to start from.
+built above, SSH/GitHub/resource blocks) to start from. To register one
+of your own repositories in it — generating a deploy key, installing it
+on GitHub, adding the `repositories:` entry — see
+[`docs/CONNECTING_A_REPOSITORY.md`](CONNECTING_A_REPOSITORY.md).
 
 ```bash
 uv run dev-workspace-mcp serve --config <path>

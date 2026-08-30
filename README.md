@@ -94,6 +94,8 @@ a real shell, not something the daemon can constrain after the fact.
   [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)
 - **Configuring a server instance:**
   [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md)
+- **Connecting your own repository to a running server:**
+  [`docs/CONNECTING_A_REPOSITORY.md`](docs/CONNECTING_A_REPOSITORY.md)
 - **Connecting a running server to ChatGPT:**
   [`docs/CONNECTING_CHATGPT.md`](docs/CONNECTING_CHATGPT.md)
 - **Trust/threat model this design assumes:**
