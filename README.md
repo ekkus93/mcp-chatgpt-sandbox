@@ -90,6 +90,8 @@ a real shell, not something the daemon can constrain after the fact.
 
 ## Getting started
 
+- **TL;DR — clone to a working repository, end to end:**
+  [`docs/QUICKSTART.md`](docs/QUICKSTART.md)
 - **Local development, running checks, running the server:**
   [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)
 - **Configuring a server instance:**
