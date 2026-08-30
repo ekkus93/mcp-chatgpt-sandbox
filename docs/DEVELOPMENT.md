@@ -19,6 +19,20 @@ clone, immediately after `uv sync`. Always run the commands below through
 (a bare `ruff` once passed something the project-pinned version, what CI
 actually runs, rejected — `docs/GAP_TODO.md` G1).
 
+`core.hooksPath` is a single directory, not a search chain — if you
+already have your own global hooks configured
+(`git config --global core.hooksPath`), setting it repo-locally would
+otherwise disable every one of them silently, since git stops consulting
+the global value the moment a local one exists (G2R-007,
+`docs/GAP2_SPEC.md`). `.githooks/commit-msg`, `post-checkout`,
+`post-commit`, `post-merge`, and `pre-push` are symlinks to
+`.githooks/_global-hook-dispatch`, which re-reads your global
+`core.hooksPath` directly and forwards to whichever hook of the same
+name lives there — so your own hooks keep running, and a clone with no
+global hooks configured gets a silent no-op from each. Only
+`.githooks/pre-commit` has no dispatcher, because this project has no
+global `pre-commit` hook to shadow.
+
 Requires Python 3.12 (`.python-version`) and Docker — the test suite is
 Docker-heavy (`docs/SPEC.md` §71), and a locally running server needs it
 for every workspace operation.

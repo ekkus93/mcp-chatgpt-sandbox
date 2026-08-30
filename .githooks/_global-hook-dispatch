@@ -1,0 +1,43 @@
+#!/bin/sh
+# G2R-007 (docs/GAP2_SPEC.md): `core.hooksPath` is a single directory,
+# not a search chain — activating this repository's hooks
+# (`git config core.hooksPath .githooks`, docs/DEVELOPMENT.md) silently
+# disables every hook configured in the developer's own global
+# `core.hooksPath` (`git config --global core.hooksPath`), since the
+# local value wins outright and git never consults the global one once
+# a local one is set. This dispatches to whichever hook of the same
+# name exists there, so this repository's own hooks don't turn those
+# off. `.githooks/pre-commit` needs no equivalent — this repository
+# doesn't ship a global `pre-commit` hook to shadow.
+#
+# One real script; `commit-msg`, `post-checkout`, `post-commit`,
+# `post-merge`, and `pre-push` in this directory are symlinks to it —
+# git execs a hook by its literal path, and a symlinked exec preserves
+# the invoked name in `$0` (verified), so `basename "$0"` recovers which
+# hook this run actually is regardless of which symlink git ran.
+set -eu
+
+hook_name=$(basename "$0")
+global_hooks_dir=$(git config --global --get core.hooksPath 2>/dev/null || true)
+
+if [ -n "$global_hooks_dir" ]; then
+    # git config values are not shell-expanded; a leading ~/ is common.
+    # The quoting below is deliberate, not the SC2088 mistake it looks
+    # like: this is matching whether the *string value* begins with a
+    # literal "~/", not trying to expand a tilde ourselves via the case
+    # pattern. Verified the other way round too — dash DOES tilde-expand
+    # an *unquoted* case pattern (undocumented gotcha, differs from the
+    # common "case patterns never expand" assumption), which would turn
+    # `~/*` into `$HOME/*` and silently stop matching the literal string
+    # from git config.
+    # shellcheck disable=SC2088
+    case "$global_hooks_dir" in
+        "~/"*) global_hooks_dir="$HOME/${global_hooks_dir#\~/}" ;;
+    esac
+    global_hook="$global_hooks_dir/$hook_name"
+    if [ -f "$global_hook" ] && [ -x "$global_hook" ]; then
+        exec "$global_hook" "$@"
+    fi
+fi
+
+exit 0
