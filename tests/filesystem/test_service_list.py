@@ -151,6 +151,55 @@ def test_list_files_respects_max_entries(tmp_path: Path) -> None:
     assert len(entries) == 3
 
 
+def test_at_g2r018_a_low_max_entries_bounds_the_walk_not_just_the_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """G2R-018 (`docs/GAP2_SPEC.md`): a real regression —
+    `candidates = sorted(start.rglob("*") ...)` materialized and sorted
+    the *entire* tree before the `max_entries` break could ever apply,
+    making `list_files("", recursive=True, max_entries=1)` against a
+    repository with a large `node_modules/`-shaped subtree walk and sort
+    every path in it just to return one entry. Counting `_is_git_
+    metadata` calls (tried first) does NOT catch this: that only
+    measures the `for` loop's own body, which already broke early even
+    in the buggy version — `sorted()` drains its whole input *before*
+    the loop starts, so the actual unbounded cost never reaches that
+    counter at all. Instrumented one level lower instead: wrapping
+    `Path.rglob` to count how many items are actually pulled out of the
+    generator it returns catches exactly what `sorted()`'s eager
+    drain does that a lazy `for` loop doesn't — deliberately not a
+    wall-clock timing assertion, which would flake on a loaded machine;
+    this is exact and machine-independent."""
+    root = _repo(tmp_path)
+    many = root / "many"
+    many.mkdir()
+    for i in range(2000):
+        (many / f"file{i:05d}.txt").write_text("x")
+    svc = _service(root)
+
+    real_rglob = Path.rglob
+    pulled = 0
+
+    def _counting_rglob(self: Path, pattern: str, **kwargs: object) -> object:
+        nonlocal pulled
+        for item in real_rglob(self, pattern, **kwargs):  # type: ignore[arg-type]
+            pulled += 1
+            yield item
+
+    monkeypatch.setattr(Path, "rglob", _counting_rglob)
+
+    entries = svc.list_files("", recursive=True, max_entries=1)
+
+    assert len(entries) == 1
+    # Generously above the theoretical minimum (a handful, accounting
+    # for `.git`, `src/`, `src/lib.rs`, and `many/` itself ahead of
+    # `many`'s own 2000 files in whatever order the filesystem actually
+    # yields them) but nowhere near the 2003 total candidates in the
+    # tree — proving the generator itself was never fully drained, not
+    # just that the *returned* list was trimmed after a full walk.
+    assert pulled < 50
+
+
 def test_list_files_on_nonexistent_directory_raises(tmp_path: Path) -> None:
     root = _repo(tmp_path)
     svc = _service(root)

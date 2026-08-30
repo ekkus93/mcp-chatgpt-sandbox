@@ -126,7 +126,24 @@ class FilesystemService:
             limit = min(max_entries, limit)
 
         entries: list[ListEntry] = []
-        candidates = sorted(start.rglob("*") if recursive else start.iterdir())
+        # G2R-018 (`docs/GAP2_SPEC.md`): no `sorted(...)` around this —
+        # sorting requires materializing every candidate up front, which
+        # walks the *entire* tree (`rglob`'s own directory descent
+        # included) before the `limit` break below can ever apply,
+        # making it decorative for cost purposes:
+        # `list_files("", recursive=True, max_entries=1)` against a
+        # repository with a large `node_modules/` used to walk and sort
+        # every path in it to return one entry. `rglob`/`iterdir` are
+        # both lazy generators — not wrapping them in `sorted()`/
+        # `list()` is what actually bounds the walk to roughly `limit`
+        # candidates, not just the entries collected. No sort-order
+        # contract exists for this output to preserve: checked
+        # `docs/SPEC.md` §13.1 (only names path/type/size/mtime/symlink
+        # status, nothing about ordering), `docs/TOOLS.md`, and every
+        # existing test (none assert or rely on a particular order —
+        # comparisons are all against sets/dicts keyed by path) before
+        # concluding this was safe to drop, not assumed.
+        candidates = start.rglob("*") if recursive else start.iterdir()
         for candidate in candidates:
             if len(entries) >= limit:
                 break
