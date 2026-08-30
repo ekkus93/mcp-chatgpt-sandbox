@@ -388,15 +388,17 @@ before and after.
 
 ## Phase 2 — Correctness
 
-### G4 — A lossy capture cannot reach a strict parser
+### G4 — A lossy capture cannot reach a strict parser ✅
 **Satisfies:** GR-006 · **Verified by:** GAT-004
-**Commit:** `PLACEHOLDER`
+**Commit:** `ea4d4ad`
 
-- [ ] `run_git_in_container` guards `stdout_lossy` as it guards
+- [x] `run_git_in_container` guards `stdout_lossy` as it guards
       `stdout_truncated`
-- [ ] The error is distinguishable from the truncation error
-- [ ] Test a genuinely non-UTF-8 path through `git_status`/`git_log`
-- [ ] Schema-drift check — this adds an error condition to three tools
+- [x] The error is distinguishable from the truncation error
+- [x] Test a genuinely non-UTF-8 path through `git_status`/`git_log`
+- [x] Schema-drift check — none: `schemas/tools.json` enumerates no
+      error conditions (see step 6 above); confirmed empty
+      `git diff --stat schemas/tools.json` after this change
 
 **Defect.** AR-001 added `stdout_lossy` and guarded both `git_commit`
 index sites. Repo-wide, `stdout_lossy` is consumed in exactly two places,
@@ -423,6 +425,87 @@ the approach AAT-001/AAT-003 already use), not a path containing a literal
 U+FFFD character — `decode_utf8_lossy` distinguishes the two deliberately
 (strict decode first), so a literal U+FFFD would not set the flag and the
 test would pass against the unfixed code.
+
+**Implemented — a stricter version was tried first, and the full suite
+correctly rejected it.** First pass: `run_git_in_container`
+(`git/service.py`) gained a second guard, unconditionally, immediately
+after the existing `stdout_truncated` one. Targeted suites (this file's
+own new test, `tests/workspace/test_git_status_tool.py
+tests/workspace/test_git_diff_log_tools.py tests/git/`: 199 passed) gave
+no hint anything was wrong. The **full** suite did:
+`test_at_aat001_a_non_utf8_path_present_only_pre_add_is_not_restored_as_a_
+phantom` and `test_at_aat003_a_new_non_utf8_path_the_calls_own_add_
+stages_is_left_honestly_dirty` (`tests/workspace/
+test_git_commit_tool_failure_modes.py`) both failed — `git_commit`'s own
+`assert '"index_left_dirty": true' in str(excinfo.value)` no longer held,
+because the *unconditional* guard now also fired inside `git_commit`'s
+own HR-023 precondition check (an ordinary `read_git_status` call, to
+inspect `status.conflicted`/`status.branch`/`status.head_sha` — nothing
+path-related), for *any* repository containing an unrelated non-UTF-8
+file anywhere. `git status`'s own porcelain output lists the whole
+repository, not just what a given caller cares about, so a caller that
+never intended to report paths to the client — and both AAT-001/AAT-003's
+own fixtures create exactly such a file, for an unrelated reason — was
+newly, and wrongly, blocked outright.
+
+**Corrected: `run_git_in_container` gained a `strict_utf8: bool = True`
+parameter**, guarding the raise (`if strict_utf8 and captured.stdout_lossy:
+raise CommandFailedError(...)`, message/`details` as originally
+described — distinguishable from the truncation error by content, not a
+second `ErrorCode`, matching this codebase's existing convention). Every
+call site was audited (`grep -rn "run_git_in_container(" src/`, 9 total)
+and set explicitly, not left to infer:
+
+| call site | reports paths to client? | `strict_utf8` |
+| --- | --- | --- |
+| `git/status.py` `read_git_status` (→ `git_status` tool) | yes | `True` (default) |
+| `git/status.py` `read_git_status` (→ `git_commit`'s 2 precondition calls) | no — only `conflicted`/`branch`/`head_sha` | `False`, explicit |
+| `git/diff.py` `read_git_diff` (→ `git_diff` tool) | yes, sole caller | `True` (default) |
+| `git/log.py` `read_git_log` (→ `git_log` tool) | yes, sole caller | `True` (default) |
+| `git/commit.py` `read_committed_files` (→ `files_committed`) | yes — GR-006's own explicit scope | `True` (default) |
+| `git/commit.py` `is_head_published` | no — only `.ok`, no path ever parsed | `False`, explicit |
+| `git/remote.py` `resolve_remote_url`/`resolve_remote_push_url` (×2) | no — a remote URL, not a path | `False`, explicit |
+| `git/push.py` `build_force_with_lease_arg` | no — a rev-parse'd SHA | `False`, explicit |
+
+`read_git_status` itself needed the parameter threaded through it (not
+just `run_git_in_container`), since it is the one function genuinely
+shared between a strict caller (the `git_status` tool) and two
+non-strict ones (`git_commit`'s own preconditions) — a single default
+could not serve both.
+
+**New test, watched fail first.**
+`tests/workspace/test_git_status_tool.py`:
+`test_at_gr006_a_non_utf8_path_raises_rather_than_reports_a_mangled_one`
+— `os.fsdecode(b"bad\xffname.txt")`, exactly the fixture warning's own
+example, an untracked file in the repository root, then `git_status`.
+Picked `git_status` over `git_log` (the checklist's "/" — either) since
+it is the more direct case: the bad path reaches stdout via `git status`'s
+own porcelain output with no commit required first.
+
+**Revert-verified, twice.** First, the corrected fix against the exact
+regression that found it: `tests/workspace/
+test_git_commit_tool_failure_modes.py -k "aat001 or aat003"` — 2 passed
+(both were failing under the first-pass, unconditional guard). Second,
+the full defect: backed up all six changed `src/` files, restored
+`HEAD`'s versions, re-ran the new test: failed with `Failed: DID NOT
+RAISE ToolError` — `git_status` completed successfully, silently
+returning the mangled path (the exact pre-fix defect). Restored the fix;
+passes again.
+
+**Suites.** `tests/workspace/test_git_status_tool.py
+tests/workspace/test_git_diff_log_tools.py tests/git/
+tests/workspace/test_git_commit_tool_failure_modes.py
+tests/workspace/test_git_commit_tool.py tests/workspace/test_git_push_tool.py
+tests/workspace/test_git_pull_tool.py`: 258 passed. `pytest
+--collect-only`: 1015 tests (1014 + 1 new — unchanged by the correction,
+since it only reshaped an existing guard's scope). Lint/format clean;
+`uv run mypy src`: no issues in 60 source files. No schema/contract
+change — confirmed empty `git diff --stat schemas/tools.json`; a new
+runtime error condition is not represented in that file at all (it
+carries only `input_schema`/`output_schema`, no error enumeration), so
+no `CONTRACT_VERSION` bump, matching G1's own earlier finding about this
+file's actual contents. Full unscoped `tests/`: 1015 passed, 0 failed,
+531s, 0 Docker leftovers before and after.
 
 ### G5 — Redaction output is always JSON-serializable
 **Satisfies:** GR-007 · **Verified by:** GAT-005
