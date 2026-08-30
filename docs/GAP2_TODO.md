@@ -3,7 +3,7 @@
 **Spec:** `docs/GAP2_SPEC.md` (G2R-001..G2R-022, G2AT-001..G2AT-018)
 **Source:** code review of `docs/GAP_TODO.md` G1–G9 plus a general review
 of the four largest source modules, 2026-08-30, against `9bc44fd`
-**Status:** in progress — X1–X20 complete (20/22); X21–X22 remaining
+**Status:** in progress — X1–X21 complete (21/22); X22 remaining
 
 Twenty-two tasks. One is a live privilege-drop bypass reproduced against
 the shipped image; two are regressions the `GAP_TODO.md` pass itself
@@ -906,12 +906,18 @@ correct as history; only the rows above, all describing *current* state,
 are in scope. This is G7's own rule and it still applies.
 
 ### X21 — Complete and correct G4's call-site audit
-**Satisfies:** G2R-021
+**Satisfies:** G2R-021 · **Commit:** `cd8cfaa` (+ `29a24b0` for the
+`docs/GAP_TODO.md` piece)
 
-- [ ] All eleven `run_git_in_container` sites carry an explicit
+- [x] All eleven `run_git_in_container` sites carry an explicit
       `strict_utf8` with justification
-- [ ] `git_state.py:76`'s silent degradation is decided deliberately
-- [ ] The correction is recorded in `docs/GAP_TODO.md`'s G4 write-up
+- [x] `git_state.py:76`'s silent degradation is decided deliberately —
+      note: the *claimed* consequence (a non-UTF-8 file path making
+      `git.clean` null) was verified empirically and found wrong; the
+      real, reproducible consequence is a non-UTF-8 *branch name*
+      making `branch`/`upstream` null — corrected in both `docs/
+      GAP2_SPEC.md` and this file's own write-up below
+- [x] The correction is recorded in `docs/GAP_TODO.md`'s G4 write-up
 
 **Defect.** G4 tabulates nine call sites and states "Every one … was
 audited and set explicitly". There are **eleven** — verified: the three
