@@ -44,7 +44,43 @@ SUPPORTED_PROJECT_CONFIG_VERSIONS = frozenset({1})
 #: `LD_*` is matched by prefix instead (checked separately, alongside
 #: this set, at the one call site) since the loader family is open-ended
 #: (`LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT`, ...).
-_ENTRYPOINT_CONTROL_ENV_KEYS = frozenset({"PATH", "BASH_ENV", "ENV", "SHELLOPTS", "IFS", "HOME"})
+#:
+#: G2R-002 (`docs/GAP2_SPEC.md`) adds the `GIT_CONFIG*` family:
+#: `entrypoint.sh`'s root phase runs exactly one git command —
+#: `git config --system url."git@github.com:".insteadOf "https://…"` —
+#: and each of these redirects it to an attacker-chosen path, creating or
+#: appending as root. Reproduced with git 2.43.0:
+#: `GIT_CONFIG_SYSTEM=/tmp/x git config --system a.b c` writes `/tmp/x`.
+#: Content is fixed (a URL rewrite rule), so this is arbitrary root-owned
+#: file creation/corruption, not code execution.
+#:
+#: The broader `GIT_*` family was assessed and found safe *for this
+#: entrypoint, as it stands today* — recorded here rather than
+#: re-derived, since the safety depends on the root phase staying this
+#: narrow: `GIT_SSH`/`GIT_SSH_COMMAND`/`GIT_EXTERNAL_DIFF` have nothing to
+#: act on (no repository, no diff, no transport in the root phase), and
+#: `GIT_DIR`/`GIT_ALTERNATE_OBJECT_DIRECTORIES` likewise — `git config
+#: --system` never opens a repository. A future entrypoint change that
+#: adds a root-phase `git` call against a real repository (a fetch, a
+#: diff, anything transport-touching) SHALL re-evaluate this assessment
+#: rather than assume it still holds. `GIT_CONFIG_KEY_<n>`/
+#: `GIT_CONFIG_VALUE_<n>` need no separate entry: git only reads them when
+#: `GIT_CONFIG_COUNT` is also set, so blocking the switch is sufficient —
+#: verified against git's own documented behavior, not assumed.
+_ENTRYPOINT_CONTROL_ENV_KEYS = frozenset(
+    {
+        "PATH",
+        "BASH_ENV",
+        "ENV",
+        "SHELLOPTS",
+        "IFS",
+        "HOME",
+        "GIT_CONFIG",
+        "GIT_CONFIG_SYSTEM",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_COUNT",
+    }
+)
 
 #: G2R-001 (`docs/GAP2_SPEC.md`): a *key* that is not a legal POSIX
 #: environment-variable name. Exists specifically to reject bash's

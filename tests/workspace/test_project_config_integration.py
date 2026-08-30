@@ -168,6 +168,32 @@ async def test_at_g2r001_project_environment_cannot_set_an_exported_shell_functi
     assert docker_client.containers.list(all=True, filters={"name": "mcp-dev-ws-example"}) == []
 
 
+async def test_at_g2r002_project_environment_cannot_redirect_gits_configuration(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """G2R-002 (`docs/GAP2_SPEC.md`): the end-to-end half, alongside
+    `test_at_g2r001_*` above — `GAP2_SPEC.md`'s own G2AT-002 says "the
+    same, for GIT_CONFIG_SYSTEM," which post-dates G2AT-001 being split
+    into a validator half and this end-to-end half, so this removes the
+    ambiguity that split left rather than assuming the validator test
+    alone was always sufficient."""
+    repo_path = tmp_path / "work" / "example"
+    _init_repo(
+        repo_path,
+        project_config={"version": 1, "environment": {"GIT_CONFIG_SYSTEM": "/tmp/evil.cfg"}},
+    )
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+
+    with pytest.raises(ToolError, match="interpreter or command resolution"):
+        await _open(server)
+
+    assert docker_client.containers.list(all=True, filters={"name": "mcp-dev-ws-example"}) == []
+
+
 async def test_no_project_config_falls_back_to_the_default_image(
     minimal_config: ServerConfig,
     default_image_tag: str,

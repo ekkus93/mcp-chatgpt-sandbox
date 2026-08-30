@@ -157,6 +157,37 @@ def test_at_gr004_environment_cannot_set_an_interpreter_or_resolution_variable(
 
 
 @pytest.mark.parametrize(
+    "key", ["GIT_CONFIG", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_COUNT"]
+)
+def test_at_g2r002_environment_cannot_redirect_gits_configuration(tmp_path: Path, key: str) -> None:
+    """G2R-002 (`docs/GAP2_SPEC.md`): `entrypoint.sh`'s root phase runs
+    exactly one git command — `git config --system url."git@github.com:"
+    .insteadOf "https://…"` — and each of these keys redirects that
+    write to an attacker-chosen path, creating or appending as root.
+    Reproduced with git 2.43.0 (this task's own write-up):
+    `GIT_CONFIG_SYSTEM=/tmp/x git config --system a.b c` writes `/tmp/x`.
+    Content is fixed (a URL rewrite rule), so this is arbitrary
+    root-owned file creation, not code execution — say it that way, not
+    inflated."""
+    repo_path = tmp_path / "repo"
+    _write(repo_path, {"version": 1, "environment": {key: "/tmp/evil.cfg"}})
+    with pytest.raises(ContainerCreateFailedError, match="interpreter or command resolution"):
+        load_project_config(repo_path)
+
+
+def test_at_g2r002_an_ordinary_git_variable_is_still_accepted(tmp_path: Path) -> None:
+    """The negative result recorded alongside `_ENTRYPOINT_CONTROL_ENV_
+    KEYS`: the broader `GIT_*` family has nothing to act on in this
+    entrypoint's root phase (no repository, no diff, no transport — only
+    `git config --system`), so only the four keys above are blocked."""
+    repo_path = tmp_path / "repo"
+    _write(repo_path, {"version": 1, "environment": {"GIT_AUTHOR_NAME": "CI Bot"}})
+    config = load_project_config(repo_path)
+    assert config is not None
+    assert config.environment == {"GIT_AUTHOR_NAME": "CI Bot"}
+
+
+@pytest.mark.parametrize(
     "key",
     [
         "BASH_FUNC_id%%",
