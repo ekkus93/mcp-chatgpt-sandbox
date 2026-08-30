@@ -70,6 +70,73 @@ def test_write_file_without_expected_sha_always_overwrites(tmp_path: Path) -> No
     assert (root / "f.txt").read_text() == "two"
 
 
+def test_at_g2r010_a_successful_writes_sha256_matches_a_subsequent_read(
+    tmp_path: Path,
+) -> None:
+    """G2R-010 (`docs/GAP2_SPEC.md`): the old truncate-then-single-
+    `os.pwrite` sequence never checked `pwrite`'s return value, so a
+    short write (POSIX permits transferring fewer bytes than requested)
+    could report a `sha256`/`size` for the buffer it *intended* to
+    write, not what actually reached disk — `expected_sha256` on a
+    later call would then never match a real `read_file`. `_write_all`
+    now loops until every byte is confirmed written, so the value this
+    computes from the buffer is provably what is on disk by the time it
+    returns — checked here the direct way, against a real
+    `read_file`-equivalent, not by asserting the loop ran."""
+    root = _repo(tmp_path)
+    svc = _service(root)
+    content = "line one\nline two\nline three\n" * 100  # large enough to be non-trivial
+    result = svc.write_file("big.txt", content)
+    on_disk = (root / "big.txt").read_bytes()
+    assert result.sha256 == sha256_of(on_disk)
+    assert result.size == len(on_disk)
+
+
+def test_at_g2r010_a_write_that_fails_partway_leaves_previous_content_intact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """G2R-010: the old sequence `ftruncate(fd, 0)` then a single
+    unchecked `pwrite` — if the write then failed outright (disk full,
+    `ENOSPC`), the *previous* content was already gone, destroyed by the
+    truncate, before any new content ever landed. The new sequence
+    writes to a fresh temp file first and `os.replace`s it over the
+    target only once the write fully succeeds: a failure during the
+    write touches only the temp file, never the real target.
+
+    Patches both `os.write` (this fix's own mechanism) and `os.pwrite`
+    (the pre-fix mechanism's) to fail on the very first call — an
+    immediate, unconditional `ENOSPC`, matching the actual scenario
+    both this task's own write-up and `docs/GAP2_SPEC.md` describe —
+    rather than just the one the current source happens to use: a
+    revert-check against this test SHALL exercise the *old* code's
+    actual data-loss bug, not merely find that the old code doesn't
+    call the same syscall this fix introduced and so never reaches the
+    mock at all. (A short-write-then-fail-on-the-second-call design was
+    tried first and rejected: the old code's single unchecked `pwrite`
+    call never notices a short write at all — no exception, silently
+    wrong `sha256`/`size` instead — so it never reaches the mock's
+    second branch either; that is a *different* defect (an unverified
+    short write, also fixed by this same task, covered by the
+    sha256-matches-a-read test above) from the one this test targets.)"""
+    root = _repo(tmp_path)
+    svc = _service(root)
+    svc.write_file("existing.txt", "original content, must survive\n")
+
+    def _always_fail(*args: object, **kwargs: object) -> int:
+        raise OSError(28, "No space left on device")  # ENOSPC
+
+    monkeypatch.setattr(os, "write", _always_fail)
+    monkeypatch.setattr(os, "pwrite", _always_fail)
+
+    with pytest.raises(OSError):
+        svc.write_file("existing.txt", "x" * 1000)
+
+    assert (root / "existing.txt").read_text() == "original content, must survive\n"
+    # the failed attempt's own temp file is not left behind either.
+    leftover_temp_files = [p for p in root.iterdir() if "mcp-write-tmp" in p.name]
+    assert leftover_temp_files == []
+
+
 def test_write_file_with_matching_expected_sha_succeeds(tmp_path: Path) -> None:
     root = _repo(tmp_path)
     svc = _service(root)

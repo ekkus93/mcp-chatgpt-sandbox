@@ -57,6 +57,21 @@ def _hash_pread(fd: int, total_size: int, *, chunk_size: int = _READ_FILE_HASH_C
     return hasher.hexdigest()
 
 
+def _write_all(fd: int, data: bytes) -> None:
+    """G2R-010 (`docs/GAP2_SPEC.md`): the same discipline `_hash_pread`
+    above already applies to reads — a single `os.write`/`os.pwrite` can
+    transfer fewer bytes than requested (POSIX permits it for any
+    reason, not only for the sizes `_hash_pread`'s own 2 GiB kernel-cap
+    note discusses), and `write_file`'s old single-call `os.pwrite(fd,
+    data, 0)` never checked its return value — a short write there
+    silently reported a `sha256`/`size` for the buffer it *intended* to
+    write, not what actually reached disk. Looped until every byte is
+    confirmed written."""
+    offset = 0
+    while offset < len(data):
+        offset += os.write(fd, data[offset:])
+
+
 @dataclass(frozen=True, slots=True)
 class ListEntry:
     path: str
@@ -390,126 +405,127 @@ class FilesystemService:
         # closes. A deliberate, documented tradeoff, not an oversight.
         self._security.ensure_parent_directories(relative_path)
 
-        # Race-free create-or-open, distinguishing the two (unlike a
-        # single `O_CREAT` open) because `expected_sha256=None` and
-        # "file exists but is empty" (`sha256_of(b"")`) are genuinely
-        # different states the original `path.is_file()` check preserved.
-        # RR-006 (`docs/REMEDIATION_SPEC.md` §5): both raw `os.open`
-        # calls are classified — an untranslated `IsADirectoryError`/
-        # `PermissionError` used to crash the tool call outright rather
-        # than reach the client as a typed error.
+        # G2R-010 (`docs/GAP2_SPEC.md`): write to a fresh temporary file
+        # in the same directory, then `os.replace` it over the target —
+        # replaces the old truncate-then-`pwrite` sequence directly
+        # against the target's own fd, which had two real defects: a
+        # write failing partway (disk full) left the *previous* content
+        # destroyed (already truncated to empty) rather than untouched,
+        # since the old file's own data was gone before the new data
+        # ever landed; and a short `os.pwrite` (POSIX permits transferring
+        # fewer bytes than requested) went unchecked, so `WriteResult`
+        # could report a `sha256`/`size` for the *intended* buffer that
+        # never matched what actually reached disk. `os.replace` is a
+        # single atomic rename: either the whole new file lands under
+        # the target name, or nothing changes — there is no partial
+        # state to fail into.
+        #
+        # A second property, not merely incidental: `rename(2)`/
+        # `renameat(2)` never follows a symlink at the *destination*
+        # name — it replaces the symlink entry itself. So even if the
+        # target name were a symlink a racing container process swapped
+        # in (`git_dir_mode: read-write`'s in-tree `.git` being the
+        # concrete concern G2R-005 closed for reads/opens), the final
+        # `os.replace` below cannot be redirected into writing through
+        # it the way the old direct-open sequence could. The *existing*
+        # file (if any) is still opened and verified below, for the
+        # `expected_sha256` read — that half of the race is unrelated to
+        # this atomicity property and still needs `verify_resolved_path`.
+        #
+        # `parent_fd` itself needs the identical re-verification, and
+        # missing this the first time through was a real regression
+        # caught by this task's own revert-verification (X5's existing
+        # race tests failed against this draft): `path.parent` is a
+        # plain string, re-resolved fresh by this `os.open` — if the
+        # intermediate component named `path.parent` was swapped to a
+        # symlink into `.git` between the `resolve()` call above and
+        # this line, `O_DIRECTORY` does not stop the open from following
+        # it (it only requires the *final* resolved target to be a
+        # directory, which `.git` is). Every operation below is relative
+        # to `parent_fd`, so an unverified `parent_fd` would silently
+        # reopen G2R-005's exact gap one level up.
+        parent_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
         try:
-            fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o644)
-            existed_before = False
-        except FileExistsError:
+            actual_parent = self._security.resolve_open_fd(parent_fd)
+            self._security.verify_resolved_path(actual_parent, relative_path)
+
+            name = path.name
+            # No `existed_before` bookkeeping to thread through, unlike
+            # the old truncate-in-place sequence: the atomic `os.replace`
+            # below never distinguishes create from update — a failure
+            # anywhere before it only ever affects the temp file, never
+            # the real target, whether or not one existed.
             try:
-                fd = os.open(path, os.O_RDWR)
-            except IsADirectoryError as exc:
-                raise InvalidArgumentError(
-                    f"is a directory: {relative_path!r}", details={"path": relative_path}
-                ) from exc
+                # `O_RDONLY` alone, unlike the old `O_RDWR`, does not
+                # raise `IsADirectoryError` merely from *opening* a
+                # directory on Linux — reading its content is what fails,
+                # and this fd is never read from directly (`_hash_pread`
+                # only runs after the `stat.S_ISDIR` check just below).
+                # Checked explicitly rather than relying on open() to
+                # reject it, so the error surfaces here with a clear
+                # message instead of confusingly out of `os.replace`
+                # further down (which also rejects a directory target,
+                # but with an unhelpful `IsADirectoryError` naming the
+                # temp filename, not `relative_path`).
+                existing_fd: int | None = os.open(name, os.O_RDONLY, dir_fd=parent_fd)
+            except FileNotFoundError:
+                existing_fd = None
             except PermissionError as exc:
                 raise InvalidArgumentError(
                     f"permission denied: {relative_path!r}", details={"path": relative_path}
                 ) from exc
-            existed_before = True
-        except PermissionError as exc:
-            raise InvalidArgumentError(
-                f"permission denied: {relative_path!r}", details={"path": relative_path}
-            ) from exc
 
-        actual: Path | None = None
-        try:
-            # Checked with the raw fd (not `verify_fd_within_root`, which
-            # would close `fd` and raise immediately): a write that
-            # escaped may have just *created* a file at that escaped
-            # location, and cleaning it up needs the kernel-reported real
-            # path, not the racy `path` string again — the `except` block
-            # below does that before raising the client-facing error.
-            # RR-006: this read (and the `verify_resolved_path` check
-            # depending on it) now runs *inside* the `try`, not before
-            # it — `fd` is a real, just-opened descriptor, so
-            # `resolve_open_fd` reading `/proc/self/fd/<fd>` cannot fail
-            # in practice, but leaving it outside the `try` meant an
-            # OSError from it would leak `fd` uncaught rather than reach
-            # the `except` below. (`stat.S_ISDIR` used to be checked
-            # here too — genuinely dead code: opening an existing
-            # directory with `O_RDWR` above already raises
-            # `IsADirectoryError`, now classified, before this line
-            # could ever run against a directory's fd.)
-            #
-            # G2R-005 (`docs/GAP2_SPEC.md`): `verify_resolved_path`, not
-            # the old bare `is_within_root` containment check — a race
-            # that redirects this open into `.git/hooks/pre-commit`
-            # (in-tree, the shipped default `git_dir_mode: read-write`)
-            # used to pass containment cleanly and write straight
-            # through it. `verify_resolved_path` applies the same three
-            # `resolve()` rules to `actual`, and raises
-            # `PathGitMetadataError`/`PathOutsideRepositoryError`
-            # directly — both land in the `except BaseException` below
-            # exactly like the old `PathOutsideRepositoryError` did, so
-            # no change was needed there.
-            actual = self._security.resolve_open_fd(fd)
-            self._security.verify_resolved_path(actual, relative_path)
+            current: str | None = None
+            if existing_fd is not None:
+                try:
+                    if stat.S_ISDIR(os.fstat(existing_fd).st_mode):
+                        raise InvalidArgumentError(
+                            f"is a directory: {relative_path!r}", details={"path": relative_path}
+                        )
+                    # RR-006 / G2R-005: the same post-open re-verification
+                    # `read_file`/`open_validated` apply — the existing
+                    # entry at this name could be a symlink a race just
+                    # planted, and `os.open` above followed it.
+                    actual = self._security.resolve_open_fd(existing_fd)
+                    self._security.verify_resolved_path(actual, relative_path)
+                    if expected_sha256 is not None:
+                        # The full, untruncated existing content —
+                        # matching `ReadResult.sha256`'s own invariant
+                        # (always the hash of the whole file, regardless
+                        # of any read/write size limit) so an
+                        # `expected_sha256` from a prior real `read_file`
+                        # call compares correctly. `_hash_pread`, not a
+                        # single `os.pread` (RR-006): a lone call can
+                        # under-read a large file, hashing a truncated
+                        # prefix.
+                        existing_size = os.fstat(existing_fd).st_size
+                        current = _hash_pread(existing_fd, existing_size)
+                finally:
+                    os.close(existing_fd)
 
-            if expected_sha256 is not None:
-                current: str | None = None
-                if existed_before:
-                    # The full, untruncated existing content — matching
-                    # `ReadResult.sha256`'s own invariant (always the hash
-                    # of the whole file, regardless of any read/write size
-                    # limit) so a `expected_sha256` from a prior real
-                    # `read_file` call compares correctly. `_hash_pread`,
-                    # not a single `os.pread` (RR-006): a lone call can
-                    # under-read a large file, hashing a truncated prefix.
-                    existing_size = os.fstat(fd).st_size
-                    current = _hash_pread(fd, existing_size)
-                if current != expected_sha256:
-                    raise FileConflictError(
-                        f"file changed since it was read: {relative_path!r}",
-                        details={
-                            "path": relative_path,
-                            "expected_sha256": expected_sha256,
-                            "actual_sha256": current,
-                        },
-                    )
+            if expected_sha256 is not None and current != expected_sha256:
+                raise FileConflictError(
+                    f"file changed since it was read: {relative_path!r}",
+                    details={
+                        "path": relative_path,
+                        "expected_sha256": expected_sha256,
+                        "actual_sha256": current,
+                    },
+                )
 
-            os.ftruncate(fd, 0)
-            os.pwrite(fd, data, 0)
-        except BaseException:
-            os.close(fd)
-            if not existed_before and actual is not None:
-                # We created this file above (either at `path`, or — if
-                # it escaped — at `actual`, the kernel-reported real
-                # location a race redirected the create to) and the
-                # write never committed — remove it so a rejected write
-                # has no side effect, matching the original behavior
-                # (which never touched disk before this same check).
-                # Using `actual`'s parent as a `dir_fd` (RR-006), not
-                # `actual.unlink()`'s own fresh path-string resolution of
-                # every component: unlinking `actual` rather than `path`
-                # again is what makes this correct even when they differ
-                # (cleaning up via the racy string a second time can
-                # silently miss the file a race already moved elsewhere —
-                # confirmed empirically on an early version of the
-                # original H9 fix that unlinked `path` here instead), and
-                # resolving only the immediate parent by `dir_fd` rather
-                # than the whole string again narrows that same class of
-                # re-resolution race by one more component.
-                # `actual is None` only when `resolve_open_fd` itself
-                # failed above — genuinely can't happen for a freshly
-                # opened fd on Linux, but if it somehow did, guessing at
-                # a path to clean up would reopen exactly the race this
-                # closes, so it is deliberately left unattempted instead.
+            tmp_name = f".{name}.mcp-write-tmp-{os.urandom(8).hex()}"
+            tmp_fd = os.open(tmp_name, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o644, dir_fd=parent_fd)
+            try:
+                _write_all(tmp_fd, data)
+            except BaseException:
+                os.close(tmp_fd)
                 with contextlib.suppress(OSError):
-                    parent_fd = os.open(actual.parent, os.O_RDONLY | os.O_DIRECTORY)
-                    try:
-                        os.unlink(actual.name, dir_fd=parent_fd)
-                    finally:
-                        os.close(parent_fd)
-            raise
-        else:
-            os.close(fd)
+                    os.unlink(tmp_name, dir_fd=parent_fd)
+                raise
+            os.close(tmp_fd)
+            os.replace(tmp_name, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        finally:
+            os.close(parent_fd)
 
         return WriteResult(sha256=sha256_of(data), size=len(data))
 
