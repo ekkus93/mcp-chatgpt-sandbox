@@ -40,7 +40,11 @@ from mcp.server import MCPServer
 #: tools.
 #: 0.7.5 (H32): patch bump — `workspace_open`/`workspace_info` gained
 #: `oom_killed` (§26) and `devcontainer_ignored` (§30); no new tools.
-CONTRACT_VERSION = "0.7.5"
+#: 0.7.6 (G2R-014, `docs/GAP2_SPEC.md`): patch bump — `workspace_open`/
+#: `workspace_info` gained `configured_image` (what `.mcp-workspace.yml`
+#: `image:`/`docker.default_image` currently resolves to, distinct from
+#: `image`, what the container actually runs); no new tools.
+CONTRACT_VERSION = "0.7.6"
 
 
 async def collect_tool_schemas(server: MCPServer) -> list[dict[str, Any]]:

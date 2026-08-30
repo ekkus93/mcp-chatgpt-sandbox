@@ -49,7 +49,11 @@ from dev_workspace_mcp.github_api import (
     verify_remote_protection,
 )
 from dev_workspace_mcp.jobs.store import JobState, JobStore
-from dev_workspace_mcp.project_config import devcontainer_json_is_ignored, load_project_config
+from dev_workspace_mcp.project_config import (
+    ProjectWorkspaceConfig,
+    devcontainer_json_is_ignored,
+    load_project_config,
+)
 from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.schema_export import CONTRACT_VERSION
 from dev_workspace_mcp.workspace.caches import build_cache_mounts, resolve_caches
@@ -110,6 +114,17 @@ class WorkspaceInfoOutput:
     the `.mcp-workspace.yml` `version` that configured it (`None` when no
     project config was present), and the workspace's own creation time —
     `None`/absent for a workspace that predates this task's migration."""
+    configured_image: str | None = None
+    """G2R-014 (`docs/GAP2_SPEC.md`): what `.mcp-workspace.yml` `image:`
+    (or `docker.default_image`) currently resolves to — as opposed to
+    `image` above, what the container actually runs. A persistent
+    workspace's container is never rebuilt just because this changed
+    (`workspace_open` reconciles an already-`RUNNING` container without
+    touching its image at all), so the two can legitimately diverge
+    until an operator runs `reset`/`rebuild` (`cli.py`); this field is
+    what makes that divergence visible instead of silently reconciled
+    into a reported `image_digest` that no longer describes the running
+    container."""
     config_version: int | None = None
     created_at: str | None = None
     oom_killed: bool = False
@@ -247,6 +262,26 @@ def load_image_provenance(
     return row["image_digest"], row["config_version"]
 
 
+def resolve_effective_image(
+    project_config: ProjectWorkspaceConfig | None, docker_config: DockerConfig
+) -> str:
+    """§9/§10: `.mcp-workspace.yml`'s `image:`, when present, is the
+    highest `image` precedence level this daemon implements
+    (`workspace_path`'s own sibling gaps — devcontainer.json, per-project
+    Dockerfile detection — are a documented, deliberate scope cut, not
+    silent approximation: see docs/TODO.md) — `docker.default_image`
+    otherwise. Factored out of `open_workspace` (G2R-014,
+    `docs/GAP2_SPEC.md`) so `build_workspace_info` can compute the exact
+    same value `workspace_open` just used to provision the container, to
+    report a config-vs-running-container mismatch rather than only ever
+    comparing against whatever the container happened to start with."""
+    return (
+        project_config.image
+        if project_config is not None and project_config.image is not None
+        else docker_config.default_image
+    )
+
+
 def load_setup_completed_container_id(db: sqlite3.Connection, workspace_id: str) -> str | None:
     """G2R-012 (`docs/GAP2_SPEC.md`): the container id `.mcp-workspace.yml`
     `setup` steps last completed successfully against, for `workspace_id`
@@ -272,6 +307,7 @@ async def build_workspace_info(
     ssh_config: SSHConfig,
     db: sqlite3.Connection,
     execution_service: ExecutionService,
+    docker_config: DockerConfig,
 ) -> WorkspaceInfoOutput:
     """H36 (`docs/HARDENING_TODO.md`, 5/8): the `git` block is only
     populated when `record` is currently `RUNNING` — `NO_GIT_STATE`
@@ -298,6 +334,17 @@ async def build_workspace_info(
     else:
         git_state = NO_GIT_STATE
     image_digest, config_version = load_image_provenance(db, record.id)
+    # G2R-014 (`docs/GAP2_SPEC.md`): `resolve_effective_image` is the
+    # exact same precedence `open_workspace` used to provision the
+    # container with — recomputed here (a project config load is cheap)
+    # so a configured image changed since the container was last built
+    # is *reported*, not silently reconciled: `image` (below) is what
+    # actually runs, `configured_image` is what `.mcp-workspace.yml`/
+    # `docker.default_image` currently asks for. They diverge exactly
+    # when a rebuild is pending — `reset`/`rebuild` (`cli.py`) is what
+    # picks up the difference.
+    project_config = load_project_config(repository.canonical_path)
+    configured_image = resolve_effective_image(project_config, docker_config)
     return WorkspaceInfoOutput(
         workspace_id=record.id,
         repository_id=record.repository_id,
@@ -315,6 +362,7 @@ async def build_workspace_info(
         ),
         image=record.image,
         image_digest=image_digest,
+        configured_image=configured_image,
         config_version=config_version,
         created_at=record.created_at,
         oom_killed=record.oom_killed,
@@ -410,11 +458,7 @@ async def open_workspace(
     # per-project Dockerfile detection — are a documented, deliberate
     # scope cut, not silent approximation: see docs/TODO.md).
     project_config = load_project_config(repository.canonical_path)
-    effective_image = (
-        project_config.image
-        if project_config is not None and project_config.image is not None
-        else docker_config.default_image
-    )
+    effective_image = resolve_effective_image(project_config, docker_config)
     resolved_caches = resolve_caches(
         repository_id=repository.id,
         project_caches=project_config.caches if project_config is not None else [],
@@ -484,12 +528,38 @@ async def open_workspace(
     # rather than a clean, typed `workspace_open` failure naming the
     # image.
     try:
-        image_digest = docker_client.images.get(effective_image).id
+        effective_image_ref = docker_client.images.get(effective_image)
     except docker.errors.ImageNotFound as exc:
         raise ImageNotFoundError(
             f"image not found locally: {effective_image!r}",
             details={"image": effective_image},
         ) from exc
+    # G2R-014 (`docs/GAP2_SPEC.md`): §9.2 reports `image` (`record.image`
+    # — what the container actually runs) and `image_digest` as one
+    # reproducibility *pair*, describing the same image. `ensure_workspace`
+    # never rebuilds a running container just because `effective_image`
+    # changed (a persistent workspace, `.mcp-workspace.yml` `image:`
+    # edited, no `reset`/`rebuild` run) — so `record.image` above can
+    # legitimately differ from `effective_image` here, and the digest
+    # written below has to describe whichever one the client is actually
+    # going to run commands against, not whichever one this call happened
+    # to look up first. Only a second Docker API call in the divergent
+    # case (rare — normally they're identical and this reuses the lookup
+    # already done above); a `record.image` that has since vanished
+    # locally (a manual `docker image rm` after the container started)
+    # is the same typed failure as `effective_image` missing, not a
+    # crash.
+    assert record.image is not None  # implied by ensure_workspace having just succeeded
+    if record.image == effective_image:
+        image_digest = effective_image_ref.id
+    else:
+        try:
+            image_digest = docker_client.images.get(record.image).id
+        except docker.errors.ImageNotFound as exc:
+            raise ImageNotFoundError(
+                f"image not found locally: {record.image!r}",
+                details={"image": record.image},
+            ) from exc
     config_version = project_config.version if project_config is not None else None
     with db:
         db.execute(
@@ -576,6 +646,7 @@ async def open_workspace(
         ssh_config=ssh_config,
         db=db,
         execution_service=execution_service,
+        docker_config=docker_config,
     )
 
 
@@ -726,6 +797,7 @@ def register(
             ssh_config=ssh_config,
             db=db,
             execution_service=execution_service,
+            docker_config=docker_config,
         )
 
     @server.tool(name="server_info", description="Server version, capabilities, and health (§25).")

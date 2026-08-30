@@ -26,6 +26,7 @@ from dev_workspace_mcp.workspace.caches import cache_volume_name
 from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
 from dev_workspace_mcp.workspace.naming import persistent_workspace_id
 from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager
+from tests.workspace.conftest import TEST_IMAGE
 
 
 def _init_repo(
@@ -111,6 +112,44 @@ async def test_at_g2r013_an_image_absent_locally_after_a_config_edit_raises_a_ty
 
     with pytest.raises(ToolError, match="IMAGE_NOT_FOUND"):
         await _open(server)
+
+
+async def test_at_g2r014_a_configured_image_change_without_a_rebuild_is_reported(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """G2R-014 (`docs/GAP2_SPEC.md`): `ensure_workspace` never rebuilds
+    an already-`RUNNING` persistent workspace's container just because
+    `.mcp-workspace.yml` `image:` changed — a real regression: the old
+    code wrote `image_digest` from the *newly configured* image
+    regardless, so `image` (the container the client actually runs
+    commands against) and `image_digest` described two different
+    images. `TEST_IMAGE` (`alpine:3.20`) stands in for a genuinely
+    different, already-locally-present image — the divergence must
+    surface even though nothing here is missing, unlike X13's test."""
+    repo_path = tmp_path / "work" / "example"
+    _init_repo(repo_path, project_config={"version": 1})
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+    first = await _open(server)
+    assert first.structured_content["image"] == default_image_tag
+    running_digest = first.structured_content["image_digest"]
+    assert running_digest == docker_client.images.get(default_image_tag).id
+
+    (repo_path / ".mcp-workspace.yml").write_text(
+        yaml.safe_dump({"version": 1, "image": TEST_IMAGE})
+    )
+
+    second = await _open(server)
+    # The container is unchanged — still running the old image — and
+    # `image`/`image_digest` SHALL keep describing it, not the merely
+    # configured one.
+    assert second.structured_content["image"] == default_image_tag
+    assert second.structured_content["image_digest"] == running_digest
+    # The divergence itself SHALL be visible, not silently reconciled.
+    assert second.structured_content["configured_image"] == TEST_IMAGE
 
 
 async def test_environment_from_project_config_reaches_the_container(

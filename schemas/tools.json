@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.7.5",
+  "contract_version": "0.7.6",
   "tools": [
     {
       "description": "Delete a repository file or directory (\u00a713.5).",
@@ -1973,6 +1973,18 @@
             "default": null,
             "title": "Config Version"
           },
+          "configured_image": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Configured Image"
+          },
           "container_state": {
             "title": "Container State",
             "type": "string"
@@ -2230,6 +2242,18 @@
             ],
             "default": null,
             "title": "Config Version"
+          },
+          "configured_image": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Configured Image"
           },
           "container_state": {
             "title": "Container State",
