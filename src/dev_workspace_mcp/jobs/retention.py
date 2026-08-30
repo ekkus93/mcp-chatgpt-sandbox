@@ -23,10 +23,13 @@ requests, but not a substitute for a real one.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from dev_workspace_mcp.jobs.store import TERMINAL_STATES, JobStore
+
+_logger = logging.getLogger(__name__)
 
 
 def prune_job_logs(
@@ -60,9 +63,24 @@ def prune_job_logs(
         over_budget = total_bytes > job_log_max_total_bytes
         if not (aged_out or over_budget):
             continue
-        _delete_log(job.stdout_log_path)
-        _delete_log(job.stderr_log_path)
-        job_store.mark_logs_pruned(job.id)
+        try:
+            _delete_log(job.stdout_log_path)
+            _delete_log(job.stderr_log_path)
+            job_store.mark_logs_pruned(job.id)
+        except Exception as exc:  # noqa: BLE001 - deliberately broad, see G2R-011 below
+            # G2R-011 (`docs/GAP2_SPEC.md`): this call runs
+            # opportunistically inline on every `exec_start`
+            # (module docstring above) — a failure pruning *this* job
+            # (a locked log file, a transient DB error) is not a reason
+            # to abort the rest of the batch, and must never surface as
+            # a failure of the unrelated request that happened to
+            # trigger it. The same RR-012 principle (`docs/
+            # REMEDIATION_SPEC.md` §10) `workspace/manager_lifecycle.py`
+            # applies to `delete()`'s own best-effort cleanup steps.
+            # Logged, not raised; a job left unpruned here is simply
+            # picked up again by the next opportunistic call.
+            _logger.warning("prune_job_logs: failed to prune job %s: %s", job.id, exc)
+            continue
         total_bytes -= sizes[job.id]
         pruned.append(job.id)
 

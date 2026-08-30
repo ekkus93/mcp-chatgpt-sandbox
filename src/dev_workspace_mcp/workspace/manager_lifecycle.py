@@ -31,6 +31,7 @@ from dev_workspace_mcp.config.models import AuditConfig
 from dev_workspace_mcp.errors import (
     ContainerCreateFailedError,
     ContainerRuntimeFailedError,
+    WorkspaceError,
 )
 from dev_workspace_mcp.jobs.store import NON_TERMINAL_STATES, JobStore
 from dev_workspace_mcp.repositories import RepositoryRecord
@@ -422,7 +423,26 @@ class _LifecycleMixin(_CoreMixin):
             ]
             if active_jobs:
                 continue
-            self.stop(record.id)
+            try:
+                self.stop(record.id)
+            except WorkspaceError as exc:
+                # G2R-011 (`docs/GAP2_SPEC.md`): the sweep is
+                # opportunistic background work riding along on an
+                # unrelated `workspace_open` call (S17) — a failure to
+                # stop *this* idle workspace is not a reason to abort
+                # the sweep for every other workspace still due, and it
+                # must never surface as a failure of the request that
+                # happened to trigger it. The same RR-012 principle
+                # (`docs/REMEDIATION_SPEC.md` §10) `delete()`'s own
+                # comment above already establishes for cleanup-adjacent
+                # failures. Logged, not raised (`stop()` itself already
+                # logs the underlying Docker failure at `:359`, so this
+                # is deliberately terser); the workspace is simply left
+                # running and picked up by a later sweep.
+                _logger.warning(
+                    "sweep_idle_workspaces: failed to stop workspace %s: %s", record.id, exc
+                )
+                continue
             write_audit_event(
                 audit_config,
                 operation="workspace_stopped_idle",

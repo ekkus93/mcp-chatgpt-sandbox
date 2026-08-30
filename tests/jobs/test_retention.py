@@ -3,6 +3,8 @@
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from dev_workspace_mcp.jobs.retention import prune_job_logs
 from dev_workspace_mcp.jobs.store import JobState, JobStore
 from tests.jobs.conftest import WORKSPACE_ID
@@ -169,3 +171,38 @@ def test_prune_marks_lost_jobs_too(
 
     pruned = prune_job_logs(job_store, job_retention_days=7, job_log_max_total_bytes=10**9)
     assert pruned == ["job_lost"]
+
+
+def test_at_g2r011_a_failure_to_prune_one_job_does_not_abort_the_rest(
+    job_store: JobStore, db: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """G2R-011 (`docs/GAP2_SPEC.md`): `prune_job_logs` runs
+    opportunistically inline on every `exec_start` (this module's own
+    docstring) — a failure pruning one eligible job (a locked log file,
+    a transient DB error) must not raise out of the whole call and fail
+    the unrelated `exec_start` that triggered it, and must not stop the
+    rest of the batch from being pruned either, the same RR-012
+    principle `workspace/manager_lifecycle.py`'s `delete()` already
+    applies to its own best-effort cleanup steps."""
+    _create_finished_job(
+        job_store, db, tmp_path, job_id="job_poisoned", finished_at="2000-01-01T00:00:00+00:00"
+    )
+    _create_finished_job(
+        job_store, db, tmp_path, job_id="job_fine", finished_at="2000-01-02T00:00:00+00:00"
+    )
+    real_mark_logs_pruned = job_store.mark_logs_pruned
+
+    def _mark_logs_pruned_raising_for_poisoned(job_id: str):  # type: ignore[no-untyped-def]
+        if job_id == "job_poisoned":
+            raise sqlite3.OperationalError("database is locked")
+        return real_mark_logs_pruned(job_id)
+
+    monkeypatch.setattr(job_store, "mark_logs_pruned", _mark_logs_pruned_raising_for_poisoned)
+
+    pruned = prune_job_logs(  # SHALL NOT raise
+        job_store, job_retention_days=7, job_log_max_total_bytes=10**9
+    )
+
+    assert pruned == ["job_fine"]  # the poisoned job is skipped, not aborting the batch
+    assert job_store.get("job_fine").logs_pruned is True
+    assert job_store.get("job_poisoned").logs_pruned is False

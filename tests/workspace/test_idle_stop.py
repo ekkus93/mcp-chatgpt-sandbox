@@ -14,6 +14,7 @@ import pytest
 import docker
 from dev_workspace_mcp.config.models import AuditConfig, RepositoryConfig, ServerConfig
 from dev_workspace_mcp.db import open_db
+from dev_workspace_mcp.errors import ContainerRuntimeFailedError
 from dev_workspace_mcp.jobs.store import JobState, JobStore
 from dev_workspace_mcp.repositories import RepositoryRecord
 from dev_workspace_mcp.server import create_server
@@ -235,6 +236,59 @@ def test_sweep_writes_nothing_when_auditing_is_disabled(
     )
 
     assert not disabled_audit.path.exists()
+
+
+def test_at_g2r011_a_failure_to_stop_one_workspace_does_not_abort_the_sweep(
+    manager: DockerWorkspaceManager,
+    docker_client: docker.DockerClient,
+    db: sqlite3.Connection,
+    job_store: JobStore,
+    audit_config: AuditConfig,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G2R-011 (`docs/GAP2_SPEC.md`): the sweep runs opportunistically
+    from `workspace_open` (S17) — `stop()` raising for one *unrelated*
+    idle workspace used to propagate straight out of
+    `sweep_idle_workspaces`, aborting the sweep for every other
+    workspace still due and, at the real call site, failing the
+    triggering `workspace_open` even though the workspace it actually
+    opened is running and healthy. The same RR-012 principle
+    (`docs/REMEDIATION_SPEC.md` §10) `delete()`'s own comment in
+    `workspace/manager_lifecycle.py` already establishes for
+    cleanup-adjacent failures."""
+    doomed = manager.ensure_workspace(
+        repository=RepositoryRecord(
+            id="doomed", canonical_path=tmp_path / "doomed", github="owner/doomed"
+        ),
+        image=TEST_IMAGE,
+        run_kwargs=KEEP_ALIVE_RUN_KWARGS,
+    )
+    fine = manager.ensure_workspace(
+        repository=RepositoryRecord(
+            id="fine", canonical_path=tmp_path / "fine", github="owner/fine"
+        ),
+        image=TEST_IMAGE,
+        run_kwargs=KEEP_ALIVE_RUN_KWARGS,
+    )
+    _backdate_last_used(db, doomed.id, seconds_ago=100)
+    _backdate_last_used(db, fine.id, seconds_ago=100)
+    real_stop = manager.stop
+
+    def _stop_raising_for_doomed(workspace_id: str):  # type: ignore[no-untyped-def]
+        if workspace_id == doomed.id:
+            raise ContainerRuntimeFailedError("simulated stop failure")
+        return real_stop(workspace_id)
+
+    monkeypatch.setattr(manager, "stop", _stop_raising_for_doomed)
+
+    stopped = manager.sweep_idle_workspaces(  # SHALL NOT raise
+        idle_stop_after_seconds=60, job_store=job_store, audit_config=audit_config
+    )
+
+    assert stopped == [fine.id]  # the doomed workspace is skipped, not aborting the sweep
+    assert manager.get(fine.id).state == WorkspaceState.STOPPED
+    assert manager.get(doomed.id).state == WorkspaceState.RUNNING
 
 
 def test_workspace_open_restarts_a_workspace_stopped_for_idleness(
