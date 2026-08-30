@@ -178,16 +178,16 @@ reformatted). `uv run mypy src`: no issues in 60 source files.
 
 ## Phase 1 — Security
 
-### G2 — `environment:` cannot supply interpreter or resolution control
+### G2 — `environment:` cannot supply interpreter or resolution control ✅
 **Satisfies:** GR-004 · **Verified by:** GAT-002
-**Commit:** `PLACEHOLDER`
+**Commit:** `fdc81a1`
 
-- [ ] `PATH`, `BASH_ENV`, `ENV`, `SHELLOPTS`, `IFS`, `HOME`, `LD_*`
+- [x] `PATH`, `BASH_ENV`, `ENV`, `SHELLOPTS`, `IFS`, `HOME`, `LD_*`
       rejected at validation
-- [ ] The rejection names the offending key, matching the existing
+- [x] The rejection names the offending key, matching the existing
       `shadowed` error's shape
-- [ ] Allowlist-vs-denylist choice recorded with its residual risk
-- [ ] Test both a rejected key and an ordinary key that still passes
+- [x] Allowlist-vs-denylist choice recorded with its residual risk
+- [x] Test both a rejected key and an ordinary key that still passes
 
 **Defect (reproduced in live containers).**
 `src/dev_workspace_mcp/project_config.py:128` rejects only
@@ -242,11 +242,63 @@ the configuration surface makes an allowlist impractical, a denylist is
 acceptable, but the write-up SHALL say which was chosen, why, and what
 remains open.
 
-**Check while here:** whether daemon-level `docker.environment`
-(`config/models.py`) reaches the same place. It is operator-authored, not
-client-authored, so it is a different trust class and probably needs no
-filter — but confirm rather than assume, and record the finding either
-way.
+**Implemented as described (chose a denylist).** A second
+`@field_validator("environment")` on `ProjectWorkspaceConfig`
+(`project_config.py`), alongside the existing HR-006 one rather than
+merged into it — the two guard genuinely different things (daemon
+identity vs. entrypoint bootstrap), and a bypass of one SHALL NOT
+silently become a bypass of both, the same reasoning the existing
+validator's own docstring already gives for keeping `container_config.py`'s
+merge-order control separate from it. A new module-level
+`_ENTRYPOINT_CONTROL_ENV_KEYS = frozenset({"PATH", "BASH_ENV", "ENV",
+"SHELLOPTS", "IFS", "HOME"})`, checked alongside a `k.startswith("LD_")`
+prefix match (the loader family is open-ended — `LD_PRELOAD`,
+`LD_LIBRARY_PATH`, `LD_AUDIT`, ... — a fixed set would need updating for
+every new one). The rejection message names the offending key(s), in the
+same `sorted(...)` shape the existing check uses.
+
+**Allowlist rejected, explicitly, not by default.** `environment:` exists
+specifically so a project can set arbitrary, project-specific variables
+(build flags, log levels, service URLs) — an allowlist of "safe" names
+would defeat the field's own purpose, not just be inconvenient. **Residual
+risk, recorded rather than left implicit:** a denylist only ever covers
+what it names; a future interpreter-affecting variable not yet in this set
+(or a shell feature not yet considered) would reach the entrypoint
+unfiltered. G3 (below) is the independent, mechanism-level backstop for
+exactly this — an entrypoint that sets its own `PATH` doesn't depend on
+this denylist being exhaustive for the sharpest consequence (the
+drop-bypass) to stay closed.
+
+**Check while here — done, no gap found.** `docker.environment` does not
+exist: grepped `config/models.py`'s `DockerConfig` and every other
+daemon-level `*Config` class — none has an `environment` field at all.
+The daemon's own `config.yml` has no environment-injection surface
+whatsoever; `ProjectWorkspaceConfig.environment` (just fixed) is the only
+one in the codebase.
+
+**New tests, watched fail first.** `tests/test_project_config.py`:
+`test_at_gr004_environment_cannot_set_an_interpreter_or_resolution_variable`,
+parametrized over `PATH`, `BASH_ENV`, `ENV`, `SHELLOPTS`, `IFS`, `HOME`,
+`LD_PRELOAD`, `LD_LIBRARY_PATH` (8 cases — the full denylist, plus two
+`LD_*` instances to exercise the prefix match, not just the exact-name
+set). Pre-fix: all 8 raised `Failed: DID NOT RAISE
+ContainerCreateFailedError`. `test_at_hat005_an_ordinary_environment_
+variable_is_still_accepted` (pre-existing, `RUST_LOG`) is the "ordinary
+key still passes" half the checklist asks for — confirmed it still
+passes unmodified.
+
+**Revert-verified.** Backed up `project_config.py`, restored `HEAD`'s
+version, re-ran the 8 new cases: all failed identically to the pre-fix
+run. Restored the fix; `tests/test_project_config.py`: 33 passed (25
+pre-existing + 8 new).
+
+**Suites.** `tests/test_project_config.py
+tests/workspace/test_project_config_integration.py`: 47 passed.
+`pytest --collect-only`: 1013 tests (1005 + 8 new). Lint/format clean;
+`uv run mypy src`: no issues in 60 source files. No schema/contract
+change — this is `.mcp-workspace.yml` validation, never a tool's own
+JSON output; no `CONTRACT_VERSION` bump. Full unscoped `tests/`: 1013
+passed, 0 failed, 532s, 0 Docker leftovers before and after.
 
 ### G3 — The entrypoint resolves its own commands
 **Satisfies:** GR-005 · **Verified by:** GAT-003
