@@ -3,7 +3,7 @@
 **Spec:** `docs/GAP2_SPEC.md` (G2R-001..G2R-022, G2AT-001..G2AT-018)
 **Source:** code review of `docs/GAP_TODO.md` G1–G9 plus a general review
 of the four largest source modules, 2026-08-30, against `9bc44fd`
-**Status:** in progress — X1–X10 complete (10/22); X11–X22 remaining
+**Status:** in progress — X1–X11 complete (11/22); X12–X22 remaining
 
 Twenty-two tasks. One is a live privilege-drop bypass reproduced against
 the shipped image; two are regressions the `GAP_TODO.md` pass itself
@@ -601,12 +601,12 @@ files a race had moved. Whatever replaces this sequence keeps that
 property; do not regress it while fixing the truncation.
 
 ### X11 — Opportunistic background work cannot fail the request that triggered it
-**Satisfies:** G2R-011 · **Verified by:** G2AT-011
+**Satisfies:** G2R-011 · **Verified by:** G2AT-011 · **Commit:** `8232ea0`
 
-- [ ] `sweep_idle_workspaces` is best-effort per workspace
-- [ ] A failure to stop one workspace does not abort the sweep
-- [ ] `prune_job_logs` gets the same treatment
-- [ ] The triggering request still succeeds and is still audited
+- [x] `sweep_idle_workspaces` is best-effort per workspace
+- [x] A failure to stop one workspace does not abort the sweep
+- [x] `prune_job_logs` gets the same treatment
+- [x] The triggering request still succeeds and is still audited
 
 **Defect.** `sweep_idle_workspaces` calls `self.stop(record.id)` with no
 exception handling; `stop()` raises `ContainerRuntimeFailedError` on any
