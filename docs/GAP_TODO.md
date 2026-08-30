@@ -4,7 +4,7 @@
 **Source:** code review of `docs/REVIEW_TODO.md` V1–V8 plus the five
 file-splitting commits that followed `docs/AUDIT_TODO.md`, 2026-08-29,
 against `fca1199`
-**Status:** not started
+**Status:** complete (G1-G9 done)
 
 Nine tasks. Two are regressions this project's own refactoring
 introduced — one currently breaking CI, one making a test pass while
@@ -769,14 +769,14 @@ test added or removed). Lint/format clean; `uv run mypy src`: no issues
 in 60 source files. Full unscoped `tests/`: 1019 passed, 0 failed, 531s,
 0 Docker leftovers before and after.
 
-### G8 — Close the tooling-drift hole, and correct the claims it produced
+### G8 — Close the tooling-drift hole, and correct the claims it produced ✅
 **Satisfies:** GR-002, GR-003
-**Commit:** `PLACEHOLDER`
+**Commit:** `11c4084`
 
-- [ ] A mechanism runs CI's three `uv run` commands before a push
-- [ ] It is enforcing, not advisory-only
-- [ ] `docs/DEVELOPMENT.md` points at it
-- [ ] Correction recorded for the `mypy src` claim in `05fe306`,
+- [x] A mechanism runs CI's three `uv run` commands before a push
+- [x] It is enforcing, not advisory-only
+- [x] `docs/DEVELOPMENT.md` points at it
+- [x] Correction recorded for the `mypy src` claim in `05fe306`,
       `fb194f9`, `fca1199`
 
 **Defect.** `docs/DEVELOPMENT.md:13-15` already documents the right
@@ -810,6 +810,83 @@ that established RR-033. Record it plainly. The useful lesson is not
 "be more careful"; it is that a documented-but-unenforced convention is
 indistinguishable from no convention, which is why the checkbox above
 says *enforcing*.
+
+**Implemented — a `pre-commit` git hook, not `pre-push`.** The checklist
+above says "before a push"; `docs/DEVELOPMENT.md` itself already said
+"All four SHALL pass before a **commit**" (unchanged by this task), and
+`docs/GAP_SPEC.md` GR-002's own suggested mechanism is explicitly "a
+`pre-commit` hook." Went with the earlier, already-documented enforcement
+point rather than the checklist's looser wording — catching a violation
+at `git commit` is strictly earlier than at `git push` (this session
+alone pushes right after every commit), and it matches what
+`DEVELOPMENT.md` already told contributors to expect.
+
+`.githooks/pre-commit` (new): runs `uv run ruff format --check .`, `uv
+run ruff check .`, `uv run mypy src` — exactly G8's own "three `uv run`
+commands," deliberately excluding `pytest`: the full suite is
+Docker-heavy and multi-minute, too slow for every commit, and neither
+the checklist nor GR-002 asked for it here. Exits nonzero, with a clear
+message naming which check failed and how to deliberately bypass it
+(`git commit --no-verify`, git's own standard escape hatch — no hook can
+close that, and none should try to).
+
+**Why `.githooks/`, not `.git/hooks/` directly.** `.git/hooks/` is
+per-clone, never version-controlled — writing there would help only this
+one checkout. `.githooks/pre-commit` is a tracked, ordinary file;
+`git config core.hooksPath .githooks` (documented in `docs/
+DEVELOPMENT.md`'s own Setup section, right after `uv sync --group dev`)
+points git at it. One-time per clone, not automatic — there is no way to
+make git run something automatically on every fresh clone without the
+clone owner's own consent, by design.
+
+**`docs/DEVELOPMENT.md` updated**, not just told to point at the hook:
+explains what activates it, why it's a one-time step, and explicitly
+tells a reader to always invoke these three commands through `uv run`,
+citing G1 as the concrete cost of not doing that.
+
+**Revert-verified against a real `git commit` attempt, not a simulation
+— and caught my own mistake mid-verification.** First attempt appended a
+plain-text line to `docs/DEVELOPMENT.md` as the "violation": the hook
+correctly ran and the commit correctly succeeded — which, on reflection,
+proved nothing, since a markdown text line trips neither `ruff` nor
+`mypy` at all. Caught this, discarded that commit (`git reset --soft
+HEAD~1`, then restored the file to `HEAD`), and re-verified with a
+genuine violation instead: an unused, out-of-order `import sys` appended
+to `errors.py`. `git commit` (not a dry run — the actual command a
+contributor would type) was correctly blocked:
+
+```
+pre-commit: uv run ruff format --check .
+1 file would be reformatted, 164 files already formatted
+pre-commit: uv run ruff check .
+E402 Module level import not at top of file
+F401 `sys` imported but unused
+pre-commit: one or more checks failed — commit blocked (docs/GAP_SPEC.md GR-002).
+```
+
+Nothing was committed (`git log` unchanged). Restored `errors.py` to
+`HEAD` exactly (`git restore --source=HEAD --staged --worktree`,
+confirmed zero diff); a clean commit of the real change set then
+succeeds through the hook.
+
+**Correction recorded for the `mypy src` claim** — GR-003
+(`docs/GAP_SPEC.md`) and this task's own "The claim to correct" section
+above *are* that correction, per the convention `REMEDIATION_TODO.md`/
+`HARDENING_TODO.md` use for superseded claims elsewhere; nothing further
+needed here beyond what already exists in this document.
+
+No pytest test accompanies this task — the hook is a shell script, not
+Python, and its correctness was verified the way G1 (the other pure
+tooling task) was: direct reproduction via a real `git commit`, not a
+simulation. `shellcheck .githooks/pre-commit`: clean, no warnings.
+`pytest --collect-only`: 1019 tests, unchanged (as expected — no Python
+behavior changed; the transient `import sys` violation used for
+verification was never committed and is confirmed fully reverted).
+Lint/format clean; `uv run mypy src`: no issues in 60 source files. Full
+unscoped `tests/`: 1019 passed, 0 failed, 530s, 0 Docker leftovers before
+and after — run anyway per this session's own standing discipline,
+despite the near-zero likelihood a shell-script/docs-only change affects
+it; confirmed it doesn't.
 
 ### G9 — A test that asserts H31 currently verifies nothing ✅
 **Satisfies:** GR-010, GR-011 · **Verified by:** GAT-008
