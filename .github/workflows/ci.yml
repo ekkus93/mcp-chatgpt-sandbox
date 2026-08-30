@@ -7,7 +7,14 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Self-hosted (the `mcp-chatgpt-sandbox` runner) — GitHub-hosted
+    # Actions minutes were exhausted (docs/GAP_TODO.md G1's "Actions
+    # budget" failures), blocking every push from 2026-08-29 through
+    # today. Both labels required: `self-hosted` alone would also match
+    # any other self-hosted runner on this account; `mcp-chatgpt-sandbox`
+    # alone would work too (unique to this repo) but pairing both is the
+    # documented convention and makes the intent explicit at a glance.
+    runs-on: [self-hosted, mcp-chatgpt-sandbox]
     steps:
       # HR-029 (`docs/HARDENING_SPEC.md` §12): full history, not the
       # default shallow single-commit checkout — the contract_version
@@ -25,9 +32,12 @@ jobs:
       - name: Install dependencies
         run: uv sync --group dev
 
-      # ubuntu-latest ships Docker pre-installed and running (§71's
-      # "Docker-backed integration tests"); building here keeps the cost
-      # visible instead of hiding inside the first test that needs it
+      # §71's "Docker-backed integration tests" needs a running Docker
+      # daemon — true of `ubuntu-latest` by default; the self-hosted
+      # runner above is expected to have one too, and this step is what
+      # actually proves it rather than assuming it. Building here keeps
+      # the cost visible instead of hiding inside the first test that
+      # needs it
       # (`tests/workspace/conftest.py`'s `default_image_tag` fixture
       # builds this same image lazily, from the same context and tag —
       # this step is a cache-warming duplicate of that build, not a
