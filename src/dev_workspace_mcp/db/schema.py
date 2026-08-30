@@ -142,6 +142,29 @@ MIGRATIONS: list[list[str]] = [
         "ALTER TABLE workspace ADD COLUMN oom_killed INTEGER NOT NULL DEFAULT 0 "
         "CHECK (oom_killed IN (0, 1))",
     ],
+    # --- version 5 -> 6: setup-step completion, per container (§10, G2R-012) ---
+    [
+        # G2R-012 (`docs/GAP2_SPEC.md`): the previous check ("did a DB
+        # row already exist before this `workspace_open`?", `tools/
+        # workspace.py`) conflated the row's lifetime with the
+        # *container's* — a setup step failing transiently left the row
+        # in place with setup never run, and a container recreated
+        # behind an existing row (`docker system prune`, HR-017's
+        # recovery branch in `manager_lifecycle.py`) got a genuinely
+        # empty container with no signal to run setup again either.
+        # Recording the *container id* setup last completed for, not a
+        # boolean, is what makes one comparison
+        # (`setup_completed_container_id != container_id`) cover both:
+        # a brand-new row's `container_id` was never recorded here
+        # (NULL), and a recreated container gets a new id from Docker
+        # even when it replaces one behind the same, unchanged row.
+        # Like `image_digest`/`config_version` above, this is read and
+        # written with raw SQL (`load_image_provenance`'s own pattern)
+        # rather than added to `WorkspaceRecord` — nothing in
+        # `_CoreMixin`'s persistence layer needs to know about it, only
+        # the one call site that decides whether to run setup.
+        "ALTER TABLE workspace ADD COLUMN setup_completed_container_id TEXT",
+    ],
 ]
 
 

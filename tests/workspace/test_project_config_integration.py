@@ -24,6 +24,7 @@ from dev_workspace_mcp.db import open_db
 from dev_workspace_mcp.server import create_server
 from dev_workspace_mcp.workspace.caches import cache_volume_name
 from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
+from dev_workspace_mcp.workspace.naming import persistent_workspace_id
 from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager
 
 
@@ -277,6 +278,84 @@ async def test_a_failing_setup_step_raises_a_clear_error(
 
     with pytest.raises(ToolError, match="COMMAND_FAILED"):
         await _open(server)
+
+
+async def test_at_g2r012_a_failing_setup_step_is_retried_on_the_next_open(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """G2R-012 (`docs/GAP2_SPEC.md`): the old `was_created` check only
+    ever compared "did the DB row already exist" — true exactly once,
+    on genuine creation — so a setup step failing transiently (a flaky
+    network call, a package registry hiccup) left the row in place with
+    setup **permanently** skipped on every subsequent `workspace_open`,
+    even though the container itself survives a failed step and stays
+    running. The first line of `setup` below runs (and is observable)
+    on *every* attempt; the second always fails, so both opens raise —
+    what this proves is that the first line ran twice, not once."""
+    repo_path = tmp_path / "work" / "example"
+    _init_repo(
+        repo_path,
+        project_config={
+            "version": 1,
+            "setup": ["echo attempt >> /tmp/setup-attempts", "false"],
+        },
+    )
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+
+    with pytest.raises(ToolError, match="COMMAND_FAILED"):
+        await _open(server)
+    with pytest.raises(ToolError, match="COMMAND_FAILED"):
+        await _open(server)  # SHALL retry setup, not silently skip it forever
+
+    workspace_id = persistent_workspace_id("example")
+    result = await server.call_tool(
+        "exec", {"workspace_id": workspace_id, "shell": "wc -l < /tmp/setup-attempts"}
+    )
+    assert result.structured_content["stdout_tail"].strip() == "2"
+
+
+async def test_at_g2r012_setup_reruns_for_a_container_recreated_behind_the_same_row(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """G2R-012's other half: a container removed out of band (`docker
+    system prune`, or here, a direct `container.remove(force=True)`
+    standing in for it) makes `ensure_workspace`'s HR-017 branch
+    (`manager_lifecycle.py`) recreate a genuinely empty container behind
+    the *same*, unchanged workspace row — the old check never re-ran
+    setup for it, since the row was never new. `setup_completed_
+    container_id` no longer matches the replacement's id, so this must
+    re-run — appends, so a second run is observable as two lines."""
+    repo_path = tmp_path / "work" / "example"
+    _init_repo(
+        repo_path,
+        project_config={"version": 1, "setup": ["echo ran >> /tmp/setup-count"]},
+    )
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+
+    first = await _open(server)
+    workspace_id = first.structured_content["workspace_id"]
+    db = open_db(config.state_db_path)
+    manager = DockerWorkspaceManager(docker_client, db)
+    container_id = manager.get(workspace_id).container_id
+    assert container_id is not None
+    docker_client.containers.get(container_id).remove(force=True)
+
+    second = await _open(server)
+    assert second.structured_content["workspace_id"] == workspace_id  # same row, reused
+    assert manager.get(workspace_id).container_id != container_id  # genuinely new container
+
+    result = await server.call_tool(
+        "exec", {"workspace_id": workspace_id, "shell": "cat /tmp/setup-count"}
+    )
+    assert result.structured_content["stdout_tail"].strip() == "ran"
 
 
 # --- named cache volumes -------------------------------------------------------------

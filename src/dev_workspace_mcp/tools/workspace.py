@@ -246,6 +246,22 @@ def load_image_provenance(
     return row["image_digest"], row["config_version"]
 
 
+def load_setup_completed_container_id(db: sqlite3.Connection, workspace_id: str) -> str | None:
+    """G2R-012 (`docs/GAP2_SPEC.md`): the container id `.mcp-workspace.yml`
+    `setup` steps last completed successfully against, for `workspace_id`
+    — `None` if they never have. `open_workspace` runs `setup` again
+    whenever this doesn't match the *current* `container_id`, which
+    covers both ways the old "was this DB row just created?" check
+    missed: a brand-new row's container was never recorded here, and a
+    container recreated behind an existing row (Docker assigns the
+    replacement a new id) no longer matches whatever id was recorded for
+    the one it replaced — one comparison, not two special cases."""
+    row = db.execute(
+        "SELECT setup_completed_container_id FROM workspace WHERE id = ?", (workspace_id,)
+    ).fetchone()
+    return None if row is None else row["setup_completed_container_id"]
+
+
 async def build_workspace_info(
     record: WorkspaceRecord,
     *,
@@ -437,23 +453,6 @@ async def open_workspace(
             )
             mounts.append(build_ssh_agent_mount(agent_record.socket_path))
     run_kwargs["mounts"] = mounts
-    # §10: whether `setup` runs below depends on whether this call is
-    # a genuine creation — checked *before* `ensure_workspace` (which
-    # always advances `last_used_at` past `created_at` on its own
-    # success path, even for a brand-new row, so comparing those two
-    # on the *returned* record can never distinguish create from
-    # reuse; a real bug this task's own tests caught before trusting
-    # it). Only meaningful for `mode: "persistent"`, whose workspace
-    # id is deterministic (`persistent_workspace_id`, the same trick
-    # the ssh-agent mount above already relies on) — `"ephemeral"`
-    # has no "the" workspace to reuse at all (`ensure_workspace`'s
-    # own docstring), so every ephemeral open is a creation.
-    was_created = mode == "ephemeral" or (
-        db.execute(
-            "SELECT 1 FROM workspace WHERE id = ?", (persistent_workspace_id(repository.id),)
-        ).fetchone()
-        is None
-    )
     record = manager.ensure_workspace(
         repository=repository,
         image=effective_image,
@@ -481,9 +480,27 @@ async def open_workspace(
             (image_digest, config_version, record.id),
         )
 
-    if was_created and project_config is not None and project_config.setup:
-        # §10: run once, only for a container this call just created —
-        # never on a reused persistent workspace's every reopen.
+    # G2R-012 (`docs/GAP2_SPEC.md`): whether `setup` runs depends on
+    # whether *this container* has already had it run against it, not
+    # on whether the DB row was just created — a row and a container
+    # have independent lifetimes. The old "did a DB row already exist
+    # before this call" check (`was_created`) got this wrong two ways:
+    # a setup step failing transiently left the row in place with
+    # setup permanently skipped on every retry, and a container
+    # recreated behind an existing row (`docker system prune`,
+    # HR-017's recovery branch in `manager_lifecycle.py`) got a
+    # genuinely empty container with no signal to run setup again
+    # either — `load_setup_completed_container_id`'s own docstring has
+    # the full comparison this replaces it with.
+    setup_completed_for = load_setup_completed_container_id(db, record.id)
+    setup_ran = (
+        project_config is not None
+        and project_config.setup
+        and record.container_id is not None
+        and record.container_id != setup_completed_for
+    )
+    if setup_ran:
+        assert project_config is not None  # implied by setup_ran, mypy can't see through it
         await run_setup_steps(
             execution_service,
             record,
@@ -491,6 +508,17 @@ async def open_workspace(
             container_config=container_config,
             execution_config=execution_config,
         )
+        # Recorded only after every step succeeds — `run_setup_steps`
+        # itself fails closed on the first failing step (its own
+        # docstring), so a transient failure here leaves this column
+        # exactly as it was and the *next* `workspace_open` for this
+        # workspace id sees the same mismatch and retries, rather than
+        # silently marking a half-provisioned container complete.
+        with db:
+            db.execute(
+                "UPDATE workspace SET setup_completed_container_id = ? WHERE id = ?",
+                (record.container_id, record.id),
+            )
 
     # §8.1's idle-stop (S17): no scheduler exists in the daemon, so —
     # like S16's job-log retention — this runs opportunistically on a
@@ -515,7 +543,7 @@ async def open_workspace(
             "container_state": record.state.value,
             "remote_protection_status": remote_protection.status,
             "image": effective_image,
-            "setup_steps_run": was_created and bool(project_config and project_config.setup),
+            "setup_steps_run": setup_ran,
             # H32 (`docs/HARDENING_SPEC.md` §9/§30 row): audited on
             # every open, not only visible to a client that already
             # thought to call `workspace_info` and check the field.
