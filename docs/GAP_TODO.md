@@ -533,11 +533,17 @@ only. `git_pull`'s two sites and `git_push`'s one now carry an explicit
 fix, not a documentation change. The remaining gaps this correction
 surfaced — `git/diff.py`, `git/log.py`, and `git/commit.py`'s
 `read_committed_files` left at the implicit default rather than set
-explicitly, and `git_state.py:76`'s undocumented degradation
-(`workspace_info`'s `git.clean` silently becoming `null` for a
-repository containing a non-UTF-8 path) never decided at all — are
-closed separately by X21 (`docs/GAP2_TODO.md`), which is where all
-eleven sites are made explicit; not yet done as of this correction.
+explicitly, and `git_state.py:76`'s undocumented degradation never
+decided at all — were closed by X21 (`docs/GAP2_TODO.md`), which made
+all eleven sites explicit. `git_state.py:76`'s consequence, as it
+turned out once X21 actually verified it rather than described it, is
+not `workspace_info`'s `git.clean` going `null` for a non-UTF-8 file
+path (`git status --porcelain`'s own default `core.quotePath`
+C-quotes non-ASCII bytes in a path as ASCII-safe octal escapes, so
+that specific claim never reproduced) — it is `git.branch`/`upstream`
+going `null` for a non-UTF-8 *branch* name, which `rev-parse
+--abbrev-ref` emits unquoted. See X21's own write-up
+(`docs/GAP2_TODO.md`) for the correction in full.
 
 ### G5 — Redaction output is always JSON-serializable ✅
 **Satisfies:** GR-007 · **Verified by:** GAT-005
