@@ -404,13 +404,14 @@ write-up per the convention this family uses for superseded claims —
 alongside X21's correction of the same task's call-site count, which is a
 separate error in the same audit.
 
-### X7 — Activating this repository's hooks does not disable others
+### X7 — Activating this repository's hooks does not disable others ✅
 **Satisfies:** G2R-007 · **Verified by:** G2AT-007
+**Commit:** `992cee6`
 
-- [ ] A `Co-Authored-By:` trailer is refused again in this clone
-- [ ] The other four shadowed global hooks are reachable, or their loss
+- [x] A `Co-Authored-By:` trailer is refused again in this clone
+- [x] The other four shadowed global hooks are reachable, or their loss
       is documented as deliberate
-- [ ] `docs/DEVELOPMENT.md` explains the shadowing
+- [x] `docs/DEVELOPMENT.md` explains the shadowing
 
 **Defect (verified in this clone).** `core.hooksPath` is a single
 directory, not a search chain:
