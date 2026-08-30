@@ -223,6 +223,12 @@ async def read_git_diff(
         execution_service=execution_service,
         container_config=container_config,
         execution_config=execution_config,
+        # G2R-021 (`docs/GAP2_SPEC.md`): explicit, matching the existing
+        # default — diff headers (`diff --git a/... b/...`, `+++`/`---`)
+        # embed the changed files' own paths, and `paginate_diff_output`
+        # reports the diff text to the client verbatim, the "report
+        # faithfully" case for keeping this `True`.
+        strict_utf8=True,
     )
     if not result.ok:
         raise CommandFailedError(

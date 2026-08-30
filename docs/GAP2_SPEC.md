@@ -715,6 +715,25 @@ value with its justification, and the correction SHALL be recorded in
 uses for superseded claims. `git_state.py:76`'s silent degradation SHALL
 be decided deliberately — either accepted with a comment, or reported.
 
+**Correction (X21, `docs/GAP2_TODO.md`): `git_state.py:76`'s consequence
+above was verified empirically while implementing this task, and does
+not hold as stated.** `git status --porcelain` (this call — no `-z`,
+unlike `git/status.py`'s own `--porcelain=v2 ... -z`) C-quotes any
+non-ASCII byte in a path as a literal octal escape by git's own default
+`core.quotePath`, which this codebase never overrides — confirmed
+directly against a real `git` binary (`"bad-\377\376-name.txt"`, valid
+ASCII regardless of the real filename's bytes). `decode_utf8_lossy`
+never trips for an untracked/modified file through this call, so
+`git.clean` cannot actually go `null` this way. The genuine,
+reproducible trigger is a non-UTF-8 **branch name** instead:
+`rev-parse --abbrev-ref HEAD`/`@{upstream}` emit ref names *unquoted*,
+raw — checking one out makes `branch` (or, symmetrically, `upstream`)
+go `null`, the same "diagnostic field silently unavailable" shape, from
+a different one of `_run`'s four callers than originally named. The
+Requirement (all eleven sites carry an explicit, justified
+`strict_utf8`) is unaffected — `git_state.py:76` still needed `False`,
+for the reason actually verified this time.
+
 ### G2R-022 — Concurrent suite runs SHALL NOT silently collide
 
 Workspace container names are deterministic (`mcp-dev-ws-<repo>-<hash>`).

@@ -211,6 +211,13 @@ async def read_committed_files(
         execution_service=execution_service,
         container_config=container_config,
         execution_config=execution_config,
+        # G2R-021 (`docs/GAP2_SPEC.md`): explicit, matching the existing
+        # default rather than leaving it implicit — `parse_committed_
+        # files_output` below extracts individual file paths and reports
+        # them to the client as `files_committed`, exactly the "report
+        # faithfully" case `run_git_in_container`'s own docstring
+        # describes for keeping this `True`.
+        strict_utf8=True,
     )
     if not result.ok:
         return []

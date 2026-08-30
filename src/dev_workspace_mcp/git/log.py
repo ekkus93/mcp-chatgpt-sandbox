@@ -167,6 +167,14 @@ async def read_git_log(
         execution_service=execution_service,
         container_config=container_config,
         execution_config=execution_config,
+        # G2R-021 (`docs/GAP2_SPEC.md`): `_LOG_FORMAT` (`%H`, `%an <%ae>`,
+        # `%aI`, `%s`) has no path field at all — `paths` above filters
+        # which commits are considered, it is never echoed back in the
+        # output `parse_git_log_output` reads. No path is ever parsed
+        # out of `result.stdout`, so a non-UTF-8 path elsewhere in the
+        # repository (§46's own "whole tree, not just what this caller
+        # needs" concern) has no bearing on this call.
+        strict_utf8=False,
     )
     if not result.ok and _UNBORN_BRANCH_MARKER not in result.stderr:
         raise CommandFailedError(

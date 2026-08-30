@@ -933,6 +933,24 @@ change nobody chose — decide it, comment it.
 adjacent keeps the write-up coherent. Separate commits, since X6 changes
 behaviour and this changes arguments and prose.
 
+**Correction, found implementing this task (RR-033 — verify the actual
+mechanism, not the plausible one): `git_state.py:76`'s consequence above
+is wrong as stated.** `git status --porcelain` (this call, no `-z` —
+unlike `git/status.py`'s own `--porcelain=v2 ... -z`) C-quotes any
+non-ASCII byte in a path as a literal octal escape by git's own default
+`core.quotePath`, confirmed directly against a real `git` binary
+(`"bad-\377\376-name.txt"`, valid ASCII regardless of the actual
+filename's bytes) — this codebase never overrides that default, so
+`decode_utf8_lossy` never trips for an untracked/modified file through
+this call, and `git.clean` cannot actually go `null` this way. The
+genuine, reproducible trigger is a non-UTF-8 **branch name**:
+`rev-parse --abbrev-ref HEAD`/`@{upstream}` emit ref names unquoted,
+raw, so checking one out makes `branch` (or `upstream`) go `null`
+instead — the same shape, a different one of `_run`'s four callers.
+Does not change the requirement or the fix (`git_state.py:76` still
+needed `strict_utf8=False`, for the reason actually verified this
+time) — only the example consequence in the table above.
+
 ### X22 — Concurrent suite runs do not silently collide
 **Satisfies:** G2R-022
 

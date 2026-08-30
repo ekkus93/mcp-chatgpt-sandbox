@@ -293,6 +293,75 @@ async def test_workspace_open_reports_git_state(
     assert git_state["head_sha"] is not None
 
 
+async def test_at_g2r021_git_branch_is_reported_for_a_non_utf8_branch_name(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """G2R-021 (`docs/GAP2_SPEC.md`): a real regression —
+    `read_basic_git_state`'s shared `_run` helper left `strict_utf8` at
+    `run_git_in_container`'s own default (`True`) by omission. This
+    task's write-up originally claimed the trigger was a non-UTF-8
+    *file* path making `git.clean` go `null` — checked empirically and
+    that specific claim did not hold: `git status --porcelain` (no
+    `-z`, unlike `git/status.py`'s own call) C-quotes any non-ASCII byte
+    in a path as a literal octal escape by git's own default
+    `core.quotePath`, which this codebase never overrides, so the
+    quoted output stays valid UTF-8 regardless of the real filename's
+    bytes and `decode_utf8_lossy` never trips for an untracked file
+    here. The genuine, reproducible trigger is a non-UTF-8 **branch
+    name** instead: `git rev-parse --abbrev-ref HEAD` emits it
+    unquoted, raw (confirmed directly against a real `git` binary) —
+    checking one out used to make `branch` go `None` instead of
+    reporting the name, the same "diagnostic field silently
+    unavailable" shape, just from a different one of `_run`'s callers
+    than originally claimed."""
+    import os
+
+    repo_path = tmp_path / "work" / "example"
+    repo_path.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo_path)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo_path),
+            "-c",
+            "user.email=t@example.com",
+            "-c",
+            "user.name=t",
+            "commit",
+            "--allow-empty",
+            "-q",
+            "-m",
+            "initial",
+        ],
+        check=True,
+    )
+    hostile_branch = os.fsdecode(b"bad-\xff\xfe-branch")
+    subprocess.run(
+        ["git", "-C", str(repo_path), "checkout", "-q", "-b", hostile_branch], check=True
+    )
+    config = minimal_config.model_copy(
+        update={
+            "docker": minimal_config.docker.model_copy(update={"default_image": default_image_tag}),
+            "repositories": [
+                RepositoryConfig(id="example", path=repo_path, github="owner/example")
+            ],
+        }
+    )
+    server = create_server(config)
+
+    result = await server.call_tool("workspace_open", {"repository_id": "example"})
+
+    git_state = result.structured_content["git"]
+    assert git_state["branch"] is not None  # SHALL NOT be None
+    assert "bad-" in git_state["branch"]
+    assert git_state["branch"].encode("utf-8")  # SHALL NOT raise UnicodeEncodeError
+    assert git_state["clean"] is True
+
+
 async def test_server_info_reports_real_state(
     minimal_config: ServerConfig,
     default_image_tag: str,

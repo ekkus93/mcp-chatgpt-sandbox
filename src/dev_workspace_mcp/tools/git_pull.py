@@ -270,6 +270,7 @@ async def run_git_pull(
             execution_service=execution_service,
             container_config=container_config,
             execution_config=execution_config,
+            strict_utf8=False,  # G2R-021: none — `--is-ancestor` stdout is always empty
         )
         fast_forward = ancestor_check.ok
 

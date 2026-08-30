@@ -173,6 +173,7 @@ async def run_git_push(
             execution_service=execution_service,
             container_config=container_config,
             execution_config=execution_config,
+            strict_utf8=False,  # G2R-021: a rev-parse'd SHA, never a repository path
         )
         if not rev.ok:
             raise InvalidArgumentError(

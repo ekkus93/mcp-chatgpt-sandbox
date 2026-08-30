@@ -69,7 +69,42 @@ async def read_basic_git_state(
     `workspace_info` itself unavailable: reporting `clean: null` beside
     an accurate `container_state` is strictly more useful than failing
     the call. This is the same reasoning as the `if result.ok else None`
-    below, applied to one more failure mode."""
+    below, applied to one more failure mode.
+
+    G2R-021 (`docs/GAP2_SPEC.md`): `_run` below is shared by every
+    command this function issues (`rev-parse` three times, `status
+    --porcelain` once) with no distinction, and used to leave
+    `strict_utf8` at `run_git_in_container`'s own default (`True`) by
+    omission, not by choice — a real behavior nobody had actually
+    decided. None of the four callers below need it: `branch`/
+    `head_sha`/`upstream` are ref names and a SHA, never a repository
+    *content* path, and `status_output` is only ever compared for
+    emptiness (`clean = status_output == ""`) — no individual path is
+    extracted from it or reported anywhere.
+
+    **Correction — verify the actual mechanism, not the plausible one
+    (RR-033).** This task's own write-up originally claimed the
+    consequence was a non-UTF-8 *file* path making `git.clean` go
+    `null`. Checked empirically and that specific claim does not hold:
+    `git status --porcelain` (this call — no `-z`, unlike `git/
+    status.py`'s own `--porcelain=v2 ... -z`) C-quotes any non-ASCII
+    byte in a path as a literal octal escape (`"bad-\377\376-name.txt"`)
+    by git's own default `core.quotePath`, which this codebase never
+    overrides — the quoted output is valid ASCII/UTF-8 regardless of
+    the real filename's bytes, so `decode_utf8_lossy` never trips for
+    an untracked/modified *file* here at all. The genuine, reproducible
+    trigger is a non-UTF-8 **ref name** instead: `git rev-parse
+    --abbrev-ref HEAD`/`@{upstream}` emit a branch/upstream name
+    *unquoted*, raw — confirmed directly (`git checkout -b
+    "$(printf 'bad-\xff\xfe-branch')"` then `git rev-parse --abbrev-ref
+    HEAD` prints the two raw bytes verbatim). With the old implicit
+    `strict_utf8=True`, checking out such a branch made `branch` (or,
+    for the symmetric `@{upstream}` call, `upstream`) go `None` instead
+    of reporting the name — the same "diagnostic field silently
+    unavailable" shape the original claim described, just triggered by
+    a different one of `_run`'s four callers than claimed. Set `False`
+    here to fix it for all four, uniformly, since none of them parse a
+    path either way."""
 
     async def _run(args: list[str]) -> str | None:
         try:
@@ -80,6 +115,7 @@ async def read_basic_git_state(
                 execution_service=execution_service,
                 container_config=container_config,
                 execution_config=execution_config,
+                strict_utf8=False,  # G2R-021: see this function's own docstring
             )
         except CommandFailedError:
             return None
