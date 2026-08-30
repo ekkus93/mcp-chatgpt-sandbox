@@ -3,7 +3,7 @@
 **Spec:** `docs/GAP2_SPEC.md` (G2R-001..G2R-022, G2AT-001..G2AT-018)
 **Source:** code review of `docs/GAP_TODO.md` G1–G9 plus a general review
 of the four largest source modules, 2026-08-30, against `9bc44fd`
-**Status:** in progress — X1–X14 complete (14/22); X15–X22 remaining
+**Status:** in progress — X1–X15 complete (15/22); X16–X22 remaining
 
 Twenty-two tasks. One is a live privilege-drop bypass reproduced against
 the shipped image; two are regressions the `GAP_TODO.md` pass itself
@@ -709,13 +709,13 @@ behind the manager is in scope if it falls out of the fix; a broader
 ownership refactor is not.
 
 ### X15 — Deleting a workspace reclaims its job logs
-**Satisfies:** G2R-015 · **Verified by:** G2AT-015
+**Satisfies:** G2R-015 · **Verified by:** G2AT-015 · **Commit:** `d54cda0`
 
-- [ ] A deleted workspace's `<state_dir>/jobs/<job_id>/` directories are
+- [x] A deleted workspace's `<state_dir>/jobs/<job_id>/` directories are
       removed, or retention enumerates the directory rather than the
       table
-- [ ] The choice is recorded
-- [ ] `job_log_max_total_bytes` accounting reflects reality afterwards
+- [x] The choice is recorded
+- [x] `job_log_max_total_bytes` accounting reflects reality afterwards
 
 **Defect.** `manager_lifecycle.py:551-552` deletes the workspace's `job`
 rows. Nothing deletes the log files. `prune_job_logs`
