@@ -57,6 +57,12 @@ uv run dev-workspace-mcp serve --config <path>
 config prints a clear `error: ...` message and exits nonzero rather than
 serving on bad configuration (§73 step 1).
 
+This runs the server on `stdio` (the default `--transport`), talking to
+whatever spawns it directly — a local MCP client, or `tunnel-client` if
+you're connecting a hosted client. See
+[`docs/CONNECTING_CHATGPT.md`](CONNECTING_CHATGPT.md) to connect ChatGPT
+specifically.
+
 ## Project layout
 
 ```
