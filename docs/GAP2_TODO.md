@@ -3,7 +3,7 @@
 **Spec:** `docs/GAP2_SPEC.md` (G2R-001..G2R-022, G2AT-001..G2AT-018)
 **Source:** code review of `docs/GAP_TODO.md` G1–G9 plus a general review
 of the four largest source modules, 2026-08-30, against `9bc44fd`
-**Status:** in progress — X1–X21 complete (21/22); X22 remaining
+**Status:** complete — X1–X22 all done (22/22)
 
 Twenty-two tasks. One is a live privilege-drop bypass reproduced against
 the shipped image; two are regressions the `GAP_TODO.md` pass itself
@@ -958,12 +958,14 @@ needed `strict_utf8=False`, for the reason actually verified this
 time) — only the example consequence in the table above.
 
 ### X22 — Concurrent suite runs do not silently collide
-**Satisfies:** G2R-022
+**Satisfies:** G2R-022 · **Commit:** `753deb2`
 
-- [ ] Test workspace names are namespaced per run, or the collision is
-      documented in `docs/DEVELOPMENT.md`
-- [ ] The failure mode is named, so it is not diagnosed as flakiness
-- [ ] Not satisfied by a retry
+- [x] Test workspace names are namespaced per run, or the collision is
+      documented in `docs/DEVELOPMENT.md` — documented: the deterministic
+      naming is a real product guarantee (§59), not something to route
+      around here
+- [x] The failure mode is named, so it is not diagnosed as flakiness
+- [x] Not satisfied by a retry — explicitly stated why
 
 **Defect.** Workspace container names are deterministic
 (`mcp-dev-ws-<repo>-<hash>`). Two concurrent runs of `tests/workspace/`,
