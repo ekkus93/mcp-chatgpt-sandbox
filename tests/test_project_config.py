@@ -1,6 +1,7 @@
 """S30: `.mcp-workspace.yml` parsing (§9, §10)."""
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -153,6 +154,66 @@ def test_at_gr004_environment_cannot_set_an_interpreter_or_resolution_variable(
     _write(repo_path, {"version": 1, "environment": {key: "/tmp/evil"}})
     with pytest.raises(ContainerCreateFailedError, match="interpreter or command resolution"):
         load_project_config(repo_path)
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "BASH_FUNC_id%%",
+        "BASH_FUNC_git%%",
+        "BASH_FUNC_%%",
+        "MALFORMED KEY",
+        "has-a-dash",
+    ],
+)
+def test_at_g2r001_environment_cannot_set_a_malformed_key(tmp_path: Path, key: str) -> None:
+    """G2R-001 (`docs/GAP2_SPEC.md`): `BASH_FUNC_id%%` is bash's current
+    exported-function key form — the `%%` makes it an illegal
+    environment-variable name, which `test_at_gr004_*` above cannot
+    catch since it only ever compares against legally-named variables.
+    Reproduced in a live container (this task's own write-up): a shell
+    function shadowing `id` takes precedence over `PATH` lookup, so this
+    survives even G3's hardcoded `PATH`. The other malformed keys are
+    just confirming the general shape is rejected, not one spelling of
+    it — the checklist's own requirement."""
+    repo_path = tmp_path / "repo"
+    _write(repo_path, {"version": 1, "environment": {key: "() { echo 1234; }"}})
+    with pytest.raises(ContainerCreateFailedError, match="exported shell function"):
+        load_project_config(repo_path)
+
+
+def test_at_g2r001_environment_cannot_set_a_pre_shellshock_function_value(
+    tmp_path: Path,
+) -> None:
+    """The bare-name, pre-Shellshock export form: an identifier-shaped
+    *key* (which `_POSIX_ENV_VAR_NAME` alone would accept) whose *value*
+    begins `() {`. Current bash does not import this form, but the
+    checklist's own "closes the shape, not one spelling" requirement
+    means it is checked anyway."""
+    repo_path = tmp_path / "repo"
+    _write(repo_path, {"version": 1, "environment": {"id": "() { echo pwned; }"}})
+    with pytest.raises(ContainerCreateFailedError, match="exported shell function"):
+        load_project_config(repo_path)
+
+
+def test_at_g2r001_the_offending_key_is_named(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo"
+    _write(repo_path, {"version": 1, "environment": {"BASH_FUNC_id%%": "() { echo 1234; }"}})
+    with pytest.raises(ContainerCreateFailedError, match=re.escape("BASH_FUNC_id%%")):
+        load_project_config(repo_path)
+
+
+def test_at_g2r001_an_ordinary_environment_variable_is_still_accepted(tmp_path: Path) -> None:
+    """Confirms the fix does not over-reject: `PATH`/`RUST_LOG`/
+    `GIT_CONFIG_SYSTEM` are all legal identifiers and none has a
+    function-shaped value, so the shape check leaves them alone (`PATH`
+    itself is still separately rejected by the sibling HR-004 check,
+    which is not this test's concern)."""
+    repo_path = tmp_path / "repo"
+    _write(repo_path, {"version": 1, "environment": {"RUST_LOG": "debug"}})
+    config = load_project_config(repo_path)
+    assert config is not None
+    assert config.environment == {"RUST_LOG": "debug"}
 
 
 def test_unknown_cache_entry_field_is_a_validation_error(tmp_path: Path) -> None:

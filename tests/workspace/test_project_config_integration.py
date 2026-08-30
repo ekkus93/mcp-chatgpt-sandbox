@@ -137,6 +137,37 @@ async def test_at_hat005_project_environment_cannot_run_the_container_as_root(
     assert docker_client.containers.list(all=True, filters={"name": "mcp-dev-ws-example"}) == []
 
 
+async def test_at_g2r001_project_environment_cannot_set_an_exported_shell_function(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """G2R-001 (`docs/GAP2_SPEC.md`): the reproduced live bypass, from
+    the daemon's own client-facing entry point rather than
+    `load_project_config` directly — `test_at_g2r001_*` in
+    `tests/test_project_config.py` covers the validator in isolation;
+    this is the end-to-end half the checklist asks for. `workspace_open`
+    fails at project-config load time, exactly as `test_at_hat005_*`
+    above proves for the sibling HR-006 check, and — the property that
+    actually matters here — no container is ever created for the
+    attempt: this key never reaches the entrypoint at all, which is
+    what makes it a fix rather than a mitigation."""
+    repo_path = tmp_path / "work" / "example"
+    _init_repo(
+        repo_path,
+        project_config={"version": 1, "environment": {"BASH_FUNC_id%%": "() { echo 1234; }"}},
+    )
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+
+    with pytest.raises(ToolError, match="exported shell function"):
+        await _open(server)
+
+    # no container was created at all for this attempt.
+    assert docker_client.containers.list(all=True, filters={"name": "mcp-dev-ws-example"}) == []
+
+
 async def test_no_project_config_falls_back_to_the_default_image(
     minimal_config: ServerConfig,
     default_image_tag: str,

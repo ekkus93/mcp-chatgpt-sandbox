@@ -19,6 +19,7 @@ whenever no `.mcp-workspace.yml` is present or it omits `image`.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,30 @@ SUPPORTED_PROJECT_CONFIG_VERSIONS = frozenset({1})
 #: this set, at the one call site) since the loader family is open-ended
 #: (`LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT`, ...).
 _ENTRYPOINT_CONTROL_ENV_KEYS = frozenset({"PATH", "BASH_ENV", "ENV", "SHELLOPTS", "IFS", "HOME"})
+
+#: G2R-001 (`docs/GAP2_SPEC.md`): a *key* that is not a legal POSIX
+#: environment-variable name. Exists specifically to reject bash's
+#: exported-function form, `BASH_FUNC_<name>%%` — the `%%` makes the key
+#: itself invalid — which the exact-name/prefix check above cannot see
+#: since it only ever compares against variables that ARE legally named.
+#: Reproduced in a live container: an entry keyed `BASH_FUNC_id%%` with
+#: value `() { echo 1234; }` reaches `entrypoint.sh` as an imported bash
+#: function that shadows the real `id`, and a shell function takes
+#: precedence over `PATH` lookup — so the drop-bypass this task's sibling
+#: check exists for survives even a hardcoded `PATH` (G3,
+#: `docs/GAP_TODO.md`). Verified this does not over-reject: `PATH`,
+#: `RUST_LOG`, and `GIT_CONFIG_SYSTEM` all match; only the `%%`-suffixed
+#: function-export form fails.
+_POSIX_ENV_VAR_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+#: G2R-001: bash's *pre-Shellshock* function-export form used a bare,
+#: identifier-shaped key (so the pattern above cannot see it at all) with
+#: a value beginning `() {`. Current bash does not import this form —
+#: only the modern `BASH_FUNC_<name>%%` key — so this guards a downgraded
+#: or patched `/bin/bash` rather than the one this project ships; two
+#: lines, worth having so "closes the shape, not one spelling" is true
+#: rather than aspirational.
+_SHELL_FUNCTION_VALUE = re.compile(r"^\s*\(\s*\)\s*\{")
 
 
 class ProjectCacheEntry(BaseModel):
@@ -164,15 +189,68 @@ class ProjectWorkspaceConfig(BaseModel):
         flags, log levels, service URLs) — an allowlist of "safe" names
         would defeat that purpose. The residual risk of a denylist is
         the ordinary one: a future interpreter-affecting variable this
-        set does not yet name. `docker/default/entrypoint.sh` gaining an
-        explicit, hardcoded `PATH` (`docs/GAP_TODO.md` G3) closes the
-        sharpest consequence — the drop-bypass — independently of
-        whatever this set does or does not cover."""
+        set does not yet name.
+
+        `docker/default/entrypoint.sh` gaining an explicit, hardcoded
+        `PATH` (`docs/GAP_TODO.md` G3) closes the sharpest consequence of
+        a missed *named* variable — the drop-bypass via a hostile `PATH`
+        — but it is not a backstop for every consequence of a missed
+        input, and SHALL NOT be relied on as one: an exported shell
+        function reaches the entrypoint under a key that was never going
+        to appear in this set at all (it is not naming a dangerous
+        variable, it is not a legal variable name), and a shell function
+        takes precedence over `PATH` lookup regardless of what `PATH` is
+        set to — G3's fix does not defend against it. Found live
+        (G2R-001, `docs/GAP2_SPEC.md`) precisely because this paragraph
+        used to claim G3 covered it. Closed directly, not by leaning on
+        G3, by `_environment_cannot_supply_an_exported_shell_function`
+        below."""
         blocked = sorted(k for k in v if k in _ENTRYPOINT_CONTROL_ENV_KEYS or k.startswith("LD_"))
         if blocked:
             raise ValueError(
                 f"environment may not set variable(s) {blocked} that control the "
                 "container entrypoint's interpreter or command resolution (§5.3/GR-004)"
+            )
+        return v
+
+    @field_validator("environment")
+    @classmethod
+    def _environment_cannot_supply_an_exported_shell_function(
+        cls, v: dict[str, str]
+    ) -> dict[str, str]:
+        """G2R-001 (`docs/GAP2_SPEC.md`): the check above closes every
+        *named* interpreter-control variable, but bash imports **exported
+        functions** from the environment too, under a key
+        (`BASH_FUNC_<name>%%`) that check never considers because it is
+        not one of the names it compares against. A function takes
+        precedence over `PATH` lookup, so `BASH_FUNC_id%%` shadowing the
+        real `id` defeats both the check above and `entrypoint.sh`'s own
+        hardcoded `PATH` (G3, `docs/GAP_TODO.md`) at once — reproduced in
+        a live container: `entrypoint.sh`'s `[ "$(id -u)" != "0" ]` takes
+        the imported function's answer, and the workspace command runs as
+        uid 0 with the privilege drop never performed.
+
+        Two checks, not one, because bash has changed which half of a
+        function export carries the signature: the key for the current
+        `BASH_FUNC_<name>%%` form, the value for the pre-Shellshock bare-
+        name form neither this daemon's shipped image nor most current
+        systems import — kept anyway so this rejects the *shape*, not one
+        historical spelling of it. Deliberately its own validator, not
+        merged into the daemon-controlled-variable check above or the
+        HR-006 one two methods up: each rejects a genuinely different
+        thing (a key that is not a legal variable name at all, versus a
+        legal name whose meaning happens to be dangerous), and a bypass of
+        one SHALL NOT silently become a bypass of the others — the same
+        reasoning that keeps HR-006's own check separate."""
+        not_a_name = sorted(k for k in v if not _POSIX_ENV_VAR_NAME.match(k))
+        looks_like_a_function = sorted(
+            k for k, value in v.items() if _SHELL_FUNCTION_VALUE.match(value)
+        )
+        offending = sorted(set(not_a_name) | set(looks_like_a_function))
+        if offending:
+            raise ValueError(
+                f"environment may not set variable(s) {offending} that define an "
+                "exported shell function (§5.3/G2R-001)"
             )
         return v
 
