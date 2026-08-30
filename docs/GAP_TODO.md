@@ -471,15 +471,16 @@ that established RR-033. Record it plainly. The useful lesson is not
 indistinguishable from no convention, which is why the checkbox above
 says *enforcing*.
 
-### G9 — A test that asserts H31 currently verifies nothing
+### G9 — A test that asserts H31 currently verifies nothing ✅
 **Satisfies:** GR-010, GR-011 · **Verified by:** GAT-008
-**Commit:** `PLACEHOLDER`
+**Commit:** `7485af2`
 
-- [ ] `test_manager.py`'s H31 assertion targets a logger that covers the
+- [x] `test_manager.py`'s H31 assertion targets a logger that covers the
       emitting modules
-- [ ] `tests/test_cli.py` restores root logging state
-- [ ] `tests/workspace/test_manager.py` passes **run on its own**
-- [ ] Removing the `_logger.info` calls makes it fail **run on its own**
+- [x] `tests/conftest.py` restores root logging state (autouse, for
+      every test — not scoped to `tests/test_cli.py` alone; see below)
+- [x] `tests/workspace/test_manager.py` passes **run on its own**
+- [x] Removing the `_logger.info` calls makes it fail **run on its own**
 
 **Defect (reproduced).** `tests/workspace/test_manager.py:61`:
 
@@ -528,21 +529,96 @@ Then close the leak so the fix is verifiable: restore the root logger's
 level and handlers after the CLI tests — a fixture in `tests/test_cli.py`,
 or an autouse snapshot/restore fixture in `tests/conftest.py`.
 
-**Order matters within this task.** Close the leak **first or together**
-with the retarget. Until it is closed, reverting the retarget still passes
-in any run containing `tests/test_cli.py`, so the revert-verification step
-cannot distinguish a working fix from a broken one — which is exactly how
-this defect survived two full-suite runs.
+**Order matters within this task, but not for the reason originally
+written here — corrected after implementing both fixes and checking
+each in isolation.** The original text claimed reverting the retarget
+would still pass in any run containing `tests/test_cli.py`, so revert-
+verification couldn't distinguish a working fix from a broken one unless
+the leak was closed first. Tested directly: `caplog.at_level(level,
+logger=name)` sets `getLogger(name)`'s own explicit level (not just the
+capturing handler's), so retargeting to `dev_workspace_mcp.workspace` —
+a genuine ancestor of both `manager_core.py`/`manager_lifecycle.py` —
+makes `test_manager.py` pass **standalone**, with the leak fixture
+disabled entirely (verified: reverting *only* the fixture's restoration,
+leaving the retarget in place, the standalone test still passes).
+Reverting *only* the retarget, with the leak fixture fully active, fails
+standalone as expected. **The two fixes are independent of each other
+for this specific test.**
+
+Where "order matters" is real: revert-verifying the retarget by running
+it in a context that happens to include `tests/test_cli.py` (rather than
+standalone) is unreliable regardless of fix order, because the leak
+independently produces a false pass for the *original, wrong* logger name
+too (reproduced: reverted retarget + `tests/test_cli.py` prefixed → 10
+passed, no failure). GAT-008's own "run on its own" clause is what
+actually protects revert-verification here — not fix ordering. The leak
+fix is still required by GR-011 on its own terms: it is a real, general
+defect (a test calling a process-global configuration function without
+cleaning up) independent of whether it happens to matter for *this*
+test's revert-verification.
 
 **Do not** change `configure_logging` itself. `force=True` is correct for
 a daemon entrypoint called once per process and its docstring explains
 why; the defect is a test calling a process-global configuration function
 without cleaning up.
 
-**Check while here:** whether any other test asserts on log records (or
-their absence) and is order-dependent for the same reason. `caplog` appears
-in several suites; a quick audit costs little and this task is the natural
-place for it. Record what was found either way.
+**Check while here — done.** Audited every `caplog` user in the suite
+(`tests/execution/test_service.py`, `tests/jobs/test_reconcile.py`,
+`tests/workspace/test_async_runner.py`, `tests/workspace/
+test_git_push_tool.py`, `tests/workspace/test_ssh_agent.py`, plus
+`test_manager.py` itself). All five others already name their own
+correct emitting logger exactly (not a sibling), so none share
+`test_manager.py`'s specific defect. All six benefit from the leak fix
+regardless, since it is implemented as a global autouse fixture rather
+than scoped to `tests/test_cli.py` alone — chosen over the narrower
+option specifically because of this audit: it closes the defect class
+for every current and future `caplog`-based test, not just the one
+instance found.
+
+**Implemented as described**, plus one addition beyond the checklist: a
+dedicated `pytester`-based regression test
+(`tests/test_logging_isolation.py`, modeled on the real, separate-
+subprocess pattern `tests/test_skip_policy.py` already established for
+proving cross-test-boundary properties) that exercises the real
+`_restore_root_logging_state` fixture from `tests/conftest.py` — not a
+copy of its logic — against a synthetic leaky test, proving level *and*
+handler restoration directly, plus a negative control proving the same
+scenario leaks without the fixture. Also discovered while writing it:
+pytest's own logging plugin already has handlers attached to root before
+any test runs (`_LiveLoggingNullHandler`, a file handler, two
+`LogCaptureHandler`s) — `configure_logging`'s `force=True` therefore also
+wipes pytest's *own* capturing infrastructure, not merely cosmetic
+level/format state, making the fixture's handler-list restoration (not
+just the level) load-bearing.
+
+**Revert-verified, four ways:**
+1. Isolation fixture neutralized (restoration replaced with a bare
+   `yield`) → `test_logging_isolation.py`'s positive test fails with
+   `assert 50 != 50` (root stuck at the synthetic `CRITICAL` level) —
+   restored, passes again.
+2. Retarget reverted (wrong sibling name), leak fixture active →
+   `test_manager.py -k h031` fails standalone with the original
+   `assert False` — restored, passes again.
+3. Retarget reverted, **and** run with `tests/test_cli.py` prefixed →
+   still passes (10 passed) — the false-positive this task exists to
+   close, reproduced on demand.
+4. Both fixes active, but the two `_logger.info` calls (`"...created"`/
+   `"...deleted"`) removed from `manager_lifecycle.py` entirely
+   (simulating a genuine H31 regression) → `test_manager.py -k h031`
+   fails standalone — restored, passes again. This is GAT-008's second
+   half: the fixed test can actually catch the regression H31 exists to
+   prevent, which the original (broken) version could not.
+
+**Suites.** `tests/test_cli.py tests/workspace/test_manager.py`
+(the order that used to mask the defect): 40 passed.
+`tests/execution/test_service.py tests/jobs/test_reconcile.py
+tests/workspace/test_async_runner.py tests/workspace/test_ssh_agent.py`
+(the other `caplog` users unaffected by the new autouse fixture): 34
+passed. `tests/test_logging_isolation.py`: 2 passed.
+`pytest --collect-only`: 1005 tests (1003 + the 2 new isolation tests).
+Full unscoped `tests/`: 1005 passed, 0 failed, 537s, 0 Docker leftovers
+before and after. Lint/format clean; `uv run mypy src`: no issues in 60
+source files.
 
 ---
 
