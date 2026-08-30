@@ -18,8 +18,10 @@ from __future__ import annotations
 import contextlib
 import logging
 import secrets
+import shutil
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from docker.errors import DockerException
@@ -517,7 +519,13 @@ class _LifecycleMixin(_CoreMixin):
             record, image=image, run_kwargs=run_kwargs or {}, allow_adopt=False
         )
 
-    def delete(self, workspace_id: str, *, cache_volume_names: list[str] | None = None) -> None:
+    def delete(
+        self,
+        workspace_id: str,
+        *,
+        cache_volume_names: list[str] | None = None,
+        state_dir: Path | None = None,
+    ) -> None:
         """§8.4: remove workspace/container metadata. SHALL NOT delete the
         host repository — deletion here is Docker resources and the DB
         row only.
@@ -563,18 +571,75 @@ class _LifecycleMixin(_CoreMixin):
         already gone, and are best-effort (logged, not raised) on top of
         that as a second, independent guarantee that neither can ever
         again come between anything.
+
+        G2R-015 (`docs/GAP2_SPEC.md`): deleting the `job` rows below used
+        to leave their `<state_dir>/jobs/<job_id>/` log directories
+        behind — nothing else ever deletes them, and `prune_job_logs`
+        (`jobs/retention.py`) enumerates candidates from `job_store`, so
+        a row-less directory is invisible to it and permanently
+        unreachable, both as leftover disk usage and as a silent
+        under-count in `job_log_max_total_bytes` accounting (still-live
+        jobs get pruned to compensate for space the orphans are actually
+        using). Chose "remove the directories here" over "make retention
+        scan the directory tree instead of the table": `delete` already
+        knows exactly which job ids belonged to this workspace, from the
+        rows it is about to delete — scanning `<state_dir>/jobs/` and
+        diffing against `job_store` to rediscover the same information
+        would be strictly more work for the same result, and would still
+        leave orphans sitting on disk between a delete and the next
+        opportunistic `prune_job_logs` call rather than reclaiming them
+        immediately. `state_dir` is optional and `None` by default (a
+        caller with no on-disk job logs to worry about, or that hasn't
+        been updated yet, gets the exact old behavior) — deliberately
+        NOT derived from a job row's own `stdout_log_path` string: every
+        directory this method ever removes is reconstructed as
+        `state_dir / "jobs" / job_id` from the caller-supplied root and
+        the job's own id (a random hex string, `execution.py`'s
+        `_new_job_id`), never trusted from a stored path that test
+        fixtures elsewhere in this codebase set to placeholders like
+        `/dev/null` — an unconfined `shutil.rmtree` of that string's
+        parent would target `/dev` itself.
         """
         record = self._get_or_raise(workspace_id)
         self._save(replace(record, state=WorkspaceState.DELETING, last_used_at=_now()))
         self._remove_container_if_present(record)
+        # Read *before* the `DELETE FROM job` below — once those rows are
+        # gone, nothing links a job id back to its on-disk directory.
+        job_ids = [
+            row["id"]
+            for row in self._db.execute(
+                "SELECT id FROM job WHERE workspace_id = ?", (workspace_id,)
+            ).fetchall()
+        ]
         with self._db:
             self._db.execute("DELETE FROM job WHERE workspace_id = ?", (workspace_id,))
             self._db.execute("DELETE FROM workspace WHERE id = ?", (workspace_id,))
         _logger.info("workspace %s: deleted", workspace_id)
+        if state_dir is not None:
+            self._remove_job_log_dirs(state_dir, job_ids)
         if cache_volume_names:
             self._remove_cache_volumes(cache_volume_names)
         if self._ssh_agents is not None:
             self._terminate_ssh_agent(workspace_id)  # §19.2: no agent after delete
+
+    def _remove_job_log_dirs(self, state_dir: Path, job_ids: list[str]) -> None:
+        """G2R-015: best-effort, the same RR-012 reasoning
+        `_remove_cache_volumes`/`_terminate_ssh_agent` below already
+        apply — the workspace is already fully deleted (container and
+        rows both gone) by the time this runs, so one directory this
+        daemon somehow can't remove (a permission problem, a stray
+        concurrent reader) is logged and left behind, never a reason to
+        report `delete` itself as failed."""
+        for job_id in job_ids:
+            job_dir = state_dir / "jobs" / job_id
+            try:
+                shutil.rmtree(job_dir)
+            except FileNotFoundError:
+                continue  # already gone — nothing to reclaim
+            except OSError as exc:
+                _logger.warning(
+                    "workspace delete: failed to remove job log directory %s: %s", job_dir, exc
+                )
 
     def _remove_cache_volumes(self, cache_volume_names: list[str]) -> None:
         for name in cache_volume_names:

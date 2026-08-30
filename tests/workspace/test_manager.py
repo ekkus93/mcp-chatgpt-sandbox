@@ -524,6 +524,99 @@ def test_at_hat015_delete_of_a_workspace_with_multiple_jobs_removes_all_of_them(
     assert remaining.fetchone()["n"] == 0
 
 
+# --- G2R-015 (`docs/GAP2_SPEC.md`): delete reclaims a job's on-disk logs -----------
+
+
+def test_at_g2r015_delete_removes_a_jobs_log_directory(
+    manager: DockerWorkspaceManager,
+    db: sqlite3.Connection,
+    repository: RepositoryRecord,
+    tmp_path: Path,
+) -> None:
+    """G2R-015: nothing else ever deletes `<state_dir>/jobs/<job_id>/` —
+    `prune_job_logs` (`jobs/retention.py`) enumerates candidates from
+    `job_store`, so a row-less directory (deleting the `job` row is
+    exactly what `delete()` does) is permanently invisible to it. A real
+    regression: reproduced by asserting the directory survives against
+    the pre-fix `delete()`, which only ever touched DB rows."""
+    record = manager.ensure_workspace(
+        repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
+    )
+    job_dir = tmp_path / "jobs" / "job_example"
+    job_dir.mkdir(parents=True)
+    (job_dir / "stdout.log").write_bytes(b"x" * 100)
+    (job_dir / "stderr.log").write_bytes(b"")
+    JobStore(db).create(
+        job_id="job_example",
+        workspace_id=record.id,
+        command="true",
+        cwd="/workspace",
+        stdout_log_path=str(job_dir / "stdout.log"),
+        stderr_log_path=str(job_dir / "stderr.log"),
+    )
+
+    manager.delete(record.id, state_dir=tmp_path)
+
+    assert not job_dir.exists()
+
+
+def test_at_g2r015_delete_tolerates_a_job_log_directory_already_gone(
+    manager: DockerWorkspaceManager,
+    db: sqlite3.Connection,
+    repository: RepositoryRecord,
+    tmp_path: Path,
+) -> None:
+    """A job whose log directory was already removed by something else
+    (an earlier `prune_job_logs` — deliberately not `logs_pruned`,
+    though: that column tracks S16's own retention state, unrelated to
+    whether this specific directory happens to be absent right now)
+    SHALL NOT make `delete` itself fail."""
+    record = manager.ensure_workspace(
+        repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
+    )
+    job_dir = tmp_path / "jobs" / "job_gone"
+    JobStore(db).create(
+        job_id="job_gone",
+        workspace_id=record.id,
+        command="true",
+        cwd="/workspace",
+        stdout_log_path=str(job_dir / "stdout.log"),
+        stderr_log_path=str(job_dir / "stderr.log"),
+    )
+
+    manager.delete(record.id, state_dir=tmp_path)  # SHALL NOT raise
+
+
+def test_at_g2r015_delete_without_state_dir_leaves_old_behavior_unchanged(
+    manager: DockerWorkspaceManager,
+    db: sqlite3.Connection,
+    repository: RepositoryRecord,
+    tmp_path: Path,
+) -> None:
+    """`state_dir` is opt-in — a caller that never passes it (none did,
+    before this task) gets exactly the pre-fix behavior: rows deleted,
+    on-disk files untouched. Confirms the new parameter didn't change
+    `delete()`'s default behavior for every existing caller."""
+    record = manager.ensure_workspace(
+        repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
+    )
+    job_dir = tmp_path / "jobs" / "job_example"
+    job_dir.mkdir(parents=True)
+    (job_dir / "stdout.log").write_bytes(b"x")
+    JobStore(db).create(
+        job_id="job_example",
+        workspace_id=record.id,
+        command="true",
+        cwd="/workspace",
+        stdout_log_path=str(job_dir / "stdout.log"),
+        stderr_log_path=str(job_dir / "stderr.log"),
+    )
+
+    manager.delete(record.id)  # no state_dir
+
+    assert job_dir.exists()  # untouched
+
+
 # --- H32: OOM reporting surface (`docs/HARDENING_SPEC.md` §9/§26 row) --------------
 
 

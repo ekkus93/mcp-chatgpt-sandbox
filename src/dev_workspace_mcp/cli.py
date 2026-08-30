@@ -492,8 +492,16 @@ def delete_workspace(config_path: Path, repository_id: str) -> None:
         for entry in (project_config.caches if project_config is not None else [])
     ]
     try:
+        # G2R-015 (`docs/GAP2_SPEC.md`): `state_dir` is where
+        # `tools/execution.py`'s `job_dir = state_dir / "jobs" / job_id`
+        # writes every job's logs — the same root `server.py` derives
+        # for the running daemon (`config.state_db_path.parent`), so a
+        # workspace deleted here reclaims the on-disk logs the daemon
+        # itself would have left orphaned otherwise.
         DockerWorkspaceManager(docker_client, db, ssh_agent_manager=ssh_agent_manager).delete(
-            workspace_id, cache_volume_names=cache_volume_names
+            workspace_id,
+            cache_volume_names=cache_volume_names,
+            state_dir=config.state_db_path.parent,
         )
     except WorkspaceNotFoundError:
         click.echo(
