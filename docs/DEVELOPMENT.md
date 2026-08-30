@@ -35,6 +35,19 @@ it stays a separate, manual step the hook does not run on every commit.
 
 ## Running the server locally
 
+Build the default workspace image first — nothing in `serve` itself does
+this for you, and a config naming an image that doesn't exist yet fails
+at workspace-open time, not at startup:
+
+```bash
+docker build -t mcp-dev-ubuntu:24.04 docker/default/
+```
+
+Then write a config file. There is no bundled example file to copy —
+`docs/CONFIGURATION.md` explains why, and `docs/SPEC.md` §52 has the full
+worked example (repositories, `docker.default_image` matching the tag
+built above, SSH/GitHub/resource blocks) to start from.
+
 ```bash
 uv run dev-workspace-mcp serve --config <path>
 ```

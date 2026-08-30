@@ -1,7 +1,13 @@
 # Development Workspace MCP Server — Implementation TODO
 
 **Source of truth:** `docs/SPEC.md` (§ references below point into it)
-**Status:** not started
+**Status:** implemented — S1-S33 complete. S32 (advisory locks) is
+deferred by spec, not attempted (see its own section — it conflicts
+with a later spec decision). S29, S30, and S31 each carry one
+explicitly-scoped, documented partial item within an otherwise-complete
+task (see each section's own "partial — see below" note); S15 carries
+one deferred sub-item, documented inline at its own checkbox. Nothing
+else is outstanding.
 **Convention:** tasks are `S<n>`. Each names the spec sections it implements, the
 functional requirements it satisfies, and the acceptance tests that prove it.
 
@@ -236,7 +242,9 @@ image's configured user by default (root), not whatever PID 1 dropped to via
       `PATH_GIT_METADATA` (rule 3 checked *before* the containment check, since its
       target is by construction always outside the root — otherwise every rule-3
       hit would report as a generic escape instead of the more specific error)
-- [ ] Exclude `.git` from `list_files` / `search_files` output by default — S10
+- [x] Exclude `.git` from `list_files` / `search_files` output by default — S10
+      (`_is_git_metadata`, `filesystem/service.py`; `test_list_files_excludes_
+      git_metadata`, `test_search_excludes_git_metadata`)
 - [x] AT-001 / AT-002 / AT-033 exercised directly against `FilesystemSecurity`;
       full tool-level exercise (`read_file`/`write_file`/etc.) completes with S10
 
