@@ -301,24 +301,38 @@ def _redact(value: Any, *, key: str | None = None, inherited_secret: bool = Fals
         # every item under a sensitive key inherits that key's verdict,
         # same as `inherited_secret` does for a dict's values.
         return [_redact(v, key=key, inherited_secret=key_flags_secret) for v in value]
-    # VR-005 (`docs/REVIEW_SPEC.md` §4): `tuple`/`set` recurse the same
-    # way `list` does, just type-preserved rather than coerced to a
-    # `list` — R18's own "preserve type" precedent, applied to the
-    # container itself, not only to a non-redacted scalar inside it.
-    # `frozenset` deliberately not included: nothing in this codebase
-    # constructs one for `details`/audit `metadata` today, and adding a
-    # case with no reproducible caller would be untested by construction.
+    # VR-005 (`docs/REVIEW_SPEC.md` §4): `tuple` recurses the same way
+    # `list` does, just type-preserved rather than coerced — R18's own
+    # "preserve type" precedent, applied to the container itself, not
+    # only to a non-redacted scalar inside it. Safe to preserve: a
+    # `tuple` serializes as a JSON array, same as a `list` would.
     #
     # AR-002 (`docs/AUDIT_SPEC.md` §4): a `namedtuple` degrades to a
     # plain `tuple` here — `tuple(...)` on a `_fields`-carrying subclass
-    # doesn't reconstruct it. Deliberately not special-cased for the
-    # same reason as `frozenset`: no caller in this codebase constructs
-    # one for `details`/audit `metadata` today. Content is still
-    # correctly redacted; only the field names are lost.
+    # doesn't reconstruct it. Deliberately not special-cased: no caller
+    # in this codebase constructs one for `details`/audit `metadata`
+    # today, and its field names are never consulted as key hints either
+    # way — a `P(user=..., password="hunter2")` under a non-secret key
+    # leaves the value in the clear unless `_looks_like_secret` catches
+    # its shape on its own. Content is still correctly redacted; only
+    # the field names (and so this one extra source of key hints) are
+    # lost.
     if isinstance(value, tuple):
         return tuple(_redact(v, key=key, inherited_secret=key_flags_secret) for v in value)
+    # GR-007 (`docs/GAP_SPEC.md`): unlike `tuple`, a `set` has no JSON
+    # representation at all — VR-005's type-preserving choice, correct
+    # for `tuple`, made `redact_secrets` output that `json.dumps` (both
+    # call sites: `to_tool_error`, `write_audit_event`) rejects outright
+    # the moment any caller puts one in `details`/`metadata`. Coerced to
+    # a `list` here instead: JSON-safe, and lossless for redaction's own
+    # purpose (`details`/`metadata` values are reported, never consumed
+    # back as sets). `frozenset` deliberately still excluded, same
+    # reasoning as `namedtuple`: no caller constructs one today, and
+    # `isinstance(x, set)` is `False` for one anyway, so it falls
+    # through to the plain `return value` at the bottom, unredacted —
+    # documented, not silently unhandled.
     if isinstance(value, set):
-        return {_redact(v, key=key, inherited_secret=key_flags_secret) for v in value}
+        return [_redact(v, key=key, inherited_secret=key_flags_secret) for v in value]
 
     if isinstance(value, str):
         if key_flags_secret or _looks_like_secret(value):
@@ -341,10 +355,19 @@ def _redact(value: Any, *, key: str | None = None, inherited_secret: bool = Fals
     # `memoryview` is deliberately excluded, same reasoning as
     # `frozenset`/`namedtuple` above — no caller constructs one for
     # `details`/audit `metadata` today.
+    #
+    # GR-007 (`docs/GAP_SPEC.md`): the non-secret passthrough used to
+    # return `value` itself — the raw `bytes`/`bytearray` object, which
+    # `json.dumps` rejects exactly like `set` did above. Decoded with
+    # `errors="replace"` instead (the same `decode_utf8_lossy`-style
+    # tradeoff `sanitize_for_client`, `git/service.py`, already makes at
+    # a client-facing boundary): JSON-safe, and the closest a `str` can
+    # get to the original content when it isn't valid UTF-8.
     if isinstance(value, (bytes, bytearray)):
-        if key_flags_secret or _looks_like_secret(bytes(value).decode("utf-8", errors="replace")):
+        text = bytes(value).decode("utf-8", errors="replace")
+        if key_flags_secret or _looks_like_secret(text):
             return "[REDACTED]"
-        return value
+        return text
     # RR-009: a non-string, non-bytes scalar (`{"ssh_key_present": True}`,
     # `{"key_count": 3}`) carries no free-text secret material of its
     # own — so it is never redacted on a substring key hint alone. This

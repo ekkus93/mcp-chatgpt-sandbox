@@ -192,7 +192,15 @@ def test_at_vat005_a_secret_flagged_tuple_recurses() -> None:
 
 
 def test_at_vat005_a_secret_flagged_set_recurses() -> None:
-    assert redact_secrets({"secret": {"hunter2"}}) == {"secret": {"[REDACTED]"}}
+    """GR-007 (`docs/GAP_SPEC.md`): recurses into `list`, not `set` — a
+    `set` isn't JSON-serializable at all, unlike `tuple` (a JSON array),
+    so `redact_secrets`'s original type-preserving choice for `set`
+    (matching VR-005's own precedent for `tuple`) was corrected once a
+    caller putting one in `details`/`metadata` was shown to crash
+    `json.dumps` at both call sites (`to_tool_error`, `write_audit_
+    event`) — this assertion used to expect a `set` back; that was the
+    defect, not this test."""
+    assert redact_secrets({"secret": {"hunter2"}}) == {"secret": ["[REDACTED]"]}
 
 
 def test_at_vat005_tuple_recursion_preserves_the_container_type() -> None:
@@ -214,10 +222,23 @@ def test_at_vat005_a_secret_flagged_bytes_value_is_redacted() -> None:
     assert redact_secrets({"secret": b"ghp_abc"}) == {"secret": "[REDACTED]"}
 
 
-def test_at_vat005_a_non_secret_bytes_value_is_left_untouched() -> None:
-    """The type-preservation half, mirrored from R18: `bytes` with no
-    secret-hinted key stays `bytes`, unredacted and untouched."""
-    assert redact_secrets({"payload": b"\x00\x01\x02"}) == {"payload": b"\x00\x01\x02"}
+def test_at_vat005_a_non_secret_bytes_value_is_decoded_not_left_as_bytes() -> None:
+    """GR-007 (`docs/GAP_SPEC.md`): the non-secret passthrough used to
+    return the raw `bytes` object unchanged — also not JSON-serializable,
+    the same defect class as the `set` case above. Decoded with
+    `errors="replace"` instead, matching `sanitize_for_client`'s own
+    lossy-but-safe tradeoff at a client-facing boundary elsewhere in this
+    codebase; content is unredacted, only the type changed."""
+    assert redact_secrets({"payload": b"hello"}) == {"payload": "hello"}
+
+
+def test_at_gr007_a_non_utf8_non_secret_bytes_value_decodes_lossily_not_left_as_bytes() -> None:
+    """The genuinely-non-UTF-8 case `errors="replace"` exists for: still
+    not the raw `bytes` object (still not JSON-serializable), and still
+    unredacted (content, not secret-shaped)."""
+    redacted = redact_secrets({"payload": b"\xff\xfe"})
+    assert isinstance(redacted["payload"], str)
+    assert "�" in redacted["payload"]
 
 
 def test_at_aat002_a_secret_shaped_bytes_value_is_redacted_under_an_unrelated_key() -> None:
@@ -239,13 +260,15 @@ def test_at_aat002_a_secret_shaped_bytearray_value_is_redacted() -> None:
     assert redact_secrets({"secret": bytearray(b"hunter2")}) == {"secret": "[REDACTED]"}
 
 
-def test_at_aat002_a_non_secret_bytearray_value_is_left_untouched() -> None:
-    """The type-preservation half, mirrored from R18/V5: a `bytearray`
-    with no secret hint and no secret-shaped content stays a
-    `bytearray`, unredacted and untouched."""
-    redacted = redact_secrets({"payload": bytearray(b"\x00\x01\x02")})
-    assert redacted == {"payload": bytearray(b"\x00\x01\x02")}
-    assert isinstance(redacted["payload"], bytearray)
+def test_at_aat002_a_non_secret_bytearray_value_is_decoded_not_left_as_bytearray() -> None:
+    """GR-007 (`docs/GAP_SPEC.md`): `bytearray`'s own type-preservation
+    used to stay `bytearray` here — also not JSON-serializable, the same
+    defect class `bytes`/`set` had. Decoded with `errors="replace"`
+    instead, matching the plain-`bytes` branch's own fix; content is
+    unredacted, only the type changed."""
+    redacted = redact_secrets({"payload": bytearray(b"hello")})
+    assert redacted == {"payload": "hello"}
+    assert isinstance(redacted["payload"], str)
 
 
 def test_at_hat011_url_userinfo_is_redacted_even_under_an_unrelated_key() -> None:
@@ -299,6 +322,20 @@ def test_to_tool_error_redacts_details() -> None:
     payload = json.loads(str(to_tool_error(exc)))
     assert payload["details"]["token"] == "[REDACTED]"
     assert payload["details"]["path"] == ".git/config"
+
+
+def test_at_gr007_to_tool_error_does_not_crash_on_a_set_or_bytes_value() -> None:
+    """GR-007 (`docs/GAP_SPEC.md`): `to_tool_error` calls `json.dumps` on
+    `_redact`'s own output — reproduced before this fix that a `set` or
+    non-secret `bytes` in `details` raised `TypeError: Object of type
+    set/bytes is not JSON serializable` here, escaping as an unhandled
+    crash rather than the structured response the caller actually
+    raised. No caller constructs either today (latent, not live) — this
+    guards the boundary regardless."""
+    exc = InvalidArgumentError("bad set", details={"tags": {"a", "b"}, "payload": b"\x00\x01"})
+    payload = json.loads(str(to_tool_error(exc)))  # SHALL NOT raise
+    assert isinstance(payload["details"]["tags"], list)
+    assert isinstance(payload["details"]["payload"], str)
 
 
 # --- @translate_workspace_errors ---------------------------------------------------

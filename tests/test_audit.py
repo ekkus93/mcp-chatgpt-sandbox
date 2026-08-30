@@ -69,6 +69,29 @@ def test_write_audit_event_redacts_secrets_in_metadata(tmp_path: Path) -> None:
     assert "ok" in content
 
 
+def test_at_gr007_write_audit_event_does_not_crash_on_a_set_or_bytes_value(
+    tmp_path: Path,
+) -> None:
+    """GR-007 (`docs/GAP_SPEC.md`): `write_audit_event` calls
+    `json.dumps` on `redact_secrets`'s own output, the same as
+    `to_tool_error` — reproduced before this fix that a `set` or
+    non-secret `bytes` in `metadata` raised inside this call, before the
+    `except OSError` below ever got a chance to matter (a `TypeError`
+    isn't an `OSError`), losing the audit event entirely rather than
+    writing it."""
+    config = AuditConfig(enabled=True, path=tmp_path / "audit.jsonl")
+    write_audit_event(
+        config,
+        operation="op",
+        result="success",
+        metadata={"tags": {"a", "b"}, "payload": b"\x00\x01"},
+    )  # SHALL NOT raise
+    lines = _read_lines(config.path)
+    assert len(lines) == 1
+    assert isinstance(lines[0]["metadata"]["tags"], list)
+    assert isinstance(lines[0]["metadata"]["payload"], str)
+
+
 def test_write_audit_event_defaults_metadata_to_empty_dict(tmp_path: Path) -> None:
     config = AuditConfig(enabled=True, path=tmp_path / "audit.jsonl")
     write_audit_event(config, operation="op", result="success")
