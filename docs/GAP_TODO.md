@@ -648,16 +648,16 @@ change — internal redaction, never a tool's own JSON output; no
 **Commit:** `89a0236`
 
 - [x] Real-container test for the `.ssh` **directory** symlink refusal
-      (`entrypoint.sh:209`)
+      (`entrypoint.sh:237` — X20 (`docs/GAP2_TODO.md`): was `:209`, re-verified against `HEAD`)
 - [x] `isinstance` assertion on the `set` redaction branch
 
 **Gap 1.** VR-004 required two refusals; `entrypoint.sh` implements both
-(209 for the directory, 214 for the `config` file), but VAT-004
-(`tests/workspace/test_default_image.py:232`) exercises only the file one.
+(237 for the directory, 242 for the `config` file — X20 (`docs/GAP2_TODO.md`): were 209/214, re-verified against `HEAD`), but VAT-004
+(`tests/workspace/test_default_image.py:326`) exercises only the file one.
 The directory refusal has no test. Model the new one on `test_at_vat004_*`
 directly.
 
-**Gap 2.** `tests/test_errors.py:194` asserts value equality only, and
+**Gap 2.** `tests/test_errors.py:195` <!-- X20: was `:194` --> asserts value equality only, and
 `{"[REDACTED]"} == frozenset({"[REDACTED]"})` is `True` — a
 `set`→`frozenset` coercion would pass. The tuple test at `:198-204`
 already does the right thing (`assert isinstance(..., tuple)`); match it.
@@ -694,7 +694,7 @@ subdirectory, which an unprivileged run genuinely can replace
 
 **Revert-verified — and found a sharper finding than the checklist item
 alone implied.** Removed *only* the directory-level refusal
-(`entrypoint.sh:209`, the `config`-file refusal at :214 left intact),
+(`entrypoint.sh:237`, the `config`-file refusal at :242 left intact — X20 (`docs/GAP2_TODO.md`): were :209/:214, re-verified against `HEAD`),
 re-ran the new test: `Failed: DID NOT RAISE ContainerError` — the
 container started cleanly. Traced why: with `.ssh` a symlink to `/etc`
 and no refusal, `mkdir -p "$HOME_DIR/.ssh"` follows the symlink and

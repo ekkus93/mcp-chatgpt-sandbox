@@ -5,9 +5,9 @@ import os
 import subprocess
 from pathlib import Path
 
+import docker
 import pytest
 
-import docker
 from dev_workspace_mcp.config.models import ContainerConfig, SSHConfig
 from dev_workspace_mcp.workspace.container_config import build_workspace_run_kwargs
 from dev_workspace_mcp.workspace.mounts import GitDirMode, build_workspace_mounts

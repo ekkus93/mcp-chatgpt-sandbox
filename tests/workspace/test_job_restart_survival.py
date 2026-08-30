@@ -21,12 +21,12 @@ import asyncio
 from pathlib import Path
 from unittest.mock import patch
 
+import docker
 import pytest
 import yaml
 from click.testing import CliRunner
 from mcp.server.mcpserver.exceptions import ToolError
 
-import docker
 from dev_workspace_mcp.cli import main
 from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
 from dev_workspace_mcp.server import create_server

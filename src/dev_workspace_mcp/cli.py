@@ -22,8 +22,8 @@ from pathlib import Path
 from typing import Any
 
 import click
-
 import docker
+
 from dev_workspace_mcp import __version__
 from dev_workspace_mcp.config import ConfigError, docker_available, load_config
 from dev_workspace_mcp.config.models import ServerConfig

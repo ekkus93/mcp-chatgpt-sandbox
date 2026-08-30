@@ -5,10 +5,10 @@ the point where S5-S8 come together into a real running container
 import subprocess
 from pathlib import Path
 
+import docker
 import pytest
 from mcp.server import MCPServer
 
-import docker
 from dev_workspace_mcp.config.loader import ensure_known_hosts_file_exists
 from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
 from dev_workspace_mcp.db import open_db

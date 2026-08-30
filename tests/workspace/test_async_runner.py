@@ -8,9 +8,9 @@ import asyncio
 import sqlite3
 from pathlib import Path
 
+import docker
 import pytest
 
-import docker
 from dev_workspace_mcp.errors import ContainerRuntimeFailedError
 from dev_workspace_mcp.execution.async_runner import AsyncJobRunner
 from dev_workspace_mcp.execution.service import ExecutionService

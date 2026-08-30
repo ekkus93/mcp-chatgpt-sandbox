@@ -318,7 +318,13 @@ Verified by GAT-004.
 ### GR-007 — Redaction output SHALL always be JSON-serializable
 
 `redact_secrets` output feeds `json.dumps` at two call sites:
-`errors.py:389` (`to_tool_error`) and `audit.py:83` (the audit record).
+`errors.py:478` (`to_tool_error`) and `audit.py:83` (the audit record).
+<!-- X20 (`docs/GAP2_TODO.md`) corrected this line number from a stale
+`:389` (later found already stale itself at `:412` by the time this
+task ran — re-verified against HEAD, not the TODO's own suggested
+replacement, per this document's own "do not run a mechanical
+rewrite pass" rule: a citation fix has to check the actual current
+line, not trust an intermediate claim). -->
 V5 made `_redact` preserve container types — correct for `tuple`, which
 serializes as a JSON array, but `set` does not serialize at all.
 Reproduced directly:
@@ -355,6 +361,31 @@ their documentation required, see GR-008.
 
 Verified by GAT-005.
 
+**Correction (X20, `docs/GAP2_TODO.md`): the paragraph above and the
+Requirement paragraph immediately before it contradict each other, and
+the Requirement governs.** "Every value `_redact` can return SHALL be
+JSON-serializable" and "`frozenset`/`memoryview`/namedtuple-degradation
+… are out of scope" cannot both be true of the same requirement — the
+carve-out reads as an exemption from JSON-serializability itself, which
+is exactly what the Requirement forbids. `src/dev_workspace_mcp/
+errors.py`'s current `_redact` (G2R-004, `docs/GAP2_SPEC.md` — landed
+after this document, in the same X1–X22 pass this correction belongs
+to) resolves this in code, not just in prose: every explicitly
+recognized type is redacted or passed through, and anything this
+function does not recognize — `frozenset`, `memoryview`, and (the
+detail worth stating precisely, since the residue was never actually
+three named types) *every other type outside that explicit set* —
+`Decimal`, `Path`, `datetime`, a dataclass, whatever a future caller
+reaches for next — becomes a `f"[UNREPRESENTABLE: {type(value).
+__name__}]"` string. A `str` is always JSON-serializable, so the
+Requirement holds for the full, open-ended residue, not merely the
+three types GR-008 names — "out of scope" above described a real gap
+at the time this document was written, but described it too narrowly,
+and is now stale as an exemption from serializability specifically:
+`frozenset`/`memoryview` are only exempt from *content-aware*
+redaction (no secret-shaped-content check the way `bytes` gets), never
+from the Requirement itself.
+
 ---
 
 ## Phase 3 — Reference, test, and documentation integrity
@@ -370,7 +401,7 @@ correction paragraph:
 
 | file:line | says | referent actually lives in |
 | --- | --- | --- |
-| `src/dev_workspace_mcp/git/commit.py:107` | `` `tools/git.py`'s `capture_index` `` | `tools/git_commit.py:255` |
+| `src/dev_workspace_mcp/git/commit.py:107` | `` `tools/git.py`'s `capture_index` `` | `tools/git_commit.py:260` (X20, `docs/GAP2_TODO.md`; was `:255`, re-verified against `HEAD`) |
 
 Verified that the other `tools/git.py` references in `src/` are **still
 accurate** — `audit_denials`, `git_pull_tool`, and `git_push_tool` all
@@ -422,16 +453,26 @@ state — are in scope.
 
 Two gaps, both found while verifying V4 and V5:
 
-1. **The `.ssh` *directory* refusal is untested.** `entrypoint.sh:209`
+1. **The `.ssh` *directory* refusal is untested.** `entrypoint.sh:237`
+   <!-- X20 (`docs/GAP2_TODO.md`): was `:209`, then claimed `:225` by an
+   intermediate correction that was itself stale by the time this task
+   ran (G3's own PATH block moved it further) — re-verified against
+   `HEAD`, both here and for the other three line numbers in this
+   paragraph, not carried forward from any prior claim. This gap is now
+   closed: `test_at_gr009_a_symlinked_ssh_directory_planted_in_a_cache_
+   volume_is_not_followed` (`tests/workspace/test_default_image.py`)
+   covers it — this paragraph is left as history describing the
+   original defect, per this document's own "historical citations are
+   correct as history" rule, with only its line numbers corrected. -->
    (`[ -L "$HOME_DIR/.ssh" ]`) has no test. VAT-004
-   (`tests/workspace/test_default_image.py:232`) exercises only the
-   `config`-*file* refusal at line 214. Both refusals are required by
+   (`tests/workspace/test_default_image.py:326`) exercises only the
+   `config`-*file* refusal at line 242. Both refusals are required by
    VR-004; one is covered.
 2. **The `set` redaction test cannot detect a type regression.**
-   `tests/test_errors.py:194` asserts value equality only, and
+   `tests/test_errors.py:195` <!-- X20: was `:194` --> asserts value equality only, and
    `{"[REDACTED]"} == frozenset({"[REDACTED]"})` is `True` in Python — so
    a `set`→`frozenset` coercion would pass. The sibling tuple test
-   (`:198-204`) does assert `isinstance`, which is the shape to match.
+   (`:216-222` <!-- X20: was `:198-204` -->) does assert `isinstance`, which is the shape to match.
 
 **Requirement.** Both SHALL be covered: the `.ssh` directory refusal by a
 real-container test following `test_at_vat004_*`'s own precedent, and the
@@ -583,6 +624,41 @@ inspection.
   SHALL both be demonstrated: the file passes standalone after the fix,
   and the assertion fails standalone if the `_logger.info` calls are
   removed.
+
+**Correction (X20, `docs/GAP2_TODO.md`): GAT-006 is unsatisfiable as
+written, and GAT-007 contradicts GR-007.**
+
+- **GAT-006.** A Docker volume mount always creates a real directory at
+  its own mount point — the mount point itself can therefore never be a
+  symlink, so "a cache volume mounted at `.ssh` whose mount point is
+  itself a symlink" describes a state Docker's own mount mechanics make
+  unreachable, not a bug this codebase could exhibit or a test could
+  provoke. What GAT-006 was actually written to cover — the sibling
+  refusal one line below `entrypoint.sh`'s `.ssh/config` check, `[ -L
+  "$HOME_DIR/.ssh" ]` for `.ssh` itself — is genuinely testable, just not
+  the way GAT-006 phrases it: `cache_paths=["."]` (`.` normalizes to
+  `$HOME`, not `.ssh`) mounts a persistent, container-writable volume at
+  `$HOME` *containing* `.ssh` as an ordinary subdirectory, which an
+  unprivileged run can replace with a symlink — the mount point (`$HOME`)
+  stays a real directory throughout; only its *content* becomes a
+  symlink. `test_at_gr009_a_symlinked_ssh_directory_planted_in_a_cache_
+  volume_is_not_followed` (`tests/workspace/test_default_image.py`)
+  exercises exactly this, and already carries the reasoning above in its
+  own docstring — it is cited under `GR-009`, not `GAT-006`, matching
+  this document's own note (§ "Acceptance tests" above) that GAT
+  numbering is independent of GR and some GR requirements carry no GAT.
+- **GAT-007** says `_redact` on a secret-flagged `set` "returns a `set`,
+  asserted by `isinstance`." That is the pre-fix defect this same
+  document's GR-007 exists to close, not the post-fix behavior: a `set`
+  has no JSON representation at all, so `_redact` coerces it to a `list`
+  (GR-007's own text, four sections above: "coercing `set` to `list`
+  would have been both JSON-safe and lossless"). The actual test —
+  `test_at_vat005_a_secret_flagged_set_recurses`
+  (`tests/test_errors.py`) — asserts `isinstance(redacted["secret"],
+  list)`, and its own docstring says so explicitly: "this assertion used
+  to expect a `set` back; that was the defect, not this test." GAT-007's
+  acceptance criterion has the assertion's target backwards; the test
+  is, and always was, correct.
 
 ---
 

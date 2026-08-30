@@ -18,10 +18,10 @@ server.
 import subprocess
 from pathlib import Path
 
+import docker
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 
-import docker
 from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
 from dev_workspace_mcp.server import create_server
 

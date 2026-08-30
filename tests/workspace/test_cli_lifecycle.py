@@ -7,11 +7,11 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import docker
 import pytest
 import yaml
 from click.testing import CliRunner
 
-import docker
 from dev_workspace_mcp.cli import main
 from dev_workspace_mcp.config import load_config
 from dev_workspace_mcp.server import create_server

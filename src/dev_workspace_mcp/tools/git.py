@@ -34,9 +34,9 @@ from collections.abc import Awaitable, Callable
 from functools import wraps
 from typing import Any, Literal
 
+import docker
 from mcp.server import MCPServer
 
-import docker
 from dev_workspace_mcp.audit import write_audit_event
 from dev_workspace_mcp.config.models import (
     AuditConfig,

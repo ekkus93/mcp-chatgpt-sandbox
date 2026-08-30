@@ -824,7 +824,7 @@ recurse into symlinked directories, so `a/b -> ../a` terminates; do not
 **Defect.** `tests/test_acceptance_test_coverage.py:71-99` registers
 `AT`, `HAT`, `RAT`, `VAT`. `docs/AUDIT_SPEC.md`'s `AAT-001..004` and
 `docs/GAP_SPEC.md`'s `GAT-001..008` are unregistered, though
-`GAP_SPEC.md:545` uses the identical "Each SHALL be an automated test"
+`GAP_SPEC.md:586` <!-- X20 (`docs/GAP2_TODO.md`): was `:545`, shifted by this same task's own edits to that file --> uses the identical "Each SHALL be an automated test"
 language the audit's own docstring cites as its justification for
 covering the other three. Twelve acceptance tests drift with nothing to
 catch a deletion or renumber.

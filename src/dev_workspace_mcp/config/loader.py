@@ -9,11 +9,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import docker
 import yaml
 from docker.errors import DockerException
 from pydantic import ValidationError
 
-import docker
 from dev_workspace_mcp.config.models import ServerConfig, WorkspaceConfig
 
 

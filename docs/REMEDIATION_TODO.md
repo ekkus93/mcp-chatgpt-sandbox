@@ -2002,7 +2002,7 @@ this as an accepted substitution rather than a gap.
 
 | Property | Test | Location |
 |---|---|---|
-| Character-safe pagination, invalid bytes | `test_rr016_pagination_with_an_invalid_byte_for_every_max_bytes_from_1_to_64` | `tests/git/test_diff.py:364` |
+| Character-safe pagination, invalid bytes | `test_rr016_pagination_with_an_invalid_byte_for_every_max_bytes_from_1_to_64` | `tests/git/test_diff.py:382` (X20, `docs/GAP2_TODO.md`; was `:364`) |
 | Index rollback, prior staged content | `test_rr005_a_failed_commit_restores_prior_staged_content_not_head` | `tests/workspace/test_git_commit_tool_failure_modes.py` |
 | Pathspec literalization, `""`/`"."`/`"./"` | `test_rr004_an_empty_or_root_normalizing_path_is_rejected_before_staging` (parametrized over exactly `["", ".", "./"]`) | `tests/workspace/test_git_commit_tool_failure_modes.py` |
 | Failed termination, unreachable Docker daemon | `test_rr013_failed_termination_via_a_real_exec_inspect_failure` | `tests/workspace/test_async_execution_tools_cancel.py` |

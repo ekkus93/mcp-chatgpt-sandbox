@@ -28,9 +28,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+import docker
 from mcp.server import MCPServer
 
-import docker
 from dev_workspace_mcp.audit import write_audit_event
 from dev_workspace_mcp.config.models import AuditConfig, ContainerConfig, ExecutionConfig, SSHConfig
 from dev_workspace_mcp.errors import (

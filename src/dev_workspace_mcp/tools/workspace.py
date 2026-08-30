@@ -13,9 +13,9 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+import docker
 from mcp.server import MCPServer
 
-import docker
 from dev_workspace_mcp import __version__
 from dev_workspace_mcp.audit import write_audit_event
 from dev_workspace_mcp.config.models import (

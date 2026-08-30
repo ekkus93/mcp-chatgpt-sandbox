@@ -7,9 +7,9 @@ this file is for `pid_of`'s own branches, not the race itself."""
 
 from unittest.mock import MagicMock
 
+import docker
 import pytest
 
-import docker
 from dev_workspace_mcp.execution.service import ExecutionService
 
 

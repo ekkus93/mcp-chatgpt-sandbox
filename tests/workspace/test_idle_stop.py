@@ -9,9 +9,9 @@ import json
 import sqlite3
 from pathlib import Path
 
+import docker
 import pytest
 
-import docker
 from dev_workspace_mcp.config.models import AuditConfig, RepositoryConfig, ServerConfig
 from dev_workspace_mcp.db import open_db
 from dev_workspace_mcp.errors import ContainerRuntimeFailedError

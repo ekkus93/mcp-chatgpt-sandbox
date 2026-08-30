@@ -17,11 +17,11 @@ import logging
 import sqlite3
 from dataclasses import replace
 
+import docker
 from docker.errors import DockerException
 from docker.errors import NotFound as DockerNotFound
 from docker.models.containers import Container
 
-import docker
 from dev_workspace_mcp.errors import (
     ContainerRuntimeFailedError,
     WorkspaceNotFoundError,

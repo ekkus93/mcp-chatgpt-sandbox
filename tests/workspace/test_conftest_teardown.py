@@ -21,10 +21,10 @@ import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
+import docker
 import docker.types
 import pytest
 
-import docker
 from dev_workspace_mcp.workspace.caches import cache_volume_name
 from dev_workspace_mcp.workspace.naming import LABEL_MANAGED
 

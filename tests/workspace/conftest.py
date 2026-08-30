@@ -46,10 +46,10 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import docker
 import docker.models.containers
 import pytest
 
-import docker
 from dev_workspace_mcp.config.models import SSHConfig
 from dev_workspace_mcp.db import open_db
 from dev_workspace_mcp.repositories import RepositoryRecord

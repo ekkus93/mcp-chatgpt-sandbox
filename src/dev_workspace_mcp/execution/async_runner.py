@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import docker
+
 from dev_workspace_mcp.errors import ContainerRuntimeFailedError
 from dev_workspace_mcp.execution.log_capture import StreamCapture
 from dev_workspace_mcp.execution.service import ExecutionService

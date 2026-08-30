@@ -37,6 +37,20 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# G2R-020 (`docs/GAP2_SPEC.md`): without an explicit `src`, ruff's isort
+# looks for a first-party package at every top-level directory — and
+# this repository has one named `docker/` (image/entrypoint assets, not
+# Python), which ruff has no way to distinguish from a local package by
+# name alone. That ambiguity split one distribution's imports across two
+# sections (`import docker` sorted as first-party, `from docker.errors
+# import ...` as third-party) — the actual shape G1 (`docs/GAP_SPEC.md`)
+# reproduced, and `workspace/manager_core.py`'s own import block still
+# carries. G1 pinned the ruff *version* without closing the ambiguity
+# itself, so a different tool (or a future ruff release with different
+# default source detection) could reopen it. Declaring the real source
+# root removes the ambiguity at its cause, rather than special-casing
+# `docker` by name in `known-third-party`.
+src = ["src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "C4"]

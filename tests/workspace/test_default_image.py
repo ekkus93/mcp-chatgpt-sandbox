@@ -13,10 +13,10 @@ user a later `exec` call should run as is S12's problem, not S7's.
 import uuid
 from pathlib import Path
 
+import docker
 import docker.types
 import pytest
 
-import docker
 from dev_workspace_mcp.config.models import ContainerConfig, SSHConfig
 from dev_workspace_mcp.errors import ContainerCreateFailedError
 from dev_workspace_mcp.repositories import RepositoryRecord

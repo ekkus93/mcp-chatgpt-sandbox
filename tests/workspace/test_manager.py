@@ -9,9 +9,9 @@ import sqlite3
 import time
 from pathlib import Path
 
+import docker
 import pytest
 
-import docker
 from dev_workspace_mcp.errors import (
     ContainerCreateFailedError,
     ContainerRuntimeFailedError,

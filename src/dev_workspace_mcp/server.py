@@ -11,9 +11,9 @@ from __future__ import annotations
 import sqlite3
 from typing import Literal
 
+import docker
 from mcp.server import MCPServer
 
-import docker
 from dev_workspace_mcp import __version__
 from dev_workspace_mcp.config.loader import ensure_known_hosts_file_exists
 from dev_workspace_mcp.config.models import ServerConfig
