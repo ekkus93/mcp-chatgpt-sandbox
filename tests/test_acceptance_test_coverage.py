@@ -7,7 +7,14 @@ series alone. `docs/HARDENING_SPEC.md`'s `HAT`, `docs/REMEDIATION_SPEC.md`'s
 required acceptance tests the same way `AT` does ("Each SHALL be an
 automated test", `REMEDIATION_SPEC.md`'s own words) but had no equivalent
 audit — a deleted `VAT` citation, for instance, would have gone unnoticed
-indefinitely. All four are covered here now, table-driven.
+indefinitely.
+
+G2R-019 (`docs/GAP2_SPEC.md`): `docs/AUDIT_SPEC.md`'s own `AAT` series and
+`docs/GAP_SPEC.md`'s `GAT` series used the identical language too and were
+missed the same way — the pleasing irony being that `AAT-004` (§4 below)
+is itself "removing every `VAT` citation SHALL make this audit fail," so
+this module's own series was the one it forgot to audit. All six series
+are covered here now, table-driven.
 
 This does NOT judge whether a test's assertions are adequate — only that
 each acceptance test has at least one test file that mentions its number,
@@ -94,6 +101,35 @@ _SERIES = (
         spec_path=_REPO_ROOT / "docs" / "REVIEW_SPEC.md",
         heading_re=re.compile(r"^- \*\*VAT-(\d{3})\*\*", re.MULTILINE),
         expected_total=6,
+    ),
+    # G2R-019 (`docs/GAP2_SPEC.md`): `AAT` (`docs/AUDIT_SPEC.md`) and
+    # `GAT` (`docs/GAP_SPEC.md`) use the identical "Each SHALL be an
+    # automated test" language this module's own docstring cites as its
+    # justification for auditing `HAT`/`RAT`/`VAT` — both were simply
+    # never added. Measured before writing `known_uncited` below, not
+    # assumed: `GAT` has zero citations anywhere under `tests/` at all
+    # (this codebase names its GAP tests after the *requirement* —
+    # `test_at_gr004_*` — never the acceptance-test number, the same
+    # precedent `HR`/`RR`-prefixed tests already established, and not
+    # itself a defect worth back-filling here). `AAT-001`/`002`/`003`
+    # are cited (`test_at_aat001_*`, `test_at_aat002_*`,
+    # `test_at_aat003_*`); `AAT-004` is not.
+    _Series(
+        prefix="AAT",
+        spec_path=_REPO_ROOT / "docs" / "AUDIT_SPEC.md",
+        heading_re=re.compile(r"^- \*\*AAT-(\d{3})\*\*", re.MULTILINE),
+        expected_total=4,
+        # AAT-004 is itself "Removing every citation of one `VAT` SHALL
+        # make the coverage audit fail" — this module's own series was
+        # the one it forgot to audit, until this task.
+        known_uncited=frozenset({4}),
+    ),
+    _Series(
+        prefix="GAT",
+        spec_path=_REPO_ROOT / "docs" / "GAP_SPEC.md",
+        heading_re=re.compile(r"^- \*\*GAT-(\d{3})\*\*", re.MULTILINE),
+        expected_total=8,
+        known_uncited=frozenset(range(1, 9)),  # every GAT — see comment above
     ),
 )
 _BY_PREFIX = {series.prefix: series for series in _SERIES}
@@ -215,5 +251,31 @@ def test_meta_removing_every_citation_for_a_vat_makes_the_audit_fail_for_it() ->
     uncited = sorted(_uncited(series, scrubbed) - series.known_uncited)
     assert uncited == [target], (
         "scrubbing every VAT-001 citation should make the audit flag VAT-001 "
+        f"specifically, not {uncited}"
+    )
+
+
+def test_meta_removing_every_citation_for_an_aat_makes_the_audit_fail_for_it() -> None:
+    """G2R-019 (`docs/GAP2_SPEC.md`): the same HR-027 self-verification,
+    proven for `AAT` specifically — the series this task's own defect is
+    about (`AAT` went unregistered here despite `docs/AUDIT_SPEC.md`
+    using the identical "Each SHALL be an automated test" language every
+    other series is audited against). `AAT-001` (unlike `AAT-004`, in
+    `known_uncited`) has a real citation (`test_at_aat001_*`) to scrub,
+    so this proves the new registration is genuinely wired up — not
+    merely a table entry that happens to look complete."""
+    target = 1
+    series = _BY_PREFIX["AAT"]
+    assert target in series.spec_numbers()
+    assert target not in series.known_uncited
+
+    source = _all_test_source()
+    citation_re = series.citation_re(target)
+    scrubbed = re.sub(citation_re, "SCRUBBED", source, flags=re.I)
+    assert not re.search(citation_re, scrubbed, re.I)
+
+    uncited = sorted(_uncited(series, scrubbed) - series.known_uncited)
+    assert uncited == [target], (
+        "scrubbing every AAT-001 citation should make the audit flag AAT-001 "
         f"specifically, not {uncited}"
     )
