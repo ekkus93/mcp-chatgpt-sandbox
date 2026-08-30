@@ -614,6 +614,20 @@ def run_exec_output(
     ):
         if value is not None and value < 0:
             raise InvalidArgumentError(f"{name} must be >= 0, not {value}", details={name: value})
+    # G2R-017 (`docs/GAP2_SPEC.md`): an inverted range (`byte_start=100,
+    # byte_end=50`) used to reach the slicing logic below unrejected —
+    # `requested = byte_end - byte_start` went negative, `capped =
+    # max(min(requested, limit), 0)` floored it back to `0`, and the
+    # client got back an empty read with `truncated: true` (`0 <
+    # requested`'s own comparison, still true for a negative
+    # `requested`) — indistinguishable from "there is more to read,
+    # page again," inviting a paging loop that can never terminate
+    # rather than a clear error naming the actual mistake.
+    if byte_start is not None and byte_end is not None and byte_end < byte_start:
+        raise InvalidArgumentError(
+            f"byte_end ({byte_end}) must be >= byte_start ({byte_start})",
+            details={"byte_start": byte_start, "byte_end": byte_end},
+        )
 
     record = reauthorized_job(
         job_id, job_store=job_store, manager=manager, registry=registry

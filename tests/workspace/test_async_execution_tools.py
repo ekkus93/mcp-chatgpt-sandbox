@@ -376,6 +376,38 @@ async def test_at_h029_exec_output_rejects_a_negative_offset(
         await server.call_tool("exec_output", {"job_id": job_id, field: -1})
 
 
+async def test_at_g2r017_exec_output_rejects_an_inverted_byte_range(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """G2R-017 (`docs/GAP2_SPEC.md`): a real regression — with
+    `byte_start=100, byte_end=50`, the old code let `requested =
+    byte_end - byte_start` go negative, `capped = max(min(requested,
+    limit), 0)` floored it back to `0`, and the client got back empty
+    `content` with `truncated: true` — indistinguishable from "there is
+    more to read, page again," inviting a paging loop that can never
+    terminate rather than a clear error naming the actual mistake."""
+    config = _configured(minimal_config, default_image_tag, tmp_path / "work" / "example")
+    server = create_server(config)
+    workspace_id = await _open_workspace(server)
+
+    started = await server.call_tool(
+        "exec_start", {"workspace_id": workspace_id, "shell": "printf '0123456789'"}
+    )
+    job_id = started.structured_content["job_id"]
+
+    async def finished() -> bool:
+        status = await server.call_tool("exec_status", {"job_id": job_id})
+        return bool(status.structured_content["state"] == "succeeded")
+
+    await _wait_until(finished)
+
+    with pytest.raises(ToolError, match="INVALID_ARGUMENT"):
+        await server.call_tool("exec_output", {"job_id": job_id, "byte_start": 100, "byte_end": 50})
+
+
 async def test_at_h029_stored_bytes_and_stream_total_bytes_diverge_once_truncated(
     minimal_config: ServerConfig,
     default_image_tag: str,
