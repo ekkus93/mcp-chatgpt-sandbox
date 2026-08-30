@@ -507,13 +507,13 @@ no `CONTRACT_VERSION` bump, matching G1's own earlier finding about this
 file's actual contents. Full unscoped `tests/`: 1015 passed, 0 failed,
 531s, 0 Docker leftovers before and after.
 
-### G5 — Redaction output is always JSON-serializable
+### G5 — Redaction output is always JSON-serializable ✅
 **Satisfies:** GR-007 · **Verified by:** GAT-005
-**Commit:** `PLACEHOLDER`
+**Commit:** `bb919a5`
 
-- [ ] A `set` in `details`/`metadata` survives `json.dumps`
-- [ ] A non-secret `bytes`/`bytearray` survives `json.dumps`
-- [ ] Test through `to_tool_error` and the audit writer, not just `_redact`
+- [x] A `set` in `details`/`metadata` survives `json.dumps`
+- [x] A non-secret `bytes`/`bytearray` survives `json.dumps`
+- [x] Test through `to_tool_error` and the audit writer, not just `_redact`
 
 **Defect (reproduced).**
 
@@ -544,6 +544,68 @@ correct (tuples serialize as arrays).
 `frozenset`, `memoryview`, and namedtuple degradation stay deliberate
 exclusions and are **out of scope** — except for the comment correction in
 G7.
+
+**Implemented as described.** `_redact` (`errors.py`): `set` now coerces
+to `list` (`[_redact(v, ...) for v in value]`) instead of a `set`
+comprehension — the exact asymmetry-fix the spec text called out, chosen
+over `tuple`'s type-preservation specifically because `tuple` is
+JSON-safe (an array) and `set` is not. Non-secret `bytes`/`bytearray`
+now decode with `errors="replace"` (`bytes(value).decode("utf-8",
+errors="replace")`) instead of returning the raw object — the same
+lossy-but-safe tradeoff `sanitize_for_client` (`git/service.py`) already
+uses at a client-facing boundary — computed once and reused for both the
+`_looks_like_secret` check and the return value, rather than decoding
+twice.
+
+**G7's own comment-correction folded in here, not deferred**, since it
+sits in the exact lines this task was already rewriting: the `tuple`/
+`namedtuple` comment block now explicitly notes that a namedtuple's
+field names are never consulted as key hints either (not just that the
+type degrades to a plain `tuple`). G7's own checklist item for this is
+satisfied by this commit — recorded there as "see G5" rather than
+duplicated.
+
+**Existing tests corrected, not silently rewritten — each explains
+why.** Three pre-existing tests encoded the old (buggy) behavior as
+their expected result, not merely "accurate when written, now
+describes obsolete history" — the assertion itself was wrong per this
+task's own requirement, so each was corrected in place with a docstring
+explaining the change, matching how AR-002/V5 corrected prior tests
+that encoded a defect:
+`test_at_vat005_a_secret_flagged_set_recurses` (expected a `set` back;
+now expects a `list`), `test_at_vat005_a_non_secret_bytes_value_is_left_
+untouched` → renamed `..._is_decoded_not_left_as_bytes` (expected raw
+`bytes` back; now expects the decoded `str`), and
+`test_at_aat002_a_non_secret_bytearray_value_is_left_untouched` →
+renamed `..._is_decoded_not_left_as_bytearray` (same, for `bytearray`) —
+found only by running the full touched-file suite, not anticipated by
+this task's own checklist.
+
+**New tests, watched fail first.** `tests/test_errors.py`:
+`test_at_gr007_a_non_utf8_non_secret_bytes_value_decodes_lossily_not_
+left_as_bytes` (the genuinely-non-UTF-8 case `errors="replace"` exists
+for) and `test_at_gr007_to_tool_error_does_not_crash_on_a_set_or_bytes_
+value` (through `to_tool_error`, per the checklist). `tests/test_audit.py`:
+`test_at_gr007_write_audit_event_does_not_crash_on_a_set_or_bytes_value`
+(through the audit writer, per the checklist) — its own docstring notes
+the pre-fix failure mode specifically: a `TypeError` from `json.dumps`
+isn't an `OSError`, so it wasn't caught by `write_audit_event`'s own
+`except OSError` and the event was lost entirely, not just logged to
+stderr.
+
+**Revert-verified.** Backed up `errors.py`, restored `HEAD`'s version,
+re-ran all 6 new/corrected tests together: all 6 failed with `TypeError:
+Object of type set/bytes is not JSON serializable` or an `AssertionError`
+against the old expected value — confirmed, not assumed. Restored the
+fix; `tests/test_errors.py tests/test_audit.py`: 75 passed.
+
+**Suites.** `tests/ --ignore=tests/workspace --ignore=tests/git` (the
+full non-Docker suite, `errors.py` being widely used): 451 passed.
+`pytest --collect-only`: 1018 tests (1015 + 3 new). Lint/format clean;
+`uv run mypy src`: no issues in 60 source files. No schema/contract
+change — internal redaction, never a tool's own JSON output; no
+`CONTRACT_VERSION` bump. Full unscoped `tests/`: 1018 passed, 0 failed,
+522s, 0 Docker leftovers before and after.
 
 ---
 
