@@ -681,17 +681,18 @@ Lint/format clean; `uv run mypy src`: no issues in 60 source files.
 Full unscoped `tests/`: 1019 passed, 0 failed, 529s, 0 Docker leftovers
 before and after.
 
-### G7 — Correct references the splits invalidated
+### G7 — Correct references the splits invalidated ✅
 **Satisfies:** GR-008
-**Commit:** `PLACEHOLDER`
+**Commit:** `e09ad82`
 
-- [ ] `src/dev_workspace_mcp/git/commit.py:107` — `tools/git.py` →
+- [x] `src/dev_workspace_mcp/git/commit.py:107` — `tools/git.py` →
       `tools/git_commit.py`
-- [ ] `docs/REVIEW_TODO.md:104,115,196`
-- [ ] `docs/REMEDIATION_TODO.md:2008,2010,2012`
-- [ ] `docs/AUDIT_TODO.md:412`
-- [ ] `errors.py` exclusion comment — note that namedtuple field names are
-      never used as key hints
+- [x] `docs/REVIEW_TODO.md:104,115,196`
+- [x] `docs/REMEDIATION_TODO.md:2008,2010,2012`
+- [x] `docs/AUDIT_TODO.md:412`
+- [x] `errors.py` exclusion comment — already done in G5 (touched the
+      exact same lines while implementing that fix); recorded here, not
+      duplicated
 
 The exact rows are tabulated in `docs/GAP_SPEC.md` GR-008. One is in
 shipped source; the rest are documentation. Verified that the *other*
@@ -715,6 +716,58 @@ checker to catch this class. It is a coverage audit — "is this number
 cited anywhere" — and that is the right scope. A link checker is a
 different tool with different failure modes; if one is wanted, it is its
 own task, not a mutation of this one.
+
+**Implemented as described, all five items — plus one adjacent finding
+GR-008's own audit had missed, corrected in the same table it sits in.**
+
+- `git/commit.py:107` (shipped source): fixed in place, not annotated —
+  a docstring explaining current architecture to today's reader, not a
+  historical record. `tools/git.py`'s `capture_index` → `tools/
+  git_commit.py`'s.
+- `docs/REVIEW_TODO.md` (narrative "what V1 did" — accurate when
+  written): one consolidated **Correction (G7, ...)** paragraph appended
+  after V1's own "Suites." line, covering both `capture_index`'s module
+  and the VAT-001 test's file (`f9ead84`/`7ce029a`); a second, separate
+  correction appended after V2's "Suites." line for the `test_service.py`
+  mentions (`fb194f9`/`7a3f38a`) — two paragraphs, not one, since they
+  correct two different tasks' write-ups.
+- `docs/REMEDIATION_TODO.md` (a `Property | Test | Location` **lookup
+  table**, not narrative — closer to "describes current state" than "what
+  a task did"): the `Location` column updated outright for all affected
+  rows, plus a correction note explaining the choice. **Found two more
+  stale rows here than GR-008 tabulated** — `test_rr005_*`/`test_rr004_*`
+  had also moved (`test_git_commit_tool.py` →
+  `test_git_commit_tool_failure_modes.py`), in the exact same table as
+  the three tabulated rows. Fixed all five together rather than leaving
+  two behind in a table I was already correcting; recorded as an
+  explicit finding beyond this task's own tabulated scope, not silently
+  folded in as if GR-008 had already counted it.
+- `docs/AUDIT_TODO.md` (narrative "what A4's own verification steps
+  did," including a `git show HEAD:… >`/restore sequence against the
+  real file at the time): corrected with a note, not rewritten — the
+  file genuinely existed and was genuinely edited/restored as described;
+  only its later, unrelated split makes the name look wrong to a reader
+  today.
+- `errors.py`: see G5's own commit — folded in there since it touched
+  the identical lines.
+
+**Verified rather than assumed** that no *other* `tools/git.py`
+reference in `src/` needed the same fix: `grep -n "tools/git\.py"
+src/dev_workspace_mcp/git/commit.py` after the edit shows exactly one
+remaining hit (the module docstring's "the execution service `tools/
+git.py` shares with `exec`") — accurate as written, since it describes
+shared execution infrastructure at the hub/subsystem level, not a
+specific function's current location.
+
+No test accompanies this task — every change is a comment or a
+documentation correction, no behavior changed. Verified anyway, per
+this list's own step 3: `tests/git/test_commit.py
+tests/workspace/test_git_commit_tool.py
+tests/workspace/test_git_commit_tool_failure_modes.py`: 52 passed.
+`pytest --collect-only`: 1019 tests, unchanged from G6 (as expected — no
+test added or removed). Lint/format clean; `uv run mypy src`: no issues
+in 60 source files. Full unscoped `tests/`: 1019 passed, 0 failed, 531s,
+0 Docker leftovers before and after.
 
 ### G8 — Close the tooling-drift hole, and correct the claims it produced
 **Satisfies:** GR-002, GR-003
