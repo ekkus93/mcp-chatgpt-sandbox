@@ -3,7 +3,7 @@ name = "dev-workspace-mcp"
 version = "0.1.0"
 description = "Private MCP server providing Docker-backed development workspaces to ChatGPT and other MCP clients"
 readme = "README.md"
-license = "MIT"
+license = "Apache-2.0"
 authors = [
     { name = "Phillip Chin", email = "ekkus93@gmail.com" }
 ]
