@@ -37,6 +37,14 @@ _CANDIDATE_FILENAMES = (".mcp-workspace.yml", ".mcp-workspace.yaml")
 #: schema version actually exists, not before.
 SUPPORTED_PROJECT_CONFIG_VERSIONS = frozenset({1})
 
+#: GR-004 (`docs/GAP_SPEC.md`): exact-name keys `environment:` may not
+#: set, because `docker/default/entrypoint.sh` reads them (directly, or
+#: implicitly via the shell that runs it) before the privilege drop.
+#: `LD_*` is matched by prefix instead (checked separately, alongside
+#: this set, at the one call site) since the loader family is open-ended
+#: (`LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT`, ...).
+_ENTRYPOINT_CONTROL_ENV_KEYS = frozenset({"PATH", "BASH_ENV", "ENV", "SHELLOPTS", "IFS", "HOME"})
+
 
 class ProjectCacheEntry(BaseModel):
     """One `caches[]` entry (§11). `path` is authored `$HOME`-relative
@@ -129,6 +137,42 @@ class ProjectWorkspaceConfig(BaseModel):
         if shadowed:
             raise ValueError(
                 f"environment may not set daemon-controlled variable(s) {shadowed} (§5.3/HR-006)"
+            )
+        return v
+
+    @field_validator("environment")
+    @classmethod
+    def _environment_cannot_control_interpreter_or_resolution(
+        cls, v: dict[str, str]
+    ) -> dict[str, str]:
+        """GR-004 (`docs/GAP_SPEC.md`): the check above closes the
+        daemon-identity gap HR-006 was written for, but `environment:`
+        reaches further than that — `docker/default/entrypoint.sh` runs
+        as root, PID 1, *before* the privilege drop, as `#!/bin/bash`,
+        with no `PATH=` assignment anywhere and unqualified calls to
+        `id`/`git`/`getent`/`useradd`/`mkdir`/`chown`/`chmod`/`setpriv`.
+        Every key other than the daemon-identity ones above used to
+        reach that phase unfiltered — verified in a live container that
+        a hostile `BASH_ENV` or `PATH` there is root code execution, and
+        that a `PATH` shadowing `id` to print anything but `0` skips the
+        privilege-drop check (`entrypoint.sh`'s
+        `[ "$(id -u)" != "0" ]`) entirely, running the workspace command
+        itself as root even under `container.sudo: false`.
+
+        A denylist, not an allowlist: `environment:` exists precisely so
+        a project can set arbitrary, project-specific variables (build
+        flags, log levels, service URLs) — an allowlist of "safe" names
+        would defeat that purpose. The residual risk of a denylist is
+        the ordinary one: a future interpreter-affecting variable this
+        set does not yet name. `docker/default/entrypoint.sh` gaining an
+        explicit, hardcoded `PATH` (`docs/GAP_TODO.md` G3) closes the
+        sharpest consequence — the drop-bypass — independently of
+        whatever this set does or does not cover."""
+        blocked = sorted(k for k in v if k in _ENTRYPOINT_CONTROL_ENV_KEYS or k.startswith("LD_"))
+        if blocked:
+            raise ValueError(
+                f"environment may not set variable(s) {blocked} that control the "
+                "container entrypoint's interpreter or command resolution (§5.3/GR-004)"
             )
         return v
 

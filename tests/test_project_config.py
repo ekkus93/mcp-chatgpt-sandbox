@@ -132,6 +132,29 @@ def test_at_hat005_an_ordinary_environment_variable_is_still_accepted(tmp_path: 
     assert config.environment == {"RUST_LOG": "debug"}
 
 
+@pytest.mark.parametrize(
+    "key", ["PATH", "BASH_ENV", "ENV", "SHELLOPTS", "IFS", "HOME", "LD_PRELOAD", "LD_LIBRARY_PATH"]
+)
+def test_at_gr004_environment_cannot_set_an_interpreter_or_resolution_variable(
+    tmp_path: Path, key: str
+) -> None:
+    """GR-004 (`docs/GAP_SPEC.md`): `_environment_cannot_shadow_daemon_
+    variables` (HR-006) rejects the daemon's own identity/credential
+    variables, but `docker/default/entrypoint.sh` runs as root, PID 1,
+    before the privilege drop, as `#!/bin/bash` with no `PATH=`
+    assignment anywhere and unqualified calls to `id`/`git`/`getent`/
+    `useradd`/`mkdir`/`chown`/`chmod`/`setpriv` — every other key in
+    `environment:` used to reach that phase unfiltered. Verified in a
+    live container (this task's own write-up) that a hostile `PATH` or
+    `BASH_ENV` there is root code execution, and — the sharper
+    consequence — a `PATH` shadowing `id` to print anything but `0`
+    skips the entrypoint's privilege-drop check entirely."""
+    repo_path = tmp_path / "repo"
+    _write(repo_path, {"version": 1, "environment": {key: "/tmp/evil"}})
+    with pytest.raises(ContainerCreateFailedError, match="interpreter or command resolution"):
+        load_project_config(repo_path)
+
+
 def test_unknown_cache_entry_field_is_a_validation_error(tmp_path: Path) -> None:
     repo_path = tmp_path / "repo"
     _write(
