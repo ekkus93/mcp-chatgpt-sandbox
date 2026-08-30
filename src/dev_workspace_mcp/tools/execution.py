@@ -57,8 +57,56 @@ from dev_workspace_mcp.workspace.manager import (
 )
 from dev_workspace_mcp.workspace.ssh_agent import resolve_ssh_key_path, ssh_key_fingerprint
 
-#: How long to wait after TERM before escalating to KILL on a timed-out command.
+#: How long to wait after TERM before escalating to KILL on a timed-out
+#: command. Shared by `tools/workspace.py`'s `run_setup_steps` too
+#: (G2R-016, `docs/GAP2_SPEC.md`) — a real cross-import, not a duplicated
+#: constant kept in sync by hand: the two used to be separate constants
+#: (`_SETUP_KILL_GRACE_PERIOD_SECONDS` there), which is exactly the shape
+#: that let the OSError-handling `kill_after_timeout` below closes also
+#: exist in only one of the two call sites for as long as it did.
 KILL_GRACE_PERIOD_SECONDS = 2.0
+
+
+async def kill_after_timeout(
+    execution_service: ExecutionService,
+    exec_id: str,
+    *,
+    workspace_id: str,
+    timeout_seconds: float,
+    grace_period_seconds: float = KILL_GRACE_PERIOD_SECONDS,
+) -> None:
+    """G2R-016 (`docs/GAP2_SPEC.md`): TERM, a grace period, then KILL —
+    shared between `run_exec` below and `tools/workspace.py`'s
+    `run_setup_steps`, extracted rather than left independently
+    hand-copied so the two cannot diverge again the way they already
+    had (`run_exec` handled a failed kill; the setup-step copy did not,
+    letting `PermissionError`/`DockerException` escape past
+    `@translate_workspace_errors` as an unstructured crash).
+
+    `ExecutionService.kill`'s own docstring is explicit that both
+    `PermissionError` (HR-020 — the daemon's own uid lacks permission to
+    signal this pid) and a `docker.errors.DockerException` from
+    `exec_inspect` (RR-013 — the container was removed out from under a
+    still-running exec) are deliberately allowed to propagate, not
+    swallowed as if the signal had succeeded. Caught here as
+    `(OSError, docker.errors.DockerException)`, not `OSError` alone:
+    `docker.errors.APIError` — the common case — chains through
+    `HTTPError`/`RequestException` to `OSError`, so a narrower
+    `except OSError` already covered it, but `kill`'s own docstring
+    promises *any* `DockerException` from `exec_inspect`, and a
+    non-`APIError` one (confirmed by checking `docker.errors`'
+    hierarchy directly, not assumed) would still escape a
+    plain `except OSError`."""
+    try:
+        await asyncio.to_thread(execution_service.kill, exec_id)
+        await asyncio.sleep(grace_period_seconds)
+        await asyncio.to_thread(execution_service.kill, exec_id, grace_period_reached=True)
+    except (OSError, docker.errors.DockerException) as exc:
+        raise ContainerRuntimeFailedError(
+            f"command exceeded {timeout_seconds}s and could not be terminated: {exc}",
+            details={"workspace_id": workspace_id, "timeout_seconds": timeout_seconds},
+            recoverable=False,
+        ) from exc
 
 
 def _new_job_id() -> str:
@@ -406,26 +454,18 @@ async def run_exec(
             details={"workspace_id": workspace_id},
         ) from exc
     except TimeoutError:
-        # HR-020: `kill` can raise `PermissionError` (the daemon's
-        # own uid lacks permission to signal this pid/process
-        # group) — reported as a structured error rather than an
-        # unhandled `OSError` escaping this tool as a crash.
-        # `consume`'s own blocked read (unlike `exec_start`'s split
-        # start/drain) has no stream reference available here to
+        # HR-020 / G2R-016: `kill_after_timeout` is what handles a
+        # failed kill (`PermissionError`/`DockerException`) as a
+        # structured error rather than an unhandled crash — see its own
+        # docstring. `consume`'s own blocked read (unlike `exec_start`'s
+        # split start/drain) has no stream reference available here to
         # force-close on a failed kill — a stream that never EOFs
         # can still hold this call's `asyncio.to_thread` executor
         # slot indefinitely; scoped out of this task, which the
         # HARDENING_TODO.md write-up documents explicitly.
-        try:
-            await asyncio.to_thread(service.kill, exec_id)
-            await asyncio.sleep(KILL_GRACE_PERIOD_SECONDS)
-            await asyncio.to_thread(service.kill, exec_id, grace_period_reached=True)
-        except OSError as exc:
-            raise ContainerRuntimeFailedError(
-                f"command exceeded {timeout}s and could not be terminated: {exc}",
-                details={"workspace_id": workspace_id, "timeout_seconds": timeout},
-                recoverable=False,
-            ) from exc
+        await kill_after_timeout(
+            service, exec_id, workspace_id=workspace_id, timeout_seconds=timeout
+        )
         raise CommandTimeoutError(
             f"command exceeded {timeout}s and was terminated",
             details={"workspace_id": workspace_id, "timeout_seconds": timeout},

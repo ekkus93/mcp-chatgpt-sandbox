@@ -617,6 +617,63 @@ def test_at_g2r015_delete_without_state_dir_leaves_old_behavior_unchanged(
     assert job_dir.exists()  # untouched
 
 
+# --- G2R-016 (`docs/GAP2_SPEC.md`): a setup-step kill failure is a typed error -----
+
+
+async def test_at_g2r016_a_setup_step_kill_failure_is_a_typed_error(
+    manager: DockerWorkspaceManager,
+    docker_client: docker.DockerClient,
+    repository: RepositoryRecord,
+    default_image_tag: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G2R-016: `run_setup_steps`'s own `except TimeoutError` used to
+    kill the timed-out step with no exception handling at all —
+    `ExecutionService.kill`'s own docstring is explicit that a failed
+    kill (`PermissionError`, HR-020) is deliberately allowed to
+    propagate, not swallowed. `run_exec` (`tools/execution.py`) already
+    handled exactly this; the setup-step copy did not, so it escaped
+    past `@translate_workspace_errors` as an unstructured crash instead
+    of the same `ContainerRuntimeFailedError` `run_exec` reports.
+    Exercised by calling `run_setup_steps` directly against a real
+    running container — its own docstring says it is written to support
+    exactly that, module-level rather than a `register()` closure, for
+    unit-testing without a whole running server."""
+    import dev_workspace_mcp.tools.workspace as workspace_module
+    from dev_workspace_mcp.config.models import ContainerConfig, ExecutionConfig
+    from dev_workspace_mcp.execution.service import ExecutionService
+    from dev_workspace_mcp.tools.workspace import run_setup_steps
+
+    # A tiny timeout, not the real 600s default — `_SETUP_STEP_TIMEOUT_
+    # SECONDS` is a module constant with "no config knob for a single
+    # call site" (its own comment), so a real test has to monkeypatch it
+    # rather than wait it out.
+    monkeypatch.setattr(workspace_module, "_SETUP_STEP_TIMEOUT_SECONDS", 0.2)
+
+    def _kill_raises_permission_error(
+        self: ExecutionService, *args: object, **kwargs: object
+    ) -> None:
+        raise PermissionError("simulated: daemon lacks permission to signal this pid")
+
+    monkeypatch.setattr(ExecutionService, "kill", _kill_raises_permission_error)
+
+    # `default_image_tag`, not `TEST_IMAGE` (`alpine:3.20`, no `bash`):
+    # `run_setup_steps` always runs `["bash", "-c", step]`.
+    record = manager.ensure_workspace(
+        repository=repository, image=default_image_tag, run_kwargs=KEEP_ALIVE_RUN_KWARGS
+    )
+    execution_service = ExecutionService(docker_client)
+
+    with pytest.raises(ContainerRuntimeFailedError, match="could not be terminated"):
+        await run_setup_steps(
+            execution_service,
+            record,
+            ["sleep 30"],
+            container_config=ContainerConfig(user="host", sudo=False),
+            execution_config=ExecutionConfig(),
+        )
+
+
 # --- H32: OOM reporting surface (`docs/HARDENING_SPEC.md` §9/§26 row) --------------
 
 

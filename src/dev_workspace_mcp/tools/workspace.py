@@ -56,6 +56,7 @@ from dev_workspace_mcp.project_config import (
 )
 from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.schema_export import CONTRACT_VERSION
+from dev_workspace_mcp.tools.execution import kill_after_timeout
 from dev_workspace_mcp.workspace.caches import build_cache_mounts, resolve_caches
 from dev_workspace_mcp.workspace.container_config import (
     build_workspace_run_kwargs,
@@ -83,10 +84,13 @@ DEFAULT_WORKSPACE_PATH = "/workspace"
 #: `execution.sync_timeout_seconds` (30s), so this gets its own, more
 #: generous budget rather than a new config knob for a single call site.
 _SETUP_STEP_TIMEOUT_SECONDS = 600.0
-#: Matches `tools/execution.py`'s own `KILL_GRACE_PERIOD_SECONDS` — a
-#: separate constant, not a cross-import, since the two tool modules are
-#: otherwise independent of each other.
-_SETUP_KILL_GRACE_PERIOD_SECONDS = 2.0
+#: G2R-016 (`docs/GAP2_SPEC.md`): a real cross-import of
+#: `tools/execution.py`'s `KILL_GRACE_PERIOD_SECONDS` now, not a second,
+#: separately hand-kept constant — the previous comment here claimed the
+#: two tool modules were "otherwise independent of each other" as the
+#: reason to duplicate rather than import, but that was the exact
+#: condition that let this one grace period and `run_exec`'s kill-failure
+#: handling (missing entirely from the setup-step copy) drift apart.
 
 
 @dataclass
@@ -213,9 +217,19 @@ async def run_setup_steps(
                 details={"workspace_id": record.id, "step": step},
             ) from exc
         except TimeoutError:
-            await asyncio.to_thread(execution_service.kill, exec_id)
-            await asyncio.sleep(_SETUP_KILL_GRACE_PERIOD_SECONDS)
-            await asyncio.to_thread(execution_service.kill, exec_id, grace_period_reached=True)
+            # G2R-016 (`docs/GAP2_SPEC.md`): `kill_after_timeout` is what
+            # handles a failed kill (`PermissionError`/`DockerException`,
+            # `tools/execution.py`'s own docstring) as a structured error
+            # rather than letting it escape past
+            # `@translate_workspace_errors` as an unstructured crash —
+            # exactly the gap `run_exec` already closed and this copy
+            # had not.
+            await kill_after_timeout(
+                execution_service,
+                exec_id,
+                workspace_id=record.id,
+                timeout_seconds=_SETUP_STEP_TIMEOUT_SECONDS,
+            )
             raise CommandFailedError(
                 f".mcp-workspace.yml setup step exceeded {_SETUP_STEP_TIMEOUT_SECONDS}s: {step!r}",
                 details={"workspace_id": record.id, "step": step},
