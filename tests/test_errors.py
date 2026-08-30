@@ -29,12 +29,13 @@ _ALL_CODES = list(ErrorCode)
 
 
 def test_every_spec_31_code_is_covered_by_exactly_one_error_class() -> None:
-    """§31 lists 25 codes (24 plus H22's `GIT_NOTHING_TO_COMMIT`); each
-    must map to exactly one WorkspaceError subclass, and every subclass
-    must be reachable from this module."""
+    """§31 lists 26 codes (24 plus H22's `GIT_NOTHING_TO_COMMIT` plus
+    G2R-013's `IMAGE_NOT_FOUND`); each must map to exactly one
+    WorkspaceError subclass, and every subclass must be reachable from
+    this module."""
     subclasses = WorkspaceError.__subclasses__()
     codes = [cls.code for cls in subclasses]
-    assert len(codes) == 25
+    assert len(codes) == 26
     assert sorted(codes, key=str) == sorted(_ALL_CODES, key=str)
     assert len(set(codes)) == len(codes)  # no code claimed by two classes
 

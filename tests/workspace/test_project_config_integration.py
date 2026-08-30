@@ -83,6 +83,36 @@ async def test_project_config_image_overrides_the_default(
     assert result.structured_content["image"] == default_image_tag
 
 
+async def test_at_g2r013_an_image_absent_locally_after_a_config_edit_raises_a_typed_error(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """G2R-013 (`docs/GAP2_SPEC.md`): a real regression — `reconcile()`
+    returns a persistent workspace's existing `RUNNING` container
+    without touching Docker images at all, so editing `.mcp-workspace.
+    yml`'s `image:` to something never pulled locally leaves nothing to
+    pull it before the reproducibility-record digest lookup
+    (`docker_client.images.get`, in `workspace_open`) runs against it.
+    `docker.errors.ImageNotFound` used to escape untyped past
+    `@translate_workspace_errors` — an unstructured crash instead of a
+    clean, typed `IMAGE_NOT_FOUND` naming the image."""
+    repo_path = tmp_path / "work" / "example"
+    _init_repo(repo_path, project_config={"version": 1})
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+    first = await _open(server)
+    assert first.structured_content["container_state"] == "running"
+
+    (repo_path / ".mcp-workspace.yml").write_text(
+        yaml.safe_dump({"version": 1, "image": "this-image-does-not-exist:latest"})
+    )
+
+    with pytest.raises(ToolError, match="IMAGE_NOT_FOUND"):
+        await _open(server)
+
+
 async def test_environment_from_project_config_reaches_the_container(
     minimal_config: ServerConfig,
     default_image_tag: str,

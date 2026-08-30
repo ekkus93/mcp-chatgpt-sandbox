@@ -1,6 +1,6 @@
 """The §31 error taxonomy and its mapping to MCP tool errors (§6.1).
 
-Every domain error in the system is one of the 25 typed exceptions below,
+Every domain error in the system is one of the 26 typed exceptions below,
 each carrying the fields §31 requires: a stable code, a concise message, a
 recoverable flag, and structured details. `to_tool_error()` and the
 `@translate_workspace_errors` decorator are the "map internal errors to
@@ -56,6 +56,7 @@ class ErrorCode(StrEnum):
     POLICY_DENIED = "POLICY_DENIED"
     CONTAINER_CREATE_FAILED = "CONTAINER_CREATE_FAILED"
     CONTAINER_RUNTIME_FAILED = "CONTAINER_RUNTIME_FAILED"
+    IMAGE_NOT_FOUND = "IMAGE_NOT_FOUND"
     NETWORK_FAILED = "NETWORK_FAILED"
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
@@ -215,6 +216,20 @@ class ContainerCreateFailedError(WorkspaceError):
 class ContainerRuntimeFailedError(WorkspaceError):
     code = ErrorCode.CONTAINER_RUNTIME_FAILED
     default_recoverable = True  # Docker/container hiccups are often transient
+
+
+class ImageNotFoundError(WorkspaceError):
+    code = ErrorCode.IMAGE_NOT_FOUND
+    # G2R-013 (`docs/GAP2_SPEC.md`): a persistent workspace already
+    # RUNNING an older container, reconciled against an updated
+    # `.mcp-workspace.yml` `image:` nothing has pulled locally yet —
+    # `reconcile()` returns RUNNING without touching Docker images, so
+    # nothing pulls the new one, and the reproducibility-record lookup
+    # (`docker_client.images.get`) in `workspace_open` is what discovers
+    # it is missing. Usually a configuration problem (a typo, or an
+    # image genuinely not built/pulled yet), not a transient hiccup —
+    # same category `ContainerCreateFailedError` is already in.
+    default_recoverable = False
 
 
 class NetworkFailedError(WorkspaceError):

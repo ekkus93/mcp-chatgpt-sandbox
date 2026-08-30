@@ -32,6 +32,7 @@ from dev_workspace_mcp.config.models import (
 from dev_workspace_mcp.errors import (
     CommandFailedError,
     ContainerRuntimeFailedError,
+    ImageNotFoundError,
     RemoteProtectionMissingError,
     RepositoryNotAllowedError,
     translate_workspace_errors,
@@ -472,7 +473,23 @@ async def open_workspace(
     # Docker API call (`images.get`), not a cached value — cheap, and
     # correct even if the tag was retagged since the container last
     # started.
-    image_digest = docker_client.images.get(effective_image).id
+    #
+    # G2R-013 (`docs/GAP2_SPEC.md`): unlike every other Docker call in
+    # this module, this one had no `try` — a persistent workspace
+    # already `RUNNING`, reconciled against a `.mcp-workspace.yml`
+    # `image:` edited to something absent locally (`reconcile()`
+    # returns `RUNNING` without touching Docker images, so nothing
+    # pulls the new one), made `docker.errors.ImageNotFound` escape
+    # untyped past `translate_workspace_errors`, an unstructured crash
+    # rather than a clean, typed `workspace_open` failure naming the
+    # image.
+    try:
+        image_digest = docker_client.images.get(effective_image).id
+    except docker.errors.ImageNotFound as exc:
+        raise ImageNotFoundError(
+            f"image not found locally: {effective_image!r}",
+            details={"image": effective_image},
+        ) from exc
     config_version = project_config.version if project_config is not None else None
     with db:
         db.execute(
