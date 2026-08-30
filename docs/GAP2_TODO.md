@@ -454,7 +454,9 @@ tool) and redoing it against a genuine violation. Same discipline here.
 
 - [ ] The three checks run against the index, not the working tree
 - [ ] A clean commit still succeeds with unrelated dirty files present
-- [ ] The stash/restore cannot lose work on failure or interrupt
+- [ ] The mechanism cannot corrupt the working tree on failure, interrupt,
+      or a staged/unstaged overlap
+- [ ] Cleanup happens even if a check itself is interrupted (`trap`)
 
 **Defect.** `.githooks/pre-commit` runs `ruff format --check .`,
 `ruff check .`, `mypy src` — all against the working tree. A commit
@@ -467,25 +469,60 @@ records the index. Two divergences:
 - *False positive.* An unrelated dirty or untracked `.py` blocks every
   commit until cleaned. `ruff check .` walks untracked files too.
 
-**Shape of the fix.** `git stash --keep-index --include-untracked` around
-the checks with a restoring `trap`. **The trap is the load-bearing
-part**: a hook that stashes and dies without restoring loses the
-developer's uncommitted work, which is far worse than the bug being
-fixed. Test the interrupt path explicitly, not just the pass and fail
-paths.
+**Do not implement this with `git stash --keep-index` — verified broken
+on its own intended use, not merely suboptimal.** It was this task's
+first draft, and it looked right: stash everything outside the index,
+run the checks, pop it back. Reproduced why it fails: `git stash pop`
+restores what it stashed via a **three-way merge**, and that merge can
+conflict with the very thing a developer is doing when this hook's own
+scenario applies — fixing a staged mistake with an unstaged edit *on the
+same line*. Stage a broken version, leave a same-line fix unstaged,
+stash with `--keep-index`, pop: `git stash pop` reports `CONFLICT
+(content): Merge conflict`, and the file is left containing literal
+`<<<<<<< / ======= / >>>>>>>` markers — worse than doing nothing, and a
+real trap/interrupt failure mode is not even required to trigger it.
 
-**Handle "nothing to stash".** When there is nothing outside the index
-to save, `git stash` creates no stash and reports "No local changes to
-save" — a `git commit --allow-empty`, or a commit where every change is
-staged and no untracked files exist, hits this. A trap that
-unconditionally pops then fails, or worse pops an *older, unrelated*
-stash off the top. Capture whether a stash was actually created (compare
-`git rev-parse -q --verify refs/stash` before and after, or check the
-push's own exit/output) and make the restore conditional on it. This is
-the failure mode most likely to bite a developer rather than CI, so test
-it directly.
+**Shape of the fix — a temporary worktree, not the working tree at
+all.** `git write-tree` snapshots the current index as a tree object
+(index-only; cannot conflict with anything, since it never touches the
+working tree). `git commit-tree <tree> -p HEAD -m ...` wraps it as a
+throwaway commit. `git worktree add --detach <tmpdir> <that commit>`
+checks it out into a scratch directory; run the three checks with `cd`
+into it (or `uv run --project <tmpdir>`). Cleanup is
+`git worktree remove`, which cannot conflict either — there is nothing
+to merge, only a directory to delete. Verified fast enough not to
+matter: worktree creation plus a fresh `uv run` (creating its own
+`.venv`, `uv`'s own package cache makes this cheap) together took under
+150ms against this repository.
 
----
+**The `trap` is still load-bearing**, for a smaller reason than the
+original draft's: an interrupted check run (Ctrl-C mid-`mypy`) should
+still clean up the scratch worktree rather than leaving it registered.
+Nothing here can lose developer work, since the real working tree was
+never touched — the trap's job is tidiness, not data safety.
+
+**A second bug found implementing this, not merely a risk to guard
+against — `git worktree add` failed outright on every real commit
+attempted through the actual hook, while working fine run directly from
+an interactive shell.** `git` sets `GIT_INDEX_FILE=.git/index` (relative)
+in every hook's own environment; a hook's `git` subprocesses inherit it.
+`fatal: .git/index: index file open failed: Not a directory` —
+reproduced by tracing the hook step by step until this was the exact
+command that failed, then confirmed `unset GIT_INDEX_FILE` before any
+`git` command runs is sufficient by isolating it as the only change
+between a failing and a succeeding real `git commit`.
+
+**Do not verify this task with `git clone` into a throwaway test repo
+and expect the current working-tree hook to be present** — `git clone`
+only carries committed history; an uncommitted `.githooks/pre-commit`
+edit in the source checkout has to be copied into the clone by hand
+after cloning, and again after every `git reset --hard` in that clone
+(which restores whatever `.githooks/pre-commit` the target commit
+actually recorded). Losing track of this produced two false readings
+while verifying this task — a "the fix does nothing" reading from
+testing a stale pre-worktree hook, and a "the false-positive case is
+still broken" reading from the same cause — before the real bug above
+was found underneath both.
 
 ## Phase 2 — Correctness defects in shipped code
 

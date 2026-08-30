@@ -18,8 +18,62 @@
 # hook — that is git's own design, not a gap this hook can close.
 # Enforcing means "on by default for anyone who ran the one-time setup
 # step," not "physically impossible to skip."
+#
+# G2R-008 (docs/GAP2_SPEC.md): the checks below run against a snapshot
+# of the *index*, not the working tree — a commit records the index,
+# and checking the working tree instead let a file staged in a failing
+# state, then fixed unstaged, commit its broken staged version anyway
+# (the G1 failure mode by another route).
+#
+# Built via a temporary `git worktree`, deliberately not
+# `git stash --keep-index` — that was this file's first draft, and it
+# has a real, reproduced failure mode: `git stash pop` restores what it
+# stashed via a three-way merge, and that merge can conflict with a
+# same-line fix left unstaged — precisely the scenario this hook exists
+# to make routine (stage a mistake, fix it unstaged) — leaving the file
+# containing literal conflict markers, worse than doing nothing. A
+# worktree built from `git write-tree` never touches the real working
+# tree at all, so nothing can conflict with it; cleanup is
+# `git worktree remove`, a directory deletion, not a merge — verified
+# that removal succeeds even while a shell's cwd is still inside the
+# worktree being removed, so the `cd back` below is for hygiene, not
+# because cleanup would otherwise fail.
+#
+# `unset GIT_INDEX_FILE` below is load-bearing, not defensive: git sets
+# it (to the relative path `.git/index`) in every hook's environment,
+# and it is inherited by this script's own `git` subprocesses. Verified
+# by reproducing the failure directly: with it still set, `git worktree
+# add` itself fails with `fatal: .git/index: index file open failed:
+# Not a directory` on every single real commit through this hook — not
+# only the conflict scenario above — because `.git` in a worktree is a
+# *file* (a pointer to the real git dir), not a directory, so resolving
+# the inherited relative path against it breaks. Confirmed this is the
+# actual, sufficient fix: identical script, only this `unset` added,
+# and `git worktree add` succeeds.
 
 set -eu
+
+unset GIT_INDEX_FILE
+
+original_dir=$(pwd)
+tree=$(git write-tree)
+snapshot_commit=$(git commit-tree "$tree" -p HEAD -m "pre-commit: staged snapshot")
+worktree_dir=$(mktemp -d)
+rmdir "$worktree_dir"  # `git worktree add` requires the target not already exist
+
+# shellcheck disable=SC2317
+# False positive: shellcheck's static analysis doesn't follow `trap
+# cleanup ...` below as a call site, so it reads this function's body as
+# unreachable. It runs on every exit path (normal, failed check,
+# Ctrl-C, kill).
+cleanup() {
+    cd "$original_dir"
+    git worktree remove --force "$worktree_dir" >/dev/null 2>&1 || rm -rf "$worktree_dir"
+}
+trap cleanup EXIT INT TERM
+
+git worktree add --quiet --detach "$worktree_dir" "$snapshot_commit"
+cd "$worktree_dir"
 
 fail=0
 

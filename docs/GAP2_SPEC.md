@@ -374,9 +374,44 @@ Two divergences follow:
   every commit until cleaned, including commits that do not touch it.
 
 **Requirement.** The hook SHALL check the content that would be
-committed. `git stash --keep-index --include-untracked` around the checks
-with a restoring trap satisfies this, as does checking out the index to a
-temporary tree.
+committed, and SHALL NOT be able to corrupt the developer's working tree
+while doing it.
+
+**`git stash --keep-index` is not safe here — verified, not assumed.**
+It looks like the obvious mechanism, but `git stash pop` performs a
+three-way merge to restore what it stashed, and that merge can conflict
+with the *fix* deliberately left unstaged. Reproduced: stage a broken
+version, leave a fix unstaged that touches the same line, stash with
+`--keep-index`, then pop — `git stash pop` reports `CONFLICT (content):
+Merge conflict`, and the working file is left containing literal
+`<<<<<<< / ======= / >>>>>>>` markers instead of either version. That is
+precisely the scenario this requirement exists to make routine (stage a
+failing version, fix it unstaged) — a mechanism that corrupts the file
+on exactly its own intended use is worse than the defect it closes.
+
+**Checking out the index into a temporary worktree does not have this
+failure mode**, because it never touches the real working tree at all:
+`git write-tree` snapshots the index as a tree object (index-only, no
+working-tree interaction, cannot conflict with anything), `git
+commit-tree` wraps it as a commit, and `git worktree add --detach` checks
+that commit out into a scratch directory the checks run against.
+Cleanup is `git worktree remove`, not a merge. Verified fast enough not
+to matter: worktree creation and a fresh `uv run` (creating its own
+`.venv` via `uv`'s package cache) together took under 150ms against this
+repository.
+
+**A second pitfall, found implementing this, not merely theorized:**
+`git` sets `GIT_INDEX_FILE=.git/index` (a relative path) in every
+hook's environment, and a hook script's own `git` subprocesses inherit
+it. `git worktree add` reached from *inside a real hook invocation* —
+not from an interactive shell, where this environment variable is
+unset — fails outright with `fatal: .git/index: index file open
+failed: Not a directory`, on every single commit, not only the conflict
+scenario above: a worktree's `.git` is a *file* (a pointer to the real
+git dir), not a directory, so resolving the inherited relative path
+against it breaks. `unset GIT_INDEX_FILE` before any `git` command runs
+is the fix, confirmed sufficient by isolating it as the only change
+between a failing and a succeeding run.
 
 Verified by G2AT-008.
 
