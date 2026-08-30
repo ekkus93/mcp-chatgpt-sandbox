@@ -133,6 +133,18 @@ before this change, 23 after, all the same pattern the file already had —
 is not part of the `mypy src` gate CI actually runs). No schema/contract
 change; no `CONTRACT_VERSION` bump needed, as expected.
 
+**Correction (G7, `docs/GAP_SPEC.md` GR-008):** two references above were
+accurate when written, no longer are — five file-splitting commits
+landed after this task, and both moved without this write-up being
+updated. `capture_index` lives in `tools/git_commit.py` now, not
+`tools/git.py` (`f9ead84`'s split of `tools/git.py` into a thin hub plus
+per-tool modules). `test_at_vat001_a_line_cropped_index_snapshot_does_
+not_crash_the_commit` lives in `tests/workspace/
+test_git_commit_tool_failure_modes.py` now, not `tests/workspace/
+test_git_commit_tool.py` (`7ce029a`'s split of that file). Neither move
+changed what either did — recorded here as a location correction, not a
+retraction of anything V1 claimed.
+
 ### V2 — `truncated` reflects bytes withheld, not bytes requested ✅
 **Satisfies:** VR-002 · **Verified by:** VAT-002
 **Commit:** `d698f8c`
@@ -215,6 +227,11 @@ caller): 146 passed. Full unscoped `tests/`: 983 passed, 0 failed,
 532.64s. No Docker leftovers. Lint/format clean; `mypy src`: no issues in
 53 files. No schema/contract change — `truncated`'s type is unchanged,
 only which value it reports; no `CONTRACT_VERSION` bump.
+
+**Correction (G7, `docs/GAP_SPEC.md` GR-008):** `tests/filesystem/
+test_service.py` above no longer exists — split into four files by
+operation (`fb194f9`/`7a3f38a`). Both `test_at_vat002_*` tests now live
+in `tests/filesystem/test_service_read.py`.
 
 ### V3 — Daemon-controlled variables are re-asserted in every branch ✅
 **Satisfies:** VR-003 · **Verified by:** VAT-003

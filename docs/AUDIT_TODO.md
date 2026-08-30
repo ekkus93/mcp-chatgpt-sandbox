@@ -423,6 +423,14 @@ meta-tests' own internal scrub.**
    isolated rename. Left in this write-up because it's real evidence the
    audit doesn't need to be told what broke to catch it.
 
+**Correction (G7, `docs/GAP_SPEC.md` GR-008):** `tests/filesystem/
+test_service.py`, named twice above (steps 1 and 2) as the real file this
+verification edited and restored, no longer exists under that name — it
+was later split into four files by operation (`fb194f9`/`7a3f38a`). This
+is a historical account of what genuinely happened at the time, on the
+file that genuinely existed then, and stays as written; the file's later
+split doesn't make either verification step less real.
+
 **Suites — full coverage, but split across two runs, and honestly reported
 including three environment-caused false alarms along the way.**
 `tests/test_acceptance_test_coverage.py`: 6 passed. `pytest --collect-only`

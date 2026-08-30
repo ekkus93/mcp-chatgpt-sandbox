@@ -104,9 +104,9 @@ def build_capture_index_argv(paths: list[str]) -> list[str]:
     used to also claim a large listing is "truncated only by the byte
     cap, never silently by line count" — false. Git does not escape
     newlines in `-z` output, so a path containing one still breaks a
-    line-based crop mid-entry. `tools/git.py`'s `capture_index` reads
-    this argv's output through `ExecutionService.capture`, which is not
-    line-cropped, specifically so this listing can be handed whole to
+    line-based crop mid-entry. `tools/git_commit.py`'s `capture_index`
+    reads this argv's output through `ExecutionService.capture`, which is
+    not line-cropped, specifically so this listing can be handed whole to
     `parse_index_entries` regardless of what a path contains."""
     return ["git", "ls-files", "-z", "--stage", "--", *_literal_pathspecs(paths)]
 

@@ -2003,13 +2003,25 @@ this as an accepted substitution rather than a gap.
 | Property | Test | Location |
 |---|---|---|
 | Character-safe pagination, invalid bytes | `test_rr016_pagination_with_an_invalid_byte_for_every_max_bytes_from_1_to_64` | `tests/git/test_diff.py:364` |
-| Index rollback, prior staged content | `test_rr005_a_failed_commit_restores_prior_staged_content_not_head` | `tests/workspace/test_git_commit_tool.py:779` |
-| Pathspec literalization, `""`/`"."`/`"./"` | `test_rr004_an_empty_or_root_normalizing_path_is_rejected_before_staging` (parametrized over exactly `["", ".", "./"]`) | `tests/workspace/test_git_commit_tool.py:651` |
-| Failed termination, unreachable Docker daemon | `test_rr013_failed_termination_via_a_real_exec_inspect_failure` | `tests/workspace/test_async_execution_tools.py:635` |
+| Index rollback, prior staged content | `test_rr005_a_failed_commit_restores_prior_staged_content_not_head` | `tests/workspace/test_git_commit_tool_failure_modes.py` |
+| Pathspec literalization, `""`/`"."`/`"./"` | `test_rr004_an_empty_or_root_normalizing_path_is_rejected_before_staging` (parametrized over exactly `["", ".", "./"]`) | `tests/workspace/test_git_commit_tool_failure_modes.py` |
+| Failed termination, unreachable Docker daemon | `test_rr013_failed_termination_via_a_real_exec_inspect_failure` | `tests/workspace/test_async_execution_tools_cancel.py` |
 | Enumeration resilience, symlink loop / permission error | `test_rr007_search_files_survives_a_symlink_loop`, `test_rr007_search_files_survives_an_unreadable_subdirectory` | `tests/filesystem/test_search.py:145,160` |
-| Enumeration resilience (list variant) | `test_rr007_list_files_survives_a_symlink_loop`, `test_rr007_list_files_survives_an_unreadable_subdirectory` | `tests/filesystem/test_service.py:876,893` |
+| Enumeration resilience (list variant) | `test_rr007_list_files_survives_a_symlink_loop`, `test_rr007_list_files_survives_an_unreadable_subdirectory` | `tests/filesystem/test_service_list.py` |
 | Tail correctness, nonzero backward offset | `test_rr019_read_log_tail_composed_with_tail_text_at_a_nonzero_backward_offset` | `tests/execution/test_log_capture.py:255` |
-| Text/binary, multi-byte character at the limit boundary | `test_rr018_a_multibyte_character_at_the_limit_boundary_is_truncated_text` | `tests/filesystem/test_service.py:266` |
+| Text/binary, multi-byte character at the limit boundary | `test_rr018_a_multibyte_character_at_the_limit_boundary_is_truncated_text` | `tests/filesystem/test_service_read.py` |
+
+**Correction (G7, `docs/GAP_SPEC.md` GR-008):** the `Location` column
+above updated outright, not annotated — a lookup table describing where
+to currently find a test, not a narrative account of what a task did.
+Six of the five file-splitting commits' effects landed here: three were
+tabulated by GR-008 itself (`test_async_execution_tools.py`,
+`test_service.py` ×2); the RR-004/RR-005 rows (`test_git_commit_tool.py`
+→ `test_git_commit_tool_failure_modes.py`) were not, found only while
+correcting the tabulated rows in this same table. Line numbers dropped
+where a test's exact position in its new file wasn't independently
+re-verified here — the file name is what this table is for; `git grep
+-n` finds the current line cheaply if needed.
 
 All 8 tests (one row has two variants) run and pass:
 `uv run pytest tests/ -k "<the 8 names>"` → 12 passed (`test_rr007_*` and
