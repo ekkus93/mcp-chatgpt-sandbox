@@ -347,6 +347,69 @@ def test_at_vat004_a_symlinked_ssh_config_planted_in_a_cache_volume_is_not_follo
         )
 
 
+def test_at_gr009_a_symlinked_ssh_directory_planted_in_a_cache_volume_is_not_followed(
+    docker_client: docker.DockerClient, default_image_tag: str, ssh_config: SSHConfig
+) -> None:
+    """GR-009 (`docs/GAP_SPEC.md`): VAT-004 above exercises
+    `entrypoint.sh`'s `config`-*file* refusal (`[ -L
+    "$HOME_DIR/.ssh/config" ]`); the sibling refusal one line earlier
+    (`[ -L "$HOME_DIR/.ssh" ]`, for `.ssh` itself) had no test at all.
+
+    `.ssh` itself cannot be replaced with a symlink through a cache
+    volume mounted *at* `.ssh` (`cache_paths=[".ssh"]`, VAT-004's own
+    setup) — a Docker volume mount always creates a real directory at
+    its own mount point, so the mount point itself can never be a
+    symlink. `cache_paths=["."]` — `.` normalizes to `$HOME` itself, per
+    `entrypoint.sh`'s own docstring here — mounts a persistent,
+    container-writable volume at `$HOME` *containing* `.ssh` as an
+    ordinary subdirectory, which an unprivileged run genuinely can
+    replace with a symlink."""
+    volume_name = f"mcp-test-gr009-{uuid.uuid4().hex[:12]}"
+    mount = docker.types.Mount(
+        target="/home/mcpuser", source=volume_name, type="volume", read_only=False
+    )
+    config = ContainerConfig(user="host", sudo=False)
+
+    plant_kwargs = build_workspace_run_kwargs(
+        ssh_config=ssh_config,
+        container_config=config,
+        docker_client=docker_client,
+        checkout_uid=1234,
+        checkout_gid=1234,
+        cache_paths=["."],
+    )
+    docker_client.containers.run(
+        default_image_tag,
+        # entrypoint.sh's own root phase already created a real `.ssh`
+        # directory (with `config` inside it) on *this* run, before
+        # dropping to this unprivileged command — replaced outright with
+        # a symlink for the *next* run's root phase to encounter.
+        ["sh", "-c", "rm -rf /home/mcpuser/.ssh && ln -s /etc /home/mcpuser/.ssh"],
+        remove=True,
+        labels={LABEL_MANAGED: "true"},
+        environment=plant_kwargs["environment"],
+        mounts=[mount],
+    )
+
+    reach_kwargs = build_workspace_run_kwargs(
+        ssh_config=ssh_config,
+        container_config=config,
+        docker_client=docker_client,
+        checkout_uid=1234,
+        checkout_gid=1234,
+        cache_paths=["."],
+    )
+    with pytest.raises(docker.errors.ContainerError, match="symlink"):
+        docker_client.containers.run(
+            default_image_tag,
+            ["sh", "-c", "id -u"],
+            remove=True,
+            labels={LABEL_MANAGED: "true"},
+            environment=reach_kwargs["environment"],
+            mounts=[mount],
+        )
+
+
 def test_at_014_sudo_apt_get_install_works_as_non_root(
     docker_client: docker.DockerClient, default_image_tag: str, ssh_config: SSHConfig
 ) -> None:

@@ -200,7 +200,16 @@ def test_at_vat005_a_secret_flagged_set_recurses() -> None:
     `json.dumps` at both call sites (`to_tool_error`, `write_audit_
     event`) — this assertion used to expect a `set` back; that was the
     defect, not this test."""
-    assert redact_secrets({"secret": {"hunter2"}}) == {"secret": ["[REDACTED]"]}
+    redacted = redact_secrets({"secret": {"hunter2"}})
+    assert redacted == {"secret": ["[REDACTED]"]}
+    # GR-009 (`docs/GAP_SPEC.md`): `isinstance`, not just equality — a
+    # `set`->`frozenset` coercion would have passed a plain `{"secret":
+    # {"[REDACTED]"}} == {"secret": frozenset({"[REDACTED]"})}` check
+    # (`True` in Python) the way this test's predecessor could not have
+    # caught, back when both the fix and the assertion still used `set`
+    # literals. Matches `test_at_vat005_tuple_recursion_preserves_the_
+    # container_type`'s own shape, immediately above.
+    assert isinstance(redacted["secret"], list)
 
 
 def test_at_vat005_tuple_recursion_preserves_the_container_type() -> None:
