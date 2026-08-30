@@ -27,6 +27,22 @@
 
 set -euo pipefail
 
+# GR-005 (`docs/GAP_SPEC.md`): explicit, hardcoded — never inherited —
+# before any external command below runs. This script executes entirely
+# as root, PID 1, before the privilege drop a few lines down; every
+# command it calls (`id`, `git`, `getent`, `useradd`, `mkdir`, `chown`,
+# `chmod`, `setpriv`) was previously resolved through whatever `PATH`
+# the container's environment happened to supply. A project-authored
+# `PATH` shadowing `id` to report anything but `0` made the very next
+# check below — "am I root?" — answer "no" and skip the privilege drop
+# entirely, running the workspace command itself as root. GR-004
+# (`docs/GAP_SPEC.md`) closes today's one input path for that (project
+# `environment:`); this closes the mechanism, independently, so no
+# future config surface can reopen it by supplying `PATH` a different
+# way.
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
 MCP_USER="${MCP_USER:-mcpuser}"
 MCP_SUDO="${MCP_SUDO:-true}"
 MCP_WORKSPACE_PATH="${MCP_WORKSPACE_PATH:-/workspace}"

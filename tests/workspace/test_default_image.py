@@ -85,6 +85,59 @@ def test_at_hat005_hostile_extra_env_cannot_make_pid_1_root(
     assert output.strip() == "1234"  # not "0"
 
 
+def test_at_gr005_a_hostile_path_does_not_skip_the_privilege_drop(
+    docker_client: docker.DockerClient,
+    default_image_tag: str,
+    ssh_config: SSHConfig,
+    tmp_path: Path,
+) -> None:
+    """GR-005 (`docs/GAP_SPEC.md`): `entrypoint.sh` now sets its own
+    hardcoded `PATH` before the first external command it runs —
+    proven here the same way `test_at_hat005_*` above proves HR-006's
+    entrypoint-side backstop: simulate a filter above this layer being
+    bypassed (`build_workspace_run_kwargs`'s `extra_env` is the lowest
+    layer that still enforces nothing about `PATH`) and confirm the
+    entrypoint's own defense holds regardless.
+
+    A fake `id` planted on a poisoned `PATH` always reports a non-root
+    uid, which — pre-fix — made `entrypoint.sh`'s own `[ "$(id -u)" !=
+    "0" ]` check believe it wasn't root and `exec` the workspace command
+    with **no privilege drop performed at all**, running it as the
+    *real* root. `$EUID` (a bash builtin, never resolved through
+    `PATH`) is what checks the result: the workspace command's own
+    later `id -u` call would be shadowed by the same fake binary too,
+    so asserting through it here could pass for the wrong reason even
+    post-fix."""
+    hostile_bin = tmp_path / "hostile-bin"
+    hostile_bin.mkdir()
+    fake_id = hostile_bin / "id"
+    fake_id.write_text("#!/bin/sh\necho 1000\n")
+    fake_id.chmod(0o755)
+
+    config = ContainerConfig(user="host", sudo=False)
+    run_kwargs = build_workspace_run_kwargs(
+        ssh_config=ssh_config,
+        container_config=config,
+        docker_client=docker_client,
+        checkout_uid=1234,
+        checkout_gid=1234,
+        extra_env={
+            "PATH": "/hostile-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        },
+    )
+    output = _run_oneshot(
+        docker_client,
+        default_image_tag,
+        ["bash", "-c", "echo $EUID"],
+        environment=run_kwargs["environment"],
+        volumes={str(hostile_bin): {"bind": "/hostile-bin", "mode": "ro"}},
+    )
+    # 1234 (the checkout uid): the drop happened despite the hostile
+    # PATH. Not "0" (drop skipped, running as real root) and not
+    # "1000" (the fake `id`'s own claim, which $EUID cannot report).
+    assert output.strip() == "1234"
+
+
 def test_at_hat007_a_traversal_in_mcp_cache_paths_is_rejected_by_the_entrypoint(
     docker_client: docker.DockerClient, default_image_tag: str, ssh_config: SSHConfig
 ) -> None:
