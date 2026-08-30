@@ -285,5 +285,6 @@ async def is_head_published(
         execution_service=execution_service,
         container_config=container_config,
         execution_config=execution_config,
+        strict_utf8=False,  # GR-006: only `.ok` is used, no path is ever parsed
     )
     return result.ok

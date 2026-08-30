@@ -73,7 +73,19 @@ async def read_git_status(
     execution_service: ExecutionService,
     container_config: ContainerConfig,
     execution_config: ExecutionConfig,
+    strict_utf8: bool = True,
 ) -> GitStatus:
+    """`strict_utf8` (GR-006, `docs/GAP_SPEC.md`) — default `True`,
+    passed straight through to `run_git_in_container`. `git status`'s own
+    porcelain output lists the *whole* repository, so this is the one
+    read genuinely shared between "report every path faithfully to the
+    client" (the `git_status` tool itself) and "only ever look at
+    `conflicted`/`branch`/`head_sha`, an unrelated file's name is
+    irrelevant" (`git_commit`'s HR-023 precondition checks,
+    `tools/git_commit.py`) — a single default could not serve both.
+    `tools/git_commit.py`'s two calls pass `strict_utf8=False`
+    explicitly; `tools/git_read.py`'s `run_git_status` keeps the
+    default."""
     result = await run_git_in_container(
         ["status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z"],
         container_id=container_id,
@@ -81,6 +93,7 @@ async def read_git_status(
         execution_service=execution_service,
         container_config=container_config,
         execution_config=execution_config,
+        strict_utf8=strict_utf8,
     )
     if not result.ok:
         raise CommandFailedError(

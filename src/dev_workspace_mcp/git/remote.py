@@ -92,6 +92,10 @@ async def resolve_remote_url(
         execution_service=execution_service,
         container_config=container_config,
         execution_config=execution_config,
+        # GR-006 (`docs/GAP_SPEC.md`): a remote URL, never a repository
+        # path — an unrelated non-UTF-8 file elsewhere in the repository
+        # has no bearing on this call.
+        strict_utf8=False,
     )
     if not result.ok:
         raise GitRemoteNotAllowedError(
@@ -143,6 +147,7 @@ async def resolve_remote_push_url(
         execution_service=execution_service,
         container_config=container_config,
         execution_config=execution_config,
+        strict_utf8=False,  # GR-006: a remote URL, never a repository path
     )
     if not result.ok:
         raise GitRemoteNotAllowedError(

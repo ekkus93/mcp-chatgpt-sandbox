@@ -145,6 +145,11 @@ async def run_git_commit(
         execution_service=execution_service,
         container_config=container_config,
         execution_config=execution_config,
+        # GR-006 (`docs/GAP_SPEC.md`): only `conflicted`/`branch`/
+        # `head_sha` are read below — an unrelated non-UTF-8 path
+        # elsewhere in the repository has no bearing on this check and
+        # SHALL NOT block an otherwise-unrelated commit.
+        strict_utf8=False,
     )
 
     # HR-023 (`docs/HARDENING_SPEC.md` §11): `detect_interrupted_operation`
@@ -393,6 +398,7 @@ async def run_git_commit(
         execution_service=execution_service,
         container_config=container_config,
         execution_config=execution_config,
+        strict_utf8=False,  # GR-006: only `head_sha` is used below
     )
     assert new_status.head_sha is not None  # a commit just succeeded
     # HR-024: `files_committed` SHALL report what Git actually

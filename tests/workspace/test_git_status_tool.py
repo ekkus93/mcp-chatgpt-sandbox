@@ -9,6 +9,7 @@ host-side and needed neither; `test_git_status_requires_docker` and
 behavior this migration removes.
 """
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -86,6 +87,41 @@ async def test_git_status_reflects_a_write_through_the_filesystem_tool(
     content = result.structured_content
     assert content["clean"] is False
     assert content["untracked"] == ["new.txt"]
+
+
+async def test_at_gr006_a_non_utf8_path_raises_rather_than_reports_a_mangled_one(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """GR-006 (`docs/GAP_SPEC.md`): `run_git_in_container` (`git/
+    service.py`) — the shared read path behind `git_status`/`git_diff`/
+    `git_log`/`read_committed_files` — checked `stdout_truncated` but not
+    `stdout_lossy`, so a non-UTF-8 path (real on Linux; Git does not
+    require valid UTF-8 filenames) reached the client silently
+    U+FFFD-substituted, the same defect class AR-001
+    (`docs/AUDIT_SPEC.md`) closed at `git_commit`'s two index-capture
+    sites, at a surface AR-001 didn't cover.
+
+    `os.fsdecode(b"bad\\xffname.txt")`, not a path containing a literal
+    `\N{REPLACEMENT CHARACTER}`: `decode_utf8_lossy` (`execution/
+    service.py`) tries a strict decode first specifically so a genuine
+    U+FFFD already in the source bytes isn't misreported as lossy — a
+    literal-U+FFFD path would not set `stdout_lossy` at all and this
+    test would pass against the unfixed code."""
+    repo_path = tmp_path / "work" / "example"
+    config = _configured(minimal_config, default_image_tag, repo_path)
+    server = create_server(config)
+    opened = await server.call_tool("workspace_open", {"repository_id": "example"})
+    workspace_id = opened.structured_content["workspace_id"]
+
+    bad_path = repo_path / os.fsdecode(b"bad\xffname.txt")
+    bad_path.write_bytes(b"content\n")
+
+    with pytest.raises(ToolError, match="COMMAND_FAILED") as excinfo:
+        await server.call_tool("git_status", {"workspace_id": workspace_id})
+    assert "not valid UTF-8" in str(excinfo.value)
 
 
 async def test_git_status_on_unknown_workspace_raises_not_found(

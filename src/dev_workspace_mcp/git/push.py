@@ -119,6 +119,7 @@ async def build_force_with_lease_arg(
         execution_service=execution_service,
         container_config=container_config,
         execution_config=execution_config,
+        strict_utf8=False,  # GR-006: a rev-parse'd SHA, never a repository path
     )
     if tracking.ok:
         return f"--force-with-lease={ref}:{tracking.stdout.strip()}"

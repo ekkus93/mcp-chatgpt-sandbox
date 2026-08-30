@@ -120,6 +120,7 @@ async def run_git_in_container(
     execution_service: ExecutionService,
     container_config: ContainerConfig,
     execution_config: ExecutionConfig,
+    strict_utf8: bool = True,
 ) -> GitCommandResult:
     """Runs `git <args>` in-container (§20.1, H36), as the container
     user, through the *same* execution service `exec`/`git_commit`/
@@ -157,6 +158,28 @@ async def run_git_in_container(
     `git_state.py`'s `read_basic_git_state` is the one deliberate
     exception — see its own docstring for why a diagnostic block absorbs
     this rather than propagating it.
+
+    `strict_utf8` (GR-006, `docs/GAP_SPEC.md`) governs the *separate*
+    `stdout_lossy` check below, default `True`. Set `False` only for a
+    caller that does not parse a path out of `result.stdout` at all — a
+    remote URL (`git/remote.py`), a rev-parse'd SHA (`git/push.py`), an
+    ancestor check's bare exit code (`is_head_published`,
+    `git/commit.py`) — or that parses paths for a purpose narrower than
+    "report them to the client faithfully," the way `git_commit`'s own
+    `read_git_status` precondition calls only ever inspect
+    `status.conflicted`/`status.branch`/`status.head_sha`, never an
+    unrelated file's name. A repository can contain a non-UTF-8 path
+    nowhere near what a given call actually needs — `git status`'s own
+    porcelain output lists the *whole* repository, not just what one
+    caller cares about — so defaulting every caller to strict turned out
+    to be too broad: it broke `git_commit`'s HR-023 conflict check for
+    any repository containing an unrelated non-UTF-8 file anywhere,
+    caught by AAT-001/AAT-003 (`tests/workspace/
+    test_git_commit_tool_failure_modes.py`) failing in the full suite
+    even though they passed standalone against this file's earlier,
+    narrower verification. `read_committed_files` (`git/commit.py`)
+    keeps the strict default deliberately: its result (`files_committed`)
+    *is* reported to the client, so this is exactly the GR-006 case.
     """
     user = resolve_exec_user(container_config)
     exec_id = await asyncio.to_thread(
@@ -183,6 +206,20 @@ async def run_git_in_container(
                 "git_command": args[0] if args else "",
                 "max_output_bytes": execution_config.max_output_bytes,
             },
+        )
+    # GR-006 (`docs/GAP_SPEC.md`): see this function's own docstring for
+    # `strict_utf8`'s exact scope and why it exists. AR-001
+    # (`docs/AUDIT_SPEC.md` §4) added `stdout_lossy` and guarded
+    # `git_commit`'s two index-capture sites; a non-UTF-8 path decodes to
+    # U+FFFD here exactly the way it did at those two sites, silently —
+    # the same defect class, at whichever surface a `strict_utf8=True`
+    # caller reports paths through.
+    if strict_utf8 and captured.stdout_lossy:
+        raise CommandFailedError(
+            f"git {args[0] if args else ''} produced output containing a path that is "
+            f"not valid UTF-8, and cannot be represented losslessly in this response. "
+            f"Narrow the request (e.g. a path filter) to avoid the offending entry.",
+            details={"git_command": args[0] if args else ""},
         )
     return GitCommandResult(
         returncode=captured.exit_code, stdout=captured.stdout, stderr=captured.stderr
