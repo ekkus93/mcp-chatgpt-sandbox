@@ -76,13 +76,15 @@ independently testable) but do not stop after one.
 
 ## Phase 0 — The repository does not pass its own gate
 
-### G1 — Restore the lint gate
+### G1 — Restore the lint gate ✅
 **Satisfies:** GR-001 · **Verified by:** GAT-001
-**Commit:** `PLACEHOLDER`
+**Commit:** `c9e953e`
 
-- [ ] `uv run ruff check .` exits 0
-- [ ] `uv run ruff format --check .` exits 0
-- [ ] No behavior change — imports reordered only
+- [x] `uv run ruff check .` exits 0
+- [x] `uv run ruff format --check .` exits 0
+- [x] No behavior change — imports reordered only (the 3 `05fe306` files);
+      whitespace-only inside an illustrative code sample (the 2
+      unrelated `docs/` files, see below)
 
 **Defect (reproduced).** At `fca1199`:
 
@@ -134,10 +136,43 @@ rest of the codebase already uses — confirmed with `--diff` on
 binary again to "check" the result — the whole defect is that the two
 tools disagree. Re-verify with `uv run` only.
 
+**A second, unrelated failure surfaced while re-verifying the requirement
+over the whole repo.** `uv run ruff format --check .` also fails on
+`docs/REMEDIATION_SPEC.md` and `docs/REMEDIATION_TODO.md` — the pinned
+0.16.4 reformats a Python code sample embedded in both:
+
+```diff
+-    return                                   # <- silent success
++    return  # <- silent success
+```
+
+**Confirmed pre-existing, not a `05fe306` regression:**
+
+```
+$ git worktree add /tmp/wt f9ead84^ -q
+$ (cd /tmp/wt && uv run ruff format --check .)
+2 files would be reformatted, 148 files already formatted
+```
+
+`f9ead84^` predates all five file-splitting commits. Folded into this
+task anyway, per `docs/GAP_SPEC.md` GR-001's own note on why: it blocks
+GR-001's literal, whole-repo acceptance criterion, and the fix is a
+two-line, zero-semantic-content whitespace collapse inside an
+illustrative code sample — `uv run ruff format docs/REMEDIATION_SPEC.md
+docs/REMEDIATION_TODO.md`, confirmed via `git diff` to touch only those
+two lines in each file.
+
 No test accompanies this task; GAT-001's acceptance criterion is the CI
 gate itself, recorded in `docs/GAP_SPEC.md` as a deliberate choice rather
 than an omission. The full suite SHALL still be run, since an import
 reorder can in principle change import-time side effects.
+
+**Verified.** `uv run ruff check .`: all checks passed. `uv run ruff
+format --check .`: 164 files already formatted (was 2 files would be
+reformatted). `uv run mypy src`: no issues in 60 source files.
+`pytest --collect-only`: 1003 tests, identical to before. Full suite
+(including the Docker-heavy `tests/workspace/`/`tests/git/` suites):
+1003 passed in 536s, 0 Docker leftovers before and after.
 
 ---
 

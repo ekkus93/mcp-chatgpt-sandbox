@@ -97,8 +97,25 @@ first-party `dev_workspace_mcp` imports. The fix is to run the pinned
 binary's own `--fix`, which restores the third-party-before-first-party
 order the rest of the codebase already uses.
 
+**A second, unrelated finding surfaced while verifying this requirement.**
+`uv run ruff format --check .` over the whole repository also fails on
+`docs/REMEDIATION_SPEC.md` and `docs/REMEDIATION_TODO.md` — 0.16.4
+reformats a Python code sample embedded in both (collapsing
+`return                                   # <- silent success` to
+`return  # <- silent success`). Confirmed via `git worktree` at
+`f9ead84^` (before any of the five file-splitting commits) that this
+predates all of them; it is not part of the same regression and has a
+different, older cause (the pinned ruff version's markdown-embedded-code
+formatting versus whatever ruff version last touched these files). Folded
+into this task rather than given its own `GR`/`GAT` pair — a two-line,
+zero-semantic-content whitespace fix in an illustrative code sample,
+matching V6's own precedent for a finding "worth doing with \[the
+adjacent task\] … not worth a phase." Recorded here, distinctly from the
+`05fe306` regression above, so neither is misattributed to the other.
+
 **Requirement.** `uv run ruff check .` and `uv run ruff format --check .`
-SHALL both exit 0 at `HEAD`. Verified by GAT-001.
+SHALL both exit 0 at `HEAD`, over the whole repository. Verified by
+GAT-001.
 
 ### GR-002 — Local verification SHALL NOT be able to silently diverge from CI
 
