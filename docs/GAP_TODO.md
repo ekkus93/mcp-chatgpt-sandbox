@@ -300,14 +300,14 @@ change — this is `.mcp-workspace.yml` validation, never a tool's own
 JSON output; no `CONTRACT_VERSION` bump. Full unscoped `tests/`: 1013
 passed, 0 failed, 532s, 0 Docker leftovers before and after.
 
-### G3 — The entrypoint resolves its own commands
+### G3 — The entrypoint resolves its own commands ✅
 **Satisfies:** GR-005 · **Verified by:** GAT-003
-**Commit:** `PLACEHOLDER`
+**Commit:** `c1668fe`
 
-- [ ] `entrypoint.sh` sets an explicit absolute `PATH` before any external
+- [x] `entrypoint.sh` sets an explicit absolute `PATH` before any external
       command
-- [ ] The privilege-drop decision cannot be influenced by inherited `PATH`
-- [ ] Real-container test: hostile `PATH`, drop still occurs
+- [x] The privilege-drop decision cannot be influenced by inherited `PATH`
+- [x] Real-container test: hostile `PATH`, drop still occurs
 
 **Defect.** Confirmed by grep: `docker/default/entrypoint.sh` contains no
 `PATH=` assignment and no `export PATH` anywhere. Every command it runs
@@ -339,6 +339,50 @@ for the wrong reason. Construct the fixture so it exercises the
 *entrypoint*, not the validator — e.g. by passing the environment through
 `run_kwargs` directly, the way `test_at_vat003_*` builds its hostile input
 at the `container_config` layer rather than through project config.
+
+**Implemented as described.** `docker/default/entrypoint.sh`, right after
+`set -euo pipefail`, before any of the variable defaults or the first
+external command (`id`, in the very next block):
+
+```sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+```
+
+**New test, built exactly per the revert-verification note.**
+`tests/workspace/test_default_image.py`:
+`test_at_gr005_a_hostile_path_does_not_skip_the_privilege_drop`, modeled
+directly on `test_at_hat005_hostile_extra_env_cannot_make_pid_1_root`
+(the sibling test proving HR-006's *entrypoint-side* backstop) — hostile
+input built via `build_workspace_run_kwargs`'s `extra_env` (the layer
+that still enforces nothing about `PATH`, unaffected by whether G2's
+project-config validator is bypassed), not through project config. A
+fake `id` (always printing `1000`) is bind-mounted into the container
+and put first on a poisoned `PATH` supplied through `extra_env`.
+
+One subtlety found while writing this, not anticipated by the task text:
+asserting through the workspace command's *own* `id -u` call would be
+worthless post-fix, since that command's `id` is *also* resolved via the
+same poisoned `PATH` — a pass there wouldn't distinguish "the drop
+happened and a genuinely non-root `id -u` ran" from "the fake `id`
+printed `1000` regardless of anything." Switched to `bash -c 'echo
+$EUID'` — a bash builtin, never resolved through `PATH` at all — so the
+assertion can only reflect the *real* running uid.
+
+**Revert-verified.** `entrypoint.sh` reverted to `HEAD`'s version
+(`git show HEAD:... > entrypoint.sh`), new test re-run: failed with
+`assert '0' == '1234'` — the drop-bypass, reproduced on demand. Restored
+the fix; passes again.
+
+**Suites.** `tests/workspace/test_default_image.py`: 12 passed.
+`shellcheck docker/default/entrypoint.sh`: the same one pre-existing
+`SC2034` warning (`GROUP_NAME`, line 82, untouched by this change) V4
+already documented — no new warnings. `pytest --collect-only`: 1014
+tests (1013 + 1 new). Lint/format clean; `uv run mypy src`: no issues in
+60 source files. No schema/contract change — an entrypoint-script
+change, never a tool's own JSON output; no `CONTRACT_VERSION` bump. Full
+unscoped `tests/`: 1014 passed, 0 failed, 539s, 0 Docker leftovers
+before and after.
 
 ---
 
