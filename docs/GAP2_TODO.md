@@ -3,7 +3,8 @@
 **Spec:** `docs/GAP2_SPEC.md` (G2R-001..G2R-022, G2AT-001..G2AT-018)
 **Source:** code review of `docs/GAP_TODO.md` G1–G9 plus a general review
 of the four largest source modules, 2026-08-30, against `9bc44fd`
-**Status:** not started
+**Status:** in progress — X1, X4, X5, X6, X7, X8 complete (6/22); X2, X3,
+X9–X22 remaining
 
 Twenty-two tasks. One is a live privilege-drop bypass reproduced against
 the shipped image; two are regressions the `GAP_TODO.md` pass itself
@@ -87,19 +88,20 @@ about consequence, not about X1 being insufficient on its own.
 
 ## Phase 0 — Security: controls that do not hold
 
-### X1 — `environment:` cannot supply an exported shell function
+### X1 — `environment:` cannot supply an exported shell function ✅
 **Satisfies:** G2R-001 · **Verified by:** G2AT-001
+**Commit:** `545d265`
 
-- [ ] A key that is not a valid POSIX environment-variable name is
+- [x] A key that is not a valid POSIX environment-variable name is
       rejected at validation
-- [ ] A value beginning `() {` under an identifier-shaped key is
+- [x] A value beginning `() {` under an identifier-shaped key is
       rejected at validation
-- [ ] The rejection names the offending key, matching the existing
+- [x] The rejection names the offending key, matching the existing
       `blocked`/`shadowed` error shape
-- [ ] End-to-end: `workspace_open` against a repository whose
+- [x] End-to-end: `workspace_open` against a repository whose
       `.mcp-workspace.yml` carries such a key fails, and no container is
       created
-- [ ] The residual-risk paragraph at `project_config.py:162-170` is
+- [x] The residual-risk paragraph at `project_config.py:162-170` is
       corrected — it names G3 as the backstop for exactly this, and G3
       does not cover it
 
@@ -272,14 +274,15 @@ for the wrong reason. Build the fixture at the `extra_env`/`run_kwargs`
 layer, exactly as `test_at_gr005_*` does, so it exercises the entrypoint
 and not X1's validator.
 
-### X4 — Redaction never returns a secret it was asked to redact
+### X4 — Redaction never returns a secret it was asked to redact ✅
 **Satisfies:** G2R-004 · **Verified by:** G2AT-004
+**Commit:** `effca82`
 
-- [ ] A secret-flagged `frozenset` is redacted
-- [ ] A secret-flagged `memoryview` is redacted
-- [ ] The comment at `errors.py:324-333` records the redaction-bypass
+- [x] A secret-flagged `frozenset` is redacted
+- [x] A secret-flagged `memoryview` is redacted
+- [x] The comment at `errors.py:324-333` records the redaction-bypass
       consequence, not only the serialization one
-- [ ] Fail closed on unrecognized types (recommended below), or recurse
+- [x] Fail closed on unrecognized types (recommended below), or recurse
       into the remaining container types — decide and record which
 
 **Defect (reproduced).** `_redact` has no branch for `frozenset` or
@@ -328,13 +331,14 @@ JSON-serializable" here. That sentence contradicts its own carve-out two
 paragraphs later; reconciling it is a correction to `docs/GAP_SPEC.md`
 (see X20), not a code change in this task.
 
-### X5 — A post-open re-check enforces every rule its pre-open resolve enforced
+### X5 — A post-open re-check enforces every rule its pre-open resolve enforced ✅
 **Satisfies:** G2R-005 · **Verified by:** G2AT-005
+**Commit:** `85905c1`
 
-- [ ] `verify_fd_within_root` applies `resolve()`'s full rule set
-- [ ] `write_file`'s inline `resolve_open_fd`/`is_within_root` sequence
+- [x] `verify_fd_within_root` applies `resolve()`'s full rule set
+- [x] `write_file`'s inline `resolve_open_fd`/`is_within_root` sequence
       does the same
-- [ ] Test the in-tree `.git` redirect under the default
+- [x] Test the in-tree `.git` redirect under the default
       `git_dir_mode: read-write`
 
 **Defect.** `resolve()` enforces three rules — external-git-dir,
@@ -355,24 +359,32 @@ Under `git_dir_mode: "none"`/`"read-only"` with an external git dir,
 containment alone catches it — the gap is specific to the in-tree
 default, which is the default.
 
-**Test note.** Drive the race deterministically through the same
-injection point the existing race tests use rather than looping and
-hoping; a loop-based test is slow and flaky and this codebase already
-established the deterministic pattern.
+**Correction (found implementing this, not merely a wording nit): the
+"deterministic pattern" this file's own draft claimed already existed
+does not.** This codebase's actual established pattern for this exact
+race class is `_symlink_flipper` — a background thread continuously
+flipping a directory between real and a symlink, looped 2000 iterations
+per test — duplicated across `test_service_write.py`/
+`test_service_read.py`/`test_service_delete.py` already. It is
+loop-based, not an alternative to looping. Followed that real pattern
+here (`_git_metadata_flipper`, flipping into the repository's own
+`.git` instead of somewhere outside it), not the deterministic
+injection point this note incorrectly implied exists.
 
 ---
 
 ## Phase 1 — Regressions introduced by the `GAP_TODO.md` pass
 
-### X6 — `git_pull` and `git_push` work on repositories containing non-UTF-8 paths
+### X6 — `git_pull` and `git_push` work on repositories containing non-UTF-8 paths ✅
 **Satisfies:** G2R-006 · **Verified by:** G2AT-006
+**Commit:** `95c7037`
 
-- [ ] `tools/git_pull.py:102` passes `strict_utf8=False`
-- [ ] `tools/git_pull.py:249` passes `strict_utf8=False`
-- [ ] `tools/git_push.py:147` passes `strict_utf8=False`
-- [ ] Each carries the same in-code justification `git_commit`'s two
+- [x] `tools/git_pull.py:102` passes `strict_utf8=False`
+- [x] `tools/git_pull.py:249` passes `strict_utf8=False`
+- [x] `tools/git_push.py:147` passes `strict_utf8=False`
+- [x] Each carries the same in-code justification `git_commit`'s two
       sites carry
-- [ ] Real-container test through both tools
+- [x] Real-container test through both tools
 
 **Defect.** G4 found that an unconditional `stdout_lossy` guard wrongly
 blocked callers inspecting only `branch`/`head_sha`, and fixed it by
@@ -449,14 +461,15 @@ trailer, not by reading the dispatcher — G8's own write-up records
 catching a vacuous verification (a markdown line that tripped neither
 tool) and redoing it against a genuine violation. Same discipline here.
 
-### X8 — The pre-commit gate verifies what is being committed
+### X8 — The pre-commit gate verifies what is being committed ✅
 **Satisfies:** G2R-008 · **Verified by:** G2AT-008
+**Commit:** `e439357`
 
-- [ ] The three checks run against the index, not the working tree
-- [ ] A clean commit still succeeds with unrelated dirty files present
-- [ ] The mechanism cannot corrupt the working tree on failure, interrupt,
+- [x] The three checks run against the index, not the working tree
+- [x] A clean commit still succeeds with unrelated dirty files present
+- [x] The mechanism cannot corrupt the working tree on failure, interrupt,
       or a staged/unstaged overlap
-- [ ] Cleanup happens even if a check itself is interrupted (`trap`)
+- [x] Cleanup happens even if a check itself is interrupted (`trap`)
 
 **Defect.** `.githooks/pre-commit` runs `ruff format --check .`,
 `ruff check .`, `mypy src` — all against the working tree. A commit
