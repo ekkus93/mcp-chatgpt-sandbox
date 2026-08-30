@@ -3,7 +3,7 @@
 **Spec:** `docs/GAP2_SPEC.md` (G2R-001..G2R-022, G2AT-001..G2AT-018)
 **Source:** code review of `docs/GAP_TODO.md` G1–G9 plus a general review
 of the four largest source modules, 2026-08-30, against `9bc44fd`
-**Status:** in progress — X1–X16 complete (16/22); X17–X22 remaining
+**Status:** in progress — X1–X17 complete (17/22); X18–X22 remaining
 
 Twenty-two tasks. One is a live privilege-drop bypass reproduced against
 the shipped image; two are regressions the `GAP_TODO.md` pass itself
@@ -763,10 +763,10 @@ too. Decide whether the extracted version widens the catch, and say
 which.
 
 ### X17 — `exec_output` rejects an inverted byte range
-**Satisfies:** G2R-017 · **Verified by:** G2AT-017
+**Satisfies:** G2R-017 · **Verified by:** G2AT-017 · **Commit:** `1999569`
 
-- [ ] `byte_end < byte_start` is an invalid-argument error
-- [ ] Schema-drift check
+- [x] `byte_end < byte_start` is an invalid-argument error
+- [x] Schema-drift check — none, confirmed empty (input validation only)
 
 **Defect.** `tools/execution.py:627-634`. With `byte_start=100,
 byte_end=50`: `requested = -50` → `capped = max(min(-50, limit), 0) = 0`
