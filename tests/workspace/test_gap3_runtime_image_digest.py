@@ -93,7 +93,7 @@ async def test_g3at_006_retagging_does_not_change_existing_container_digest(
     # so the rebuild half tests provenance rather than distro differences.
     derived_repository = f"mcp-gap3-y6-derived-{suffix}"
     derived_tag = f"{derived_repository}:latest"
-    dockerfile = (f"FROM {default_image_tag}\n" f'LABEL mcp.gap3.y6="{suffix}"\n').encode()
+    dockerfile = (f'FROM {default_image_tag}\nLABEL mcp.gap3.y6="{suffix}"\n').encode()
     image_b, _ = docker_client.images.build(
         fileobj=io.BytesIO(dockerfile),
         tag=derived_tag,
