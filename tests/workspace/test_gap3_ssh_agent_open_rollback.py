@@ -11,7 +11,10 @@ import pytest
 
 from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
 from dev_workspace_mcp.db import open_db
-from dev_workspace_mcp.errors import ContainerCreateFailedError
+from dev_workspace_mcp.errors import (
+    ContainerCreateFailedError,
+    SSHCredentialCleanupFailedError,
+)
 from dev_workspace_mcp.jobs.store import JobStore
 from dev_workspace_mcp.repositories import RepositoryRecord, RepositoryRegistry
 from dev_workspace_mcp.tools import workspace as workspace_tools
@@ -41,6 +44,17 @@ class _RecordingAgentManager:
     def unload_key(self, workspace_id: str) -> None:
         self.unload_calls += 1
         self.loaded = False
+
+
+class _FailingCleanupAgentManager(_RecordingAgentManager):
+    """Models a Y4 cleanup failure after Y5 has already loaded a key."""
+
+    def unload_key(self, workspace_id: str) -> None:
+        self.unload_calls += 1
+        raise SSHCredentialCleanupFailedError(
+            "synthetic credential cleanup failure",
+            details={"workspace_id": workspace_id},
+        )
 
 
 class _FailingManager:
@@ -144,6 +158,22 @@ def _patch_nonessential_open_work(
     monkeypatch.setattr(workspace_tools, "store_remote_protection", lambda *_args: None)
 
 
+def _setup_project_config() -> SimpleNamespace:
+    return SimpleNamespace(
+        version=1,
+        image=None,
+        caches=[],
+        environment={},
+        setup=[SimpleNamespace(command="false")],
+    )
+
+
+def _docker_client_with_image() -> MagicMock:
+    docker_client = MagicMock()
+    docker_client.images.get.return_value = SimpleNamespace(id="sha256:example")
+    return docker_client
+
+
 async def test_at_g3at005_docker_create_failure_never_loads_the_repository_key(
     minimal_config: ServerConfig,
     tmp_path: Path,
@@ -195,29 +225,20 @@ async def test_at_g3at005_setup_failure_rolls_back_an_already_loaded_key(
     record = _seed_workspace(db)
     registry = RepositoryRegistry(config)
     agent_manager = _RecordingAgentManager(tmp_path / "agent.sock")
-    project_config = SimpleNamespace(
-        version=1,
-        image=None,
-        caches=[],
-        environment={},
-        setup=[SimpleNamespace(command="false")],
-    )
-    _patch_nonessential_open_work(monkeypatch, project_config=project_config)
+    _patch_nonessential_open_work(monkeypatch, project_config=_setup_project_config())
     monkeypatch.setattr(workspace_tools, "load_setup_completed_container_id", lambda *_args: None)
 
     async def _fail_setup(*_args, **_kwargs) -> None:
         raise RuntimeError("synthetic setup failure")
 
     monkeypatch.setattr(workspace_tools, "run_setup_steps", _fail_setup)
-    docker_client = MagicMock()
-    docker_client.images.get.return_value = SimpleNamespace(id="sha256:example")
 
     with pytest.raises(RuntimeError, match="synthetic setup failure"):
         await workspace_tools.open_workspace(
             "example",
             "persistent",
             manager=_ReturningManager(record),
-            docker_client=docker_client,
+            docker_client=_docker_client_with_image(),
             execution_service=MagicMock(),
             registry=registry,
             db=db,
@@ -236,4 +257,51 @@ async def test_at_g3at005_setup_failure_rolls_back_an_already_loaded_key(
         )
 
     assert agent_manager.loaded is False
+    assert agent_manager.unload_calls == 1
+
+
+async def test_at_g3at005_cleanup_failure_is_surfaced_instead_of_forgotten(
+    minimal_config: ServerConfig,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed rollback replaces the setup error with the typed cleanup failure."""
+    repository = _repository(tmp_path)
+    config = _config(minimal_config, repository)
+    db = open_db(":memory:")
+    record = _seed_workspace(db)
+    registry = RepositoryRegistry(config)
+    agent_manager = _FailingCleanupAgentManager(tmp_path / "agent.sock")
+    _patch_nonessential_open_work(monkeypatch, project_config=_setup_project_config())
+    monkeypatch.setattr(workspace_tools, "load_setup_completed_container_id", lambda *_args: None)
+
+    async def _fail_setup(*_args, **_kwargs) -> None:
+        raise RuntimeError("synthetic setup failure")
+
+    monkeypatch.setattr(workspace_tools, "run_setup_steps", _fail_setup)
+
+    with pytest.raises(SSHCredentialCleanupFailedError, match="synthetic credential cleanup failure"):
+        await workspace_tools.open_workspace(
+            "example",
+            "persistent",
+            manager=_ReturningManager(record),
+            docker_client=_docker_client_with_image(),
+            execution_service=MagicMock(),
+            registry=registry,
+            db=db,
+            job_store=JobStore(db),
+            docker_config=config.docker,
+            container_config=config.container,
+            execution_config=config.execution,
+            resources_config=config.resources,
+            ssh_config=config.ssh,
+            workspace_config=config.workspace,
+            github_config=config.github,
+            git_policy_config=config.git_policy,
+            audit_config=config.audit,
+            repository_roots=config.repository_roots,
+            ssh_agent_manager=agent_manager,  # type: ignore[arg-type]
+        )
+
+    assert agent_manager.loaded is True
     assert agent_manager.unload_calls == 1
