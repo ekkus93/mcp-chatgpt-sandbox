@@ -89,9 +89,7 @@ def _config(minimal_config: ServerConfig, repository: RepositoryRecord) -> Serve
 
 
 def _seed_workspace(db: sqlite3.Connection) -> WorkspaceRecord:
-    db.execute(
-        "INSERT INTO repository (id, canonical_path) VALUES ('example', '/repo')"
-    )
+    db.execute("INSERT INTO repository (id, canonical_path) VALUES ('example', '/repo')")
     db.execute(
         """
         INSERT INTO workspace
