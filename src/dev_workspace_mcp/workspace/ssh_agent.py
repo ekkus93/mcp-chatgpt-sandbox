@@ -346,9 +346,7 @@ class SSHAgentManager:
                 details={"workspace_id": workspace_id, "key_path": str(key_path)},
             )
 
-    def _terminate_for_credential_cleanup(
-        self, record: SSHAgentRecord, *, reason: str
-    ) -> None:
+    def _terminate_for_credential_cleanup(self, record: SSHAgentRecord, *, reason: str) -> None:
         """Fail-closed fallback used when key removal cannot be proven.
 
         G3R-004: because each agent is workspace-scoped, terminating the
