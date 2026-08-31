@@ -102,9 +102,7 @@ async def test_g3at_006_retagging_does_not_change_existing_container_digest(
         # Removing the mutable tag must not erase provenance for the
         # already-running container.  No fallback tag lookup is allowed.
         docker_client.images.remove(mutable_tag, noprune=True)
-        missing_tag_info = await server.call_tool(
-            "workspace_info", {"workspace_id": workspace_id}
-        )
+        missing_tag_info = await server.call_tool("workspace_info", {"workspace_id": workspace_id})
         assert missing_tag_info.structured_content["image_digest"] == image_b.id
     finally:
         with contextlib.suppress(docker.errors.DockerException):
