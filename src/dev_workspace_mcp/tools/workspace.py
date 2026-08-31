@@ -515,9 +515,7 @@ async def open_workspace(
         # a known, documented gap (docs/TODO.md).
         workspace_key_path = resolve_ssh_key_path(ssh_config, repository)
         if workspace_key_path is not None:
-            agent_record = ssh_agent_manager.ensure_agent(
-                persistent_workspace_id(repository.id)
-            )
+            agent_record = ssh_agent_manager.ensure_agent(persistent_workspace_id(repository.id))
             mounts.append(build_ssh_agent_mount(agent_record.socket_path))
     run_kwargs["mounts"] = mounts
     record = manager.ensure_workspace(
@@ -667,9 +665,7 @@ async def open_workspace(
                 # H32 (`docs/HARDENING_SPEC.md` §9/§30 row): audited on
                 # every open, not only visible to a client that already
                 # thought to call `workspace_info` and check the field.
-                "devcontainer_ignored": devcontainer_json_is_ignored(
-                    repository.canonical_path
-                ),
+                "devcontainer_ignored": devcontainer_json_is_ignored(repository.canonical_path),
             },
         )
 
