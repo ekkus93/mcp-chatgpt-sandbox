@@ -184,17 +184,22 @@ def verify_remote_protection(
     default_branch: str | None,
     checks: Sequence[str],
 ) -> RemoteProtectionResult:
-    """§18.5/§20.4: the daemon-side verification `workspace_open` calls.
-    Degrades to `unverified` — never raises — for every reason short of a
-    genuine "protection confirmed absent" answer from a real, credentialed
-    query: no credential configured, no resolvable GitHub identity, no
-    resolvable default branch, an unimplemented auth mode, or the query
-    itself failing for any reason (auth rejected, network error, GitHub
-    down). A diagnostic feature SHALL NOT be able to fail `workspace_open`
-    by itself — `require_remote_protection: deny`'s own enforcement, not
-    this function, is what may still refuse the operation, and only for
-    a *confirmed* `missing`, never for `unverified` (§18.5's explicit
-    "deny SHALL be treated as warn" rule for the no-credential case)."""
+    """§18.5/§20.4: produce a three-state remote-protection result.
+
+    Verification itself remains diagnostic and does not raise for ordinary
+    inability to verify. Missing credentials, unresolved repository/default
+    branch identity, an unimplemented auth mode, authorization failures,
+    network failures, and malformed responses all become `unverified` with
+    the exact reason preserved. A successful query that proves the configured
+    checks absent becomes `missing`; only proven satisfaction is `verified`.
+
+    G3R-003 deliberately separates this reporting layer from enforcement:
+    `workspace_open` interprets `git_policy.require_remote_protection`.
+    `warn` allows `missing` and `unverified` while reporting them; `deny`
+    blocks either state before SSH-key provisioning or Docker work. Keeping
+    `unverified` distinct here is therefore load-bearing — enforcement may
+    fail closed without falsely claiming that protection was confirmed absent.
+    """
     if owner_repo is None:
         return _unverified(default_branch, "repository has no configured GitHub identity")
     if default_branch is None:

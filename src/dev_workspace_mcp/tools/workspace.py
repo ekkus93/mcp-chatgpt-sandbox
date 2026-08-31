@@ -428,9 +428,12 @@ async def open_workspace(
         )
         raise
 
-    # §18.5/§20.4: verified before any container work, so `deny` can
-    # refuse the whole operation — never provisioning a key — rather
-    # than tearing down a container it already started.
+    # G3R-003 (`docs/GAP3_SPEC.md`): verification stays three-state
+    # (`verified`/`missing`/`unverified`), but enforcement must not turn
+    # "could not verify" into success when the operator selected `deny`.
+    # This check runs before project configuration, SSH-agent key loading,
+    # or Docker work so a denied workspace never gains a credential or a
+    # container as a side effect of the failed open.
     default_branch = detect_default_branch(repository.canonical_path)
     remote_protection = verify_remote_protection(
         github_config=github_config,
@@ -440,12 +443,8 @@ async def open_workspace(
     )
     if (
         git_policy_config.require_remote_protection == "deny"
-        and remote_protection.status == "missing"
+        and remote_protection.status != "verified"
     ):
-        # §18.5: "SHALL NOT provision a write-capable key... SHALL
-        # NOT have provisioned a key into the container" — enforced
-        # here, before `ensure_workspace` touches Docker at all, not
-        # merely by skipping the ssh-agent step below.
         write_audit_event(
             audit_config,
             operation="workspace_opened",
@@ -455,14 +454,18 @@ async def open_workspace(
                 "policy_decision": "deny",
                 "policy": "require_remote_protection",
                 "remote_protection_status": remote_protection.status,
+                "remote_protection_reason": remote_protection.reason,
             },
         )
         raise RemoteProtectionMissingError(
-            f"default branch {remote_protection.default_branch!r} lacks the "
-            f"required remote protections (§18.5): {remote_protection.reason}",
+            f"required remote protection is not verified for default branch "
+            f"{remote_protection.default_branch!r} (§18.5/G3R-003): "
+            f"status={remote_protection.status!r}; {remote_protection.reason}",
             details={
                 "repository_id": repository_id,
                 "default_branch": remote_protection.default_branch,
+                "remote_protection_status": remote_protection.status,
+                "reason": remote_protection.reason,
             },
         )
 

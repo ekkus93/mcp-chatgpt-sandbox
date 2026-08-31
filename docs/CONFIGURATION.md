@@ -89,12 +89,19 @@ for the reasoning, not just the field list.
   (`git_commit`/`git_push`/`git_pull`); `exec` is a real shell and isn't
   bound by it. Covers force-push, force-with-lease, remote branch/tag
   deletion, amending published commits, default-branch push/commit, pull
-  strategy, and whether a missing remote branch-protection ruleset
-  blocks a write (`require_remote_protection`). Every key here maps to a
-  parameter a structured tool actually accepts — operations with no
-  structured tool (hard reset, `clean -fdx`, rebase, changing a remote
-  URL) deliberately have no policy key; they're reachable only through
-  `exec`, bounded instead by the container and the remote.
+  strategy, and remote-protection enforcement through
+  `require_remote_protection`. Its semantics are intentionally explicit
+  (G3R-003): `off` performs no enforcement; `warn` allows both confirmed
+  `missing` protection and `unverified` status while returning the exact
+  reason; `deny` blocks both `missing` and `unverified` before repository
+  SSH-key provisioning or Docker workspace creation. An API outage,
+  absent/unauthorized credential, timeout, or malformed response is
+  therefore **not** silently treated as success under `deny`. Every key
+  here maps to a parameter a structured tool actually accepts —
+  operations with no structured tool (hard reset, `clean -fdx`, rebase,
+  changing a remote URL) deliberately have no policy key; they're
+  reachable only through `exec`, bounded instead by the container and
+  the remote.
 - **`resources`** (§26) — optional Docker `cpus`/`memory`/`pids_limit`
   ceilings on workspace containers; unset (the default for each) means
   no limit, matching Docker's own default rather than an opinionated
