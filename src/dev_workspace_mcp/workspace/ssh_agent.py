@@ -262,7 +262,33 @@ class SSHAgentManager:
         record.socket_path.unlink(missing_ok=True)
         self._forget(record.workspace_id)
 
+    def ensure_agent(self, workspace_id: str) -> SSHAgentRecord:
+        """Ensure a mountable per-workspace agent exists without loading a key.
+
+        G3R-005 separates socket/process provisioning from credential
+        provisioning so Docker create/start failures cannot leave a
+        repository key loaded merely because the socket had to exist
+        before container creation.
+        """
+        existing = self.get(workspace_id)
+        if existing is not None:
+            if _record_matches_running_agent(existing):
+                return existing
+            self._discard_unverifiable(existing, operation="ensure_agent")
+        return self._start_agent(workspace_id)
+
+    def load_key(self, workspace_id: str, key_path: Path) -> None:
+        """Load `key_path` only into the verified agent for `workspace_id`."""
+        record = self.get(workspace_id)
+        if record is None or not _record_matches_running_agent(record):
+            raise SSHKeyProvisionFailedError(
+                "cannot load the workspace key: no verified ssh-agent is available",
+                details={"workspace_id": workspace_id, "key_path": str(key_path)},
+            )
+        self._load_key(record.socket_path, key_path, workspace_id=workspace_id)
+
     def ensure(self, workspace_id: str, key_path: Path) -> SSHAgentRecord:
+        """Compatibility helper: ensure an agent and ensure `key_path` is loaded."""
         existing = self.get(workspace_id)
         if existing is not None:
             if _record_matches_running_agent(existing):
@@ -271,7 +297,7 @@ class SSHAgentManager:
             self._discard_unverifiable(existing, operation="ensure")
         return self._start(workspace_id, key_path)
 
-    def _start(self, workspace_id: str, key_path: Path) -> SSHAgentRecord:
+    def _start_agent(self, workspace_id: str) -> SSHAgentRecord:
         socket_path = agent_socket_path(self._runtime_dir, workspace_id)
         socket_path.parent.mkdir(parents=True, exist_ok=True)
         socket_path.unlink(missing_ok=True)
@@ -313,14 +339,6 @@ class SSHAgentManager:
                 details={"workspace_id": workspace_id},
             ) from exc
 
-        try:
-            self._load_key(socket_path, key_path, workspace_id=workspace_id)
-        except SSHKeyProvisionFailedError:
-            process.kill()
-            process.wait()
-            socket_path.unlink(missing_ok=True)
-            raise
-
         record = SSHAgentRecord(
             workspace_id=workspace_id,
             pid=process.pid,
@@ -330,6 +348,15 @@ class SSHAgentManager:
         )
         self._save(record)
         _logger.info("workspace %s: ssh-agent started (pid=%d)", workspace_id, process.pid)
+        return record
+
+    def _start(self, workspace_id: str, key_path: Path) -> SSHAgentRecord:
+        record = self._start_agent(workspace_id)
+        try:
+            self._load_key(record.socket_path, key_path, workspace_id=workspace_id)
+        except SSHKeyProvisionFailedError:
+            self.terminate(workspace_id)
+            raise
         return record
 
     @staticmethod
