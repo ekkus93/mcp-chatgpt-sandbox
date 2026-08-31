@@ -50,7 +50,9 @@ def _is_alive(pid: int) -> bool:
 def _failed_unload_run(real_run):
     def _run(argv, *args, **kwargs):
         if argv == ["ssh-add", "-D"]:
-            return subprocess.CompletedProcess(argv, 1, stdout="", stderr="synthetic unload failure")
+            return subprocess.CompletedProcess(
+                argv, 1, stdout="", stderr="synthetic unload failure"
+            )
         return real_run(argv, *args, **kwargs)
 
     return _run
