@@ -355,7 +355,9 @@ class SSHAgentManager:
         try:
             self._load_key(record.socket_path, key_path, workspace_id=workspace_id)
         except SSHKeyProvisionFailedError:
-            self.terminate(workspace_id)
+            self._terminate_for_credential_cleanup(
+                record, reason="repository key load failed during ssh-agent startup"
+            )
             raise
         return record
 
