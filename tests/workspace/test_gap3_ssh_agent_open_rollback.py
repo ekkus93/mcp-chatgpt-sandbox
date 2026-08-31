@@ -280,7 +280,9 @@ async def test_at_g3at005_cleanup_failure_is_surfaced_instead_of_forgotten(
 
     monkeypatch.setattr(workspace_tools, "run_setup_steps", _fail_setup)
 
-    with pytest.raises(SSHCredentialCleanupFailedError, match="synthetic credential cleanup failure"):
+    with pytest.raises(
+        SSHCredentialCleanupFailedError, match="synthetic credential cleanup failure"
+    ):
         await workspace_tools.open_workspace(
             "example",
             "persistent",
