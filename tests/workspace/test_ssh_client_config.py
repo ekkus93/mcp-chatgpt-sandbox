@@ -190,6 +190,14 @@ async def test_at_034_substituted_host_key_fails_closed_no_prompt(
     prompt on a non-interactive `exec` anyway); with it, a real client
     hitting a mismatch fails outright rather than hanging."""
     config = _configured(minimal_config, default_image_tag, tmp_path / "work" / "example")
+    # `exec.timeout_seconds` is clamped to `execution.sync_timeout_seconds`;
+    # the shared test fixture keeps the production default ceiling of 30s.
+    # This acceptance test deliberately performs a network-backed apt install,
+    # so make its configured ceiling match the 120s timeout requested below
+    # instead of accidentally testing the 30s clamp.
+    config = config.model_copy(
+        update={"execution": config.execution.model_copy(update={"sync_timeout_seconds": 120})}
+    )
     server = create_server(config)
     workspace_id = await _open(server)
 

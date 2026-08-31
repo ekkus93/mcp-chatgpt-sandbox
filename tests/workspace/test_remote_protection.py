@@ -105,7 +105,7 @@ def _forbid_key_provision(monkeypatch: pytest.MonkeyPatch) -> None:
     def _unexpected(*args: object, **kwargs: object) -> None:
         pytest.fail("remote-protection deny reached SSH key provisioning")
 
-    monkeypatch.setattr(SSHAgentManager, "ensure", _unexpected)
+    monkeypatch.setattr(SSHAgentManager, "load_key", _unexpected)
 
 
 def _assert_no_workspace_container(docker_client: docker.DockerClient) -> None:
