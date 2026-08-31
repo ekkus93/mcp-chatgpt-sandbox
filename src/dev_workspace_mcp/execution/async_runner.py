@@ -83,6 +83,16 @@ class LiveJob:
     nor a successful timeout, regardless of which call path (the
     internal timeout branch, or a separate `cancel_job` call) attempted
     it."""
+    termination_in_progress: bool = False
+    """True while a cancellation/timeout termination attempt is unresolved.
+
+    RR-013 regression: the stream can reach EOF after TERM but before the
+    follow-up KILL/inspect step completes. Without this gate `_run` could
+    observe `cancel_requested=True`, finalize the job as `canceled`, and
+    only afterward have `exec_cancel` discover that termination actually
+    failed. The terminal state must wait for the termination verdict.
+    """
+    termination_done: asyncio.Event = field(default_factory=asyncio.Event)
 
     def elapsed_seconds(self) -> float:
         end = self.finished_monotonic if self.finished_monotonic is not None else time.monotonic()
@@ -227,6 +237,14 @@ class AsyncJobRunner:
             _logger.exception("job %s: drain failed unexpectedly", job_id)
             exit_code = None
 
+        # RR-013: an external `exec_cancel` can still be deciding whether
+        # termination succeeded after the process stream has already
+        # closed. Do not commit a terminal state until that decision is
+        # complete; otherwise a late second-signal/inspect failure is
+        # silently overwritten by `canceled`.
+        if live.termination_in_progress:
+            await live.termination_done.wait()
+
         live.finished_monotonic = time.monotonic()
         live.stdout_capture.finish()
         live.stderr_capture.finish()
@@ -306,7 +324,16 @@ class AsyncJobRunner:
         closing the stream here, regardless of outcome, is the only thing
         that reliably frees it rather than leaking the executor slot for
         the rest of the process's lifetime. `CancellableStream.close()`
-        is explicitly documented as safe to call from another thread."""
+        is explicitly documented as safe to call from another thread.
+
+        The `termination_in_progress`/`termination_done` pair closes a
+        race between this coroutine and `_run`: EOF after TERM is not
+        proof the complete TERM→grace→KILL/inspect sequence succeeded.
+        `_run` waits for this method's final verdict before persisting a
+        terminal job state.
+        """
+        live.termination_in_progress = True
+        live.termination_done.clear()
         try:
             await self._terminate(live.exec_id)
         except ContainerRuntimeFailedError:
@@ -315,6 +342,8 @@ class AsyncJobRunner:
         finally:
             with contextlib.suppress(Exception):
                 live.stream.close()  # type: ignore[attr-defined]
+            live.termination_in_progress = False
+            live.termination_done.set()
 
     async def cancel_job(self, job_id: str) -> None:
         """§15.3's `exec_cancel`. Idempotent no-op for a job this process
