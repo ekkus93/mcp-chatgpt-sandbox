@@ -196,9 +196,7 @@ async def test_at_034_substituted_host_key_fails_closed_no_prompt(
     # so make its configured ceiling match the 120s timeout requested below
     # instead of accidentally testing the 30s clamp.
     config = config.model_copy(
-        update={
-            "execution": config.execution.model_copy(update={"sync_timeout_seconds": 120})
-        }
+        update={"execution": config.execution.model_copy(update={"sync_timeout_seconds": 120})}
     )
     server = create_server(config)
     workspace_id = await _open(server)
