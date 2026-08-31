@@ -34,6 +34,15 @@ def sha256_of(data: bytes) -> str:
 _READ_FILE_HASH_CHUNK_BYTES = 1024 * 1024
 
 
+#: G3R-008 (`docs/GAP3_SPEC.md`): returned-entry count is not a work
+#: bound when candidates can be skipped. Keep a separate derived budget
+#: large enough for ordinary churn but finite under pathological trees.
+#: Derive it from the daemon's configured maximum listing size, not the
+#: caller's per-request `max_entries`, so asking for one entry does not
+#: make a handful of concurrent vanishes spuriously fatal.
+_LISTING_CANDIDATES_PER_CONFIGURED_ENTRY = 10
+
+
 def _hash_pread(fd: int, total_size: int, *, chunk_size: int = _READ_FILE_HASH_CHUNK_BYTES) -> str:
     """RR-006 (`docs/REMEDIATION_SPEC.md` §5): `write_file`'s
     `expected_sha256` check used a single `os.pread(fd, total_size, 0)` —
@@ -125,38 +134,100 @@ class FilesystemService:
         if max_entries is not None:
             limit = min(max_entries, limit)
 
+        if limit <= 0:
+            return []
+
         entries: list[ListEntry] = []
-        # G2R-018 (`docs/GAP2_SPEC.md`): no `sorted(...)` around this —
-        # sorting requires materializing every candidate up front, which
-        # walks the *entire* tree (`rglob`'s own directory descent
-        # included) before the `limit` break below can ever apply,
-        # making it decorative for cost purposes:
-        # `list_files("", recursive=True, max_entries=1)` against a
-        # repository with a large `node_modules/` used to walk and sort
-        # every path in it to return one entry. `rglob`/`iterdir` are
-        # both lazy generators — not wrapping them in `sorted()`/
-        # `list()` is what actually bounds the walk to roughly `limit`
-        # candidates, not just the entries collected. No sort-order
-        # contract exists for this output to preserve: checked
-        # `docs/SPEC.md` §13.1 (only names path/type/size/mtime/symlink
-        # status, nothing about ordering), `docs/TOOLS.md`, and every
-        # existing test (none assert or rely on a particular order —
-        # comparisons are all against sets/dicts keyed by path) before
-        # concluding this was safe to drop, not assumed.
-        candidates = start.rglob("*") if recursive else start.iterdir()
-        for candidate in candidates:
-            if len(entries) >= limit:
-                break
-            if self._is_git_metadata(candidate):
+        candidates_examined = 0
+        candidate_limit = (
+            self._config.max_listing_entries * _LISTING_CANDIDATES_PER_CONFIGURED_ENTRY
+        )
+        pending_directories = [start]
+        next_directory = 0
+
+        # G3R-008 / G3AT-008: traversal work and returned entries are two
+        # different budgets. `Path.rglob()` cannot prune a directory before
+        # its own recursion has already committed to descending into it, so
+        # filtering `.git` in the outer loop still walked `.git/objects`.
+        # Scan one directory at a time instead. A Git-metadata directory is
+        # rejected before it can be queued for descent, and symlinked
+        # directories are never followed (`follow_symlinks=False`).
+        while next_directory < len(pending_directories):
+            directory = pending_directories[next_directory]
+            next_directory += 1
+            try:
+                iterator = os.scandir(directory)
+            except OSError:
+                # The directory disappeared after it was queued, or became
+                # unreadable. This is the directory-level counterpart to
+                # G2R-009's vanished-entry handling and preserves the existing
+                # unreadable-subdirectory behavior without swallowing errors
+                # from `_describe` or the security checks below.
                 continue
-            described = self._describe(candidate)
-            # G2R-009 (`docs/GAP2_SPEC.md`): `None` means `candidate`
-            # vanished between enumeration (above) and description — see
-            # `_describe`'s own docstring — not a reason to abort the
-            # rest of the listing, the same principle `_is_git_metadata`
-            # already applies to an escaping symlink or a symlink loop.
-            if described is not None:
-                entries.append(described)
+
+            with iterator:
+                while candidates_examined < candidate_limit:
+                    try:
+                        dir_entry = next(iterator)
+                    except StopIteration:
+                        break
+                    except OSError:
+                        # Concurrent mutation/permission change while scanning
+                        # this directory: stop descending this directory only;
+                        # siblings already queued remain eligible.
+                        break
+
+                    candidates_examined += 1
+                    candidate = Path(dir_entry.path)
+                    if self._is_git_metadata(candidate):
+                        continue
+
+                    should_descend = False
+                    if recursive:
+                        try:
+                            should_descend = dir_entry.is_dir(follow_symlinks=False)
+                        except OSError:
+                            # Concurrent mutation may make a directory entry
+                            # unstatable after enumeration. G2R-009 already
+                            # requires listing to continue; not descending an
+                            # identity we can no longer prove is a directory
+                            # is the safe choice.
+                            pass
+
+                    described = self._describe(candidate)
+                    # G2R-009 (`docs/GAP2_SPEC.md`): `None` means the
+                    # candidate vanished between enumeration and description.
+                    # It still consumed candidate work, but it does not consume
+                    # a returned-entry slot.
+                    if described is not None:
+                        entries.append(described)
+                        if len(entries) >= limit:
+                            return entries
+
+                    if should_descend:
+                        pending_directories.append(candidate)
+
+                else:
+                    # Do not pull one more DirEntry merely to discover whether
+                    # this iterator happens to be exhausted: that would perform
+                    # work beyond the derived ceiling. If the requested
+                    # visible-entry count was not reached when the budget
+                    # itself is exhausted, return no silently-partial success.
+                    raise InvalidArgumentError(
+                        "listing traversal exhausted the derived candidate-work limit",
+                        details={
+                            "path": relative_path,
+                            "recursive": recursive,
+                            "max_entries": limit,
+                            "entries_collected": len(entries),
+                            "candidate_limit": candidate_limit,
+                            "candidates_examined": candidates_examined,
+                        },
+                    )
+
+            if not recursive:
+                break
+
         return entries
 
     def _is_git_metadata(self, path: Path) -> bool:
@@ -196,8 +267,8 @@ class FilesystemService:
 
     def _describe(self, path: Path) -> ListEntry | None:
         """`None` means `path` no longer exists — G2R-009
-        (`docs/GAP2_SPEC.md`): `list_files` enumerates first
-        (`start.rglob`/`iterdir`), then calls this once per candidate; a
+        (`docs/GAP2_SPEC.md`): `list_files` enumerates a directory entry,
+        then calls this once per candidate; a
         container process (via `exec`) can delete an entry in that
         window, e.g. `rm -rf build/` against the same bind-mounted
         checkout. `path.stat()` below is the one call in this method
