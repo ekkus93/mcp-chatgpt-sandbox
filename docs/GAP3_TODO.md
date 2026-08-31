@@ -131,15 +131,24 @@ This is intentionally a semantic change. A policy called `deny` must not mean �
 
 **Satisfies:** G3R-006 · **Verified by:** G3AT-006
 
-- [ ] Refresh/read immutable image identity from current container metadata
-- [ ] Stop deriving the runtime digest by resolving `record.image` as a mutable tag
-- [ ] Preserve a configured/reference image field separately if useful
-- [ ] Test same-tag retargeting: A -> create container -> retag to B -> existing workspace still reports A digest
-- [ ] Test explicit rebuild changes runtime digest to B
-- [ ] Handle missing local tag without losing the ability to report an already-running container's immutable image ID
-- [ ] Run schema drift check
-- [ ] Correct comments that currently claim tag lookup remains correct after retagging
-- [ ] Amend GAP2 X14's completion write-up with a correction pointing here
+- [x] Refresh/read immutable image identity from current container metadata
+- [x] Stop deriving the runtime digest by resolving `record.image` as a mutable tag
+- [x] Preserve a configured/reference image field separately if useful
+- [x] Test same-tag retargeting: A -> create container -> retag to B -> existing workspace still reports A digest
+- [x] Test explicit rebuild changes runtime digest to B
+- [x] Handle missing local tag without losing the ability to report an already-running container's immutable image ID
+- [x] Run schema drift check
+- [x] Correct comments that currently claim tag lookup remains correct after retagging
+- [x] Amend GAP2 X14's completion write-up with a correction pointing here
+
+**Completion evidence.** PR #4 derives `image_digest` from the running
+container's immutable Docker inspect `Image` value and deliberately has no
+mutable-tag fallback when that identity cannot be inspected. G3AT-006 covers
+same-tag retargeting, explicit rebuild, removal of the configured tag after
+container creation, and fail-closed behavior when container provenance cannot
+be established. CI run `33436682335` passed the complete 1,077-test suite plus
+Ruff, mypy, schema export, contract-version, and tool-doc drift gates on the
+final code/test head before this documentation-only bookkeeping update.
 
 ### Y7 — Reopen X15: make failed job-log cleanup durable and retryable
 
