@@ -30,7 +30,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from dev_workspace_mcp.config.models import SSHConfig
-from dev_workspace_mcp.errors import RepositoryNotAllowedError, SSHKeyProvisionFailedError
+from dev_workspace_mcp.errors import (
+    RepositoryNotAllowedError,
+    SSHCredentialCleanupFailedError,
+    SSHKeyProvisionFailedError,
+)
 from dev_workspace_mcp.repositories import RepositoryRecord, RepositoryRegistry
 
 _logger = logging.getLogger(__name__)
@@ -160,6 +164,17 @@ def _record_matches_running_agent(record: SSHAgentRecord) -> bool:
         return _has_expected_agent_signature(record.pid, record.socket_path)
     except (OSError, ValueError):
         return False
+
+
+def _pid_exists(pid: int) -> bool:
+    """Liveness only; never use this as process identity proof."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def _terminate_pid(pid: int) -> None:
@@ -331,15 +346,95 @@ class SSHAgentManager:
                 details={"workspace_id": workspace_id, "key_path": str(key_path)},
             )
 
+    def _terminate_for_credential_cleanup(
+        self, record: SSHAgentRecord, *, reason: str
+    ) -> None:
+        """Fail-closed fallback used when key removal cannot be proven.
+
+        G3R-004: because each agent is workspace-scoped, terminating the
+        verified agent is stronger and simpler than pretending a failed
+        `ssh-add -D` removed the key. The persisted row is intentionally
+        kept until termination is both attempted against the verified
+        process and observed to have ended. A failure therefore remains
+        retryable/observable instead of being warning-and-forget state.
+        """
+        if not _record_matches_running_agent(record):
+            raise SSHCredentialCleanupFailedError(
+                "cannot prove SSH credentials were removed: the tracked ssh-agent "
+                "identity is no longer verifiable, so it is unsafe to signal the PID",
+                details={"workspace_id": record.workspace_id, "stage": reason},
+            )
+        try:
+            _terminate_pid(record.pid)
+        except OSError as exc:
+            raise SSHCredentialCleanupFailedError(
+                "cannot prove SSH credentials were removed: terminating the "
+                "workspace ssh-agent failed",
+                details={"workspace_id": record.workspace_id, "stage": reason},
+            ) from exc
+
+        # `_terminate_pid` normally reaps a same-process child. Re-check
+        # identity anyway so a non-child/restart-recovered agent cannot be
+        # reported clean merely because SIGTERM was sent successfully.
+        if _record_matches_running_agent(record):
+            raise SSHCredentialCleanupFailedError(
+                "cannot prove SSH credentials were removed: the workspace "
+                "ssh-agent is still running after termination",
+                details={"workspace_id": record.workspace_id, "stage": reason},
+            )
+
+        record.socket_path.unlink(missing_ok=True)
+        self._forget(record.workspace_id)
+        _logger.warning(
+            "workspace %s: %s; terminated the per-workspace ssh-agent as fail-closed fallback",
+            record.workspace_id,
+            reason,
+        )
+
     def unload_key(self, workspace_id: str) -> None:
+        """Remove all keys, or prove the workspace agent itself is gone.
+
+        G3R-004 closes the old silent fallback: `ssh-add -D`'s exit status
+        is security-significant and is checked. A nonzero result triggers
+        verified agent termination. If that fallback also fails, a typed
+        non-recoverable error is raised and the tracking row is preserved
+        so a later retry/operator can still identify the cleanup debt.
+        stderr is deliberately not reflected into the client/log message;
+        only the exit code/reason class is recorded, avoiding credential
+        leakage from an unexpected `ssh-add` diagnostic.
+        """
         record = self.get(workspace_id)
-        if record is None or not record.socket_path.exists():
+        if record is None:
             return
-        subprocess.run(  # noqa: S603
+
+        if not record.socket_path.exists():
+            if not _pid_exists(record.pid):
+                # The tracked process is confirmed gone; no agent remains
+                # that could still use a loaded credential.
+                self._forget(workspace_id)
+                return
+            self._terminate_for_credential_cleanup(
+                record, reason="ssh-agent socket disappeared before key unload"
+            )
+            return
+
+        unload = subprocess.run(  # noqa: S603
             ["ssh-add", "-D"],
             env={**os.environ, "SSH_AUTH_SOCK": str(record.socket_path)},
             capture_output=True,
             text=True,
+        )
+        if unload.returncode == 0:
+            return
+
+        _logger.warning(
+            "workspace %s: ssh-add -D failed with exit code %d; "
+            "terminating per-workspace agent instead",
+            workspace_id,
+            unload.returncode,
+        )
+        self._terminate_for_credential_cleanup(
+            record, reason=f"ssh-add -D failed with exit code {unload.returncode}"
         )
 
     def terminate(self, workspace_id: str) -> None:

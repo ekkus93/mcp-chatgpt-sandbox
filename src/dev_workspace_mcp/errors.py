@@ -1,6 +1,6 @@
 """The §31 error taxonomy and its mapping to MCP tool errors (§6.1).
 
-Every domain error in the system is one of the 26 typed exceptions below,
+Every domain error in the system is one of the 27 typed exceptions below,
 each carrying the fields §31 requires: a stable code, a concise message, a
 recoverable flag, and structured details. `to_tool_error()` and the
 `@translate_workspace_errors` decorator are the "map internal errors to
@@ -51,6 +51,7 @@ class ErrorCode(StrEnum):
     GIT_AUTH_FAILED = "GIT_AUTH_FAILED"
     REMOTE_PROTECTION_MISSING = "REMOTE_PROTECTION_MISSING"
     SSH_KEY_PROVISION_FAILED = "SSH_KEY_PROVISION_FAILED"
+    SSH_CREDENTIAL_CLEANUP_FAILED = "SSH_CREDENTIAL_CLEANUP_FAILED"
     GIT_NON_FAST_FORWARD = "GIT_NON_FAST_FORWARD"
     GIT_NOTHING_TO_COMMIT = "GIT_NOTHING_TO_COMMIT"
     POLICY_DENIED = "POLICY_DENIED"
@@ -100,7 +101,7 @@ class WorkspaceError(Exception):
         }
 
 
-# --- the 25 typed errors -------------------------------------------------------
+# --- the typed errors -------------------------------------------------------
 
 
 class InvalidArgumentError(WorkspaceError):
@@ -191,6 +192,20 @@ class RemoteProtectionMissingError(WorkspaceError):
 class SSHKeyProvisionFailedError(WorkspaceError):
     code = ErrorCode.SSH_KEY_PROVISION_FAILED
     default_recoverable = False  # an operator configuration/registration problem (§19)
+
+
+class SSHCredentialCleanupFailedError(WorkspaceError):
+    """G3R-004: the daemon could not prove a workspace credential was removed.
+
+    This is deliberately distinct from provisioning failure: by the time
+    this is raised a credential may already be live in an ssh-agent, so a
+    silent retry/continue would overstate the security state. The tracked
+    agent row is preserved whenever possible so an operator/later retry
+    still has the information needed to clean it up.
+    """
+
+    code = ErrorCode.SSH_CREDENTIAL_CLEANUP_FAILED
+    default_recoverable = False
 
 
 class GitNonFastForwardError(WorkspaceError):
