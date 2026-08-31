@@ -165,6 +165,17 @@ MIGRATIONS: list[list[str]] = [
         # the one call site that decides whether to run setup.
         "ALTER TABLE workspace ADD COLUMN setup_completed_container_id TEXT",
     ],
+    # --- version 6 -> 7: restart-safe ssh-agent process identity (G3R-002) ----
+    [
+        # A persisted PID is not an identity across daemon restarts: the
+        # original process can exit and Linux can reuse the integer for an
+        # unrelated host process. `boot_id` + `/proc/<pid>/stat` field 22
+        # (start time) makes PID reuse/reboot detectable. Nullable is
+        # deliberate for migration compatibility: legacy rows become
+        # unverifiable and reconciliation refuses to signal them.
+        "ALTER TABLE ssh_agent ADD COLUMN boot_id TEXT",
+        "ALTER TABLE ssh_agent ADD COLUMN process_start_time INTEGER",
+    ],
 ]
 
 
