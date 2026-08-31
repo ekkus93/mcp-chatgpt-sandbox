@@ -19,7 +19,7 @@ def _table_names(connection: sqlite3.Connection) -> set[str]:
     return {row["name"] for row in rows}
 
 
-def test_open_db_creates_all_five_tables() -> None:
+def test_open_db_creates_all_six_tables() -> None:
     connection = open_db(":memory:")
     assert _table_names(connection) == {
         "repository",
@@ -27,6 +27,7 @@ def test_open_db_creates_all_five_tables() -> None:
         "job",
         "audit_event",
         "ssh_agent",
+        "job_log_cleanup",
     }
 
 
@@ -255,10 +256,14 @@ def test_at_hat016_migration_from_an_older_populated_database_preserves_data(
     workspace = connection.execute("SELECT * FROM workspace WHERE id = 'ws_example'").fetchone()
     assert workspace["state"] == "running"
     assert workspace["image_digest"] is None  # a later migration's new column, defaulted NULL
-    # the ssh_agent table a later migration adds is present and usable
+    # later migration tables are present and usable
     connection.execute(
         "INSERT INTO ssh_agent (workspace_id, pid, socket_path, created_at) "
         "VALUES ('ws_example', 1234, '/tmp/agent.sock', '2026-01-01T00:00:00Z')"
+    )
+    connection.execute(
+        "INSERT INTO job_log_cleanup (job_id, workspace_id, created_at) "
+        "VALUES ('job_orphan', 'ws_deleted', '2026-01-01T00:00:00Z')"
     )
     connection.commit()
 

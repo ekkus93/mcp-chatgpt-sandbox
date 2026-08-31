@@ -176,6 +176,49 @@ MIGRATIONS: list[list[str]] = [
         "ALTER TABLE ssh_agent ADD COLUMN boot_id TEXT",
         "ALTER TABLE ssh_agent ADD COLUMN process_start_time INTEGER",
     ],
+    # --- version 7 -> 8: durable job-log cleanup debt (G3R-007) ---------------
+    [
+        # G3R-007 (`docs/GAP3_SPEC.md`): a cleanup tombstone intentionally
+        # has no FK to either `job` or `workspace` because both rows are
+        # expected to be gone while host-log cleanup can still be pending.
+        # The BEFORE DELETE trigger is load-bearing: it creates the debt row
+        # in the same SQLite transaction as every job-row deletion, closing
+        # both the ordinary rmtree-failure case and the crash window between
+        # metadata deletion and best-effort filesystem cleanup.
+        """
+        CREATE TABLE job_log_cleanup (
+            job_id          TEXT PRIMARY KEY,
+            workspace_id    TEXT NOT NULL,
+            created_at      TEXT NOT NULL,
+            last_attempt_at TEXT,
+            last_error      TEXT,
+            bytes_hint      INTEGER NOT NULL DEFAULT 0 CHECK (bytes_hint >= 0)
+        )
+        """,
+        "CREATE INDEX idx_job_log_cleanup_created_at ON job_log_cleanup (created_at)",
+        # Plain INSERT rather than INSERT OR REPLACE is deliberate. An
+        # unexpected unresolved tombstone for a reused job id must make the
+        # metadata transaction fail instead of silently overwriting the only
+        # durable record of the older cleanup debt. Byte counters are a safe
+        # lower-bound hint when a later permission failure prevents scanning
+        # the directory; maintenance refreshes from disk whenever possible.
+        """
+        CREATE TRIGGER job_log_cleanup_before_delete
+        BEFORE DELETE ON job
+        BEGIN
+            INSERT INTO job_log_cleanup
+                (job_id, workspace_id, created_at, last_attempt_at, last_error, bytes_hint)
+            VALUES (
+                OLD.id,
+                OLD.workspace_id,
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                NULL,
+                NULL,
+                max(OLD.stdout_total_bytes + OLD.stderr_total_bytes, 0)
+            );
+        END
+        """,
+    ],
 ]
 
 
