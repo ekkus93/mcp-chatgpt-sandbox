@@ -61,8 +61,11 @@ def test_g3at_008_git_subtree_is_pruned_before_any_scandir_descent(
     real_scandir = os.scandir
     scanned_git_dirs: list[Path] = []
 
-    def _counting_scandir(path: str | bytes | os.PathLike[str] | os.PathLike[bytes]):  # type: ignore[no-untyped-def]
-        candidate = Path(path)
+    def _counting_scandir(path):  # type: ignore[no-untyped-def]
+        if isinstance(path, int):
+            candidate = Path(os.readlink(f"/proc/self/fd/{path}"))
+        else:
+            candidate = Path(path)
         try:
             candidate.relative_to(root / ".git")
         except ValueError:
