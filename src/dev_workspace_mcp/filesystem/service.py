@@ -155,80 +155,134 @@ class FilesystemService:
         while next_directory < len(pending_directories):
             directory = pending_directories[next_directory]
             next_directory += 1
-            try:
-                iterator = os.scandir(directory)
-            except OSError:
-                # The directory disappeared after it was queued, or became
-                # unreadable. This is the directory-level counterpart to
-                # G2R-009's vanished-entry handling and preserves the existing
-                # unreadable-subdirectory behavior without swallowing errors
-                # from `_describe` or the security checks below.
+            directory_fd = self._open_listing_directory(directory)
+            if directory_fd is None:
                 continue
 
-            with iterator:
-                while candidates_examined < candidate_limit:
-                    try:
-                        dir_entry = next(iterator)
-                    except StopIteration:
-                        break
-                    except OSError:
-                        # Concurrent mutation/permission change while scanning
-                        # this directory: stop descending this directory only;
-                        # siblings already queued remain eligible.
-                        break
-
-                    candidates_examined += 1
-                    candidate = Path(dir_entry.path)
-                    if self._is_git_metadata(candidate):
-                        continue
-
-                    should_descend = False
-                    if recursive:
+            try:
+                iterator = os.scandir(directory_fd)
+                with iterator:
+                    while candidates_examined < candidate_limit:
                         try:
-                            should_descend = dir_entry.is_dir(follow_symlinks=False)
+                            dir_entry = next(iterator)
+                        except StopIteration:
+                            break
                         except OSError:
-                            # Concurrent mutation may make a directory entry
-                            # unstatable after enumeration. G2R-009 already
-                            # requires listing to continue; not descending an
-                            # identity we can no longer prove is a directory
-                            # is the safe choice.
-                            pass
+                            # Concurrent mutation/permission change while scanning
+                            # this directory: stop descending this directory only;
+                            # siblings already queued remain eligible.
+                            break
 
-                    described = self._describe(candidate)
-                    # G2R-009 (`docs/GAP2_SPEC.md`): `None` means the
-                    # candidate vanished between enumeration and description.
-                    # It still consumed candidate work, but it does not consume
-                    # a returned-entry slot.
-                    if described is not None:
-                        entries.append(described)
-                        if len(entries) >= limit:
-                            return entries
+                        candidates_examined += 1
+                        # `os.scandir(fd)` intentionally returns names relative
+                        # to the pinned directory fd. Reconstruct the display/
+                        # validation path from the already-authorized directory
+                        # instead of trusting a separately resolved host path.
+                        candidate = directory / dir_entry.name
+                        if self._is_git_metadata(candidate):
+                            continue
 
-                    if should_descend:
-                        pending_directories.append(candidate)
+                        should_descend = False
+                        if recursive:
+                            try:
+                                should_descend = dir_entry.is_dir(follow_symlinks=False)
+                            except OSError:
+                                # Concurrent mutation may make a directory entry
+                                # unstatable after enumeration. G2R-009 already
+                                # requires listing to continue; not descending an
+                                # identity we can no longer prove is a directory
+                                # is the safe choice.
+                                pass
 
-                else:
-                    # Do not pull one more DirEntry merely to discover whether
-                    # this iterator happens to be exhausted: that would perform
-                    # work beyond the derived ceiling. If the requested
-                    # visible-entry count was not reached when the budget
-                    # itself is exhausted, return no silently-partial success.
-                    raise InvalidArgumentError(
-                        "listing traversal exhausted the derived candidate-work limit",
-                        details={
-                            "path": relative_path,
-                            "recursive": recursive,
-                            "max_entries": limit,
-                            "entries_collected": len(entries),
-                            "candidate_limit": candidate_limit,
-                            "candidates_examined": candidates_examined,
-                        },
-                    )
+                        described = self._describe(candidate)
+                        # G2R-009 (`docs/GAP2_SPEC.md`): `None` means the
+                        # candidate vanished between enumeration and description.
+                        # It still consumed candidate work, but it does not consume
+                        # a returned-entry slot.
+                        if described is not None:
+                            entries.append(described)
+                            if len(entries) >= limit:
+                                return entries
+
+                        if should_descend:
+                            pending_directories.append(candidate)
+
+                    else:
+                        # Do not pull one more DirEntry merely to discover whether
+                        # this iterator happens to be exhausted: that would perform
+                        # work beyond the derived ceiling. If the requested
+                        # visible-entry count was not reached when the budget
+                        # itself is exhausted, return no silently-partial success.
+                        raise InvalidArgumentError(
+                            "listing traversal exhausted the derived candidate-work limit",
+                            details={
+                                "path": relative_path,
+                                "recursive": recursive,
+                                "max_entries": limit,
+                                "entries_collected": len(entries),
+                                "candidate_limit": candidate_limit,
+                                "candidates_examined": candidates_examined,
+                            },
+                        )
+            finally:
+                os.close(directory_fd)
 
             if not recursive:
                 break
 
         return entries
+
+    def _open_listing_directory(self, directory: Path) -> int | None:
+        """Open a queued directory without following a swapped final symlink.
+
+        G3R-008 changes the traversal primitive, so it must not weaken the
+        repository boundary while doing so. A candidate can be a real directory
+        when `DirEntry.is_dir(follow_symlinks=False)` queues it and then be
+        replaced by a container process before the later descent. Re-opening the
+        queued path with plain `os.scandir(path)` would follow an escaping symlink
+        in that window. Pin the parent with the existing race-checked security
+        helper, then open the final component with `O_NOFOLLOW`; scan the resulting
+        fd, never the path string.
+
+        `None` is only the concurrent-vanish/unreadable/not-a-real-directory case.
+        Repository-boundary or Git-metadata errors from `open_parent_validated`/
+        `verify_fd_within_root` remain typed failures and are deliberately not
+        swallowed as best effort.
+        """
+        if directory == self._security.root:
+            try:
+                directory_fd = os.open(
+                    directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+                )
+            except OSError:
+                return None
+            self._security.verify_fd_within_root(directory_fd, "")
+            return directory_fd
+
+        relative = directory.relative_to(self._security.root).as_posix()
+        try:
+            parent_fd, name = self._security.open_parent_validated(relative)
+        except InvalidArgumentError:
+            # A directory that was previously enumerable can vanish or have an
+            # intermediate component replaced before descent (G2R-009).
+            return None
+        try:
+            try:
+                directory_fd = os.open(
+                    name,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                    dir_fd=parent_fd,
+                )
+            except OSError:
+                # Includes a final-component symlink swap (O_NOFOLLOW), a
+                # concurrent vanish, or a permission change. Never retry by
+                # path string: doing so would reopen the escape race above.
+                return None
+        finally:
+            os.close(parent_fd)
+
+        self._security.verify_fd_within_root(directory_fd, relative)
+        return directory_fd
 
     def _is_git_metadata(self, path: Path) -> bool:
         """§12.1: excluded from listings by default (§13.1).
