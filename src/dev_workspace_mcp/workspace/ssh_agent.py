@@ -8,8 +8,11 @@ therefore requires restart-stable identity proof first.
 
 The proof is Linux-specific by design: this daemon targets Linux Docker
 hosts. It combines the host boot ID, `/proc/<pid>/stat` start time, the
-current executable name, and the exact `ssh-agent -D -a <socket>` command
-shape. Legacy rows without the new identity fields are deliberately
+current process name from `/proc/<pid>/comm`, and the exact
+`ssh-agent -D -a <socket>` command shape. `comm` is deliberate rather than
+`/proc/<pid>/exe`: hardened/self-hosted environments can deny reading the
+`exe` symlink even when `stat`/`comm`/`cmdline` for the same process remain
+readable. Legacy rows without the new identity fields are deliberately
 unverifiable and are forgotten without signalling their PID.
 """
 
@@ -111,6 +114,21 @@ def _capture_process_identity(pid: int) -> _ProcessIdentity:
     )
 
 
+def _read_process_name(pid: int) -> str:
+    """Return Linux `/proc/<pid>/comm` without requiring `/proc/<pid>/exe` access.
+
+    Some hardened procfs/Yama configurations deny `readlink(.../exe)` for
+    an otherwise-readable process. `comm` remains sufficient here because
+    it is only one component of the identity proof: boot ID + process start
+    time prevent PID reuse, while the exact command line below binds the
+    process to this workspace's expected ssh-agent/socket invocation.
+    """
+    name = (_PROC_ROOT / str(pid) / "comm").read_text().strip()
+    if not name:
+        raise OSError(f"empty Linux process name at /proc/{pid}/comm")
+    return name
+
+
 def _read_cmdline(pid: int) -> list[str]:
     raw = (_PROC_ROOT / str(pid) / "cmdline").read_bytes()
     return [part.decode(errors="surrogateescape") for part in raw.split(b"\0") if part]
@@ -118,8 +136,7 @@ def _read_cmdline(pid: int) -> list[str]:
 
 def _has_expected_agent_signature(pid: int, socket_path: Path) -> bool:
     """Confirm the live PID still looks like the agent this daemon started."""
-    executable = Path(os.readlink(_PROC_ROOT / str(pid) / "exe"))
-    if executable.name != "ssh-agent":
+    if _read_process_name(pid) != "ssh-agent":
         return False
     cmdline = _read_cmdline(pid)
     if not cmdline or Path(cmdline[0]).name != "ssh-agent" or "-D" not in cmdline:
