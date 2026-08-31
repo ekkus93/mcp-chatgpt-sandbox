@@ -5,13 +5,17 @@
 # owner's uid/gid (§5.3), which varies by host and is only known when the
 # daemon actually launches the container.
 #
-# G2R-003 (`docs/GAP2_SPEC.md`): the actual ENTRYPOINT is
-# `entrypoint-wrapper.py`, not `entrypoint.sh` — the wrapper strips
-# interpreter-control environment state (`BASH_ENV`/`ENV`/an exported
-# shell function) before `entrypoint.sh`'s root phase can run at all,
-# since bash imports that state at its own process startup, before even
-# `entrypoint.sh`'s first line executes. See the wrapper's own docstring
-# for why this step is Python, not another layer of shell.
+# G2R-003 (`docs/GAP2_SPEC.md`): the privileged root phase must not start
+# under Bash before Bash startup controls have been stripped. The Python
+# wrapper sanitizes that Bash-specific state before execing entrypoint.sh.
+#
+# G3R-001 (`docs/GAP3_SPEC.md`): Python itself has an earlier startup
+# boundary. In normal mode `PYTHONPATH` can make `sitecustomize.py` execute
+# before the wrapper reaches its first line, while the container is still
+# root. The real ENTRYPOINT therefore invokes the absolute interpreter with
+# `-I`: isolated mode ignores `PYTHON*` environment state and unsafe import
+# search paths. This flag is load-bearing; do not replace this array with a
+# direct invocation of the wrapper script or a PATH-resolved interpreter.
 
 FROM ubuntu:24.04
 
@@ -44,5 +48,5 @@ RUN chmod 0755 /usr/local/bin/mcp-entrypoint-real.sh /usr/local/bin/mcp-entrypoi
 
 WORKDIR /workspace
 
-ENTRYPOINT ["/usr/local/bin/mcp-entrypoint-wrapper.py"]
+ENTRYPOINT ["/usr/bin/python3", "-I", "/usr/local/bin/mcp-entrypoint-wrapper.py"]
 CMD ["sleep", "infinity"]
