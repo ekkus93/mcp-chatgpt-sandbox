@@ -6,6 +6,7 @@ reference from the immutable image already backing a persistent container.
 """
 
 import contextlib
+import io
 import subprocess
 import uuid
 from pathlib import Path
@@ -18,7 +19,6 @@ from dev_workspace_mcp.db import open_db
 from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.server import create_server
 from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
-from tests.workspace.conftest import TEST_IMAGE
 
 
 def _init_repo(repo_path: Path) -> None:
@@ -53,10 +53,27 @@ async def test_g3at_006_retagging_does_not_change_existing_container_digest(
     tmp_path: Path,
 ) -> None:
     image_a = docker_client.images.get(default_image_tag)
-    image_b = docker_client.images.get(TEST_IMAGE)
+    suffix = uuid.uuid4().hex
+
+    # Build B FROM A with only a unique image label. It has the same
+    # entrypoint/tools/runtime contract as A but a distinct immutable ID,
+    # so the rebuild half tests provenance rather than distro differences.
+    derived_repository = f"mcp-gap3-y6-derived-{suffix}"
+    derived_tag = f"{derived_repository}:latest"
+    dockerfile = (
+        f"FROM {default_image_tag}\n"
+        f'LABEL mcp.gap3.y6="{suffix}"\n'
+    ).encode()
+    image_b, _ = docker_client.images.build(
+        fileobj=io.BytesIO(dockerfile),
+        tag=derived_tag,
+        rm=True,
+        forcerm=True,
+        pull=False,
+    )
     assert image_a.id != image_b.id
 
-    tag_repository = f"mcp-gap3-y6-{uuid.uuid4().hex}"
+    tag_repository = f"mcp-gap3-y6-{suffix}"
     mutable_tag = f"{tag_repository}:latest"
     assert image_a.tag(tag_repository, tag="latest", force=True)
 
@@ -71,7 +88,7 @@ async def test_g3at_006_retagging_does_not_change_existing_container_digest(
         assert first.structured_content["image"] == mutable_tag
         assert first.structured_content["image_digest"] == image_a.id
 
-        # Retarget the same configured reference to B.  Reopening a
+        # Retarget the same configured reference to B. Reopening a
         # persistent workspace reconciles the existing container; it is
         # deliberately not a rebuild and therefore must still report A.
         assert image_b.tag(tag_repository, tag="latest", force=True)
@@ -84,7 +101,7 @@ async def test_g3at_006_retagging_does_not_change_existing_container_digest(
         assert info.structured_content["image_digest"] == image_a.id
 
         # An explicit rebuild is the boundary where the mutable reference
-        # is resolved for a new container.  After that, runtime provenance
+        # is resolved for a new container. After that, runtime provenance
         # must change to B.
         db = open_db(config.state_db_path)
         try:
@@ -100,10 +117,12 @@ async def test_g3at_006_retagging_does_not_change_existing_container_digest(
         assert rebuilt_info.structured_content["image_digest"] == image_b.id
 
         # Removing the mutable tag must not erase provenance for the
-        # already-running container.  No fallback tag lookup is allowed.
+        # already-running container. No fallback tag lookup is allowed.
         docker_client.images.remove(mutable_tag, noprune=True)
         missing_tag_info = await server.call_tool("workspace_info", {"workspace_id": workspace_id})
         assert missing_tag_info.structured_content["image_digest"] == image_b.id
     finally:
         with contextlib.suppress(docker.errors.DockerException):
             docker_client.images.remove(mutable_tag, noprune=True)
+        with contextlib.suppress(docker.errors.DockerException):
+            docker_client.images.remove(derived_tag, noprune=True)
