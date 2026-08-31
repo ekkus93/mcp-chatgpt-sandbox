@@ -154,22 +154,16 @@ def test_list_files_respects_max_entries(tmp_path: Path) -> None:
 def test_at_g2r018_a_low_max_entries_bounds_the_walk_not_just_the_result(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """G2R-018 (`docs/GAP2_SPEC.md`): a real regression —
-    `candidates = sorted(start.rglob("*") ...)` materialized and sorted
-    the *entire* tree before the `max_entries` break could ever apply,
-    making `list_files("", recursive=True, max_entries=1)` against a
-    repository with a large `node_modules/`-shaped subtree walk and sort
-    every path in it just to return one entry. Counting `_is_git_
-    metadata` calls (tried first) does NOT catch this: that only
-    measures the `for` loop's own body, which already broke early even
-    in the buggy version — `sorted()` drains its whole input *before*
-    the loop starts, so the actual unbounded cost never reaches that
-    counter at all. Instrumented one level lower instead: wrapping
-    `Path.rglob` to count how many items are actually pulled out of the
-    generator it returns catches exactly what `sorted()`'s eager
-    drain does that a lazy `for` loop doesn't — deliberately not a
-    wall-clock timing assertion, which would flake on a loaded machine;
-    this is exact and machine-independent."""
+    """G2R-018 still bounds actual enumeration after G3R-008 replaced rglob.
+
+    X18 originally wrapped `Path.rglob` because the defect was
+    `sorted(rglob(...))` draining the whole generator before the outer
+    result-limit break. G3R-008 deliberately removes `rglob` entirely, so
+    keeping that instrumentation would make this regression test vacuous.
+    Count yielded `os.scandir` entries instead: it is below both traversal
+    implementations and still fails if eager materialization of the whole
+    tree ever returns.
+    """
     root = _repo(tmp_path)
     many = root / "many"
     many.mkdir()
@@ -177,27 +171,37 @@ def test_at_g2r018_a_low_max_entries_bounds_the_walk_not_just_the_result(
         (many / f"file{i:05d}.txt").write_text("x")
     svc = _service(root)
 
-    real_rglob = Path.rglob
-    pulled = 0
+    real_scandir = os.scandir
+    pulled = [0]
 
-    def _counting_rglob(self: Path, pattern: str, **kwargs: object) -> object:
-        nonlocal pulled
-        for item in real_rglob(self, pattern, **kwargs):  # type: ignore[arg-type]
-            pulled += 1
-            yield item
+    class _CountingScandir:
+        def __init__(self, iterator):  # type: ignore[no-untyped-def]
+            self._iterator = iterator
 
-    monkeypatch.setattr(Path, "rglob", _counting_rglob)
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            self._iterator.__enter__()
+            return self
+
+        def __exit__(self, *args: object):  # type: ignore[no-untyped-def]
+            return self._iterator.__exit__(*args)
+
+        def __iter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        def __next__(self):  # type: ignore[no-untyped-def]
+            item = next(self._iterator)
+            pulled[0] += 1
+            return item
+
+    def _counting_scandir(path):  # type: ignore[no-untyped-def]
+        return _CountingScandir(real_scandir(path))
+
+    monkeypatch.setattr(os, "scandir", _counting_scandir)
 
     entries = svc.list_files("", recursive=True, max_entries=1)
 
     assert len(entries) == 1
-    # Generously above the theoretical minimum (a handful, accounting
-    # for `.git`, `src/`, `src/lib.rs`, and `many/` itself ahead of
-    # `many`'s own 2000 files in whatever order the filesystem actually
-    # yields them) but nowhere near the 2003 total candidates in the
-    # tree — proving the generator itself was never fully drained, not
-    # just that the *returned* list was trimmed after a full walk.
-    assert pulled < 50
+    assert pulled[0] < 50
 
 
 def test_list_files_on_nonexistent_directory_raises(tmp_path: Path) -> None:
@@ -252,18 +256,15 @@ def test_rr007_list_files_survives_an_unreadable_subdirectory(tmp_path: Path) ->
 def test_at_g2r009_list_files_survives_an_entry_deleted_after_enumeration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """G2R-009 (`docs/GAP2_SPEC.md`): `list_files` enumerates the whole
-    directory up front (`sorted(start.rglob(...)/iterdir())` fully
-    materializes the candidate list before the loop below ever calls
-    `_describe`), so a container process (via `exec`, e.g. `rm -rf` on
-    the same bind-mounted checkout) can delete an entry in the window
-    between enumeration and its own `_describe` call. `Path.stat()` —
-    unlike `is_symlink`/`exists`/`is_dir`, which all tolerate a missing
-    target and return `False` — raises `FileNotFoundError` there, not a
-    `WorkspaceError`, so unguarded this crashed the whole listing
-    untyped over one concurrently-deleted entry. Simulated
-    deterministically by monkeypatching `Path.stat` to raise for the one
-    target file, rather than racing a real background delete against
+    """G2R-009 (`docs/GAP2_SPEC.md`): `list_files` enumerates a directory
+    entry, then calls `_describe`, so a container process (via `exec`, e.g.
+    `rm -rf` on the same bind-mounted checkout) can still delete an entry
+    in that window. `Path.stat()` — unlike `is_symlink`/`exists`/`is_dir`,
+    which all tolerate a missing target and return `False` — raises
+    `FileNotFoundError` there, not a `WorkspaceError`, so unguarded this
+    crashed the whole listing untyped over one concurrently-deleted entry.
+    Simulated deterministically by monkeypatching `Path.stat` to raise for
+    the one target file, rather than racing a real background delete against
     this test's own timing."""
     root = _repo(tmp_path)
     svc = _service(root)
