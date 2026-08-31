@@ -75,7 +75,9 @@ def _configured_with_resolvable_default_branch(
     return minimal_config.model_copy(
         update={
             "docker": minimal_config.docker.model_copy(update={"default_image": default_image_tag}),
-            "repositories": [RepositoryConfig(id="example", path=repo_path, github="owner/example")],
+            "repositories": [
+                RepositoryConfig(id="example", path=repo_path, github="owner/example")
+            ],
         }
     )
 
@@ -84,7 +86,9 @@ def _deny_with_write_key(config: ServerConfig) -> ServerConfig:
     repository = config.repositories[0]
     return config.model_copy(
         update={
-            "git_policy": config.git_policy.model_copy(update={"require_remote_protection": "deny"}),
+            "git_policy": config.git_policy.model_copy(
+                update={"require_remote_protection": "deny"}
+            ),
             "repositories": [
                 RepositoryConfig(
                     id=repository.id,
@@ -175,7 +179,9 @@ async def test_at_035_warn_succeeds_with_missing_status(
             "github": config.github.model_copy(
                 update={"api_auth": "token", "api_token_path": token_path, "api_base_url": base_url}
             ),
-            "git_policy": config.git_policy.model_copy(update={"require_remote_protection": "warn"}),
+            "git_policy": config.git_policy.model_copy(
+                update={"require_remote_protection": "warn"}
+            ),
         }
     )
     server = create_server(config)
@@ -205,7 +211,9 @@ async def test_at_h032_warn_reports_a_404_as_unverified_and_still_allows(
             "github": config.github.model_copy(
                 update={"api_auth": "token", "api_token_path": token_path, "api_base_url": base_url}
             ),
-            "git_policy": config.git_policy.model_copy(update={"require_remote_protection": "warn"}),
+            "git_policy": config.git_policy.model_copy(
+                update={"require_remote_protection": "warn"}
+            ),
         }
     )
     server = create_server(config)
@@ -331,7 +339,9 @@ async def test_at_035_deny_fails_on_confirmed_missing_and_creates_no_container(
             "github": config.github.model_copy(
                 update={"api_auth": "token", "api_token_path": token_path, "api_base_url": base_url}
             ),
-            "git_policy": config.git_policy.model_copy(update={"require_remote_protection": "deny"}),
+            "git_policy": config.git_policy.model_copy(
+                update={"require_remote_protection": "deny"}
+            ),
         }
     )
     server = create_server(config)
@@ -364,7 +374,9 @@ async def test_verified_when_the_configured_checks_are_satisfied(
             "github": config.github.model_copy(
                 update={"api_auth": "token", "api_token_path": token_path, "api_base_url": base_url}
             ),
-            "git_policy": config.git_policy.model_copy(update={"require_remote_protection": "deny"}),
+            "git_policy": config.git_policy.model_copy(
+                update={"require_remote_protection": "deny"}
+            ),
         }
     )
     server = create_server(config)
