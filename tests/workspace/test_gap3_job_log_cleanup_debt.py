@@ -147,9 +147,10 @@ def test_g3at_007_failed_delete_is_durable_accounted_and_retried(
     assert pruned == ["job_budget"]
     assert store.get("job_budget").logs_pruned is True
     assert job_dir.exists()
-    assert db.execute(
-        "SELECT 1 FROM job_log_cleanup WHERE job_id = ?", (job_id,)
-    ).fetchone() is not None
+    assert (
+        db.execute("SELECT 1 FROM job_log_cleanup WHERE job_id = ?", (job_id,)).fetchone()
+        is not None
+    )
 
     # Remove the injected failure and run the same on-demand maintenance
     # path again. The orphan is reclaimed and only then is the tombstone
@@ -162,6 +163,6 @@ def test_g3at_007_failed_delete_is_durable_accounted_and_retried(
         state_dir=tmp_path,
     )
     assert not job_dir.exists()
-    assert db.execute(
-        "SELECT 1 FROM job_log_cleanup WHERE job_id = ?", (job_id,)
-    ).fetchone() is None
+    assert (
+        db.execute("SELECT 1 FROM job_log_cleanup WHERE job_id = ?", (job_id,)).fetchone() is None
+    )
