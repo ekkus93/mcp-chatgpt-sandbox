@@ -46,3 +46,7 @@ keys/
 #  https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
 .idea/
 .vscode/
+
+
+run_claude*.sh*
+*~
