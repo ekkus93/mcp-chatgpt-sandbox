@@ -115,3 +115,35 @@ def test_g3at_008_many_skipped_candidates_exhaust_work_budget_independently(
         "candidates_examined": 10,
     }
     assert described == 10
+
+
+def test_g3at_008_queued_directory_swap_cannot_escape_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A directory swapped to an escaping symlink after queueing is never descended."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    queued = root / "queued"
+    queued.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("host secret\n")
+    service = _service(root)
+    real_describe = FilesystemService._describe
+    swapped = False
+
+    def _swap_after_description(self: FilesystemService, path: Path):  # type: ignore[no-untyped-def]
+        nonlocal swapped
+        described = real_describe(self, path)
+        if path == queued and not swapped:
+            queued.rmdir()
+            queued.symlink_to(outside, target_is_directory=True)
+            swapped = True
+        return described
+
+    monkeypatch.setattr(FilesystemService, "_describe", _swap_after_description)
+
+    entries = service.list_files("", recursive=True, max_entries=100)
+
+    assert swapped is True
+    assert "queued/secret.txt" not in {entry.path for entry in entries}
