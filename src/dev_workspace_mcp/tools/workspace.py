@@ -499,19 +499,24 @@ async def open_workspace(
     )
     mounts.append(build_known_hosts_mount(ssh_config.known_hosts))
     mounts.extend(build_cache_mounts(resolved_caches))
+    workspace_key_path: Path | None = None
     if ssh_agent_manager is not None and mode == "persistent":
-        # §19.2: mounts must be finalized before `ensure_workspace`
-        # creates the container, which is only possible here because
-        # `persistent_workspace_id` is a pure, deterministic function
-        # of `repository.id` — the exact same id `ensure_workspace`
-        # computes internally for `mode: "persistent"`. Ephemeral
-        # workspaces get a random-suffixed id only `ensure_workspace`
-        # itself generates, after mounts must already exist; ephemeral
-        # agent provisioning is a known, documented gap (docs/TODO.md).
-        key_path = resolve_ssh_key_path(ssh_config, repository)
-        if key_path is not None:
-            agent_record = ssh_agent_manager.ensure(
-                persistent_workspace_id(repository.id), key_path
+        # G3R-005 (`docs/GAP3_SPEC.md`): the container needs the agent
+        # socket mounted at creation time, but it does not need the
+        # repository key loaded yet. Keep those lifecycle steps separate
+        # so Docker create/start failures cannot leave a credential live
+        # merely because the socket had to exist first.
+        #
+        # `persistent_workspace_id` is a pure, deterministic function of
+        # `repository.id` — the exact same id `ensure_workspace` computes
+        # internally for `mode: "persistent"`. Ephemeral workspaces get
+        # a random-suffixed id only `ensure_workspace` itself generates,
+        # after mounts must already exist; ephemeral agent provisioning is
+        # a known, documented gap (docs/TODO.md).
+        workspace_key_path = resolve_ssh_key_path(ssh_config, repository)
+        if workspace_key_path is not None:
+            agent_record = ssh_agent_manager.ensure_agent(
+                persistent_workspace_id(repository.id)
             )
             mounts.append(build_ssh_agent_mount(agent_record.socket_path))
     run_kwargs["mounts"] = mounts
@@ -603,68 +608,89 @@ async def open_workspace(
         and record.container_id is not None
         and record.container_id != setup_completed_for
     )
-    if setup_ran:
-        assert project_config is not None  # implied by setup_ran, mypy can't see through it
-        await run_setup_steps(
-            execution_service,
+    credential_cleanup_needed = False
+    try:
+        if workspace_key_path is not None and ssh_agent_manager is not None:
+            # G3R-005: Docker create/start has succeeded. Only now may the
+            # repository key enter the agent. Mark cleanup required before
+            # calling `ssh-add`: even a failed provisioning attempt is
+            # treated as potentially partial until Y4's checked unload path
+            # proves the agent no longer holds credentials.
+            credential_cleanup_needed = True
+            ssh_agent_manager.load_key(record.id, workspace_key_path)
+
+        if setup_ran:
+            assert project_config is not None  # implied by setup_ran, mypy can't see through it
+            await run_setup_steps(
+                execution_service,
+                record,
+                project_config.setup,
+                container_config=container_config,
+                execution_config=execution_config,
+            )
+            # Recorded only after every step succeeds — `run_setup_steps`
+            # itself fails closed on the first failing step (its own
+            # docstring), so a transient failure here leaves this column
+            # exactly as it was and the *next* `workspace_open` for this
+            # workspace id sees the same mismatch and retries, rather than
+            # silently marking a half-provisioned container complete.
+            with db:
+                db.execute(
+                    "UPDATE workspace SET setup_completed_container_id = ? WHERE id = ?",
+                    (record.container_id, record.id),
+                )
+
+        # §8.1's idle-stop (S17): no scheduler exists in the daemon, so —
+        # like S16's job-log retention — this runs opportunistically on a
+        # frequent, natural trigger point rather than on a real timer.
+        # `workspace_id` isn't necessarily among those swept (it was just
+        # ensured running, so its own `last_used_at` is fresh), but any
+        # *other* persistent workspace that has gone idle gets caught here.
+        manager.sweep_idle_workspaces(
+            idle_stop_after_seconds=workspace_config.idle_stop_after_seconds,
+            job_store=job_store,
+            audit_config=audit_config,
+        )
+
+        write_audit_event(
+            audit_config,
+            operation="workspace_opened",
+            result="success",
+            workspace_id=record.id,
+            repository_id=record.repository_id,
+            metadata={
+                "mode": mode,
+                "container_state": record.state.value,
+                "remote_protection_status": remote_protection.status,
+                "image": effective_image,
+                "setup_steps_run": setup_ran,
+                # H32 (`docs/HARDENING_SPEC.md` §9/§30 row): audited on
+                # every open, not only visible to a client that already
+                # thought to call `workspace_info` and check the field.
+                "devcontainer_ignored": devcontainer_json_is_ignored(
+                    repository.canonical_path
+                ),
+            },
+        )
+
+        return await build_workspace_info(
             record,
-            project_config.setup,
+            registry=registry,
             container_config=container_config,
             execution_config=execution_config,
+            ssh_config=ssh_config,
+            db=db,
+            execution_service=execution_service,
+            docker_config=docker_config,
         )
-        # Recorded only after every step succeeds — `run_setup_steps`
-        # itself fails closed on the first failing step (its own
-        # docstring), so a transient failure here leaves this column
-        # exactly as it was and the *next* `workspace_open` for this
-        # workspace id sees the same mismatch and retries, rather than
-        # silently marking a half-provisioned container complete.
-        with db:
-            db.execute(
-                "UPDATE workspace SET setup_completed_container_id = ? WHERE id = ?",
-                (record.container_id, record.id),
-            )
-
-    # §8.1's idle-stop (S17): no scheduler exists in the daemon, so —
-    # like S16's job-log retention — this runs opportunistically on a
-    # frequent, natural trigger point rather than on a real timer.
-    # `workspace_id` isn't necessarily among those swept (it was just
-    # ensured running, so its own `last_used_at` is fresh), but any
-    # *other* persistent workspace that has gone idle gets caught here.
-    manager.sweep_idle_workspaces(
-        idle_stop_after_seconds=workspace_config.idle_stop_after_seconds,
-        job_store=job_store,
-        audit_config=audit_config,
-    )
-
-    write_audit_event(
-        audit_config,
-        operation="workspace_opened",
-        result="success",
-        workspace_id=record.id,
-        repository_id=record.repository_id,
-        metadata={
-            "mode": mode,
-            "container_state": record.state.value,
-            "remote_protection_status": remote_protection.status,
-            "image": effective_image,
-            "setup_steps_run": setup_ran,
-            # H32 (`docs/HARDENING_SPEC.md` §9/§30 row): audited on
-            # every open, not only visible to a client that already
-            # thought to call `workspace_info` and check the field.
-            "devcontainer_ignored": devcontainer_json_is_ignored(repository.canonical_path),
-        },
-    )
-
-    return await build_workspace_info(
-        record,
-        registry=registry,
-        container_config=container_config,
-        execution_config=execution_config,
-        ssh_config=ssh_config,
-        db=db,
-        execution_service=execution_service,
-        docker_config=docker_config,
-    )
+    except BaseException:
+        # G3R-005: every failure after credential provisioning begins —
+        # including task cancellation — rolls the key back. Do not hide a
+        # cleanup failure: Y4's `unload_key` raises a typed, durable
+        # credential-cleanup error if it cannot prove the key/agent is gone.
+        if credential_cleanup_needed and ssh_agent_manager is not None:
+            ssh_agent_manager.unload_key(record.id)
+        raise
 
 
 def get_server_info(
