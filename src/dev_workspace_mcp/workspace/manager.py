@@ -37,10 +37,15 @@ before the split.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from pathlib import Path
 
 from dev_workspace_mcp.errors import WorkspaceNotFoundError
+from dev_workspace_mcp.jobs.retention import (
+    attempt_job_log_cleanup,
+    get_job_log_cleanup_debt,
+)
 from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.workspace.manager_lifecycle import _LifecycleMixin
 from dev_workspace_mcp.workspace.records import (
@@ -49,6 +54,9 @@ from dev_workspace_mcp.workspace.records import (
     _state_from_docker_container,
     touch_last_used,
 )
+
+_logger = logging.getLogger(__name__)
+
 
 __all__ = [
     "DockerWorkspaceManager",
@@ -135,3 +143,24 @@ class DockerWorkspaceManager(_LifecycleMixin):
     Every method a caller could previously reach on `DockerWorkspaceManager`
     is still reachable on it exactly the same way; only where each body
     physically lives changed."""
+
+    def _remove_job_log_dirs(self, state_dir: Path, job_ids: list[str]) -> None:
+        """G3R-007: consume the durable tombstones created before job deletion.
+
+        `_LifecycleMixin.delete` calls this only after workspace/job rows are
+        committed gone. The schema's BEFORE DELETE trigger has already created
+        one `job_log_cleanup` row per job, so immediate cleanup must use the
+        same debt-aware function as later maintenance: failure records the
+        attempt and preserves debt; success clears debt only after the
+        directory is proven absent. Workspace deletion itself remains complete.
+        """
+        for job_id in job_ids:
+            debt = get_job_log_cleanup_debt(self._db, job_id)
+            if debt is None:
+                # Do not fall back to an untracked rmtree. Missing debt here is
+                # an invariant failure that would recreate Y7's lost-cleanup gap.
+                _logger.error(
+                    "workspace delete: missing durable job-log cleanup debt for %s", job_id
+                )
+                continue
+            attempt_job_log_cleanup(self._db, state_dir=state_dir, debt=debt)

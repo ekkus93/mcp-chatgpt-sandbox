@@ -104,6 +104,17 @@ class JobStore:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self._db = connection
 
+    @property
+    def connection(self) -> sqlite3.Connection:
+        """The shared state connection used by retention/cleanup coordinators.
+
+        Job-log cleanup debt deliberately outlives `job` rows (G3R-007),
+        so it cannot be modeled as another `JobRecord` transition. Keeping
+        the connection explicit lets `jobs.retention` coordinate that
+        sibling table without reaching through this object's private state.
+        """
+        return self._db
+
     # --- creation and lookup -------------------------------------------
 
     def create(
