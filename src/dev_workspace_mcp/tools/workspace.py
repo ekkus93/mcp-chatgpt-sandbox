@@ -312,6 +312,44 @@ def load_setup_completed_container_id(db: sqlite3.Connection, workspace_id: str)
     return None if row is None else row["setup_completed_container_id"]
 
 
+def _runtime_image_digest(
+    docker_client: docker.DockerClient, record: WorkspaceRecord
+) -> str | None:
+    """Return the immutable image ID from the container's own inspect data.
+
+    G3R-006 (`docs/GAP3_SPEC.md`): a tag/reference is configuration, not
+    runtime provenance. A mutable tag can be retargeted while an existing
+    container continues to run the image it was created from, so resolving
+    `record.image` through `images.get()` can silently report the wrong
+    digest. Docker stores the immutable image ID directly in the container
+    inspect payload (`Image`); that is the authoritative source.
+
+    There is deliberately no tag-lookup fallback here. If a persisted row
+    claims a container exists but Docker cannot return trustworthy inspect
+    metadata, manufacturing a digest from a mutable name would convert
+    unknown provenance into a false success.
+    """
+    if record.container_id is None:
+        return None
+    try:
+        container = docker_client.containers.get(record.container_id)
+        container.reload()
+    except docker.errors.DockerException as exc:
+        raise ContainerRuntimeFailedError(
+            f"failed to inspect runtime image for workspace {record.id!r}: {exc}",
+            details={"workspace_id": record.id, "container_id": record.container_id},
+        ) from exc
+    image_id = container.attrs.get("Image")
+    if not isinstance(image_id, str) or not image_id:
+        raise ContainerRuntimeFailedError(
+            f"container {record.container_id!r} for workspace {record.id!r} "
+            "did not report an immutable image ID",
+            details={"workspace_id": record.id, "container_id": record.container_id},
+            recoverable=False,
+        )
+    return image_id
+
+
 async def build_workspace_info(
     record: WorkspaceRecord,
     *,
@@ -321,6 +359,7 @@ async def build_workspace_info(
     ssh_config: SSHConfig,
     db: sqlite3.Connection,
     execution_service: ExecutionService,
+    docker_client: docker.DockerClient,
     docker_config: DockerConfig,
 ) -> WorkspaceInfoOutput:
     """H36 (`docs/HARDENING_TODO.md`, 5/8): the `git` block is only
@@ -347,7 +386,9 @@ async def build_workspace_info(
         )
     else:
         git_state = NO_GIT_STATE
-    image_digest, config_version = load_image_provenance(db, record.id)
+    stored_image_digest, config_version = load_image_provenance(db, record.id)
+    runtime_image_digest = _runtime_image_digest(docker_client, record)
+    image_digest = runtime_image_digest if runtime_image_digest is not None else stored_image_digest
     # G2R-014 (`docs/GAP2_SPEC.md`): `resolve_effective_image` is the
     # exact same precedence `open_workspace` used to provision the
     # container with — recomputed here (a project config load is cheap)
@@ -533,53 +574,31 @@ async def open_workspace(
     # check that needed it early.
     store_remote_protection(db, repository_id, remote_protection)
 
-    # §9.2's reproducibility record. The digest lookup is a real
-    # Docker API call (`images.get`), not a cached value — cheap, and
-    # correct even if the tag was retagged since the container last
-    # started.
-    #
-    # G2R-013 (`docs/GAP2_SPEC.md`): unlike every other Docker call in
-    # this module, this one had no `try` — a persistent workspace
-    # already `RUNNING`, reconciled against a `.mcp-workspace.yml`
-    # `image:` edited to something absent locally (`reconcile()`
-    # returns `RUNNING` without touching Docker images, so nothing
-    # pulls the new one), made `docker.errors.ImageNotFound` escape
-    # untyped past `translate_workspace_errors`, an unstructured crash
-    # rather than a clean, typed `workspace_open` failure naming the
-    # image.
+    # G2R-013 (`docs/GAP2_SPEC.md`) still validates that the currently
+    # configured image reference exists locally. This is a configuration
+    # check only: its resolved image object MUST NOT be used as runtime
+    # provenance, because a mutable tag may now point at an image different
+    # from the one backing an already-running persistent container.
     try:
-        effective_image_ref = docker_client.images.get(effective_image)
+        docker_client.images.get(effective_image)
     except docker.errors.ImageNotFound as exc:
         raise ImageNotFoundError(
             f"image not found locally: {effective_image!r}",
             details={"image": effective_image},
         ) from exc
-    # G2R-014 (`docs/GAP2_SPEC.md`): §9.2 reports `image` (`record.image`
-    # — what the container actually runs) and `image_digest` as one
-    # reproducibility *pair*, describing the same image. `ensure_workspace`
-    # never rebuilds a running container just because `effective_image`
-    # changed (a persistent workspace, `.mcp-workspace.yml` `image:`
-    # edited, no `reset`/`rebuild` run) — so `record.image` above can
-    # legitimately differ from `effective_image` here, and the digest
-    # written below has to describe whichever one the client is actually
-    # going to run commands against, not whichever one this call happened
-    # to look up first. Only a second Docker API call in the divergent
-    # case (rare — normally they're identical and this reuses the lookup
-    # already done above); a `record.image` that has since vanished
-    # locally (a manual `docker image rm` after the container started)
-    # is the same typed failure as `effective_image` missing, not a
-    # crash.
-    assert record.image is not None  # implied by ensure_workspace having just succeeded
-    if record.image == effective_image:
-        image_digest = effective_image_ref.id
-    else:
-        try:
-            image_digest = docker_client.images.get(record.image).id
-        except docker.errors.ImageNotFound as exc:
-            raise ImageNotFoundError(
-                f"image not found locally: {record.image!r}",
-                details={"image": record.image},
-            ) from exc
+
+    # G3R-006 / G3AT-006: bind the reproducibility digest to the actual
+    # container, not to `record.image` or `effective_image`. Both are image
+    # references and can be mutable; Docker's container inspect `Image` field
+    # is the immutable image ID the current container was created from.
+    # `_runtime_image_digest` intentionally has no name/tag fallback.
+    image_digest = _runtime_image_digest(docker_client, record)
+    if image_digest is None:
+        raise ContainerRuntimeFailedError(
+            f"workspace {record.id!r} has no container image identity after open",
+            details={"workspace_id": record.id},
+            recoverable=False,
+        )
     config_version = project_config.version if project_config is not None else None
     with db:
         db.execute(
@@ -677,6 +696,7 @@ async def open_workspace(
             ssh_config=ssh_config,
             db=db,
             execution_service=execution_service,
+            docker_client=docker_client,
             docker_config=docker_config,
         )
     except BaseException:
@@ -825,7 +845,7 @@ def register(
         # reported container_state is only as meaningful as the daemon's
         # ability to act on it, and a degraded daemon should say so plainly
         # rather than report state it cannot currently corroborate.
-        active_manager, _ = _require_docker()
+        active_manager, active_client = _require_docker()
         assert execution_service is not None  # implied by `_require_docker` above
         record = get_authorized(active_manager, workspace_id, registry)
         return await build_workspace_info(
@@ -836,6 +856,7 @@ def register(
             ssh_config=ssh_config,
             db=db,
             execution_service=execution_service,
+            docker_client=active_client,
             docker_config=docker_config,
         )
 

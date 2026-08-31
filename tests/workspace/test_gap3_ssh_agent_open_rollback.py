@@ -156,6 +156,9 @@ def _patch_nonessential_open_work(
     monkeypatch.setattr(workspace_tools, "build_cache_mounts", lambda _caches: [])
     monkeypatch.setattr(workspace_tools, "build_ssh_agent_mount", lambda _path: object())
     monkeypatch.setattr(workspace_tools, "store_remote_protection", lambda *_args: None)
+    monkeypatch.setattr(
+        workspace_tools, "_runtime_image_digest", lambda _docker_client, _record: "sha256:example"
+    )
 
 
 def _setup_project_config() -> SimpleNamespace:
@@ -169,9 +172,7 @@ def _setup_project_config() -> SimpleNamespace:
 
 
 def _docker_client_with_image() -> MagicMock:
-    docker_client = MagicMock()
-    docker_client.images.get.return_value = SimpleNamespace(id="sha256:example")
-    return docker_client
+    return MagicMock()
 
 
 async def test_at_g3at005_docker_create_failure_never_loads_the_repository_key(
