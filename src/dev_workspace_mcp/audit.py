@@ -44,15 +44,12 @@ from dev_workspace_mcp.config.models import AuditConfig
 from dev_workspace_mcp.errors import redact_secrets
 
 
+# G3R-012: process-lifetime health for the configured audit sink. Audit
+# remains best-effort for already-completed operations; a failed write makes
+# the sink observably degraded until a later write succeeds. Last-failure
+# details remain available after recovery for operator diagnostics.
 @dataclass(frozen=True)
 class AuditHealth:
-    """G3R-012: process-lifetime health for the configured audit sink.
-
-    Audit remains best-effort for already-completed operations. A failed write
-    makes the sink observably degraded until a later write succeeds. The last
-    failure details are retained after recovery for operator diagnostics.
-    """
-
     status: Literal["healthy", "degraded"]
     mode: Literal["best_effort", "disabled"]
     last_failure_at: str | None
