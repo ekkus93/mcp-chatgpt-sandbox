@@ -588,13 +588,36 @@ async def test_at_004_persistent_package_install_survives_stop_and_reopen(
     docker_client: docker.DockerClient,
     tmp_path: Path,
 ) -> None:
-    """The spec names `cargo-nextest`; this substitutes a small, always-
-    available real Debian package (`tree`) for the same reason S24's
-    AT-034 substituted a generic local `sshd` for `github.com`'s — the
-    mechanism under test is "a tool installed after creation survives a
-    stop and reopen," not any particular package."""
+    """Install a real local Debian package without depending on a package
+    mirror, then prove it survives a stop and a fresh MCP-session reopen.
+
+    The acceptance criterion names `cargo-nextest`, but the mechanism under
+    test is persistence of software installed into the workspace container's
+    writable layer. Building this tiny package from the bind-mounted test
+    repository keeps that mechanism real while removing DNS/network latency
+    from CI.
+    """
     repo_path = tmp_path / "work" / "example"
     _init_repo(repo_path)
+
+    package_root = repo_path / "at004-package"
+    control_dir = package_root / "DEBIAN"
+    binary_dir = package_root / "usr" / "local" / "bin"
+    control_dir.mkdir(parents=True)
+    binary_dir.mkdir(parents=True)
+    (control_dir / "control").write_text(
+        "Package: mcp-at004-tool\n"
+        "Version: 1.0\n"
+        "Section: devel\n"
+        "Priority: optional\n"
+        "Architecture: all\n"
+        "Maintainer: Test <test@example.com>\n"
+        "Description: local AT-004 persistence test tool\n"
+    )
+    test_tool = binary_dir / "mcp-at004-tool"
+    test_tool.write_text('#!/bin/sh\necho "mcp-at004-tool 1.0"\n')
+    test_tool.chmod(0o755)
+
     config = _configured(minimal_config, default_image_tag, repo_path)
     server = create_server(config)
     opened = await _open(server)
@@ -604,8 +627,10 @@ async def test_at_004_persistent_package_install_survives_stop_and_reopen(
         "exec",
         {
             "workspace_id": workspace_id,
-            "shell": "sudo apt-get update -qq && sudo apt-get install -y -qq tree",
-            "timeout_seconds": 120,
+            "shell": (
+                "dpkg-deb --build /workspace/at004-package /tmp/mcp-at004-tool.deb "
+                "&& sudo dpkg -i /tmp/mcp-at004-tool.deb"
+            ),
         },
     )
     assert install.structured_content["exit_code"] == 0, install.structured_content
@@ -625,10 +650,11 @@ async def test_at_004_persistent_package_install_survives_stop_and_reopen(
     reopened = await _open(reopened_server)
     assert reopened.structured_content["workspace_id"] == workspace_id
 
-    check = await server.call_tool(
-        "exec", {"workspace_id": workspace_id, "shell": "tree --version"}
+    check = await reopened_server.call_tool(
+        "exec", {"workspace_id": workspace_id, "shell": "mcp-at004-tool --version"}
     )
     assert check.structured_content["exit_code"] == 0, check.structured_content
+    assert check.structured_content["stdout_tail"].strip() == "mcp-at004-tool 1.0"
 
 
 # --- H32: a present devcontainer.json is reported, not silently ignored ------------
