@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import logging
 import os
 import shutil
 import stat
@@ -21,6 +22,9 @@ from dev_workspace_mcp.errors import (
 )
 from dev_workspace_mcp.filesystem.security import FilesystemSecurity
 from dev_workspace_mcp.utf8_boundary import trim_incomplete_trailing_char
+
+
+_logger = logging.getLogger(__name__)
 
 
 def sha256_of(data: bytes) -> str:
@@ -679,14 +683,29 @@ class FilesystemService:
             tmp_name = f".{name}.mcp-write-tmp-{os.urandom(8).hex()}"
             tmp_fd = os.open(tmp_name, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o644, dir_fd=parent_fd)
             try:
-                _write_all(tmp_fd, data)
+                try:
+                    _write_all(tmp_fd, data)
+                finally:
+                    os.close(tmp_fd)
+                os.replace(tmp_name, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
             except BaseException:
-                os.close(tmp_fd)
-                with contextlib.suppress(OSError):
+                # G3R-013 / G3AT-013: every failure before a successful
+                # replacement gets the same dir-fd-relative temp cleanup.
+                # If cleanup itself fails, keep the original write/replace
+                # exception as the caller-visible error and diagnose the
+                # orphan by its name under the already-validated parent fd.
+                try:
                     os.unlink(tmp_name, dir_fd=parent_fd)
+                except FileNotFoundError:
+                    pass
+                except OSError as cleanup_exc:
+                    _logger.warning(
+                        "write_file: failed to remove atomic-write temp file %r for %r: %s",
+                        tmp_name,
+                        relative_path,
+                        cleanup_exc,
+                    )
                 raise
-            os.close(tmp_fd)
-            os.replace(tmp_name, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
         finally:
             os.close(parent_fd)
 
