@@ -1,14 +1,12 @@
 #!/bin/sh
 # G2R-007 (docs/GAP2_SPEC.md): `core.hooksPath` is a single directory,
 # not a search chain — activating this repository's hooks
-# (`git config core.hooksPath .githooks`, docs/DEVELOPMENT.md) silently
-# disables every hook configured in the developer's own global
-# `core.hooksPath` (`git config --global core.hooksPath`), since the
-# local value wins outright and git never consults the global one once
-# a local one is set. This dispatches to whichever hook of the same
-# name exists there, so this repository's own hooks don't turn those
-# off. `.githooks/pre-commit` needs no equivalent — this repository
-# doesn't ship a global `pre-commit` hook to shadow.
+# (`git config core.hooksPath .githooks`, docs/DEVELOPMENT.md) shadows
+# the developer's global `core.hooksPath`. The proxy-hook symlinks in
+# this directory invoke this dispatcher so the corresponding global
+# hook remains reachable. G3R-011 adds the one same-name composition
+# case: `.githooks/pre-commit` runs its local checks first, then invokes
+# this file directly as `--hook-name pre-commit`.
 #
 # G3R-010 (docs/GAP3_SPEC.md): `git config --get` uses exit status 1 for
 # a missing key. That benign absence is the only configuration failure
@@ -16,14 +14,29 @@
 # keep Git's stderr visible and fail the hook instead of silently
 # disabling a potentially security-relevant global hook.
 #
-# One real script; `commit-msg`, `post-checkout`, `post-commit`,
-# `post-merge`, and `pre-push` in this directory are symlinks to it —
-# git execs a hook by its literal path, and a symlinked exec preserves
-# the invoked name in `$0` (verified), so `basename "$0"` recovers which
-# hook this run actually is regardless of which symlink git ran.
+# `commit-msg`, `post-checkout`, `post-commit`, `post-merge`, and
+# `pre-push` in this directory are symlinks to this file. Git execs a
+# hook by its literal path, and a symlinked exec preserves the invoked
+# name in `$0` (verified), so `basename "$0"` recovers the hook name.
+# Direct invocation is intentionally restricted to `pre-commit`; it is
+# an internal composition path for G3R-011, not a generic caller-
+# supplied path component.
 set -eu
 
 hook_name=$(basename "$0")
+if [ "$hook_name" = "_global-hook-dispatch" ]; then
+    if [ "$#" -lt 2 ] || [ "$1" != "--hook-name" ]; then
+        echo "global hook dispatch: direct invocation requires '--hook-name pre-commit'" >&2
+        exit 2
+    fi
+    hook_name=$2
+    shift 2
+    if [ "$hook_name" != "pre-commit" ]; then
+        echo "global hook dispatch: direct invocation only supports pre-commit" >&2
+        exit 2
+    fi
+fi
+
 if global_hooks_dir=$(git config --global --get core.hooksPath); then
     :
 else
