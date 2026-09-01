@@ -177,8 +177,7 @@ class MaintenanceScheduler:
         now = datetime.now(UTC)
         due: set[str] = set()
         rows = self._db.execute(
-            "SELECT id, last_used_at FROM workspace "
-            "WHERE state = 'running' AND mode = 'persistent'"
+            "SELECT id, last_used_at FROM workspace WHERE state = 'running' AND mode = 'persistent'"
         ).fetchall()
         for row in rows:
             idle_seconds = (now - datetime.fromisoformat(row["last_used_at"])).total_seconds()
@@ -192,9 +191,7 @@ class MaintenanceScheduler:
             due.add(row["id"])
         return due
 
-    def _run_job_log_maintenance(
-        self, failures: list[tuple[str, str | None, str]]
-    ) -> None:
+    def _run_job_log_maintenance(self, failures: list[tuple[str, str | None, str]]) -> None:
         try:
             cleanup_before = {debt.job_id for debt in list_job_log_cleanup_debt(self._db)}
             cutoff = datetime.now(UTC) - timedelta(days=self._config.execution.job_retention_days)
@@ -214,9 +211,7 @@ class MaintenanceScheduler:
                 state_dir=self._config.state_db_path.parent,
             )
 
-            cleanup_after = {
-                debt.job_id: debt for debt in list_job_log_cleanup_debt(self._db)
-            }
+            cleanup_after = {debt.job_id: debt for debt in list_job_log_cleanup_debt(self._db)}
             for job_id in sorted(cleanup_before & cleanup_after.keys()):
                 debt = cleanup_after[job_id]
                 failures.append(
