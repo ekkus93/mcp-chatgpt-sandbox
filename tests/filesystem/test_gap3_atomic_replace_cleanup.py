@@ -69,9 +69,11 @@ def test_g3at_013_cleanup_failure_preserves_replace_error_and_logs_orphan(
     monkeypatch.setattr(os, "replace", fail_replace)
     monkeypatch.setattr(os, "unlink", fail_temp_unlink)
 
-    with caplog.at_level(logging.WARNING, logger="dev_workspace_mcp.filesystem.service"):
-        with pytest.raises(OSError) as excinfo:
-            service.write_file("existing.txt", "replacement content\n")
+    with (
+        caplog.at_level(logging.WARNING, logger="dev_workspace_mcp.filesystem.service"),
+        pytest.raises(OSError) as excinfo,
+    ):
+        service.write_file("existing.txt", "replacement content\n")
 
     assert excinfo.value.errno == 5
     assert target.read_bytes() == original
