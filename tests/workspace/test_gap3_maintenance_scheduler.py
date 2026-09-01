@@ -129,7 +129,9 @@ async def test_g3at_014_server_lifespan_runs_and_recovers_maintenance_without_cl
     real_stop = DockerWorkspaceManager.stop
     failed_once = False
 
-    def fail_first_idle_stop(self: DockerWorkspaceManager, target_workspace_id: str):  # type: ignore[no-untyped-def]
+    def fail_first_idle_stop(
+        self: DockerWorkspaceManager, target_workspace_id: str
+    ) -> object:
         nonlocal failed_once
         if target_workspace_id == workspace_id and not failed_once:
             failed_once = True
