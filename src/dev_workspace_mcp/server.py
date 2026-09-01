@@ -24,7 +24,11 @@ from dev_workspace_mcp.config.models import ServerConfig
 from dev_workspace_mcp.db import open_db
 from dev_workspace_mcp.errors import translate_workspace_errors
 from dev_workspace_mcp.jobs.store import JobStore
-from dev_workspace_mcp.maintenance import MaintenanceHealth, MaintenanceScheduler
+from dev_workspace_mcp.maintenance import (
+    DEFAULT_MAINTENANCE_INTERVAL_SECONDS,
+    MaintenanceHealth,
+    MaintenanceScheduler,
+)
 from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.tools import execution as execution_tools
 from dev_workspace_mcp.tools import filesystem as filesystem_tools
@@ -45,7 +49,11 @@ class ServerInfoOutput(workspace_tools.ServerInfoOutput):
     maintenance: MaintenanceHealth
 
 
-def create_server(config: ServerConfig) -> MCPServer:
+def create_server(
+    config: ServerConfig,
+    *,
+    maintenance_interval_seconds: float = DEFAULT_MAINTENANCE_INTERVAL_SECONDS,
+) -> MCPServer:
     """Build the MCP server for the given validated configuration.
 
     Opens (creating if needed) the state database at `config.state_db_path`
@@ -59,12 +67,15 @@ def create_server(config: ServerConfig) -> MCPServer:
     instance, construct `ServerConfig` directly). Does not start Docker
     containers or a transport. G3R-014 wires maintenance into MCP lifespan:
     importing/building a server starts no background task; serving does.
+
+    `maintenance_interval_seconds` is an internal construction seam used by
+    lifecycle tests; production callers use the 60-second default.
     """
     registry = RepositoryRegistry(config)
     ensure_known_hosts_file_exists(config)
     db = open_db(config.state_db_path)
     docker_client = _try_docker_client()
-    maintenance = MaintenanceScheduler(config, db=db, docker_client=docker_client)
+    maintenance = MaintenanceScheduler(config, interval_seconds=maintenance_interval_seconds)
 
     @asynccontextmanager
     async def server_lifespan(_: MCPServer) -> AsyncIterator[MaintenanceScheduler]:
