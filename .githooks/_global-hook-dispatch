@@ -10,6 +10,12 @@
 # off. `.githooks/pre-commit` needs no equivalent — this repository
 # doesn't ship a global `pre-commit` hook to shadow.
 #
+# G3R-010 (docs/GAP3_SPEC.md): `git config --get` uses exit status 1 for
+# a missing key. That benign absence is the only configuration failure
+# this dispatcher converts to a no-op. Parse/read/execution failures
+# keep Git's stderr visible and fail the hook instead of silently
+# disabling a potentially security-relevant global hook.
+#
 # One real script; `commit-msg`, `post-checkout`, `post-commit`,
 # `post-merge`, and `pre-push` in this directory are symlinks to it —
 # git execs a hook by its literal path, and a symlinked exec preserves
@@ -18,7 +24,18 @@
 set -eu
 
 hook_name=$(basename "$0")
-global_hooks_dir=$(git config --global --get core.hooksPath 2>/dev/null || true)
+if global_hooks_dir=$(git config --global --get core.hooksPath); then
+    :
+else
+    git_config_status=$?
+    if [ "$git_config_status" -eq 1 ]; then
+        global_hooks_dir=
+    else
+        printf 'global hook dispatch: failed to read global core.hooksPath (git config exit %s)\n' \
+            "$git_config_status" >&2
+        exit "$git_config_status"
+    fi
+fi
 
 if [ -n "$global_hooks_dir" ]; then
     # git config values are not shell-expanded; a leading ~/ is common.
