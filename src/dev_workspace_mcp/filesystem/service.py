@@ -184,15 +184,13 @@ class FilesystemService:
 
                         should_descend = False
                         if recursive:
-                            try:
+                            # Concurrent mutation may make a directory entry
+                            # unstatable after enumeration. G2R-009 already
+                            # requires listing to continue; not descending an
+                            # identity we can no longer prove is a directory
+                            # is the safe choice.
+                            with contextlib.suppress(OSError):
                                 should_descend = dir_entry.is_dir(follow_symlinks=False)
-                            except OSError:
-                                # Concurrent mutation may make a directory entry
-                                # unstatable after enumeration. G2R-009 already
-                                # requires listing to continue; not descending an
-                                # identity we can no longer prove is a directory
-                                # is the safe choice.
-                                pass
 
                         described = self._describe(candidate)
                         # G2R-009 (`docs/GAP2_SPEC.md`): `None` means the
