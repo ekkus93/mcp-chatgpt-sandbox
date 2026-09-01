@@ -27,7 +27,7 @@ from dev_workspace_mcp.jobs.retention import (
     pending_job_log_cleanup_bytes,
     prune_job_logs,
 )
-from dev_workspace_mcp.jobs.store import TERMINAL_STATES, JobStore
+from dev_workspace_mcp.jobs.store import NON_TERMINAL_STATES, TERMINAL_STATES, JobStore
 from dev_workspace_mcp.logging_config import redacted_extra
 from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
 from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager
@@ -145,19 +145,52 @@ class MaintenanceScheduler:
             )
             return
 
-        def record_failure(workspace_id: str, exc: BaseException) -> None:
-            failures.append(("idle_workspace_sweep", workspace_id, _safe_reason(exc)))
-
         try:
-            self._manager.sweep_idle_workspaces(
-                idle_stop_after_seconds=self._config.workspace.idle_stop_after_seconds,
-                job_store=self._job_store,
-                audit_config=self._config.audit,
-                on_failure=record_failure,
+            due = self._idle_due_workspace_ids()
+            stopped = set(
+                self._manager.sweep_idle_workspaces(
+                    idle_stop_after_seconds=self._config.workspace.idle_stop_after_seconds,
+                    job_store=self._job_store,
+                    audit_config=self._config.audit,
+                )
             )
+            for workspace_id in sorted(due - stopped):
+                # `sweep_idle_workspaces` already isolates/logs each
+                # WorkspaceError and leaves the workspace running for retry.
+                # It intentionally does not expose the swallowed exception,
+                # so health reports the failed item without inventing a more
+                # specific error type than the scheduler can prove.
+                failures.append(
+                    (
+                        "idle_workspace_sweep",
+                        workspace_id,
+                        "WorkspaceError: scheduled idle-stop did not complete; see operational log",
+                    )
+                )
         except Exception as exc:  # noqa: BLE001 - isolate the maintenance family
             _logger.exception("maintenance: idle workspace sweep failed")
             failures.append(("idle_workspace_sweep", None, _safe_reason(exc)))
+
+    def _idle_due_workspace_ids(self) -> set[str]:
+        assert self._config.workspace.idle_stop_after_seconds is not None
+        cutoff_seconds = self._config.workspace.idle_stop_after_seconds
+        now = datetime.now(UTC)
+        due: set[str] = set()
+        rows = self._db.execute(
+            "SELECT id, last_used_at FROM workspace "
+            "WHERE state = 'running' AND mode = 'persistent'"
+        ).fetchall()
+        for row in rows:
+            idle_seconds = (now - datetime.fromisoformat(row["last_used_at"])).total_seconds()
+            if idle_seconds < cutoff_seconds:
+                continue
+            if any(
+                job.state in NON_TERMINAL_STATES
+                for job in self._job_store.list_by_workspace(row["id"])
+            ):
+                continue
+            due.add(row["id"])
+        return due
 
     def _run_job_log_maintenance(
         self, failures: list[tuple[str, str | None, str]]
