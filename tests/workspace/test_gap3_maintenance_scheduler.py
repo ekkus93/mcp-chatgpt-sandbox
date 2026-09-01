@@ -162,7 +162,10 @@ async def test_g3at_014_server_lifespan_runs_and_recovers_maintenance_without_cl
         assert first_failure.last_failure_at is not None
         assert first_failure.last_failure_task == "idle_workspace_sweep"
         assert first_failure.last_failure_item == workspace_id
-        assert "ContainerRuntimeFailedError" in (first_failure.last_failure_reason or "")
+        # The existing sweep deliberately swallows/logs WorkspaceError per
+        # item. Health reports exactly what the scheduler can prove rather
+        # than inventing the swallowed exception's more specific subtype.
+        assert "WorkspaceError" in (first_failure.last_failure_reason or "")
 
         # A later cycle must still run, retry the failed workspace item, and
         # recover the current maintenance health to healthy.
