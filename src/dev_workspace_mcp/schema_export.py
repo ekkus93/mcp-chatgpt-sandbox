@@ -47,7 +47,10 @@ from mcp.server import MCPServer
 #: 0.7.7 (G3R-012, `docs/GAP3_SPEC.md`): patch bump — `server_info` gained
 #: `audit`, exposing best-effort audit sink health, last failure time, and a
 #: sanitized last failure reason; no new tools.
-CONTRACT_VERSION = "0.7.7"
+#: 0.7.8 (G3R-014, `docs/GAP3_SPEC.md`): patch bump — `server_info` gained
+#: `maintenance`, exposing scheduler state, last cycle, and sanitized last
+#: maintenance failure information; no new tools.
+CONTRACT_VERSION = "0.7.8"
 
 
 async def collect_tool_schemas(server: MCPServer) -> list[dict[str, Any]]:
