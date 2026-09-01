@@ -33,12 +33,87 @@ operation already happened and there is nothing left to roll back."""
 from __future__ import annotations
 
 import json
+import os
 import sys
+import threading
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from dev_workspace_mcp.config.models import AuditConfig
 from dev_workspace_mcp.errors import redact_secrets
+
+
+# G3R-012: process-lifetime health for the configured audit sink. Audit
+# remains best-effort for already-completed operations; a failed write makes
+# the sink observably degraded until a later write succeeds. Last-failure
+# details remain available after recovery for operator diagnostics.
+@dataclass(frozen=True)
+class AuditHealth:
+    status: Literal["healthy", "degraded"]
+    mode: Literal["best_effort", "disabled"]
+    last_failure_at: str | None
+    last_failure_reason: str | None
+
+
+_AUDIT_HEALTH_LOCK = threading.Lock()
+_AUDIT_HEALTH_BY_PATH: dict[str, AuditHealth] = {}
+
+
+def _audit_health_key(config: AuditConfig) -> str:
+    return str(config.path)
+
+
+def _healthy_state(
+    *,
+    mode: Literal["best_effort", "disabled"],
+    previous: AuditHealth | None = None,
+) -> AuditHealth:
+    return AuditHealth(
+        status="healthy",
+        mode=mode,
+        last_failure_at=previous.last_failure_at if previous is not None else None,
+        last_failure_reason=previous.last_failure_reason if previous is not None else None,
+    )
+
+
+def get_audit_health(config: AuditConfig) -> AuditHealth:
+    """Return secret/path-safe process-lifetime audit health for `config`."""
+    if not config.enabled:
+        return _healthy_state(mode="disabled")
+    key = _audit_health_key(config)
+    with _AUDIT_HEALTH_LOCK:
+        return _AUDIT_HEALTH_BY_PATH.get(key, _healthy_state(mode="best_effort"))
+
+
+def _audit_failure_reason(exc: OSError) -> str:
+    """Describe an audit filesystem failure without echoing filesystem paths."""
+    if exc.errno is None:
+        return type(exc).__name__
+    try:
+        description = os.strerror(exc.errno)
+    except ValueError:
+        description = "OS error"
+    return f"{type(exc).__name__} (errno {exc.errno}: {description})"
+
+
+def _mark_audit_failure(config: AuditConfig, exc: OSError) -> AuditHealth:
+    health = AuditHealth(
+        status="degraded",
+        mode="best_effort",
+        last_failure_at=datetime.now(UTC).isoformat(),
+        last_failure_reason=_audit_failure_reason(exc),
+    )
+    with _AUDIT_HEALTH_LOCK:
+        _AUDIT_HEALTH_BY_PATH[_audit_health_key(config)] = health
+    return health
+
+
+def _mark_audit_success(config: AuditConfig) -> None:
+    key = _audit_health_key(config)
+    with _AUDIT_HEALTH_LOCK:
+        previous = _AUDIT_HEALTH_BY_PATH.get(key)
+        _AUDIT_HEALTH_BY_PATH[key] = _healthy_state(mode="best_effort", previous=previous)
 
 
 def write_audit_event(
@@ -82,7 +157,10 @@ def write_audit_event(
         with config.path.open("a") as f:
             f.write(json.dumps(record, sort_keys=True) + "\n")
     except OSError as exc:
+        health = _mark_audit_failure(config, exc)
         print(
-            f"audit: failed to write {operation!r}/{result!r} event to {config.path}: {exc}",
+            f"audit: failed to write {operation!r}/{result!r} event: {health.last_failure_reason}",
             file=sys.stderr,
         )
+    else:
+        _mark_audit_success(config)
