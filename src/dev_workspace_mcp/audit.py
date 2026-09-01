@@ -162,8 +162,7 @@ def write_audit_event(
     except OSError as exc:
         health = _mark_audit_failure(config, exc)
         print(
-            f"audit: failed to write {operation!r}/{result!r} event: "
-            f"{health.last_failure_reason}",
+            f"audit: failed to write {operation!r}/{result!r} event: {health.last_failure_reason}",
             file=sys.stderr,
         )
     else:
