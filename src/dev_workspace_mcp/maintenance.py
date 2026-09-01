@@ -10,6 +10,7 @@ isolates failures, and stops cleanly with the daemon.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import sqlite3
 import threading
@@ -133,10 +134,8 @@ class MaintenanceScheduler:
                 self._finish_cycle([("maintenance_cycle", None, _safe_reason(exc))])
             if stop_event.is_set():
                 break
-            try:
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop_event.wait(), timeout=self._interval_seconds)
-            except TimeoutError:
-                pass
 
     def _run_cycle(self) -> None:
         """Run one complete cycle using resources created in this worker."""
