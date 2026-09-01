@@ -113,12 +113,19 @@ async def test_run_git_in_container_applies_no_host_side_neutralization(
     """H36: this is the whole point of the migration — a code-executing
     config key (`filter.*.clean`) that `run_git_host_side` would have
     neutralized (HR-002, `_discover_code_executing_overrides`) now
-    genuinely executes, in-container, exactly as `exec("git status")`
+    genuinely executes in-container, exactly as a client-issued Git command
     already could. Reproduced directly rather than assumed: a
     `.gitattributes` binding every file to a `clean` filter that writes a
-    marker file, then a real `git status` run through
+    marker file, then `git hash-object --path=README.md README.md` through
     `run_git_in_container` — followed by a direct (non-`git`) exec that
-    confirms the marker file the filter driver wrote actually exists."""
+    confirms the marker file the filter driver wrote actually exists.
+
+    `git status` is intentionally not the trigger here: when stat/index
+    metadata is sufficient to classify a worktree path, Git may report the
+    modification without applying the clean filter at all. That made this
+    acceptance test timing/filesystem dependent even though the production
+    behavior was correct. `hash-object --path` is read-only and necessarily
+    applies the path's attributes/clean filter to the file being hashed."""
     repo_path = tmp_path / "work" / "example"
     config = _configured(minimal_config, default_image_tag, repo_path)
     subprocess.run(
@@ -129,7 +136,6 @@ async def test_run_git_in_container_applies_no_host_side_neutralization(
     (repo_path / ".gitattributes").write_text("* filter=marker\n")
     subprocess.run(["git", "add", "-A"], cwd=repo_path, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "attrs"], cwd=repo_path, check=True)
-    (repo_path / "README.md").write_text("changed\n")
 
     server = create_server(config)
     workspace_id = await _open(server)
@@ -141,7 +147,7 @@ async def test_run_git_in_container_applies_no_host_side_neutralization(
     execution_service = ExecutionService(docker_client)
 
     check = await run_git_in_container(
-        ["status", "--porcelain"],
+        ["hash-object", "--path=README.md", "README.md"],
         container_id=record.container_id,
         workspace_path=record.workspace_path,
         execution_service=execution_service,
