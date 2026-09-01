@@ -5,12 +5,6 @@ on:
     branches: [master]
   pull_request:
 
-# Temporary Y14 schema-sync needs to commit the exporter output back to this
-# same-repository PR branch. This permission is removed with the helper once
-# the generated file has been materialized.
-permissions:
-  contents: write
-
 jobs:
   test:
     # Self-hosted (the `mcp-chatgpt-sandbox` runner) — GitHub-hosted
@@ -37,40 +31,6 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --group dev
-
-      # Temporary, PR-18-only bridge: the connector can edit repository
-      # text but cannot run the installed exporter and upload its generated
-      # file. Generate the authoritative schema on the same runner CI uses,
-      # commit only that file to the PR head, then remove this helper before
-      # final validation.
-      - name: Y14 temporary schema sync
-        if: github.event_name == 'pull_request' && github.head_ref == 'gap3-y14-maintenance-scheduler'
-        run: |
-          git checkout -B "$GITHUB_HEAD_REF" "origin/$GITHUB_HEAD_REF"
-          config_dir="$(mktemp -d)"
-          cat > "$config_dir/config.yml" <<EOF
-          version: 1
-          state_db_path: $config_dir/state.db
-          docker:
-            default_image: mcp-dev-ubuntu:24.04
-          ssh:
-            keys_dir: $config_dir/keys
-            known_hosts: $config_dir/known_hosts
-          audit:
-            path: $config_dir/audit.jsonl
-          EOF
-          uv run dev-workspace-mcp export-schemas \
-            --config "$config_dir/config.yml" \
-            --out schemas/tools.json
-          if git diff --quiet -- schemas/tools.json; then
-            echo "schemas/tools.json already current"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add schemas/tools.json
-          git commit -m "chore: regenerate MCP tool schema"
-          git push origin "HEAD:$GITHUB_HEAD_REF"
 
       # §71's "Docker-backed integration tests" needs a running Docker
       # daemon — true of `ubuntu-latest` by default; the self-hosted
