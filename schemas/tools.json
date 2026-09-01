@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.7.7",
+  "contract_version": "0.7.8",
   "tools": [
     {
       "description": "Delete a repository file or directory (\u00a713.5).",
@@ -1812,6 +1812,88 @@
             ],
             "title": "AuditHealth",
             "type": "object"
+          },
+          "MaintenanceHealth": {
+            "properties": {
+              "last_cycle_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Last Cycle At"
+              },
+              "last_failure_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Last Failure At"
+              },
+              "last_failure_item": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Last Failure Item"
+              },
+              "last_failure_reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Last Failure Reason"
+              },
+              "last_failure_task": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Last Failure Task"
+              },
+              "running": {
+                "title": "Running",
+                "type": "boolean"
+              },
+              "status": {
+                "enum": [
+                  "healthy",
+                  "degraded"
+                ],
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "running",
+              "last_cycle_at",
+              "last_failure_at",
+              "last_failure_task",
+              "last_failure_item",
+              "last_failure_reason"
+            ],
+            "title": "MaintenanceHealth",
+            "type": "object"
           }
         },
         "properties": {
@@ -1852,6 +1934,9 @@
             ],
             "title": "Docker Version"
           },
+          "maintenance": {
+            "$ref": "#/$defs/MaintenanceHealth"
+          },
           "running_jobs": {
             "title": "Running Jobs",
             "type": "integer"
@@ -1870,7 +1955,8 @@
           "running_jobs",
           "configured_repositories",
           "capabilities",
-          "audit"
+          "audit",
+          "maintenance"
         ],
         "title": "ServerInfoOutput",
         "type": "object"
