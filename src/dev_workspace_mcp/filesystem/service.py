@@ -24,9 +24,6 @@ from dev_workspace_mcp.filesystem.security import FilesystemSecurity
 from dev_workspace_mcp.utf8_boundary import trim_incomplete_trailing_char
 
 
-_logger = logging.getLogger(__name__)
-
-
 def sha256_of(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -73,13 +70,13 @@ def _hash_pread(fd: int, total_size: int, *, chunk_size: int = _READ_FILE_HASH_C
 def _write_all(fd: int, data: bytes) -> None:
     """G2R-010 (`docs/GAP2_SPEC.md`): the same discipline `_hash_pread`
     above already applies to reads — a single `os.write`/`os.pwrite` can
-    transfer fewer bytes than requested (POSIX permits it for any
-    reason, not only for the sizes `_hash_pread`'s own 2 GiB kernel-cap
-    note discusses), and `write_file`'s old single-call `os.pwrite(fd,
-    data, 0)` never checked its return value — a short write there
-    silently reported a `sha256`/`size` for the buffer it *intended* to
-    write, not what actually reached disk. Looped until every byte is
-    confirmed written."""
+    transfer fewer bytes than requested (POSIX permits transferring
+    fewer bytes than requested for any reason, not only for the sizes
+    `_hash_pread`'s own 2 GiB kernel-cap note discusses), and
+    `write_file`'s old single-call `os.pwrite(fd, data, 0)` never checked
+    its return value — a short write there silently reported a
+    `sha256`/`size` for the buffer it *intended* to write, not what
+    actually reached disk. Looped until every byte is confirmed written."""
     offset = 0
     while offset < len(data):
         offset += os.write(fd, data[offset:])
@@ -699,7 +696,7 @@ class FilesystemService:
                 except FileNotFoundError:
                     pass
                 except OSError as cleanup_exc:
-                    _logger.warning(
+                    logging.getLogger(__name__).warning(
                         "write_file: failed to remove atomic-write temp file %r for %r: %s",
                         tmp_name,
                         relative_path,
