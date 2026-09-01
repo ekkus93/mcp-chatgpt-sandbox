@@ -52,10 +52,14 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _safe_reason(exc: BaseException) -> str:
-    raw = f"{type(exc).__name__}: {exc}"
-    value = redacted_extra({"reason": raw})["reason"]
+def _safe_text(text: str) -> str:
+    """Bound and redact any diagnostic before it reaches daemon health."""
+    value = redacted_extra({"reason": text})["reason"]
     return str(value)[:1024]
+
+
+def _safe_reason(exc: BaseException) -> str:
+    return _safe_text(f"{type(exc).__name__}: {exc}")
 
 
 class MaintenanceScheduler:
@@ -284,7 +288,7 @@ class MaintenanceScheduler:
                     last_failure_at=now,
                     last_failure_task=task,
                     last_failure_item=item,
-                    last_failure_reason=reason[:1024],
+                    last_failure_reason=_safe_text(reason),
                 )
             else:
                 self._health = replace(previous, status="healthy", last_cycle_at=now)
