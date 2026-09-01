@@ -240,8 +240,7 @@ class MaintenanceScheduler:
             if idle_seconds < cutoff_seconds:
                 continue
             if any(
-                job.state in NON_TERMINAL_STATES
-                for job in job_store.list_by_workspace(row["id"])
+                job.state in NON_TERMINAL_STATES for job in job_store.list_by_workspace(row["id"])
             ):
                 continue
             due.add(row["id"])
