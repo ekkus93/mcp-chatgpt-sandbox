@@ -113,6 +113,32 @@ for the reasoning, not just the field list.
   `docs/SPEC.md` §52's worked example (it predates that example; see
   `docs/HARDENING_TODO.md` HR-031).
 
+## Per-repository `.mcp-workspace.yml`
+
+A repository may commit `.mcp-workspace.yml` (or `.mcp-workspace.yaml`) for the
+project-level settings defined by `docs/SPEC.md` §10. G3R-009 makes the current
+implementation status explicit: an operational-looking field is either consumed
+by runtime code or rejected. The daemon does not accept a field merely because it
+appears in the future-facing §10 example.
+
+| Field | Current status | Runtime consumer / required action |
+| --- | --- | --- |
+| `version` | **Supported** | Validated by `load_project_config`; recorded as `config_version` in workspace reproducibility metadata. |
+| `image` | **Supported** | `resolve_effective_image` and CLI reset/rebuild choose the project image ahead of `docker.default_image`. |
+| `setup` | **Supported** | `run_setup_steps` runs the commands after genuine container creation and after reset/rebuild. |
+| `environment` | **Supported** | Added to container environment only after the project-environment security validators accept it. |
+| `caches` | **Supported** | `resolve_caches` / `build_cache_mounts` create repository-scoped dependency-cache mounts. |
+| `workspace` | **Rejected** | No project-level workspace-path override is implemented. Remove the field until an end-to-end override exists. |
+| `github` | **Rejected** | Project-level `github.repository` does not populate the daemon repository registry or remote-protection identity. Configure `repositories[].github` in daemon config instead. |
+| `validation` | **Rejected** | No MCP validation tool or workspace lifecycle hook runs `format`, `lint`, or `test`; each is therefore rejected rather than silently ignored. |
+
+Rejected fields fail project-config loading with `CONTAINER_CREATE_FAILED` and a
+message naming the unsupported field. This includes an explicitly written `null`;
+omit an unsupported field entirely. `SUPPORTED_PROJECT_CONFIG_FIELDS` and
+`UNSUPPORTED_PROJECT_CONFIG_FIELDS` in `project_config.py`, plus G3AT-009, make
+the inventory exhaustive so adding a future top-level field requires an explicit
+support decision.
+
 ## Secrets
 
 Per §53: secrets belong in protected files outside repository roots,

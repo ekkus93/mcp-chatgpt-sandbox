@@ -8,7 +8,13 @@ import pytest
 import yaml
 
 from dev_workspace_mcp.errors import ContainerCreateFailedError
-from dev_workspace_mcp.project_config import devcontainer_json_is_ignored, load_project_config
+from dev_workspace_mcp.project_config import (
+    SUPPORTED_PROJECT_CONFIG_FIELDS,
+    UNSUPPORTED_PROJECT_CONFIG_FIELDS,
+    ProjectWorkspaceConfig,
+    devcontainer_json_is_ignored,
+    load_project_config,
+)
 
 
 def _write(repo_path: Path, data: dict, filename: str = ".mcp-workspace.yml") -> None:
@@ -22,14 +28,13 @@ def test_returns_none_when_no_project_config_file_exists(tmp_path: Path) -> None
     assert load_project_config(repo_path) is None
 
 
-def test_parses_the_full_documented_example(tmp_path: Path) -> None:
+def test_parses_all_currently_supported_project_config_fields(tmp_path: Path) -> None:
     repo_path = tmp_path / "repo"
     _write(
         repo_path,
         {
             "version": 1,
             "image": "ubuntu:24.04",
-            "workspace": "/workspace",
             "setup": [
                 "sudo apt-get update",
                 "sudo apt-get install -y build-essential curl git pkg-config",
@@ -39,12 +44,6 @@ def test_parses_the_full_documented_example(tmp_path: Path) -> None:
                 {"path": "$HOME/.cargo", "name": "cargo"},
                 {"path": "$HOME/.rustup", "name": "rustup"},
             ],
-            "github": {"repository": "ekkus93/example-project"},
-            "validation": {
-                "format": ["cargo fmt --check"],
-                "lint": ["cargo clippy --all-targets --all-features -- -D warnings"],
-                "test": ["cargo test --all-features"],
-            },
         },
     )
 
@@ -59,8 +58,53 @@ def test_parses_the_full_documented_example(tmp_path: Path) -> None:
     ]
     assert config.environment == {"RUST_BACKTRACE": "1"}
     assert [c.name for c in config.caches] == ["cargo", "rustup"]
-    assert config.github.repository == "ekkus93/example-project"
-    assert config.validation.test == ["cargo test --all-features"]
+
+
+def test_at_g3at009_every_project_config_field_has_an_explicit_support_classification() -> None:
+    """G3AT-009: adding a field cannot accidentally create a new silent no-op.
+
+    The runtime-consumption evidence for the supported side of this inventory is
+    documented in `docs/CONFIGURATION.md`; this static guard forces every future
+    top-level field to be classified before the model accepts it.
+    """
+    assert SUPPORTED_PROJECT_CONFIG_FIELDS.isdisjoint(UNSUPPORTED_PROJECT_CONFIG_FIELDS)
+    assert set(ProjectWorkspaceConfig.model_fields) == (
+        SUPPORTED_PROJECT_CONFIG_FIELDS | UNSUPPORTED_PROJECT_CONFIG_FIELDS
+    )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("workspace", "/worktree"),
+        ("github", {"repository": "ekkus93/example-project"}),
+        ("validation", {"format": ["cargo fmt --check"]}),
+        ("validation", {"lint": ["cargo clippy -- -D warnings"]}),
+        ("validation", {"test": ["cargo test --all-features"]}),
+    ],
+)
+def test_at_g3at009_unimplemented_operational_fields_are_rejected(
+    tmp_path: Path, field_name: str, value: object
+) -> None:
+    repo_path = tmp_path / "repo"
+    _write(repo_path, {"version": 1, field_name: value})
+
+    with pytest.raises(
+        ContainerCreateFailedError,
+        match=rf"{field_name}.*not supported.*G3R-009",
+    ):
+        load_project_config(repo_path)
+
+
+@pytest.mark.parametrize("field_name", sorted(UNSUPPORTED_PROJECT_CONFIG_FIELDS))
+def test_at_g3at009_explicit_null_does_not_pretend_an_unsupported_field_is_valid(
+    tmp_path: Path, field_name: str
+) -> None:
+    repo_path = tmp_path / "repo"
+    _write(repo_path, {"version": 1, field_name: None})
+
+    with pytest.raises(ContainerCreateFailedError, match=rf"{field_name}.*not supported"):
+        load_project_config(repo_path)
 
 
 def test_minimal_config_only_requires_version(tmp_path: Path) -> None:
