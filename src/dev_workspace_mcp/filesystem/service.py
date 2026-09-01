@@ -251,9 +251,7 @@ class FilesystemService:
         """
         if directory == self._security.root:
             try:
-                directory_fd = os.open(
-                    directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-                )
+                directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
             except OSError:
                 return None
             self._security.verify_fd_within_root(directory_fd, "")
