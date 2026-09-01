@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import dev_workspace_mcp.filesystem.service as filesystem_service
 from dev_workspace_mcp.config.models import FilesystemConfig
 from dev_workspace_mcp.filesystem.security import FilesystemSecurity
 from dev_workspace_mcp.filesystem.service import FilesystemService
@@ -82,3 +83,47 @@ def test_g3at_013_cleanup_failure_preserves_replace_error_and_logs_orphan(
     assert len(leftovers) == 1
     assert leftovers[0] in caplog.text
     assert "failed to remove atomic-write temp file" in caplog.text
+
+
+def test_g3at_013_write_failure_survives_temp_close_cleanup_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    root = _repo(tmp_path)
+    target = root / "existing.txt"
+    original = b"original content must survive\n"
+    target.write_bytes(original)
+    service = _service(root)
+
+    real_close = os.close
+    temp_fd: int | None = None
+
+    def fail_write(fd: int, data: bytes) -> None:
+        nonlocal temp_fd
+        temp_fd = fd
+        raise OSError(28, "No space left on device")
+
+    def fail_temp_close(fd: int) -> None:
+        if fd == temp_fd:
+            raise OSError(5, "Input/output error")
+        real_close(fd)
+
+    monkeypatch.setattr(filesystem_service, "_write_all", fail_write)
+    monkeypatch.setattr(os, "close", fail_temp_close)
+
+    try:
+        with (
+            caplog.at_level(logging.WARNING, logger="dev_workspace_mcp.filesystem.service"),
+            pytest.raises(OSError) as excinfo,
+        ):
+            service.write_file("existing.txt", "replacement content\n")
+    finally:
+        monkeypatch.setattr(os, "close", real_close)
+        if temp_fd is not None:
+            real_close(temp_fd)
+
+    assert excinfo.value.errno == 28
+    assert target.read_bytes() == original
+    assert [p.name for p in root.iterdir() if "mcp-write-tmp" in p.name] == []
+    assert "failed to close atomic-write temp file" in caplog.text

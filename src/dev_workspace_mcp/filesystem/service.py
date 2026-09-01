@@ -682,7 +682,25 @@ class FilesystemService:
             try:
                 try:
                     _write_all(tmp_fd, data)
-                finally:
+                except BaseException:
+                    # A close failure is cleanup after an already-established
+                    # write failure. G3R-013 requires cleanup failure not to
+                    # replace the original error the caller needs to diagnose.
+                    try:
+                        os.close(tmp_fd)
+                    except OSError as close_exc:
+                        logging.getLogger(__name__).warning(
+                            "write_file: failed to close atomic-write temp file %r for %r "
+                            "after write failure: %s",
+                            tmp_name,
+                            relative_path,
+                            close_exc,
+                        )
+                    raise
+                else:
+                    # If the write itself succeeded, a close failure is the
+                    # primary pre-replacement failure and the outer cleanup
+                    # boundary below removes the not-yet-installed temp file.
                     os.close(tmp_fd)
                 os.replace(tmp_name, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
             except BaseException:
