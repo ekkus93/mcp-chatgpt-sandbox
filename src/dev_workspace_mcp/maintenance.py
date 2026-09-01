@@ -140,7 +140,10 @@ class MaintenanceScheduler:
                 (
                     "idle_workspace_sweep",
                     None,
-                    "ContainerRuntimeFailedError: Docker is not reachable; idle maintenance cannot run",
+                    (
+                        "ContainerRuntimeFailedError: Docker is not reachable; "
+                        "idle maintenance cannot run"
+                    ),
                 )
             )
             return
