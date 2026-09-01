@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 from dev_workspace_mcp.errors import ContainerCreateFailedError
 
@@ -37,6 +37,16 @@ _CANDIDATE_FILENAMES = (".mcp-workspace.yml", ".mcp-workspace.yaml")
 #: (`docs/HARDENING_SPEC.md` §9): widen this set the day a second
 #: schema version actually exists, not before.
 SUPPORTED_PROJECT_CONFIG_VERSIONS = frozenset({1})
+
+#: G3R-009 (`docs/GAP3_SPEC.md`): every top-level project-config field is
+#: deliberately classified. The supported set has a production consumer; the
+#: unsupported set remains in the model only to produce a precise failure for
+#: §10's future-facing syntax instead of accepting a silent no-op. Tests assert
+#: that these two sets cover `ProjectWorkspaceConfig.model_fields` exactly.
+SUPPORTED_PROJECT_CONFIG_FIELDS = frozenset(
+    {"version", "image", "setup", "environment", "caches"}
+)
+UNSUPPORTED_PROJECT_CONFIG_FIELDS = frozenset({"workspace", "github", "validation"})
 
 #: GR-004 (`docs/GAP_SPEC.md`): exact-name keys `environment:` may not
 #: set, because `docker/default/entrypoint.sh` reads them (directly, or
@@ -126,9 +136,12 @@ class ProjectGithubConfig(BaseModel):
 
 
 class ProjectValidationConfig(BaseModel):
-    """Parsed for forward-compatibility and unknown-field rejection —
-    §10's example includes it, but no tool in this MVP runs these
-    commands yet; there is no `validate` tool (§34.1 doesn't list one)."""
+    """Shape reserved by §10 for a future validation-command surface.
+
+    G3R-009 keeps this nested model so the intended schema remains explicit,
+    but `ProjectWorkspaceConfig` rejects the top-level `validation` field
+    before accepting any of these currently unimplemented commands.
+    """
 
     model_config = {"extra": "forbid"}
 
@@ -157,16 +170,42 @@ class ProjectWorkspaceConfig(BaseModel):
     version: int
     image: str | None = None
     workspace: str | None = None
-    """Parsed and validated, not yet wired to anything — `docker.
-    workspace_path` (`config/models.py`) has the same "accepted, not yet
-    acted on" status; both need `tools/workspace.py`'s hardcoded
-    `DEFAULT_WORKSPACE_PATH` replaced with a real override path, a
-    separate, pre-existing piece of work this task does not do."""
+    """Reserved by §10 but rejected while no runtime override exists.
+
+    G3R-009 forbids silently accepting this field until the hard-coded
+    workspace path is replaced by a specified, end-to-end override.
+    """
     setup: list[str] = Field(default_factory=list)
     environment: dict[str, str] = Field(default_factory=dict)
     caches: list[ProjectCacheEntry] = Field(default_factory=list)
     github: ProjectGithubConfig | None = None
     validation: ProjectValidationConfig | None = None
+
+    @field_validator(*sorted(UNSUPPORTED_PROJECT_CONFIG_FIELDS), mode="before")
+    @classmethod
+    def _reject_unimplemented_operational_fields(cls, v: Any, info: ValidationInfo) -> Any:
+        """G3R-009 / G3AT-009: operational-looking project fields must
+        never parse successfully while the daemon does nothing with them.
+
+        These three fields are present in §10's future-facing example but
+        have no production consumer today:
+
+        * `workspace` does not override `DEFAULT_WORKSPACE_PATH`;
+        * project-level `github.repository` does not feed the daemon's
+          repository registry / remote-protection identity; and
+        * `validation` has no tool or lifecycle hook that runs its commands.
+
+        A ``mode="before"`` field validator is deliberate: it runs only
+        when the author supplied the field, so omitted defaults remain valid,
+        and even an explicit ``null`` cannot masquerade as supported syntax.
+        Keep this reject list synchronized with the runtime-consumption table
+        in ``docs/CONFIGURATION.md``. Implement a field end-to-end before
+        removing it from this validator.
+        """
+        raise ValueError(
+            f"project configuration field {info.field_name!r} is not supported by this daemon "
+            "and would otherwise be ignored (G3R-009); remove it until the feature is implemented"
+        )
 
     @field_validator("version")
     @classmethod
