@@ -9,15 +9,19 @@ empty tool list.
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import asdict, dataclass
 from typing import Literal
 
 import docker
 from mcp.server import MCPServer
 
 from dev_workspace_mcp import __version__
+from dev_workspace_mcp.audit import AuditHealth, get_audit_health
 from dev_workspace_mcp.config.loader import ensure_known_hosts_file_exists
 from dev_workspace_mcp.config.models import ServerConfig
 from dev_workspace_mcp.db import open_db
+from dev_workspace_mcp.errors import translate_workspace_errors
+from dev_workspace_mcp.jobs.store import JobStore
 from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.tools import execution as execution_tools
 from dev_workspace_mcp.tools import filesystem as filesystem_tools
@@ -28,6 +32,13 @@ from dev_workspace_mcp.tools import workspace as workspace_tools
 Transport = Literal["stdio", "sse", "streamable-http"]
 
 SERVER_NAME = "dev-workspace-mcp"
+
+
+@dataclass
+class ServerInfoOutput(workspace_tools.ServerInfoOutput):
+    """G3R-012: daemon health extends the existing server-info payload."""
+
+    audit: AuditHealth
 
 
 def create_server(config: ServerConfig) -> MCPServer:
@@ -107,6 +118,7 @@ def _register_tools(
         repository_roots=config.authorized_git_dir_roots,
         ssh_agent_runtime_dir=config.state_db_path.parent / "ssh-agents",
     )
+    _replace_server_info_with_audit_health(server, config, registry, db, docker_client)
     execution_tools.register(
         server,
         db=db,
@@ -129,6 +141,35 @@ def _register_tools(
         github_config=config.github,
         audit_config=config.audit,
     )
+
+
+def _replace_server_info_with_audit_health(
+    server: MCPServer,
+    config: ServerConfig,
+    registry: RepositoryRegistry,
+    db: sqlite3.Connection,
+    docker_client: docker.DockerClient | None,
+) -> None:
+    """Replace the base workspace diagnostic with the G3R-012 extension.
+
+    `workspace_tools.get_server_info` remains the single builder for the
+    existing Docker/workspace/job/capability fields. Audit health is daemon-
+    level process state, so server assembly adds that one field without
+    duplicating or weakening the established base health checks.
+    """
+    server.remove_tool("server_info")
+    job_store = JobStore(db)
+
+    @server.tool(name="server_info", description="Server version, capabilities, and health (§25).")
+    @translate_workspace_errors
+    async def server_info() -> ServerInfoOutput:
+        base = workspace_tools.get_server_info(
+            docker_client=docker_client,
+            db=db,
+            job_store=job_store,
+            registry=registry,
+        )
+        return ServerInfoOutput(**asdict(base), audit=get_audit_health(config.audit))
 
 
 def run_server(server: MCPServer, transport: Transport = "stdio") -> None:

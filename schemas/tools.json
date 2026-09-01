@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.7.6",
+  "contract_version": "0.7.7",
   "tools": [
     {
       "description": "Delete a repository file or directory (\u00a713.5).",
@@ -1762,10 +1762,65 @@
       },
       "name": "server_info",
       "output_schema": {
+        "$defs": {
+          "AuditHealth": {
+            "properties": {
+              "last_failure_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Last Failure At"
+              },
+              "last_failure_reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Last Failure Reason"
+              },
+              "mode": {
+                "enum": [
+                  "best_effort",
+                  "disabled"
+                ],
+                "title": "Mode",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "healthy",
+                  "degraded"
+                ],
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "mode",
+              "last_failure_at",
+              "last_failure_reason"
+            ],
+            "title": "AuditHealth",
+            "type": "object"
+          }
+        },
         "properties": {
           "active_workspaces": {
             "title": "Active Workspaces",
             "type": "integer"
+          },
+          "audit": {
+            "$ref": "#/$defs/AuditHealth"
           },
           "capabilities": {
             "additionalProperties": {
@@ -1814,7 +1869,8 @@
           "active_workspaces",
           "running_jobs",
           "configured_repositories",
-          "capabilities"
+          "capabilities",
+          "audit"
         ],
         "title": "ServerInfoOutput",
         "type": "object"

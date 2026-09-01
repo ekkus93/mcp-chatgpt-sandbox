@@ -44,7 +44,10 @@ from mcp.server import MCPServer
 #: `workspace_info` gained `configured_image` (what `.mcp-workspace.yml`
 #: `image:`/`docker.default_image` currently resolves to, distinct from
 #: `image`, what the container actually runs); no new tools.
-CONTRACT_VERSION = "0.7.6"
+#: 0.7.7 (G3R-012, `docs/GAP3_SPEC.md`): patch bump — `server_info` gained
+#: `audit`, exposing best-effort audit sink health, last failure time, and a
+#: sanitized last failure reason; no new tools.
+CONTRACT_VERSION = "0.7.7"
 
 
 async def collect_tool_schemas(server: MCPServer) -> list[dict[str, Any]]:
