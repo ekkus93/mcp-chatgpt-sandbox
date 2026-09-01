@@ -1,6 +1,7 @@
-"""G3AT-010: global-hook dispatch distinguishes absence from Git config failure."""
+"""G3AT-010/G3AT-011: global-hook dispatch and same-name composition."""
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -35,6 +36,89 @@ def _run_dispatch(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         check=False,
     )
+
+
+def _git(
+    repo: Path,
+    env: dict[str, str],
+    *args: str,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _prepare_g3at_011_repo(
+    tmp_path: Path,
+    *,
+    global_exit_code: int = 0,
+    uv_fail_command: str = "",
+) -> tuple[Path, dict[str, str], Path, str]:
+    env, global_config = _isolated_git_env(tmp_path)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    assert _git(repo, env, "init", "-q", "-b", "main").returncode == 0
+    assert _git(repo, env, "config", "user.email", "test@example.com").returncode == 0
+    assert _git(repo, env, "config", "user.name", "Test").returncode == 0
+
+    (repo / "README.md").write_text("seed\n", encoding="utf-8")
+    assert _git(repo, env, "add", "README.md").returncode == 0
+    assert _git(repo, env, "commit", "-q", "--no-verify", "-m", "seed").returncode == 0
+    baseline_head = _git(repo, env, "rev-parse", "HEAD").stdout.strip()
+
+    hooks_dir = repo / ".githooks"
+    hooks_dir.mkdir()
+    for name in ("pre-commit", "_global-hook-dispatch"):
+        source = _REPO_ROOT / ".githooks" / name
+        target = hooks_dir / name
+        shutil.copyfile(source, target)
+        target.chmod(0o755)
+    assert _git(repo, env, "config", "core.hooksPath", ".githooks").returncode == 0
+
+    order_log = tmp_path / "hook-order.log"
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    fake_uv = fake_bin / "uv"
+    fake_uv.write_text(
+        "#!/bin/sh\n"
+        "printf 'local:%s\\n' \"$*\" >> \"$G3AT011_LOG\"\n"
+        "if [ -n \"${G3AT011_UV_FAIL-}\" ] && [ \"$*\" = \"$G3AT011_UV_FAIL\" ]; then\n"
+        "    exit 31\n"
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_uv.chmod(0o755)
+
+    global_hooks = tmp_path / "global-hooks"
+    global_hooks.mkdir()
+    global_pre_commit = global_hooks / "pre-commit"
+    global_pre_commit.write_text(
+        "#!/bin/sh\n"
+        "printf 'global\\n' >> \"$G3AT011_LOG\"\n"
+        "exit \"${G3AT011_GLOBAL_EXIT:-0}\"\n",
+        encoding="utf-8",
+    )
+    global_pre_commit.chmod(0o755)
+    global_config.write_text(
+        f"[core]\n\thooksPath = {global_hooks}\n",
+        encoding="utf-8",
+    )
+
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+    env["G3AT011_LOG"] = str(order_log)
+    env["G3AT011_GLOBAL_EXIT"] = str(global_exit_code)
+    env["G3AT011_UV_FAIL"] = uv_fail_command
+
+    (repo / "README.md").write_text("changed\n", encoding="utf-8")
+    assert _git(repo, env, "add", "README.md").returncode == 0
+    return repo, env, order_log, baseline_head
 
 
 def test_g3at_010_missing_global_hooks_path_is_a_benign_noop(tmp_path: Path) -> None:
@@ -98,3 +182,53 @@ def test_g3at_010_tilde_global_hooks_path_still_dispatches(tmp_path: Path) -> No
     assert result.returncode == 23
     assert result.stdout == "g3at010-tilde-ran\n"
     assert result.stderr == ""
+
+
+def test_g3at_011_real_commit_runs_local_then_global_pre_commit(tmp_path: Path) -> None:
+    repo, env, order_log, baseline_head = _prepare_g3at_011_repo(tmp_path)
+
+    result = _git(repo, env, "commit", "-q", "-m", "exercise hook composition")
+
+    assert result.returncode == 0, result.stderr
+    assert order_log.read_text(encoding="utf-8").splitlines() == [
+        "local:run ruff format --check .",
+        "local:run ruff check .",
+        "local:run mypy src",
+        "global",
+    ]
+    assert _git(repo, env, "rev-parse", "HEAD").stdout.strip() != baseline_head
+
+
+def test_g3at_011_local_failure_short_circuits_global_pre_commit(tmp_path: Path) -> None:
+    repo, env, order_log, baseline_head = _prepare_g3at_011_repo(
+        tmp_path,
+        uv_fail_command="run ruff format --check .",
+    )
+
+    result = _git(repo, env, "commit", "-q", "-m", "local failure")
+
+    assert result.returncode != 0
+    assert order_log.read_text(encoding="utf-8").splitlines() == [
+        "local:run ruff format --check .",
+        "local:run ruff check .",
+        "local:run mypy src",
+    ]
+    assert _git(repo, env, "rev-parse", "HEAD").stdout.strip() == baseline_head
+
+
+def test_g3at_011_global_failure_blocks_commit_after_local_checks(tmp_path: Path) -> None:
+    repo, env, order_log, baseline_head = _prepare_g3at_011_repo(
+        tmp_path,
+        global_exit_code=23,
+    )
+
+    result = _git(repo, env, "commit", "-q", "-m", "global failure")
+
+    assert result.returncode != 0
+    assert order_log.read_text(encoding="utf-8").splitlines() == [
+        "local:run ruff format --check .",
+        "local:run ruff check .",
+        "local:run mypy src",
+        "global",
+    ]
+    assert _git(repo, env, "rev-parse", "HEAD").stdout.strip() == baseline_head

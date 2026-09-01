@@ -53,6 +53,15 @@
 
 set -eu
 
+# G3R-011: local pre-commit checks run before the developer's global
+# pre-commit. Save Git's hook environment before the temporary-worktree
+# machinery clears GIT_INDEX_FILE; restore it before chaining so the
+# global hook sees the repository context Git originally supplied.
+git_index_file_was_set=0
+if [ "${GIT_INDEX_FILE+x}" = x ]; then
+    git_index_file_was_set=1
+    saved_git_index_file=$GIT_INDEX_FILE
+fi
 unset GIT_INDEX_FILE
 
 original_dir=$(pwd)
@@ -98,4 +107,18 @@ if [ "$fail" -ne 0 ]; then
     exit 1
 fi
 
-exit 0
+# G3R-011 / G3AT-011: the explicit same-name composition policy is
+# local-then-global. Tear down the snapshot and return to the real
+# repository before the developer's global pre-commit runs. A failure
+# from that hook is propagated by exec and therefore still blocks the
+# commit. If a local check failed above, the global hook is deliberately
+# not invoked.
+cleanup
+trap - EXIT INT TERM
+if [ "$git_index_file_was_set" -eq 1 ]; then
+    GIT_INDEX_FILE=$saved_git_index_file
+    export GIT_INDEX_FILE
+else
+    unset GIT_INDEX_FILE
+fi
+exec "$original_dir/.githooks/_global-hook-dispatch" --hook-name pre-commit "$@"

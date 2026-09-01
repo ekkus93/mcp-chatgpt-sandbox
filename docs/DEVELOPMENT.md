@@ -22,16 +22,29 @@ actually runs, rejected — `docs/GAP_TODO.md` G1).
 `core.hooksPath` is a single directory, not a search chain — if you
 already have your own global hooks configured
 (`git config --global core.hooksPath`), setting it repo-locally would
-otherwise disable every one of them silently, since git stops consulting
-the global value the moment a local one exists (G2R-007,
-`docs/GAP2_SPEC.md`). `.githooks/commit-msg`, `post-checkout`,
-`post-commit`, `post-merge`, and `pre-push` are symlinks to
-`.githooks/_global-hook-dispatch`, which re-reads your global
-`core.hooksPath` directly and forwards to whichever hook of the same
-name lives there — so your own hooks keep running, and a clone with no
-global hooks configured gets a silent no-op from each. Only
-`.githooks/pre-commit` has no dispatcher, because this project has no
-global `pre-commit` hook to shadow.
+otherwise shadow them, since git stops consulting the global value the
+moment a local one exists (G2R-007, `docs/GAP2_SPEC.md`).
+`.githooks/commit-msg`, `post-checkout`, `post-commit`, `post-merge`, and
+`pre-push` are symlinks to `.githooks/_global-hook-dispatch`, which
+re-reads your global `core.hooksPath` directly and forwards to the
+same-named global hook when present.
+
+`pre-commit` has an explicit same-name policy (G3R-011/G3AT-011,
+`docs/GAP3_SPEC.md`): **the repository's local pre-commit runs first; if
+and only if its Ruff/mypy checks pass, the developer's global
+`pre-commit` runs second.** A failure from either hook blocks the commit.
+The local hook tears down its temporary index-snapshot worktree, returns
+to the real repository, and restores Git's hook environment before
+chaining, so the global hook does not run inside the scratch worktree.
+A clone with no global `pre-commit` configured simply finishes after the
+local checks.
+
+This forwarding is intentionally explicit, not a claim that
+`core.hooksPath` became a generic search chain. The proxy files preserve
+the five global hook names listed above, and the local `pre-commit`
+explicitly composes with a global `pre-commit`; an arbitrary global hook
+name for which `.githooks/` has no corresponding proxy is still not
+discovered by Git.
 
 Requires Python 3.12 (`.python-version`) and Docker — the test suite is
 Docker-heavy (`docs/SPEC.md` §71), and a locally running server needs it
