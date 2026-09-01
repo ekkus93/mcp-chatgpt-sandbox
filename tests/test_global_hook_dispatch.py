@@ -87,8 +87,8 @@ def _prepare_g3at_011_repo(
     fake_uv = fake_bin / "uv"
     fake_uv.write_text(
         "#!/bin/sh\n"
-        "printf 'local:%s\\n' \"$*\" >> \"$G3AT011_LOG\"\n"
-        "if [ -n \"${G3AT011_UV_FAIL-}\" ] && [ \"$*\" = \"$G3AT011_UV_FAIL\" ]; then\n"
+        'printf \'local:%s\\n\' "$*" >> "$G3AT011_LOG"\n'
+        'if [ -n "${G3AT011_UV_FAIL-}" ] && [ "$*" = "$G3AT011_UV_FAIL" ]; then\n'
         "    exit 31\n"
         "fi\n"
         "exit 0\n",
@@ -100,9 +100,7 @@ def _prepare_g3at_011_repo(
     global_hooks.mkdir()
     global_pre_commit = global_hooks / "pre-commit"
     global_pre_commit.write_text(
-        "#!/bin/sh\n"
-        "printf 'global\\n' >> \"$G3AT011_LOG\"\n"
-        "exit \"${G3AT011_GLOBAL_EXIT:-0}\"\n",
+        '#!/bin/sh\nprintf \'global\\n\' >> "$G3AT011_LOG"\nexit "${G3AT011_GLOBAL_EXIT:-0}"\n',
         encoding="utf-8",
     )
     global_pre_commit.chmod(0o755)
