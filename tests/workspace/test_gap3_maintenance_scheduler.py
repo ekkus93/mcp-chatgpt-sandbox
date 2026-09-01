@@ -19,7 +19,7 @@ from dev_workspace_mcp.server import create_server
 from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager, WorkspaceState
 
 
-async def _wait_until(predicate: Callable[[], bool], *, timeout: float = 3.0) -> None:
+async def _wait_until(predicate: Callable[[], bool], *, timeout: float = 15.0) -> None:
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     while loop.time() < deadline:
@@ -63,7 +63,7 @@ async def test_g3at_014_server_lifespan_runs_and_recovers_maintenance_without_cl
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = _configured_server(minimal_config, default_image_tag, tmp_path / "work" / "example")
-    server = create_server(config)
+    server = create_server(config, maintenance_interval_seconds=0.2)
 
     # Setup traffic is allowed: G3AT-014's point is that after maintenance
     # becomes due, no unrelated future MCP request is needed to trigger it.
@@ -123,26 +123,25 @@ async def test_g3at_014_server_lifespan_runs_and_recovers_maintenance_without_cl
         db.execute("DELETE FROM job WHERE id = ?", ("job_cleanup_debt",))
     assert get_job_log_cleanup_debt(db, "job_cleanup_debt") is not None
 
+    # Install failure injection before lifespan starts. The scheduler creates
+    # a fresh manager inside its worker for each cycle, so patch the class
+    # method rather than reaching into scheduler internals.
+    real_stop = DockerWorkspaceManager.stop
+    failed_once = False
+
+    def fail_first_idle_stop(self: DockerWorkspaceManager, target_workspace_id: str):  # type: ignore[no-untyped-def]
+        nonlocal failed_once
+        if target_workspace_id == workspace_id and not failed_once:
+            failed_once = True
+            raise ContainerRuntimeFailedError("G3AT-014 simulated idle-stop failure")
+        return real_stop(self, target_workspace_id)
+
+    monkeypatch.setattr(DockerWorkspaceManager, "stop", fail_first_idle_stop)
+
     lifespan = getattr(server.settings, "lifespan", None)
     assert lifespan is not None, "G3AT-014: server has no lifecycle-owned maintenance scheduler"
 
     async with lifespan(server) as scheduler:
-        # `create_task` does not run until this test yields control, so the
-        # interval and first-stop failure are installed before cycle one.
-        scheduler._interval_seconds = 0.2
-        assert scheduler._manager is not None
-        real_stop = scheduler._manager.stop
-        failed_once = False
-
-        def fail_first_idle_stop(target_workspace_id: str):  # type: ignore[no-untyped-def]
-            nonlocal failed_once
-            if target_workspace_id == workspace_id and not failed_once:
-                failed_once = True
-                raise ContainerRuntimeFailedError("G3AT-014 simulated idle-stop failure")
-            return real_stop(target_workspace_id)
-
-        monkeypatch.setattr(scheduler._manager, "stop", fail_first_idle_stop)
-
         # No MCP calls occur after entering the lifespan. The first cycle's
         # idle-stop failure must not prevent retention or Y7 debt retry.
         await _wait_until(
@@ -167,8 +166,9 @@ async def test_g3at_014_server_lifespan_runs_and_recovers_maintenance_without_cl
         # than inventing the swallowed exception's more specific subtype.
         assert "WorkspaceError" in (first_failure.last_failure_reason or "")
 
-        # A later cycle must still run, retry the failed workspace item, and
-        # recover the current maintenance health to healthy.
+        # A real Docker stop can wait for Docker's stop timeout. The scheduler
+        # performs that synchronous work off the MCP asyncio loop, so this
+        # polling coroutine remains live while the later cycle retries it.
         await _wait_until(
             lambda: (
                 manager.get(workspace_id).state == WorkspaceState.STOPPED
