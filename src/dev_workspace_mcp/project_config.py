@@ -43,9 +43,7 @@ SUPPORTED_PROJECT_CONFIG_VERSIONS = frozenset({1})
 #: unsupported set remains in the model only to produce a precise failure for
 #: §10's future-facing syntax instead of accepting a silent no-op. Tests assert
 #: that these two sets cover `ProjectWorkspaceConfig.model_fields` exactly.
-SUPPORTED_PROJECT_CONFIG_FIELDS = frozenset(
-    {"version", "image", "setup", "environment", "caches"}
-)
+SUPPORTED_PROJECT_CONFIG_FIELDS = frozenset({"version", "image", "setup", "environment", "caches"})
 UNSUPPORTED_PROJECT_CONFIG_FIELDS = frozenset({"workspace", "github", "validation"})
 
 #: GR-004 (`docs/GAP_SPEC.md`): exact-name keys `environment:` may not
