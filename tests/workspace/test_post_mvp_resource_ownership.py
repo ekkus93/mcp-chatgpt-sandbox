@@ -110,7 +110,10 @@ def test_pmoat_001_exact_cache_name_collision_is_not_adopted_or_deleted(
 
         # The existing workspace-delete cleanup hook is also forbidden from
         # turning the matching name into deletion authority.
-        manager._remove_cache_volumes([cache.volume_name])
+        manager._remove_cache_volumes(
+            [cache.volume_name],
+            expected_repository_id=repository.id,
+        )
         foreign.reload()
         assert docker_client.volumes.get(foreign.name).name == foreign.name
     finally:
@@ -141,6 +144,47 @@ def test_pmoat_001_workspace_delete_requires_cache_repository_identity(
         assert docker_client.volumes.get(foreign.name).name == foreign.name
     finally:
         with contextlib.suppress(docker.errors.NotFound):
+            foreign.remove(force=True)
+
+
+def test_pmoat_001_cache_create_race_revalidates_returned_volume(
+    docker_client: docker.DockerClient,
+    manager: DockerWorkspaceManager,
+    repository: RepositoryRecord,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A same-name volume appearing after lookup never inherits requested labels."""
+    cache = _cargo_cache(repository)
+    foreign = docker_client.volumes.create(name=cache.volume_name)
+    real_get = manager._docker.volumes.get
+    first_lookup = True
+
+    def racing_get(name: str):
+        nonlocal first_lookup
+        if name == cache.volume_name and first_lookup:
+            first_lookup = False
+            raise docker.errors.NotFound("simulated cache-volume create race")
+        return real_get(name)
+
+    monkeypatch.setattr(manager._docker.volumes, "get", racing_get)
+    try:
+        with pytest.raises(ContainerCreateFailedError, match="ownership"):
+            manager.ensure_workspace(
+                repository=repository,
+                image="alpine:3.20",
+                run_kwargs={
+                    "command": ["sleep", "3600"],
+                    "mounts": build_cache_mounts([cache]),
+                },
+            )
+
+        foreign.reload()
+        assert docker_client.volumes.get(foreign.name).name == foreign.name
+    finally:
+        # On the fixed path no container mounts the foreign volume. Suppress a
+        # Docker cleanup error anyway so a regression's primary assertion is
+        # never obscured by test cleanup.
+        with contextlib.suppress(docker.errors.DockerException):
             foreign.remove(force=True)
 
 
