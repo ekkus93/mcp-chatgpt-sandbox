@@ -151,8 +151,7 @@ def test_pmoat_002_inventory_is_bounded_and_side_effect_free(tmp_path: Path) -> 
     inventory = _inventory_module()
     mutations = _Mutations()
     containers = [
-        _Container(f"c{index}", _container_labels(f"ws{index}"), mutations)
-        for index in range(8)
+        _Container(f"c{index}", _container_labels(f"ws{index}"), mutations) for index in range(8)
     ]
 
     result = inventory.ResourceInventoryService(
