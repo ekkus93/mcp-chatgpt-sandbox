@@ -33,6 +33,7 @@ from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.tools import execution as execution_tools
 from dev_workspace_mcp.tools import filesystem as filesystem_tools
 from dev_workspace_mcp.tools import git as git_tools
+from dev_workspace_mcp.tools import operations as operations_tools
 from dev_workspace_mcp.tools import repository as repository_tools
 from dev_workspace_mcp.tools import workspace as workspace_tools
 
@@ -122,6 +123,12 @@ def _register_tools(
     """Register the §34.1 tool surface. Grows one module per task from
     S9 (filesystem) onward; `repository_list` is the first (S5)."""
     repository_tools.register(server, registry)
+    operations_tools.register(
+        server,
+        db=db,
+        docker_client=docker_client,
+        state_db_path=config.state_db_path,
+    )
     filesystem_tools.register(
         server,
         db=db,

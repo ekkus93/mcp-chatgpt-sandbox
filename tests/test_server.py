@@ -27,6 +27,7 @@ REGISTERED_TOOLS = {
     "git_commit",
     "git_pull",
     "git_push",
+    "resource_inventory",
 }
 
 

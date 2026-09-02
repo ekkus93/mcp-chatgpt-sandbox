@@ -50,7 +50,10 @@ from mcp.server import MCPServer
 #: 0.7.8 (G3R-014, `docs/GAP3_SPEC.md`): patch bump — `server_info` gained
 #: `maintenance`, exposing scheduler state, last cycle, and sanitized last
 #: maintenance failure information; no new tools.
-CONTRACT_VERSION = "0.7.8"
+#: 0.8.0 (Post-MVP Operations O3): minor bump — one new additive read-only
+#: tool, `resource_inventory`, with bounded opaque-ID filtering and explicit
+#: cleanup-debt/degraded/unavailable observations.
+CONTRACT_VERSION = "0.8.0"
 
 
 async def collect_tool_schemas(server: MCPServer) -> list[dict[str, Any]]:
