@@ -129,7 +129,7 @@ def resolve_repository_root(
     ).fetchone()
     if row is None:
         raise WorkspaceNotFoundError(f"workspace not found: {workspace_id!r}")
-    registry.get(row["repository_id"])
+    registry.get(row["repository_id"])  # raises RepositoryNotAllowedError if deauthorized
     return Path(row["canonical_path"])
 
 
@@ -149,7 +149,7 @@ def get_authorized(
     succeed before it ever constructs a manager at all, since those
     commands take a `repository_id` directly rather than a `workspace_id`."""
     record = manager.get(workspace_id)
-    registry.get(record.repository_id)
+    registry.get(record.repository_id)  # raises RepositoryNotAllowedError if deauthorized
     return record
 
 
@@ -309,6 +309,11 @@ class DockerWorkspaceManager(_LifecycleMixin):
                     details={"workspace_id": record.id, "volume_name": source},
                 ) from exc
 
+            # Docker volume create is name-idempotent. A foreign volume can
+            # appear between the get() above and create(), and Docker may return
+            # that existing object instead of applying our requested labels.
+            # Re-inspect the object we will actually mount and prove ownership
+            # after either path; the pre-create name lookup is never authority.
             try:
                 volume.reload()
             except DockerException as exc:
@@ -492,6 +497,8 @@ class DockerWorkspaceManager(_LifecycleMixin):
         for job_id in job_ids:
             debt = get_job_log_cleanup_debt(self._db, job_id)
             if debt is None:
+                # Do not fall back to an untracked rmtree. Missing debt here is
+                # an invariant failure that would recreate Y7's lost-cleanup gap.
                 _logger.error(
                     "workspace delete: missing durable job-log cleanup debt for %s", job_id
                 )
