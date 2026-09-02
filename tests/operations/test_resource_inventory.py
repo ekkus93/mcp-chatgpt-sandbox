@@ -376,7 +376,16 @@ def test_pmoat_002_inventory_never_mutates_host_filesystem(
     def reject(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("read-only inventory attempted host filesystem mutation")
 
-    for name in ("mkdir", "rmdir", "unlink", "touch", "write_bytes", "write_text", "rename", "replace"):
+    for name in (
+        "mkdir",
+        "rmdir",
+        "unlink",
+        "touch",
+        "write_bytes",
+        "write_text",
+        "rename",
+        "replace",
+    ):
         monkeypatch.setattr(inventory.Path, name, reject)
     for name in ("mkdir", "makedirs", "remove", "removedirs", "rmdir", "unlink"):
         monkeypatch.setattr(inventory.os, name, reject)
