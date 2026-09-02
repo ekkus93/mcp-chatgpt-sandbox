@@ -1,10 +1,9 @@
 """Lifecycle-owned periodic maintenance (G3R-014 / G3AT-014).
 
-Idle workspace stopping and job-log retention both existed before Y14, but
-only as opportunistic work attached to unrelated MCP requests. This module
-owns the real server-lifecycle scheduler: it starts with the MCP lifespan,
-runs both maintenance families on a bounded interval without client traffic,
-isolates failures, and stops cleanly with the daemon.
+The scheduler starts with the MCP lifespan, runs idle-workspace and job-log
+maintenance on a bounded interval without client traffic, isolates failures,
+and stops cleanly with the daemon. Request-triggered maintenance remains only
+as additional defense in depth.
 """
 
 from __future__ import annotations

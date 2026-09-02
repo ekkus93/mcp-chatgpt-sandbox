@@ -317,7 +317,7 @@ def _runtime_image_digest(
 ) -> str | None:
     """Return the immutable image ID from the container's own inspect data.
 
-    G3R-006 (`docs/GAP3_SPEC.md`): a tag/reference is configuration, not
+    G3R-006 / G3AT-006 (`docs/GAP3_SPEC.md`): a tag/reference is configuration, not
     runtime provenance. A mutable tag can be retargeted while an existing
     container continues to run the image it was created from, so resolving
     `record.image` through `images.get()` can silently report the wrong
@@ -657,12 +657,10 @@ async def open_workspace(
                     (record.container_id, record.id),
                 )
 
-        # §8.1's idle-stop (S17): no scheduler exists in the daemon, so —
-        # like S16's job-log retention — this runs opportunistically on a
-        # frequent, natural trigger point rather than on a real timer.
-        # `workspace_id` isn't necessarily among those swept (it was just
-        # ensured running, so its own `last_used_at` is fresh), but any
-        # *other* persistent workspace that has gone idle gets caught here.
+        # G3R-014 / G3AT-014: the lifecycle scheduler performs idle sweeps
+        # without client traffic. Keep this request-triggered sweep as
+        # defense in depth; the just-opened workspace is fresh, while another
+        # persistent workspace may already be eligible to stop.
         manager.sweep_idle_workspaces(
             idle_stop_after_seconds=workspace_config.idle_stop_after_seconds,
             job_store=job_store,
