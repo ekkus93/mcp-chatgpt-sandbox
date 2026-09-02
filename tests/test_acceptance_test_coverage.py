@@ -347,9 +347,7 @@ _EXECUTABLE_COVERAGE: dict[tuple[str, int], tuple[str, ...]] = {
             "test_at_gr009_a_symlinked_ssh_directory_planted_in_a_cache_volume_is_not_followed",
         ),
     ),
-    ("GAT", 7): (
-        _node("tests/test_errors.py", "test_at_vat005_a_secret_flagged_set_recurses"),
-    ),
+    ("GAT", 7): (_node("tests/test_errors.py", "test_at_vat005_a_secret_flagged_set_recurses"),),
     ("GAT", 8): (
         _node(
             "tests/workspace/test_manager.py",
