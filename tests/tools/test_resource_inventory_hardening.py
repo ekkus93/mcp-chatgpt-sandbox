@@ -82,7 +82,9 @@ async def test_o3_scoped_inventory_omits_out_of_scope_resource_diagnostics(
         ),
         incomplete=True,
     )
-    monkeypatch.setattr(operations_tools.ResourceInventoryService, "collect", lambda _self: snapshot)
+    monkeypatch.setattr(
+        operations_tools.ResourceInventoryService, "collect", lambda _self: snapshot
+    )
 
     result = await create_server(minimal_config).call_tool(
         "resource_inventory", {"repository_id": "alpha"}
@@ -105,7 +107,9 @@ async def test_o3_cleanup_debt_never_coerces_unavailable_bytes_to_zero(
         bytes_observation=ByteObservation.unavailable("cleanup byte hint unavailable"),
     )
     snapshot = _result(resources=(debt,))
-    monkeypatch.setattr(operations_tools.ResourceInventoryService, "collect", lambda _self: snapshot)
+    monkeypatch.setattr(
+        operations_tools.ResourceInventoryService, "collect", lambda _self: snapshot
+    )
 
     result = await create_server(minimal_config).call_tool("resource_inventory", {})
     payload = result.structured_content
@@ -135,7 +139,9 @@ async def test_o3_public_boundary_does_not_echo_path_shaped_docker_identity_evid
         ),
     )
     snapshot = _result(resources=(resource,))
-    monkeypatch.setattr(operations_tools.ResourceInventoryService, "collect", lambda _self: snapshot)
+    monkeypatch.setattr(
+        operations_tools.ResourceInventoryService, "collect", lambda _self: snapshot
+    )
 
     result = await create_server(minimal_config).call_tool("resource_inventory", {})
     payload = result.structured_content
