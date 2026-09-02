@@ -56,7 +56,7 @@ class _Series:
         entries: dict[int, str] = {}
         for index, match in enumerate(matches):
             end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-            entries[int(match.group(1))] = text[match.start():end]
+            entries[int(match.group(1))] = text[match.start() : end]
         return entries
 
     def formally_non_automated(self) -> set[int]:
