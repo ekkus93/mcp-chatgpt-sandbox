@@ -26,7 +26,10 @@ from dev_workspace_mcp.errors import (
     ContainerRuntimeFailedError,
     WorkspaceNotFoundError,
 )
-from dev_workspace_mcp.workspace.naming import LABEL_WORKSPACE_ID
+from dev_workspace_mcp.workspace.naming import (
+    LABEL_WORKSPACE_ID,
+    container_matches_test_namespace,
+)
 from dev_workspace_mcp.workspace.records import (
     WorkspaceRecord,
     WorkspaceState,
@@ -141,7 +144,15 @@ class _CoreMixin:
         if record.container_id is None:
             return None
         try:
-            return self._docker.containers.get(record.container_id)
+            container = self._docker.containers.get(record.container_id)
+            if not container_matches_test_namespace(container.labels):
+                raise ContainerRuntimeFailedError(
+                    f"container {record.container_id!r} for workspace {record.id!r} "
+                    "belongs to a different test resource namespace",
+                    details={"workspace_id": record.id},
+                    recoverable=False,
+                )
+            return container
         except DockerNotFound:
             return None
         except DockerException as exc:
@@ -181,9 +192,13 @@ class _CoreMixin:
         # uncaught — `ensure_workspace` (and so `workspace_open`) calls
         # this whenever a workspace row already exists.
         try:
-            labeled = self._docker.containers.list(
-                all=True, filters={"label": f"{LABEL_WORKSPACE_ID}={workspace_id}"}
-            )
+            labeled = [
+                container
+                for container in self._docker.containers.list(
+                    all=True, filters={"label": f"{LABEL_WORKSPACE_ID}={workspace_id}"}
+                )
+                if container_matches_test_namespace(container.labels)
+            ]
         except DockerException as exc:
             raise ContainerRuntimeFailedError(
                 f"failed to list containers for workspace {workspace_id!r}: {exc}",
