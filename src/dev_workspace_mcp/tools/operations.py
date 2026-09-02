@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Any, Annotated, Literal
 
 import docker
 from docker.errors import DockerException
@@ -158,8 +158,26 @@ class _Scope:
     workspace_id: str | None
 
 
+class _DockerCollectionAdapter:
+    """Expose only the read-side collection method O2 inventory consumes."""
+
+    def __init__(self, collection: Any) -> None:
+        self._collection = collection
+
+    def list(self, *args: object, **kwargs: object) -> list[Any]:
+        return list(self._collection.list(*args, **kwargs))
+
+
+class _DockerInventoryAdapter:
+    """Narrow a Docker SDK client to O2's mutation-free inventory protocol."""
+
+    def __init__(self, client: docker.DockerClient) -> None:
+        self.containers = _DockerCollectionAdapter(client.containers)
+        self.volumes = _DockerCollectionAdapter(client.volumes)
+
+
 class _UnavailableCollection:
-    def list(self, *_args: object, **_kwargs: object) -> list[object]:
+    def list(self, *_args: object, **_kwargs: object) -> list[Any]:
         raise DockerException("Docker daemon unavailable")
 
 
@@ -359,9 +377,14 @@ def register(
             max_inspections=max_inspections,
             max_diagnostics=max_diagnostics,
         )
+        inventory_docker = (
+            _DockerInventoryAdapter(docker_client)
+            if docker_client is not None
+            else _UnavailableDocker()
+        )
         result = ResourceInventoryService(
             connection=db,
-            docker_client=docker_client if docker_client is not None else _UnavailableDocker(),
+            docker_client=inventory_docker,
             state_db_path=state_db_path,
             limits=InventoryLimits(
                 max_resources=request.max_resources,
