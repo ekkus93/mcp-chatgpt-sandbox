@@ -4,6 +4,7 @@ labels (§50, §51)."""
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from typing import Final, Literal
 
@@ -15,8 +16,34 @@ WorkspaceMode = Literal["persistent", "ephemeral"]
 LABEL_MANAGED: Final = "dev-workspace-mcp.managed"
 LABEL_WORKSPACE_ID: Final = "dev-workspace-mcp.workspace-id"
 LABEL_REPOSITORY_ID: Final = "dev-workspace-mcp.repository-id"
+LABEL_TEST_NAMESPACE: Final = "dev-workspace-mcp.test-namespace"
+TEST_RESOURCE_NAMESPACE_ENV: Final = "DEV_WORKSPACE_MCP_TEST_RESOURCE_NAMESPACE"
 
 _SLUG_RUN_RE = re.compile(r"[^a-z0-9]+")
+
+
+def current_test_resource_namespace() -> str | None:
+    """Return a bounded opaque namespace for Docker resources in tests.
+
+    G3R-015 (`docs/GAP3_SPEC.md`): independently started test contexts
+    must not share physical Docker resources even when they exercise the
+    same logical repository/workspace ids. The raw environment value is
+    never copied into Docker names or labels: hashing both bounds the
+    metadata and prevents arbitrary test-run text becoming Docker-owned
+    identity. Production leaves the variable unset and therefore keeps
+    the pre-G3R-015 naming/label contract byte-for-byte.
+    """
+    raw = os.environ.get(TEST_RESOURCE_NAMESPACE_ENV)
+    if not raw:
+        return None
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def container_matches_test_namespace(labels: dict[str, str]) -> bool:
+    """Whether `labels` belong to this process's physical test namespace."""
+    expected = current_test_resource_namespace()
+    actual = labels.get(LABEL_TEST_NAMESPACE)
+    return actual == expected if expected is not None else actual is None
 
 
 def persistent_workspace_id(repository_id: str) -> str:
@@ -34,18 +61,26 @@ def ephemeral_workspace_id(repository_id: str, *, suffix: str) -> str:
 
 
 def container_name(workspace_id: str) -> str:
-    """§51: deterministic — the same `workspace_id` always yields the same
-    name, so an existing container can be found by recomputing it rather
-    than by remembering it — and collision-safe via the hash suffix."""
-    digest = hashlib.sha256(workspace_id.encode()).hexdigest()[:8]
+    """§51 deterministic naming, physically isolated for test contexts."""
+    namespace = current_test_resource_namespace()
+    if namespace is None:
+        digest = hashlib.sha256(workspace_id.encode()).hexdigest()[:8]
+    else:
+        digest = hashlib.sha256(f"{workspace_id}\x00{namespace}".encode()).hexdigest()[:8]
     slug = _SLUG_RUN_RE.sub("-", workspace_id.lower()).strip("-")
-    return f"mcp-dev-{slug}-{digest}"
+    if namespace is None:
+        return f"mcp-dev-{slug}-{digest}"
+    return f"mcp-dev-{slug}-t{namespace}-{digest}"
 
 
 def container_labels(*, workspace_id: str, repository_id: str) -> dict[str, str]:
-    """§50."""
-    return {
+    """§50 ownership labels, including G3R-015 test ownership when active."""
+    labels = {
         LABEL_MANAGED: "true",
         LABEL_WORKSPACE_ID: workspace_id,
         LABEL_REPOSITORY_ID: repository_id,
     }
+    namespace = current_test_resource_namespace()
+    if namespace is not None:
+        labels[LABEL_TEST_NAMESPACE] = namespace
+    return labels

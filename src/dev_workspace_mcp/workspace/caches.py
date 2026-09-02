@@ -27,6 +27,7 @@ from docker.types import Mount
 from dev_workspace_mcp.errors import ContainerCreateFailedError
 from dev_workspace_mcp.project_config import ProjectCacheEntry
 from dev_workspace_mcp.workspace.container_config import DEFAULT_CONTAINER_HOME
+from dev_workspace_mcp.workspace.naming import current_test_resource_namespace
 
 _SLUG_RUN_RE = re.compile(r"[^a-z0-9]+")
 
@@ -109,9 +110,15 @@ def cache_volume_name(*, repository_id: str, cache_name: str) -> str:
     rebuildable — nothing here treats it as a source of truth); still a
     real, deliberate, documented behavior change on upgrade, not an
     oversight."""
-    digest = hashlib.sha256(f"{repository_id}\x00{cache_name}".encode()).hexdigest()[:8]
+    namespace = current_test_resource_namespace()
+    identity = f"{repository_id}\x00{cache_name}"
+    if namespace is not None:
+        identity = f"{identity}\x00{namespace}"
+    digest = hashlib.sha256(identity.encode()).hexdigest()[:8]
     slug = _SLUG_RUN_RE.sub("-", f"{repository_id}-{cache_name}".lower()).strip("-")
-    return f"mcp-cache-{slug}-{digest}"
+    if namespace is None:
+        return f"mcp-cache-{slug}-{digest}"
+    return f"mcp-cache-{slug}-t{namespace}-{digest}"
 
 
 def resolve_caches(

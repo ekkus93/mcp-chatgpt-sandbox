@@ -42,6 +42,7 @@ volume this call actually brings into existence is.
 import contextlib
 import sqlite3
 import threading
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,7 @@ from dev_workspace_mcp.db import open_db
 from dev_workspace_mcp.repositories import RepositoryRecord
 from dev_workspace_mcp.workspace.container_config import DEFAULT_IMAGE_BUILD_CONTEXT
 from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
+from dev_workspace_mcp.workspace.naming import TEST_RESOURCE_NAMESPACE_ENV
 
 #: Small, always-fast, already present on this host (verified in S6's
 #: development). Needs a foreground command or it exits immediately.
@@ -163,7 +165,12 @@ def remove_tracked_docker_resources(client: docker.DockerClient) -> None:
 
 
 @pytest.fixture
-def docker_client() -> Iterator[docker.DockerClient]:
+def docker_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[docker.DockerClient]:
+    # G3R-015: every Docker-using pytest context owns a distinct physical
+    # namespace. A nested/concurrent pytest process overrides the inherited
+    # value here, so local+CI and reviewer+reviewer runs cannot adopt or
+    # tear down each other's same-logical-id resources.
+    monkeypatch.setenv(TEST_RESOURCE_NAMESPACE_ENV, uuid.uuid4().hex)
     try:
         client = docker.from_env()
         client.ping()
