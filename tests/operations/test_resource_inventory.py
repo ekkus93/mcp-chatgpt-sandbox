@@ -362,3 +362,32 @@ def test_pmoat_002_inventory_includes_cache_ssh_and_state(tmp_path: Path) -> Non
     kinds = {item.kind for item in result.resources}
     assert {ResourceKind.CACHE_VOLUME, ResourceKind.SSH_AGENT, ResourceKind.STATE_STORAGE} <= kinds
     assert mutations.calls == []
+
+
+def test_pmoat_002_inventory_never_mutates_host_filesystem(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inventory = _inventory_module()
+    state_db_path = tmp_path / "state.db"
+    state_db_path.write_bytes(b"inventory-state-sentinel")
+    before = state_db_path.read_bytes()
+
+    def reject(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("read-only inventory attempted host filesystem mutation")
+
+    for name in ("mkdir", "rmdir", "unlink", "touch", "write_bytes", "write_text", "rename", "replace"):
+        monkeypatch.setattr(inventory.Path, name, reject)
+    for name in ("mkdir", "makedirs", "remove", "removedirs", "rmdir", "unlink"):
+        monkeypatch.setattr(inventory.os, name, reject)
+
+    result = inventory.ResourceInventoryService(
+        connection=_db(),
+        docker_client=_Docker(),
+        state_db_path=state_db_path,
+    ).collect()
+
+    state = next(item for item in result.resources if item.kind is ResourceKind.STATE_STORAGE)
+    assert state.bytes.value == len(before)
+    assert state.bytes.provenance.value == "measured"
+    assert state_db_path.read_bytes() == before
