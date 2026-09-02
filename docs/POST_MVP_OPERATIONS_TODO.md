@@ -2,7 +2,7 @@
 
 **Spec:** `docs/POST_MVP_OPERATIONS_SPEC.md` (`PMOR-001`..`PMOR-012`, `PMOAT-001`..`PMOAT-012`)
 
-**Status:** open — proposed next workstream
+**Status:** open — O1 complete; O2-O12 remain
 
 This TODO deliberately starts read-only and moves the destructive boundary later. Do not implement prune execution before the inventory/ownership model and dry-run plan are independently tested.
 
@@ -43,14 +43,24 @@ Do not skip directly to O8. A safe prune executor depends on the ownership/inven
 
 **Satisfies:** PMOR-001 · **Verified by:** PMOAT-001
 
-- [ ] Inventory current durable state and Docker labels used for workspace containers and cache volumes
-- [ ] Define resource kinds and lifecycle states (`active`, `retained`, `cleanup_pending`, `orphaned_owned`, `foreign`, `unknown/degraded`)
-- [ ] Define exact positive ownership evidence per resource kind
-- [ ] Preserve GAP3 Y15 test namespace as part of test-resource ownership identity
-- [ ] Preserve GAP3 Y7 trusted job-log path reconstruction; never persist/replay arbitrary deletion paths
-- [ ] Add a foreign lookalike container and volume fixture
-- [ ] Prove name/prefix resemblance alone never establishes ownership
-- [ ] Document which resources are intentionally inventory-only (Docker images initially)
+- [x] Inventory current durable state and Docker labels used for workspace containers and cache volumes
+- [x] Define resource kinds and lifecycle states (`active`, `retained`, `cleanup_pending`, `orphaned_owned`, `foreign`, `unknown/degraded`)
+- [x] Define exact positive ownership evidence per resource kind
+- [x] Preserve GAP3 Y15 test namespace as part of test-resource ownership identity
+- [x] Preserve GAP3 Y7 trusted job-log path reconstruction; never persist/replay arbitrary deletion paths
+- [x] Add a foreign lookalike container and volume fixture
+- [x] Prove name/prefix resemblance alone never establishes ownership
+- [x] Document which resources are intentionally inventory-only (Docker images initially)
+
+**O1 completion evidence:**
+
+- PMOAT-001 first RED: Actions run `33663830634` failed on the real-Docker owned-cache assertion because daemon-created cache volumes had no positive MCP ownership labels. This established that deterministic `mcp-cache-*` naming was only an address, not ownership proof.
+- PMOAT-001 second RED: Actions run `33667428159` failed with `1 failed, 1119 passed` because `workspace_delete` deleted an exact-name cache volume whose MCP labels identified a different repository. This reproduced the narrower repository-binding authorization gap before the final fix.
+- Implementation: `operations/resources.py` defines resource kinds, lifecycle states, positive label/state evidence, inventory-only kinds, and ownership classifiers; `workspace/manager.py` explicitly creates/verifies labeled cache volumes, requires full container/cache identity correspondence, preserves Y15 test namespace identity, binds cache deletion to the pre-delete durable `repository_id`, fails closed when repository proof is unavailable, and revalidates the actual volume returned from Docker creation before mounting it.
+- GAP3 Y7 remains the deletion-path authority for job logs: paths are reconstructed from trusted `state_dir` plus validated job IDs and cleanup debt, never accepted from arbitrary persisted paths.
+- Foreign-lookalike acceptance covers unlabeled and exact deterministic cache-name collisions; container adoption/removal also requires positive workspace/repository ownership proof. Docker images are explicitly inventory-only in the O1 model.
+- GREEN: Actions run `33669094390` on exact branch head `d4bc1b948be1b9246353a83029aaa38a0cd6e7cb` passed Docker build, Ruff format/lint, mypy, MCP contract, contract-version, docs drift, and the complete Docker-backed suite: `1121 passed`.
+- Revert/pre-fix verification is represented by the two intentional RED commits above: each PMOAT-001 regression was demonstrated on code lacking the corresponding ownership guarantee before the implementation that makes it green.
 
 ### O2 — Add bounded read-only resource inventory
 

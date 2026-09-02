@@ -1,8 +1,7 @@
 """S18: recovery and reconciliation (§44, §69), against a real Docker
-daemon. Every test in this file creates real containers;
-`conftest.py`'s `docker_client` fixture force-removes everything
-carrying the §50 "managed" label on teardown, regardless of test
-outcome.
+daemon. Every test in this file creates real containers; `conftest.py`
+tracks the exact container/volume resources created by the pytest process
+and removes only those exact resources on teardown.
 """
 
 import sqlite3
@@ -122,7 +121,8 @@ def test_reconcile_all_skips_a_workspace_with_duplicate_containers(
     ws_b = manager.ensure_workspace(
         repository=repo_b, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
     )
-    # A second container claiming ws_b's label — §69's fail-closed case.
+    # A second container claiming ws_b's full ownership labels — §69's
+    # fail-closed duplicate-owned-container case.
     docker_client.containers.run(
         TEST_IMAGE,
         labels=container_labels(workspace_id=ws_b.id, repository_id=repo_b.id),
@@ -145,7 +145,7 @@ def test_reconcile_all_is_a_noop_with_no_workspaces(
     assert manager.reconcile_all() == []
 
 
-# --- HR-017/HAT-014: a workspace recovers from any Docker state -------------------
+# --- HR-017/HAT-014 recovery, narrowed by PMOR-001 ownership proof ----------------
 
 
 def test_at_hat014_container_removed_out_of_band_recovers_on_reopen(
@@ -153,10 +153,8 @@ def test_at_hat014_container_removed_out_of_band_recovers_on_reopen(
     docker_client: docker.DockerClient,
     repository: RepositoryRecord,
 ) -> None:
-    """§69's `reconcile` correctly notices the container is gone and
-    marks the row `ABSENT` — the regression was `ensure_workspace` then
-    unconditionally calling `start()`, which only ever starts an
-    *existing* container and so failed forever after."""
+    """§69 notices a positively owned recorded container is gone and
+    recreates it; PMOR-001 changes only unproven-resource handling."""
     opened = manager.ensure_workspace(
         repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
     )
@@ -178,13 +176,8 @@ def test_at_hat014_a_failed_create_recovers_once_the_cause_is_fixed(
     docker_client: docker.DockerClient,
     repository: RepositoryRecord,
 ) -> None:
-    """A `containers.run` failure (here: an image that doesn't exist,
-    standing in for any transient Docker error) leaves the row `FAILED`
-    with no container at all — not merely a container that failed to
-    *start*. The regression: `ensure_workspace`'s next call still routed
-    into `start()`, which has no container to start and fails the exact
-    same way forever, even once the underlying cause (a bad image name,
-    a transient daemon hiccup) is gone."""
+    """A `containers.run` failure leaves a recoverable workspace row;
+    correcting the underlying create cause still permits a later open."""
     with pytest.raises(ContainerCreateFailedError):
         manager.ensure_workspace(
             repository=repository,
@@ -203,33 +196,30 @@ def test_at_hat014_a_failed_create_recovers_once_the_cause_is_fixed(
     assert recovered.container_id is not None
 
 
-def test_at_hat014_an_orphaned_container_at_the_deterministic_name_is_removed(
+def test_pmoat_001_unproven_container_at_deterministic_name_survives(
     manager: DockerWorkspaceManager,
     docker_client: docker.DockerClient,
     repository: RepositoryRecord,
 ) -> None:
-    """HR-017's "adopt-or-remove" — the *remove* half: a container
-    already occupying the deterministic name (§51), but carrying no
-    workspace_id label at all, can only be a stale leftover from a
-    previous incarnation of this same logical workspace (the name is
-    deterministic per workspace_id) — not something a fresh
-    `workspace_open` should ever have to give up in front of. Before
-    this fix, `containers.run`'s own 409 on the name collision wedged
-    the workspace permanently, since the same name collides again on
-    every subsequent attempt."""
+    """PMOR-001 supersedes H15's old name-as-ownership removal fallback.
+
+    A deterministic MCP-looking name is only an address. Without positive
+    managed/workspace/repository/namespace labels, the occupant may be foreign,
+    so open fails closed and leaves the resource untouched for the operator.
+    """
     name = container_name(persistent_workspace_id(repository.id))
-    orphan = docker_client.containers.run(
+    foreign = docker_client.containers.run(
         TEST_IMAGE, name=name, detach=True, **KEEP_ALIVE_RUN_KWARGS
     )
 
-    opened = manager.ensure_workspace(
-        repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
-    )
+    with pytest.raises(ContainerCreateFailedError, match="ownership"):
+        manager.ensure_workspace(
+            repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
+        )
 
-    assert opened.state == WorkspaceState.RUNNING
-    assert opened.container_id != orphan.id
-    with pytest.raises(docker.errors.NotFound):
-        docker_client.containers.get(orphan.id)  # the orphan was removed, not merely ignored
+    foreign.reload()
+    assert foreign.status == "running"
+    assert docker_client.containers.get(foreign.id).id == foreign.id
 
 
 def test_at_hat014_a_correctly_labeled_container_at_the_name_is_adopted(
@@ -238,20 +228,12 @@ def test_at_hat014_a_correctly_labeled_container_at_the_name_is_adopted(
     docker_client: docker.DockerClient,
     repository: RepositoryRecord,
 ) -> None:
-    """HR-017's "adopt-or-remove" — the *adopt* half. Deliberately
-    deletes the `workspace` row entirely, not merely `container_id`:
-    clearing just the column still leaves a row `reconcile()`'s own
-    *existing*, pre-H15 label-based adoption already covers on its own
-    (`ensure_workspace` calls `reconcile()` whenever a row exists at
-    all) — that path doesn't distinguish this task's fix from its
-    absence. A genuinely missing row (its own earlier `containers.run`
-    plausibly completed, but the row was lost before ever being written —
-    e.g. this process crashed between the call returning and the
-    `INSERT`, or the state DB itself was reset) routes through `_create`
-    instead, which never calls `reconcile()` at all — `_run_container`'s
-    own adopt-or-remove check is the only thing that can save this case,
-    since `containers.run` would otherwise 409 against the still-running,
-    still-correctly-labeled container."""
+    """HAT-014 recovery remains valid when the orphan has positive proof.
+
+    Deliberately delete the state row while retaining the correctly labeled
+    container. PMOR-001 permits adoption because the managed, workspace,
+    repository, and Y15 namespace labels all agree with the requested state.
+    """
     opened = manager.ensure_workspace(
         repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
     )
@@ -263,7 +245,7 @@ def test_at_hat014_a_correctly_labeled_container_at_the_name_is_adopted(
         repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
     )
 
-    assert reopened.container_id == real_container_id  # adopted, not recreated
+    assert reopened.container_id == real_container_id
     assert reopened.state == WorkspaceState.RUNNING
 
 
