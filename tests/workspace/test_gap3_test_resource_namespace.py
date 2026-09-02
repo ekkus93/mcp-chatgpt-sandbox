@@ -166,7 +166,10 @@ def test_g3at_015_two_live_test_contexts_do_not_adopt_or_delete_each_other(
         assert result_a["container_name"] != result_b["container_name"]
         assert result_a["labels"].get(_TEST_NAMESPACE_LABEL)
         assert result_b["labels"].get(_TEST_NAMESPACE_LABEL)
-        assert result_a["labels"][_TEST_NAMESPACE_LABEL] != result_b["labels"][_TEST_NAMESPACE_LABEL]
+        assert (
+            result_a["labels"][_TEST_NAMESPACE_LABEL]
+            != result_b["labels"][_TEST_NAMESPACE_LABEL]
+        )
 
         # Teardown of context A must remove only A's physical Docker resource.
         _release(process_a, release_a)
