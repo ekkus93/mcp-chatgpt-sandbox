@@ -268,7 +268,9 @@ class DockerWorkspaceManager(_LifecycleMixin):
             )
         return record
 
-    def _ensure_owned_volume_mounts(self, record: WorkspaceRecord, run_kwargs: dict[str, Any]) -> None:
+    def _ensure_owned_volume_mounts(
+        self, record: WorkspaceRecord, run_kwargs: dict[str, Any]
+    ) -> None:
         """Explicitly create/verify volume mounts before Docker can mount them.
 
         All volume-type mounts assembled for a workspace are dependency-cache
@@ -410,7 +412,9 @@ class DockerWorkspaceManager(_LifecycleMixin):
             except DockerNotFound:
                 continue
             except DockerException as exc:
-                _logger.warning("workspace delete: failed to inspect cache volume %r: %s", name, exc)
+                _logger.warning(
+                    "workspace delete: failed to inspect cache volume %r: %s", name, exc
+                )
                 continue
             volume.reload()
             proof = classify_cache_volume(volume.attrs.get("Labels") or {})
