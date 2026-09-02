@@ -1,332 +1,123 @@
-# Gap 3 TODO
+# Gap 3 TODO — Completion Record
 
 **Spec:** `docs/GAP3_SPEC.md` (`G3R-001`..`G3R-017`, `G3AT-001`..`G3AT-017`)
 
-**Source:** 2026-08-31 review of current `master`. GAP2 implementation reviewed at `6e2c111e6a1c541c533103e869adcf12cbc36567`; current `master` is `ae52ece25e44c07de4c2b799920706cea97b2f30` and differs only by `.gitignore`.
+**Source:** 2026-08-31 review of GAP2/current implementation.
 
-**Status:** open — 17 tasks.
+**Status:** complete — reconciled 2026-09-02.
 
-Three tasks explicitly reopen GAP2 work:
+This file was originally the detailed Y1-Y17 implementation queue. The original task/subtask wording remains available in Git history. After Y17, most of those checkboxes were administratively stale even though the corresponding code, adversarial tests, and CI evidence had already landed. This reconciliation converts the file into the authoritative completion record rather than preserving a misleading mixture of completed implementation and unchecked historical boxes.
 
-- **Y1 reopens X3** — the Bash sanitizer starts under Python that is itself influenced by Python startup environment state;
-- **Y6 reopens X14** — mutable tag resolution still does not prove the image an existing container actually runs;
-- **Y7 reopens X15** — failed log deletion is still forgotten after job rows disappear.
+Three GAP2 tasks were reopened and are now explicitly corrected:
 
-The remaining tasks close new findings from the same code review. Do not treat this list as a request for broad refactoring. Each task is scoped to a reproduced defect or an operational/integrity gap stated in `docs/GAP3_SPEC.md`.
+- **Y1 reopens X3** — the Bash sanitizer was correct, but its privileged Python launcher itself needed isolated startup. See `docs/GAP2_X3_CORRECTION.md`.
+- **Y6 reopens X14** — mutable tag lookup is configuration lookup, not proof of the image backing an existing container. See `docs/GAP2_X14_CORRECTION.md`.
+- **Y7 reopens X15** — best-effort post-delete job-log cleanup needed durable debt/retry/accounting. See `docs/GAP2_X15_CORRECTION.md`.
 
-## How to work this list
-
-For every task:
-
-1. Read the corresponding `G3R-*` and `G3AT-*` sections first.
-2. Write the adversarial/regression test before the fix and confirm it fails for the intended reason.
-3. Implement the smallest fix that closes the whole stated mechanism, not one example spelling.
-4. Run the new test alone, then the relevant suite, then the full suite.
-5. Revert-verify: temporarily restore the pre-fix implementation and confirm the new test fails again for the same reason.
-6. Run:
-
-   ```text
-   uv run ruff format --check .
-   uv run ruff check .
-   uv run mypy src
-   ```
-
-7. Run schema-drift checks whenever a tool response, diagnostic field, error code, or configuration schema changes. **Y3, Y4, Y6, Y7, Y9, Y12, and Y16 are obvious candidates; still run the drift check for every task.**
-8. One task per commit unless two changes are mechanically inseparable and the TODO is amended before merging them.
-9. Do not use a retry to hide deterministic failures.
-10. Any best-effort cleanup introduced by a task must preserve durable degraded/retry state if the cleanup can fail after the primary operation has completed.
-11. Do not claim a security property from reading code alone. Exercise the control with hostile input.
-12. Record corrections in the task write-up when an implementation attempt disproves this TODO's own suggested mechanism.
-
-## Recommended order
-
-**Security first:** Y1, Y2, Y3, Y4, Y5.
-
-**Then reopened correctness:** Y6, Y7, Y8.
-
-**Then explicit behavior / observability:** Y9-Y13.
-
-**Then operational/test integrity:** Y14-Y17.
-
-Y1 is the highest priority because it reopens a privilege-boundary task. Y2 follows because a stale persisted PID can target an unrelated host process. Y3-Y5 concern credentials/policy and should land before lower-risk correctness work.
+The final integrated GAP3 implementation/test tree, including the Y16 source-spec disposition closeout described below, passed CI run `33608760848` on exact implementation head `c8523d650dd94ec43b701178df7c7c34c197aa8e`: Docker image build, Ruff format/lint, mypy, MCP schema/contract, contract-version, docs/TOOLS drift, and **1,114 tests passed with 94% coverage**. Subsequent commits in the closeout PR add only reconciliation/correction/post-MVP documentation and receive their own final branch-head CI before merge.
 
 ---
 
-## Phase 0 — Security
+## Completion matrix
 
-### Y1 — Reopen X3: start the privileged Python wrapper in isolated mode
+### Phase 0 — Security
 
-**Satisfies:** G3R-001 · **Verified by:** G3AT-001
+- [x] **Y1 — Reopen X3: start the privileged Python wrapper in isolated mode**  
+  **G3R-001 / G3AT-001.** RED: `fc91dcc70c7a6c8d853704d580bf144a18aca0ad`. Fix: `f97702f788adf0af3aa37ca847d02e6216d9872d`. The shipped Docker `ENTRYPOINT` uses the absolute interpreter with `-I`; `tests/workspace/test_gap3_entrypoint_isolation.py` drives hostile `PYTHONPATH`/`sitecustomize.py` through the real image and verifies the final command remains non-root when `sudo: false`. Historical X3 wording is corrected in `docs/GAP2_X3_CORRECTION.md`.
 
-- [ ] Change the real Docker `ENTRYPOINT` so Python starts with isolated startup semantics (`-I` or demonstrably equivalent)
-- [ ] Keep the interpreter path absolute; do not reintroduce `$PATH` resolution
-- [ ] Keep Bash-state sanitization in `entrypoint-wrapper.py`
-- [ ] Add a hostile `PYTHONPATH` + repository `sitecustomize.py` test through the real image entrypoint
-- [ ] Prove `container.sudo: false` still reaches the final command as the configured non-root uid
-- [ ] Revert-verify that removing isolated mode makes the hostile startup test fail
-- [ ] Amend GAP2 X3's completion write-up with a correction pointing here
+- [x] **Y2 — Never signal an ssh-agent PID after restart without identity proof**  
+  **G3R-002 / G3AT-002.** RED: `7811fa0b560e40a08194ea0c8c00115e3c72d054`. Fixes: `b49bcea4951a034a8565cf4e269735d5c4c662f7`, then restricted-procfs hardening `6ccd2db5c4c05b489a8910f700883f66539b3e95`. Persisted identity is verified before signaling; failure to prove identity does not signal the PID. `tests/workspace/test_gap3_ssh_agent_identity.py` deterministically substitutes an unrelated live process and proves it survives reconciliation.
 
-**Do not** satisfy this by adding `PYTHONPATH` to the project-config denylist only. That would repeat X1's pattern: today's input spelling would close while the mechanism remains open to a future surface. The interpreter itself must start isolated.
+- [x] **Y3 — Make `require_remote_protection: deny` fail closed**  
+  **G3R-003 / G3AT-003.** RED: `f9ee01185afa4a69fdaa383a325dcececb5a0831`. Fix: `48114c830eac82e9bfb64b27d3e57de78de45c33` (format follow-up `015c308a73efbd06b5db6668c2cc1b518f604d46`). `deny` rejects both `missing` and `unverified` before key/container provisioning; `warn` remains permissive but diagnostic. The semantics are explicit in `docs/CONFIGURATION.md` and covered by the remote-protection acceptance suite.
 
-### Y2 — Never signal an ssh-agent PID after restart without identity proof
+- [x] **Y4 — Check SSH key unload and fail closed on credential cleanup**  
+  **G3R-004 / G3AT-004.** PR #1, validated implementation head `ce05c60f08fbca9704239e4b6005a6d412d71e69`. `ssh-add -D` is checked; verified agent termination is the fallback; an unprovable cleanup becomes typed/degraded `SSH_CREDENTIAL_CLEANUP_FAILED` rather than a false clean result. The current integrated suite exercises the resulting cleanup semantics.
 
-**Satisfies:** G3R-002 · **Verified by:** G3AT-002
+- [x] **Y5 — Roll back SSH credential provisioning when workspace open fails**  
+  **G3R-005 / G3AT-005.** PR #2, implementation head `d34a234be27cb16a58e54e1de67f6cc73c30e4ca`. Agent/socket provisioning is separated from repository-key loading, key load occurs only after workspace/container establishment, and later open/setup failure rolls credentials back through Y4's checked cleanup path. Cleanup failure is surfaced rather than warning-and-forget; Y3's pre-provision deny ordering is preserved.
 
-- [ ] Extend persisted agent identity beyond a bare PID
-- [ ] Include restart-stable identity sufficient to detect PID reuse (e.g. boot ID + process start time + expected executable/socket)
-- [ ] Verify identity before any reconciliation signal
-- [ ] If identity cannot be proven, do not signal; remove/quarantine stale tracking state
-- [ ] Add a deterministic PID-reuse simulation test proving an unrelated process survives reconciliation
-- [ ] Keep same-process normal termination behavior working
-- [ ] Document which `/proc`/platform assumptions are Linux-specific
+### Phase 1 — Correctness and durability
 
-**Dangerous fallback to remove:** `_terminate_pid(record.pid)` based only on the integer from SQLite. “It is probably still ssh-agent” is not an acceptable host-process identity check.
+- [x] **Y6 — Reopen X14: derive image digest from the actual container**  
+  **G3R-006 / G3AT-006.** PR #4, head `0cf8b664d4cd5dbbf91e009a38282d54f6bd158c`, CI `33436682335`. Runtime `image_digest` comes from Docker container-inspect `Image`; configured image reference is separate and there is no mutable-tag provenance fallback. Tests cover retag A→B, rebuild, tag removal, and fail-closed provenance. See `docs/GAP2_X14_CORRECTION.md`.
 
-### Y3 — Make `require_remote_protection: deny` actually fail closed
+- [x] **Y7 — Reopen X15: make failed job-log cleanup durable and retryable**  
+  **G3R-007 / G3AT-007.** PR #5, head `6837676252d0526ac3999611d9bd31bd53586b2c`; RED CI `33442065074`, GREEN CI `33445829666`. Migration 7→8 adds durable `job_log_cleanup` tombstones; pending bytes remain accounted, retry uses trusted state-root/validated IDs, and debt clears only after absence is proven. See `docs/GAP2_X15_CORRECTION.md`.
 
-**Satisfies:** G3R-003 · **Verified by:** G3AT-003
+- [x] **Y8 — Tighten X18 so `list_files` bounds actual traversal work**  
+  **G3R-008 / G3AT-008.** PR #6, head `28962405e5bf8aa29bd46c7cf584852a29da8e4e`; RED CI `33449305711`, GREEN CI `33464448697`. Recursive `Path.rglob` was replaced with explicit `os.scandir` traversal that prunes `.git` before descent, never follows directory symlinks, and enforces a candidate/work ceiling distinct from returned-entry count.
 
-- [ ] `deny` rejects `missing`
-- [ ] `deny` also rejects `unverified`
-- [ ] `warn` continues to allow both while returning the exact reason
-- [ ] Verify no repository key is provisioned before a deny result
-- [ ] Verify no workspace container is created before a deny result
-- [ ] Add cases for absent token, 404/authorization failure, timeout/network error, and malformed response
-- [ ] Update configuration/docs to state the semantics unambiguously
-- [ ] If compatibility needs old behavior, give it a distinct setting name instead of weakening `deny`
-- [ ] Run schema/config drift checks
+### Phase 2 — Explicit behavior and observability
 
-This is intentionally a semantic change. A policy called `deny` must not mean “allow whenever verification is inconvenient.”
+- [x] **Y9 — Reject or explicitly report unimplemented project config**  
+  **G3R-009 / G3AT-009.** PR #7, head `e15c94c7ccd0423a2714423f73d0955302e18e92`, GREEN CI `33474823551`. Supported fields are exhaustively classified; operational-looking but unimplemented `workspace`, project `github`, and `validation` fields are rejected, including explicit null, rather than silently accepted as no-ops.
 
-### Y4 — Check SSH key unload and fail closed on credential cleanup
+- [x] **Y10 — Stop hiding unexpected global-hook configuration errors**  
+  **G3R-010 / G3AT-010.** PR #9, head `900abedfcef1e12c5cfc2eb4f494ce7d6c22bfd3`, GREEN CI `33480301094`. Only Git's normal missing-key status is benign; malformed/unreadable config and Git execution errors remain failures with useful secret-safe diagnostics. `~/` expansion remains supported.
 
-**Satisfies:** G3R-004 · **Verified by:** G3AT-004
+- [x] **Y11 — Decide same-name local/global hook composition explicitly**  
+  **G3R-011 / G3AT-011.** PR #11, head `e3421edd7610233b5f1b3cabd9ee66ba7ff96755`, GREEN CI `33507422707` (**1,097 passed**). Repository-local pre-commit checks run first; only on success does the configured global pre-commit run; either failure blocks the commit. Real `git commit` acceptance tests cover order and both failure paths. `docs/GAP2_X7_CORRECTION.md` records the older scope correction.
 
-- [ ] Check `ssh-add -D` return code and stderr
-- [ ] On unload failure, terminate the per-workspace agent as the preferred fallback
-- [ ] Verify agent termination actually succeeded before reporting credentials removed
-- [ ] If both paths fail, surface a typed/degraded credential-cleanup condition
-- [ ] Ensure `workspace.stop` does not silently claim a clean credential state when a live agent still holds the key
-- [ ] Preserve benign handling for an already-dead/missing agent only when no credential can remain usable
-- [ ] Add audit/operational logging with secret-safe stderr handling
-- [ ] Run schema/error drift checks
+- [x] **Y12 — Expose audit degradation as server health**  
+  **G3R-012 / G3AT-012.** PR #13 (replacement for draft #12), head `f23a3a8607129c14d98fb2ba92051ed9927ac54f`; RED CI `33511981294` (**1 failed, 1,097 passed**), GREEN CI `33518340588` (**1,098 passed**). Audit remains best-effort for completed operations, but health becomes `degraded` with redacted last-failure information and recovers to healthy after a successful write.
 
-### Y5 — Roll back SSH credential provisioning when workspace open fails
+- [x] **Y13 — Clean atomic-write temp files after `os.replace` failure**  
+  **G3R-013 / G3AT-013.** PR #15 head `79fddb8bca113f869e414139b1d9af0bd57ac48a`, GREEN CI `33535809314` (**1,100 passed**); follow-up exception-precedence hardening PR #17 head `ea3c5605cf32111ce7ccd18a9045092c47a31d80`, GREEN CI `33541281288` (**1,101 passed**). Pre-replacement failures best-effort unlink the validated-parent-relative temp file; cleanup cannot mask the primary write/replace error.
 
-**Satisfies:** G3R-005 · **Verified by:** G3AT-005
+### Phase 3 — Operational and test integrity
 
-- [ ] Separate agent/socket creation from repository-key loading if feasible
-- [ ] Create/start the container before loading the repository key
-- [ ] If a later step requires earlier key load, add rollback around every failure between key load and successful open
-- [ ] Docker create failure leaves no unnecessarily loaded key
-- [ ] Docker start/setup failure follows the same cleanup rule
-- [ ] Cleanup failure becomes durable/visible rather than warning-and-forget
-- [ ] Preserve the pre-container remote-protection deny ordering from Y3
+- [x] **Y14 — Add a real maintenance scheduler**  
+  **G3R-014 / G3AT-014.** PR #19 (replacement for draft #18), head `809559d995c7c788eb2b9c35bdde015748cc309e`, GREEN CI `33554282769` (**1,104 passed**). MCP lifespan owns a periodic scheduler that runs idle sweep plus retention/Y7 cleanup retries without client traffic, isolates failures, exposes health, shuts down cleanly, and offloads blocking Docker/filesystem work from the asyncio event loop.
+
+- [x] **Y15 — Namespace Docker resources per test run**  
+  **G3R-015 / G3AT-015.** PR #20, head `59b4fa56d48b662aaa684da1904591a1d2674143`; RED CI `33573716378` (**2 failed, 1,104 passed**) proved container/cache collisions, GREEN CI `33576044517`. The test-only namespace covers physical container names, ownership labels, cache-volume names, and reconciliation while production naming remains unchanged.
+
+- [x] **Y16 — Close acceptance-test citation/coverage debt**  
+  **G3R-016 / G3AT-016.** PR #22 (replacement for draft #21), head `286e6cda10cfc5fd05decaf033a9283bb81a9855`; RED CI `33585445211`, GREEN CI `33589165788` (**1,111 passed, 94% coverage**). Blanket `known_uncited` handling was removed; all acceptance series including G3AT are audited; requirement-named coverage maps to exact real pytest nodes; mapped-node deletion reopens debt; genuine behavioral gaps received tests.
+
+  Final source-spec residual: commit `f78328cfd9b558703d6db8ee2b488878960da60c` removed the remaining private `_DISPOSITIONS` dictionary. CI `33605872106` was the intended RED (**1 failed, 1,112 passed**) because HAT-002 had no formal source-spec disposition. `docs/GAP3_ACCEPTANCE_COVERAGE_SPEC.md` now carries the four exceptional records (HAT-002, RAT-001, RAT-002, GAT-001) as normative, reasoned, owned specification state. The first addendum-only attempt remained correctly red in CI `33607194448` because the audit had not yet consumed the addendum. Commit `c8523d650dd94ec43b701178df7c7c34c197aa8e` added exact `PREFIX-NNN` parsing, duplicate/nonexistent/malformed/stale checks, and a cross-series split regression. CI `33608760848` passed every gate with **1,114 passed, 94% coverage**. There is no private acceptance-disposition allowlist left in the audit.
+
+- [x] **Y17 — Correct stale security claims in touched source comments**  
+  **G3R-017 / G3AT-017.** PR #24 (replacement for draft #23), head `0b6f1627d5ba1068e259d707aa42cf10e4303f68`; RED CI `33592001972` (**2 failed, 1,110 passed**), GREEN CI `33592923207` (**1,112 passed, 94% coverage**). X3/Y1 comments identify Python isolation as load-bearing; X14/Y6 comments use container identity, not tag lookup, as runtime provenance; Y7/Y14 comments describe durable cleanup debt and the real scheduler rather than obsolete future claims.
 
 ---
 
-## Phase 1 — Correctness and durability
+## GAP2 reopened-task corrections
 
-### Y6 — Reopen X14: derive image digest from the actual container
-
-**Satisfies:** G3R-006 · **Verified by:** G3AT-006
-
-- [x] Refresh/read immutable image identity from current container metadata
-- [x] Stop deriving the runtime digest by resolving `record.image` as a mutable tag
-- [x] Preserve a configured/reference image field separately if useful
-- [x] Test same-tag retargeting: A -> create container -> retag to B -> existing workspace still reports A digest
-- [x] Test explicit rebuild changes runtime digest to B
-- [x] Handle missing local tag without losing the ability to report an already-running container's immutable image ID
-- [x] Run schema drift check
-- [x] Correct comments that currently claim tag lookup remains correct after retagging
-- [x] Amend GAP2 X14's completion write-up with a correction pointing here
-
-**Completion evidence.** PR #4 derives `image_digest` from the running
-container's immutable Docker inspect `Image` value and deliberately has no
-mutable-tag fallback when that identity cannot be inspected. G3AT-006 covers
-same-tag retargeting, explicit rebuild, removal of the configured tag after
-container creation, and fail-closed behavior when container provenance cannot
-be established. CI run `33436682335` passed the complete 1,077-test suite plus
-Ruff, mypy, schema export, contract-version, and tool-doc drift gates on the
-final code/test head before this documentation-only bookkeeping update.
-
-### Y7 — Reopen X15: make failed job-log cleanup durable and retryable
-
-**Satisfies:** G3R-007 · **Verified by:** G3AT-007
-
-- [ ] Choose and document a durable cleanup-debt model (tombstone table preferred, safe directory reconciliation acceptable)
-- [ ] Do not permanently erase the only linkage needed to find a failed log-directory cleanup
-- [ ] Workspace delete may still complete after metadata/container removal
-- [ ] Failed log deletion remains visible after the request returns
-- [ ] Retention/disk accounting includes pending/orphaned directories
-- [ ] Maintenance retries cleanup later
-- [ ] Successful retry clears cleanup debt
-- [ ] Add tests for permission/transient deletion failure
-- [ ] Run schema/state migration checks
-- [ ] Amend GAP2 X15's completion write-up with a correction pointing here
-
-**Do not** fix this by making `workspace_delete` fail after the workspace is already gone. Preserve the sound RR-012 principle; add durable deferred cleanup instead.
-
-### Y8 — Tighten X18 so `list_files` bounds actual traversal work
-
-**Satisfies:** G3R-008 · **Verified by:** G3AT-008
-
-- [ ] Replace recursive `Path.rglob` with a traversal that can prune `.git` before descent
-- [ ] Keep symlink handling and repository-boundary rules intact
-- [ ] Add a candidate/work budget distinct from `max_entries`
-- [ ] Define the response/error when the work budget is exhausted before the requested visible-entry count is reached
-- [ ] Instrument generator/scandir work, not wall-clock time
-- [ ] Add a huge `.git/objects` fixture proving it is pruned rather than traversed
-- [ ] Add a many-skipped-candidates fixture proving the work bound is independent of `len(entries)`
-- [ ] Preserve existing X9 concurrent-vanish behavior
-
----
-
-## Phase 2 — Explicit behavior and observability
-
-### Y9 — Reject or explicitly report unimplemented project config
-
-**Satisfies:** G3R-009 · **Verified by:** G3AT-009
-
-- [ ] Inventory every `ProjectWorkspaceConfig` field and whether runtime code consumes it
-- [ ] For `workspace`, choose implement vs reject vs explicit ignored-field reporting
-- [ ] For `validation`, choose implement vs reject vs explicit ignored-field reporting
-- [ ] Prefer rejection for this pass unless implementation is already specified and small
-- [ ] No operational-looking field may silently parse and do nothing
-- [ ] Update `docs/CONFIGURATION.md` / tool docs
-- [ ] Add tests for every currently unimplemented field
-- [ ] Run config/schema drift checks
-
-### Y10 — Stop hiding unexpected global-hook configuration errors
-
-**Satisfies:** G3R-010 · **Verified by:** G3AT-010
-
-- [ ] Replace `... 2>/dev/null || true` with exit-status-aware handling
-- [ ] Treat Git's normal “key not configured” result as benign absence
-- [ ] Treat malformed/unreadable global config or Git execution failure as a hook failure
-- [ ] Preserve support for `~/` global hooks paths
-- [ ] Add tests for absent setting and genuine error separately
-- [ ] Keep stderr useful but avoid leaking secrets from Git config values
-
-### Y11 — Decide same-name local/global hook composition explicitly
-
-**Satisfies:** G3R-011 · **Verified by:** G3AT-011
-
-- [ ] Decide whether local `pre-commit` chains, precedes, follows, or deliberately replaces global `pre-commit`
-- [ ] Implement the chosen policy
-- [ ] Exercise both hooks in a real `git commit` acceptance test
-- [ ] Update `docs/DEVELOPMENT.md`
-- [ ] Correct GAP2 X7 wording if it currently implies stronger generic composition than implemented
-
-If the repository deliberately replaces a global `pre-commit`, say that clearly. Do not leave the behavior as an accidental consequence of `core.hooksPath`.
-
-### Y12 — Expose audit degradation as server health
-
-**Satisfies:** G3R-012 · **Verified by:** G3AT-012
-
-- [ ] Add audit health state (`healthy`/`degraded`)
-- [ ] Store last failure timestamp and sanitized reason
-- [ ] Expose it through `server_info` or an equivalent diagnostic tool
-- [ ] Preserve best-effort semantics for already-completed operations
-- [ ] Decide whether `audit.required`/strict mode belongs in this task; if added, enforce before side effects
-- [ ] Verify recovery: a later successful write restores healthy state or records a clear recovered state
-- [ ] Add tests for disk/permission write failure and recovery
-- [ ] Run tool-schema drift checks
-
-### Y13 — Clean atomic-write temp files after `os.replace` failure
-
-**Satisfies:** G3R-013 · **Verified by:** G3AT-013
-
-- [ ] Put the final `os.replace` under the same temp-file cleanup guarantee as `_write_all`
-- [ ] Inject replacement failure after a complete temp write
-- [ ] Original target remains unchanged
-- [ ] Temp file is removed when cleanup succeeds
-- [ ] If temp cleanup itself fails, preserve the original replace error while logging/diagnosing the orphan temp path
-- [ ] Ensure cleanup remains relative to the already-validated parent fd
-
----
-
-## Phase 3 — Operational and test integrity
-
-### Y14 — Add a real maintenance scheduler
-
-**Satisfies:** G3R-014 · **Verified by:** G3AT-014
-
-- [ ] Add an internal periodic scheduler/task owned by server lifecycle
-- [ ] Run idle workspace sweep on schedule
-- [ ] Run job-log retention and Y7 deferred cleanup retries on schedule
-- [ ] Isolate failures per maintenance item
-- [ ] A failure in one cycle does not kill the scheduler
-- [ ] Expose maintenance health / last failure information
-- [ ] Shut scheduler down cleanly with the daemon
-- [ ] Keep opportunistic triggers only as additional defense-in-depth
-- [ ] Test maintenance with no MCP workspace request occurring
-
-### Y15 — Namespace Docker resources per test run
-
-**Satisfies:** G3R-015 · **Verified by:** G3AT-015
-
-- [ ] Add a test-only namespace injectable into workspace/container naming
-- [ ] Do not change production deterministic naming
-- [ ] Apply the namespace consistently to container labels/names and any test-owned volumes that can collide
-- [ ] Run two concurrent integration contexts against identical repository IDs without collision
-- [ ] Teardown from one context cannot delete/adopt/stop resources from the other
-- [ ] Keep existing foreign-resource protections
-- [ ] Remove or revise the “run with no concurrent Docker activity” limitation once tests prove isolation
-
-### Y16 — Close acceptance-test citation/coverage debt
-
-**Satisfies:** G3R-016 · **Verified by:** G3AT-016
-
-- [ ] Inventory every `known_uncited` item in `tests/test_acceptance_test_coverage.py`
-- [ ] For each, locate the real test if one exists under requirement-based naming and add the acceptance identifier to that test
-- [ ] Where no real test exists, add one or formally mark the spec item deferred/non-automated with a corresponding TODO owner
-- [ ] Eliminate `known_uncited` as a permanent blanket for all GATs / most RATs
-- [ ] Tighten the audit so a new unexplained missing citation fails
-- [ ] Keep the meta-tests proving citation removal is detected
-- [ ] Add G3AT series to the coverage audit
-- [ ] Run schema/test integrity checks
-
-### Y17 — Correct stale security claims in touched source comments
-
-**Satisfies:** G3R-017 · **Verified by:** G3AT-017
-
-- [ ] In files touched by Y1-Y16, identify historical comments that state a current invariant stronger than the code
-- [ ] Move long reproduction/history that is not needed locally into GAP3/GAP2 correction prose
-- [ ] Keep concise comments explaining non-obvious security constraints
-- [ ] Correct X3 comments so they state Python isolated startup is load-bearing
-- [ ] Correct X14 comments so mutable-tag resolution is never described as runtime-image proof
-- [ ] Correct cleanup comments so “best effort” never reads as “guaranteed reclaimed”
-- [ ] Point testable security claims to their `G3AT-*` or `G3R-*` identifier
-- [ ] Do not perform a repository-wide prose rewrite outside files already touched by this pass
+- [x] X3 correction: `docs/GAP2_X3_CORRECTION.md` points the stronger interpreter-startup invariant to GAP3 Y1 / G3R-001 / G3AT-001.
+- [x] X14 correction: `docs/GAP2_X14_CORRECTION.md` points immutable runtime-image provenance to GAP3 Y6 / G3R-006 / G3AT-006.
+- [x] X15 correction: `docs/GAP2_X15_CORRECTION.md` points durable post-delete job-log cleanup to GAP3 Y7 / G3R-007 / G3AT-007 and notes Y14's lifecycle retry.
 
 ---
 
 ## Definition of done
 
-- [ ] Y1-Y17 complete
-- [ ] G3AT-001..G3AT-017 automated and passing
-- [ ] GAP2 X3, X14, X15 contain correction notes pointing to GAP3
-- [ ] Remote-protection `deny` is fail-closed on `unverified`
-- [ ] No persisted ssh-agent PID is signaled after restart without identity proof
-- [ ] Failed SSH key unload cannot be silently reported as clean
-- [ ] Failed workspace opening does not unnecessarily retain a repository key
-- [ ] Runtime image digest comes from the actual container image
-- [ ] Failed post-delete log cleanup remains durable, retryable, and accounted
-- [ ] Recursive listing prunes excluded subtrees and has an actual work bound
-- [ ] Unimplemented operational config cannot silently no-op
-- [ ] Hook dispatcher cannot hide unexpected Git config failure
-- [ ] Same-name local/global hook behavior is explicit and tested
-- [ ] Audit failures appear in server health
-- [ ] Atomic write replacement failures leave no temp file when cleanup succeeds
-- [ ] Maintenance runs without client traffic
-- [ ] Concurrent workspace test runs no longer collide
-- [ ] Acceptance coverage audit has no unexplained permanent gaps
-- [ ] Security comments touched by this pass describe current, test-backed invariants
-- [ ] `uv run ruff format --check .` passes
-- [ ] `uv run ruff check .` passes
-- [ ] `uv run mypy src` passes
-- [ ] Targeted suites pass
-- [ ] Full suite passes with no Docker-dependent test skipped and no foreign Docker resources modified
-- [ ] Schema drift check passes
-- [ ] Every task has been revert-verified
+- [x] Y1-Y17 complete
+- [x] G3AT-001..G3AT-017 automated and passing
+- [x] GAP2 X3, X14, X15 contain correction records pointing to GAP3
+- [x] Remote-protection `deny` is fail-closed on `unverified`
+- [x] No persisted ssh-agent PID is signaled after restart without identity proof
+- [x] Failed SSH key unload cannot be silently reported as clean
+- [x] Failed workspace opening does not unnecessarily retain a repository key
+- [x] Runtime image digest comes from the actual container image
+- [x] Failed post-delete log cleanup remains durable, retryable, and accounted
+- [x] Recursive listing prunes excluded subtrees and has an actual work bound
+- [x] Unimplemented operational config cannot silently no-op
+- [x] Hook dispatcher cannot hide unexpected Git config failure
+- [x] Same-name local/global hook behavior is explicit and tested
+- [x] Audit failures appear in server health
+- [x] Atomic write replacement failures leave no temp file when cleanup succeeds; secondary cleanup errors do not mask the primary error
+- [x] Maintenance runs without client traffic
+- [x] Concurrent Docker-backed test contexts are namespaced and cannot adopt/delete each other's managed resources
+- [x] Acceptance coverage audit has no unexplained permanent gaps and no private disposition allowlist
+- [x] Security comments touched by this pass describe current, test-backed invariants
+- [x] Ruff format check passes
+- [x] Ruff lint passes
+- [x] mypy passes
+- [x] Targeted task acceptance suites pass
+- [x] Full Docker-backed suite passes with no GAP3 Docker acceptance skipped; current integrated closeout run `33608760848` is **1,114 passed**
+- [x] MCP schema export, contract-version, and docs/TOOLS drift gates pass
+- [x] Task histories retain adversarial RED/revert evidence demonstrating the acceptance controls fail against their pre-fix mechanisms rather than passing vacuously
+
+GAP3 is therefore closed. The next proposed implementation queue is `docs/POST_MVP_OPERATIONS_TODO.md`, governed by `docs/POST_MVP_OPERATIONS_SPEC.md`.

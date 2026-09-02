@@ -6,12 +6,14 @@ criterion must now be backed by one of:
 * an acceptance identifier attached directly to a real ``test_*`` function;
 * an explicit acceptance-ID -> exact pytest-node mapping whose target still
   exists; or
-* a formal ``Coverage status`` in the source spec with a reason and owner/task.
+* a formal ``Coverage status`` in source specification with a reason and
+  owner/task.
 
 The node registry is executable evidence metadata, not an allowlist: every
 target is parsed from the real test tree and a deleted or renamed target makes
-this audit fail. Source-spec dispositions are likewise checked against real
-executable coverage so stale deferrals cannot silently persist.
+this audit fail. Source-spec dispositions are parsed from the owning specs and
+the normative GAP3 acceptance-coverage addendum; the audit carries no private
+exception list.
 """
 
 import ast
@@ -19,8 +21,63 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _TESTS_DIR = Path(__file__).resolve().parent
+_DISPOSITION_SPEC_PATH = _REPO_ROOT / "docs" / "GAP3_ACCEPTANCE_COVERAGE_SPEC.md"
+
+_COVERAGE_MARKER_RE = re.compile(r"^\s*\*\*Coverage status:\*\*", re.MULTILINE | re.IGNORECASE)
+_COVERAGE_STATUS_RE = re.compile(
+    r"^\s*\*\*Coverage status:\*\*\s*"
+    r"(superseded|deferred|non-automated|ci-gate)\s+—\s+"
+    r"(.+?);\s*owner/task:\s*(\S.+)$",
+    re.MULTILINE | re.IGNORECASE,
+)
+_DISPOSITION_HEADING_RE = re.compile(
+    r"^### (?P<prefix>[A-Z][A-Z0-9]*)-(?P<number>\d{3})\b",
+    re.MULTILINE,
+)
+
+
+@dataclass(frozen=True)
+class _CoverageDisposition:
+    kind: str
+    reason: str
+    owner_task: str
+
+
+def _parse_disposition_entry(acceptance_id: str, entry: str) -> _CoverageDisposition | None:
+    marker_count = len(_COVERAGE_MARKER_RE.findall(entry))
+    if marker_count == 0:
+        return None
+    assert marker_count == 1, f"{acceptance_id} has {marker_count} Coverage status markers"
+    status = _COVERAGE_STATUS_RE.search(entry)
+    assert status is not None, (
+        f"{acceptance_id} has a malformed Coverage status; expected "
+        "'<kind> — <reason>; owner/task: <owner>'"
+    )
+    disposition = _CoverageDisposition(
+        kind=status.group(1).lower(),
+        reason=status.group(2).strip(),
+        owner_task=status.group(3).strip(),
+    )
+    assert disposition.reason, f"{acceptance_id} coverage status has no reason"
+    assert disposition.owner_task, f"{acceptance_id} coverage status has no owner/task"
+    return disposition
+
+
+def _addendum_entries(path: Path = _DISPOSITION_SPEC_PATH) -> dict[tuple[str, int], str]:
+    """Return exact acceptance-ID entries from the normative disposition addendum."""
+    text = path.read_text()
+    matches = list(_DISPOSITION_HEADING_RE.finditer(text))
+    entries: dict[tuple[str, int], str] = {}
+    for index, match in enumerate(matches):
+        key = (match.group("prefix"), int(match.group("number")))
+        assert key not in entries, f"duplicate source-spec disposition heading: {key}"
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        entries[key] = text[match.start() : end]
+    return entries
 
 
 @dataclass(frozen=True)
@@ -42,36 +99,33 @@ class _Series:
             entries[int(match.group(1))] = text[match.start() : end]
         return entries
 
-    def formal_dispositions(self) -> set[int]:
-        """Return source-spec entries carrying a complete formal status marker."""
-        disposed: set[int] = set()
-        pattern = re.compile(
-            r"^\s*\*\*Coverage status:\*\*\s*"
-            r"(superseded|deferred|non-automated)\s+—\s+"
-            r"(.+?);\s*owner/task:\s*(\S.+)$",
-            re.MULTILINE | re.IGNORECASE,
-        )
+    def formal_dispositions(self) -> dict[int, _CoverageDisposition]:
+        """Parse inline and addendum dispositions, failing closed on drift."""
+        dispositions: dict[int, _CoverageDisposition] = {}
         for number, entry in self.spec_entries().items():
-            status = pattern.search(entry)
-            if status is None:
+            disposition = _parse_disposition_entry(f"{self.prefix}-{number:03d}", entry)
+            if disposition is not None:
+                dispositions[number] = disposition
+
+        for (prefix, number), entry in _addendum_entries().items():
+            if prefix != self.prefix:
                 continue
-            reason = status.group(2).strip()
-            owner = status.group(3).strip()
-            assert reason, f"{self.prefix}-{number:03d} coverage status has no reason"
-            assert owner, f"{self.prefix}-{number:03d} coverage status has no owner/task"
-            disposed.add(number)
-        return disposed
+            assert number in self.spec_numbers(), (
+                f"source-spec disposition names nonexistent acceptance ID: {prefix}-{number:03d}"
+            )
+            assert number not in dispositions, (
+                f"duplicate source-spec disposition for {prefix}-{number:03d}"
+            )
+            disposition = _parse_disposition_entry(f"{prefix}-{number:03d}", entry)
+            assert disposition is not None, (
+                f"{prefix}-{number:03d} addendum entry has no Coverage status"
+            )
+            dispositions[number] = disposition
+        return dispositions
 
     def citation_re(self, n: int) -> str:
         sep = r"[-_]" if self.prefix == "AT" else r"[-_]?"
         return rf"{self.prefix}{sep}0*{n}(?!\d)"
-
-
-@dataclass(frozen=True)
-class _Disposition:
-    kind: str
-    reason: str
-    owner_task: str
 
 
 _SERIES = (
@@ -217,10 +271,7 @@ _EXECUTABLE_COVERAGE: dict[tuple[str, int], tuple[str, ...]] = {
             "tests/filesystem/test_service_list.py",
             "test_rr007_list_files_survives_a_symlink_loop",
         ),
-        _node(
-            "tests/filesystem/test_search.py",
-            "test_rr007_search_files_survives_a_symlink_loop",
-        ),
+        _node("tests/filesystem/test_search.py", "test_rr007_search_files_survives_a_symlink_loop"),
     ),
     ("RAT", 9): (
         _node(
@@ -347,7 +398,12 @@ _EXECUTABLE_COVERAGE: dict[tuple[str, int], tuple[str, ...]] = {
             "test_at_gr009_a_symlinked_ssh_directory_planted_in_a_cache_volume_is_not_followed",
         ),
     ),
-    ("GAT", 7): (_node("tests/test_errors.py", "test_at_vat005_a_secret_flagged_set_recurses"),),
+    ("GAT", 7): (
+        _node(
+            "tests/test_errors.py",
+            "test_at_vat005_a_secret_flagged_set_recurses",
+        ),
+    ),
     ("GAT", 8): (
         _node(
             "tests/workspace/test_manager.py",
@@ -357,30 +413,6 @@ _EXECUTABLE_COVERAGE: dict[tuple[str, int], tuple[str, ...]] = {
             "tests/test_logging_isolation.py",
             "test_a_leaky_configure_logging_call_does_not_alter_state_for_later_tests",
         ),
-    ),
-}
-
-
-_DISPOSITIONS: dict[tuple[str, int], _Disposition] = {
-    ("HAT", 2): _Disposition(
-        "superseded",
-        "H36 removed the host-side structured Git execution surface",
-        "H36",
-    ),
-    ("RAT", 1): _Disposition(
-        "superseded",
-        "H36 removed run_git_host_side and its included-config execution surface",
-        "H36",
-    ),
-    ("RAT", 2): _Disposition(
-        "superseded",
-        "H36 removed the host-side included-config discovery machinery",
-        "H36",
-    ),
-    ("GAT", 1): _Disposition(
-        "ci-gate",
-        "the acceptance surface is CI's real Ruff format/lint gate",
-        ".github/workflows/ci.yml",
     ),
 }
 
@@ -433,7 +465,7 @@ def _registered_numbers(series: _Series, node_ids: set[str]) -> set[int]:
 
 
 def _disposition_numbers(series: _Series) -> set[int]:
-    return {number for prefix, number in _DISPOSITIONS if prefix == series.prefix}
+    return set(series.formal_dispositions())
 
 
 def _uncovered(series: _Series, source: str, node_ids: set[str]) -> set[int]:
@@ -471,19 +503,27 @@ def test_g3at_016_registered_executable_coverage_points_to_real_tests() -> None:
     assert not unknown, f"coverage registry names nonexistent acceptance IDs: {unknown}"
 
 
-def test_g3at_016_dispositions_are_narrow_reasoned_and_owned() -> None:
-    """A disposition is explicit debt/state, never a number-only escape hatch."""
-    allowed_kinds = {"superseded", "ci-gate", "deferred"}
+def test_g3at_016_source_spec_dispositions_are_narrow_reasoned_and_owned() -> None:
+    """A source-spec disposition is explicit state, never a hidden test allowlist."""
     source, node_ids = _iter_test_nodes()
-    for key, disposition in _DISPOSITIONS.items():
-        prefix, number = key
-        assert prefix in _BY_PREFIX
-        assert number in _BY_PREFIX[prefix].spec_numbers()
-        assert disposition.kind in allowed_kinds
-        assert disposition.reason.strip()
-        assert disposition.owner_task.strip()
-        assert number not in _registered_numbers(_BY_PREFIX[prefix], node_ids)
-        assert not re.search(_BY_PREFIX[prefix].citation_re(number), source, re.I)
+
+    addendum_keys = set(_addendum_entries())
+    unknown_addendum = sorted(
+        key
+        for key in addendum_keys
+        if key[0] not in _BY_PREFIX or key[1] not in _BY_PREFIX[key[0]].spec_numbers()
+    )
+    assert not unknown_addendum, (
+        f"source-spec disposition addendum names nonexistent acceptance IDs: {unknown_addendum}"
+    )
+
+    for series in _SERIES:
+        for number, disposition in series.formal_dispositions().items():
+            assert disposition.kind in {"superseded", "deferred", "non-automated", "ci-gate"}
+            assert disposition.reason
+            assert disposition.owner_task
+            assert number not in _registered_numbers(series, node_ids)
+            assert not re.search(series.citation_re(number), source, re.I)
 
 
 def test_g3at_016_every_active_acceptance_test_has_executable_coverage() -> None:
@@ -493,7 +533,7 @@ def test_g3at_016_every_active_acceptance_test_has_executable_coverage() -> None
         missing = sorted(_uncovered(series, source, node_ids))
         assert not missing, (
             f"{series.prefix}-{missing} have neither direct executable citations, "
-            "verified pytest-node coverage, nor an explicit owner-tagged disposition"
+            "verified pytest-node coverage, nor a formal source-spec Coverage status"
         )
 
 
@@ -512,8 +552,7 @@ def test_meta_removing_every_citation_for_an_at_makes_the_audit_fail_for_it() ->
     target = 10
     series = _BY_PREFIX["AT"]
     source, node_ids = _iter_test_nodes()
-    citation_re = series.citation_re(target)
-    scrubbed = re.sub(citation_re, "SCRUBBED", source, flags=re.I)
+    scrubbed = re.sub(series.citation_re(target), "SCRUBBED", source, flags=re.I)
     assert sorted(_uncovered(series, scrubbed, node_ids)) == [target]
 
 
@@ -521,8 +560,7 @@ def test_meta_removing_every_citation_for_a_vat_makes_the_audit_fail_for_it() ->
     target = 1
     series = _BY_PREFIX["VAT"]
     source, node_ids = _iter_test_nodes()
-    citation_re = series.citation_re(target)
-    scrubbed = re.sub(citation_re, "SCRUBBED", source, flags=re.I)
+    scrubbed = re.sub(series.citation_re(target), "SCRUBBED", source, flags=re.I)
     assert sorted(_uncovered(series, scrubbed, node_ids)) == [target]
 
 
@@ -530,8 +568,7 @@ def test_meta_removing_every_citation_for_an_aat_makes_the_audit_fail_for_it() -
     target = 1
     series = _BY_PREFIX["AAT"]
     source, node_ids = _iter_test_nodes()
-    citation_re = series.citation_re(target)
-    scrubbed = re.sub(citation_re, "SCRUBBED", source, flags=re.I)
+    scrubbed = re.sub(series.citation_re(target), "SCRUBBED", source, flags=re.I)
     assert sorted(_uncovered(series, scrubbed, node_ids)) == [target]
 
 
@@ -544,3 +581,35 @@ def test_meta_deleting_a_registered_target_reopens_its_acceptance_debt() -> None
     assert target_node in node_ids
     without_target = node_ids - {target_node}
     assert key[1] in _uncovered(series, source, without_target)
+
+
+def test_meta_malformed_source_spec_disposition_fails_closed(tmp_path: Path) -> None:
+    """A Coverage status marker cannot silently disappear because its syntax drifted."""
+    spec = tmp_path / "spec.md"
+    spec.write_text(
+        "### TEST-001 synthetic acceptance\n\n"
+        "**Coverage status:** superseded — a reason with no owner field\n"
+    )
+    series = _Series(
+        prefix="TEST",
+        spec_path=spec,
+        heading_re=re.compile(r"^### TEST-(\d{3})\b", re.MULTILINE),
+        expected_total=1,
+    )
+    with pytest.raises(AssertionError, match="malformed Coverage status"):
+        series.formal_dispositions()
+
+
+def test_meta_addendum_entries_are_split_by_exact_acceptance_heading(tmp_path: Path) -> None:
+    """One series' disposition cannot absorb a later series' marker."""
+    addendum = tmp_path / "addendum.md"
+    addendum.write_text(
+        "### HAT-002\n\n"
+        "**Coverage status:** superseded — first reason; owner/task: H36\n\n"
+        "### RAT-001\n\n"
+        "**Coverage status:** superseded — second reason; owner/task: H36\n"
+    )
+    entries = _addendum_entries(addendum)
+    assert set(entries) == {("HAT", 2), ("RAT", 1)}
+    assert len(_COVERAGE_MARKER_RE.findall(entries[("HAT", 2)])) == 1
+    assert len(_COVERAGE_MARKER_RE.findall(entries[("RAT", 1)])) == 1
