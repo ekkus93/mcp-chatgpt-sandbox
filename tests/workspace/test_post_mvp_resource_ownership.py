@@ -16,6 +16,7 @@ from dev_workspace_mcp.operations.resources import (
     OwnershipStatus,
     ResourceKind,
     ResourceLifecycleState,
+    cache_volume_labels,
     classify_cache_volume,
     classify_workspace_container,
 )
@@ -110,6 +111,32 @@ def test_pmoat_001_exact_cache_name_collision_is_not_adopted_or_deleted(
         # The existing workspace-delete cleanup hook is also forbidden from
         # turning the matching name into deletion authority.
         manager._remove_cache_volumes([cache.volume_name])
+        foreign.reload()
+        assert docker_client.volumes.get(foreign.name).name == foreign.name
+    finally:
+        with contextlib.suppress(docker.errors.NotFound):
+            foreign.remove(force=True)
+
+
+def test_pmoat_001_workspace_delete_requires_cache_repository_identity(
+    docker_client: docker.DockerClient,
+    manager: DockerWorkspaceManager,
+    repository: RepositoryRecord,
+) -> None:
+    """Managed/kind/namespace labels do not authorize cross-repository deletion."""
+    record = manager.ensure_workspace(
+        repository=repository,
+        image="alpine:3.20",
+        run_kwargs={"command": ["sleep", "3600"]},
+    )
+    cache = _cargo_cache(repository)
+    foreign = docker_client.volumes.create(
+        name=cache.volume_name,
+        labels=cache_volume_labels(repository_id="other-repository"),
+    )
+    try:
+        manager.delete(record.id, cache_volume_names=[cache.volume_name])
+
         foreign.reload()
         assert docker_client.volumes.get(foreign.name).name == foreign.name
     finally:
