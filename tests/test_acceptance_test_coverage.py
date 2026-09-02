@@ -1,17 +1,17 @@
 """Acceptance-test coverage integrity audit.
 
-G3R-016 closes the old ``known_uncited`` loophole.  Every active acceptance
+G3R-016 closes the old ``known_uncited`` loophole. Every active acceptance
 criterion must now be backed by one of:
 
 * an acceptance identifier attached directly to a real ``test_*`` function;
 * an explicit acceptance-ID -> exact pytest-node mapping whose target still
   exists; or
-* a narrow, reasoned disposition for a criterion that is superseded, executed
-  outside pytest, or owned by a future task.
+* a formal ``Coverage status`` in the source spec with a reason and owner/task.
 
 The node registry is executable evidence metadata, not an allowlist: every
-target is parsed from the real test tree and a deleted/renamed target makes
-this audit fail.
+target is parsed from the real test tree and a deleted or renamed target makes
+this audit fail. Source-spec dispositions are likewise checked against real
+executable coverage so stale deferrals cannot silently persist.
 """
 
 import ast
@@ -32,6 +32,35 @@ class _Series:
 
     def spec_numbers(self) -> set[int]:
         return {int(m) for m in self.heading_re.findall(self.spec_path.read_text())}
+
+    def spec_entries(self) -> dict[int, str]:
+        text = self.spec_path.read_text()
+        matches = list(self.heading_re.finditer(text))
+        entries: dict[int, str] = {}
+        for index, match in enumerate(matches):
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+            entries[int(match.group(1))] = text[match.start() : end]
+        return entries
+
+    def formal_dispositions(self) -> set[int]:
+        """Return source-spec entries carrying a complete formal status marker."""
+        disposed: set[int] = set()
+        pattern = re.compile(
+            r"^\s*\*\*Coverage status:\*\*\s*"
+            r"(superseded|deferred|non-automated)\s+—\s+"
+            r"(.+?);\s*owner/task:\s*(\S.+)$",
+            re.MULTILINE | re.IGNORECASE,
+        )
+        for number, entry in self.spec_entries().items():
+            status = pattern.search(entry)
+            if status is None:
+                continue
+            reason = status.group(2).strip()
+            owner = status.group(3).strip()
+            assert reason, f"{self.prefix}-{number:03d} coverage status has no reason"
+            assert owner, f"{self.prefix}-{number:03d} coverage status has no owner/task"
+            disposed.add(number)
+        return disposed
 
     def citation_re(self, n: int) -> str:
         sep = r"[-_]" if self.prefix == "AT" else r"[-_]?"
@@ -96,8 +125,8 @@ def _node(path: str, test_name: str) -> str:
     return f"{path}::{test_name}"
 
 
-# G3R-016: acceptance IDs that already have real tests under requirement-based
-# names.  Multiple node IDs are deliberate for composite acceptance criteria.
+# Acceptance IDs whose real tests use requirement-oriented names. Multiple
+# node IDs are deliberate where one acceptance criterion is composite.
 _EXECUTABLE_COVERAGE: dict[tuple[str, int], tuple[str, ...]] = {
     ("AT", 20): (
         _node(
@@ -137,6 +166,12 @@ _EXECUTABLE_COVERAGE: dict[tuple[str, int], tuple[str, ...]] = {
         _node(
             "tests/workspace/test_git_commit_tool_failure_modes.py",
             "test_at_hr024_a_magic_pathspec_does_not_stage_the_whole_repository",
+        ),
+    ),
+    ("HAT", 20): (
+        _node(
+            "tests/workspace/test_conftest_teardown.py",
+            "test_a_full_suite_run_leaves_a_foreign_sentinel_intact",
         ),
     ),
     ("RAT", 3): (
@@ -182,7 +217,10 @@ _EXECUTABLE_COVERAGE: dict[tuple[str, int], tuple[str, ...]] = {
             "tests/filesystem/test_service_list.py",
             "test_rr007_list_files_survives_a_symlink_loop",
         ),
-        _node("tests/filesystem/test_search.py", "test_rr007_search_files_survives_a_symlink_loop"),
+        _node(
+            "tests/filesystem/test_search.py",
+            "test_rr007_search_files_survives_a_symlink_loop",
+        ),
     ),
     ("RAT", 9): (
         _node(
@@ -263,6 +301,12 @@ _EXECUTABLE_COVERAGE: dict[tuple[str, int], tuple[str, ...]] = {
             "test_a_real_local_permission_failure_during_fetch_is_not_classified_as_auth",
         ),
     ),
+    ("RAT", 20): (
+        _node(
+            "tests/workspace/test_conftest_teardown.py",
+            "test_rr024_a_production_shaped_volume_survives_being_referenced_by_a_tracked_run",
+        ),
+    ),
     ("AAT", 4): (
         _node(
             "tests/test_acceptance_test_coverage.py",
@@ -303,7 +347,9 @@ _EXECUTABLE_COVERAGE: dict[tuple[str, int], tuple[str, ...]] = {
             "test_at_gr009_a_symlinked_ssh_directory_planted_in_a_cache_volume_is_not_followed",
         ),
     ),
-    ("GAT", 7): (_node("tests/test_errors.py", "test_at_vat005_a_secret_flagged_set_recurses"),),
+    ("GAT", 7): (
+        _node("tests/test_errors.py", "test_at_vat005_a_secret_flagged_set_recurses"),
+    ),
     ("GAT", 8): (
         _node(
             "tests/workspace/test_manager.py",
@@ -316,12 +362,11 @@ _EXECUTABLE_COVERAGE: dict[tuple[str, int], tuple[str, ...]] = {
     ),
 }
 
-# These are not executable pytest gaps.  They are deliberately narrow,
-# owner-tagged dispositions, unlike the old permanent ``known_uncited`` sets.
+
 _DISPOSITIONS: dict[tuple[str, int], _Disposition] = {
     ("HAT", 2): _Disposition(
         "superseded",
-        "H36 removed the host-side structured Git execution path this historical criterion tested",
+        "H36 removed the host-side structured Git execution surface",
         "H36",
     ),
     ("RAT", 1): _Disposition(
@@ -336,12 +381,12 @@ _DISPOSITIONS: dict[tuple[str, int], _Disposition] = {
     ),
     ("GAT", 1): _Disposition(
         "ci-gate",
-        "the acceptance surface is CI's real ruff format/lint gate rather than pytest",
+        "the acceptance surface is CI's real Ruff format/lint gate",
         ".github/workflows/ci.yml",
     ),
     ("G3AT", 17): _Disposition(
         "deferred",
-        "G3AT-017 belongs to the next GAP3 task and cannot be implemented by Y16 itself",
+        "G3AT-017 belongs to Y17",
         "Y17",
     ),
 }
