@@ -202,8 +202,13 @@ def test_pmoat_002_per_resource_inspection_failure_is_isolated(tmp_path: Path) -
     ).collect()
 
     assert any(item.resource_id == "healthy" for item in result.resources)
-    assert any(item.resource_id == "broken" and item.lifecycle_state.value == "degraded" for item in result.resources)
-    diagnostic = next(item for item in result.diagnostics if item.code == "docker_container_inspection_failed")
+    assert any(
+        item.resource_id == "broken" and item.lifecycle_state.value == "degraded"
+        for item in result.resources
+    )
+    diagnostic = next(
+        item for item in result.diagnostics if item.code == "docker_container_inspection_failed"
+    )
     assert "super-secret" not in diagnostic.message
     assert "token=" not in diagnostic.message
     assert result.incomplete is True
@@ -277,7 +282,9 @@ def test_pmoat_003_unavailable_state_metrics_never_become_zero(
 
     state = next(item for item in result.resources if item.kind is ResourceKind.STATE_STORAGE)
     observations = [state.bytes, *state.metrics.values()]
-    unavailable_observations = [item for item in observations if item.provenance.value == "unavailable"]
+    unavailable_observations = [
+        item for item in observations if item.provenance.value == "unavailable"
+    ]
     assert unavailable_observations
     assert all(item.value is None for item in unavailable_observations)
     assert all(item.value != 0 for item in unavailable_observations)
