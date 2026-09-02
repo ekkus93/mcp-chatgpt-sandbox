@@ -297,20 +297,30 @@ class DockerWorkspaceManager(_LifecycleMixin):
                 volume = self._docker.volumes.get(source)
             except DockerNotFound:
                 try:
-                    self._docker.volumes.create(name=source, labels=labels)
+                    volume = self._docker.volumes.create(name=source, labels=labels)
                 except DockerException as exc:
                     raise ContainerCreateFailedError(
                         f"failed to create owned cache volume {source!r}: {exc}",
                         details={"workspace_id": record.id, "volume_name": source},
                     ) from exc
-                continue
             except DockerException as exc:
                 raise ContainerCreateFailedError(
                     f"failed to inspect cache volume {source!r}: {exc}",
                     details={"workspace_id": record.id, "volume_name": source},
                 ) from exc
 
-            volume.reload()
+            # Docker volume create is name-idempotent. A foreign volume can
+            # appear between the get() above and create(), and Docker may return
+            # that existing object instead of applying our requested labels.
+            # Re-inspect the object we will actually mount and prove ownership
+            # after either path; the pre-create name lookup is never authority.
+            try:
+                volume.reload()
+            except DockerException as exc:
+                raise ContainerCreateFailedError(
+                    f"failed to verify cache volume {source!r} ownership: {exc}",
+                    details={"workspace_id": record.id, "volume_name": source},
+                ) from exc
             proof = classify_cache_volume(
                 volume.attrs.get("Labels") or {},
                 expected_repository_id=record.repository_id,
@@ -398,17 +408,50 @@ class DockerWorkspaceManager(_LifecycleMixin):
             ) from exc
         return None
 
-    def _remove_cache_volumes(self, cache_volume_names: list[str]) -> None:
+    def delete(
+        self,
+        workspace_id: str,
+        *,
+        cache_volume_names: list[str] | None = None,
+        state_dir: Path | None = None,
+    ) -> None:
+        """Delete while binding cache cleanup to durable repository identity.
+
+        The inherited lifecycle implementation deliberately performs cache
+        cleanup only after the workspace/job rows are committed gone. PMOR-001
+        additionally requires the cache's repository label to correspond to
+        the workspace being deleted. Capture that trusted identity from the
+        pre-delete WorkspaceRecord, delegate the primary deletion with cache
+        cleanup disabled, then run the same best-effort cleanup under that
+        positive proof. Cache names remain addresses only.
+        """
+        record = self._get_or_raise(workspace_id)
+        super().delete(workspace_id, cache_volume_names=None, state_dir=state_dir)
+        if cache_volume_names:
+            self._remove_cache_volumes(
+                cache_volume_names,
+                expected_repository_id=record.repository_id,
+            )
+
+    def _remove_cache_volumes(
+        self,
+        cache_volume_names: list[str],
+        *,
+        expected_repository_id: str,
+    ) -> None:
         """Best-effort delete only positively owned cache volumes.
 
-        The workspace row is already gone when this inherited lifecycle hook
-        runs, so failure remains non-fatal per RR-012. Unproven volumes are not
-        cleanup failures: they are foreign/unknown resources this daemon has no
-        authority to delete, even when their names match configured caches.
+        The workspace row is already gone when this cleanup runs, so failure
+        remains non-fatal per RR-012. The caller supplies the repository id
+        captured from durable workspace state before deletion; a managed
+        same-name volume labeled for a different repository is foreign to this
+        operation and is left intact. Docker inspection failures are likewise
+        observable and non-destructive, never treated as proof of absence.
         """
         for name in cache_volume_names:
             try:
                 volume = self._docker.volumes.get(name)
+                volume.reload()
             except DockerNotFound:
                 continue
             except DockerException as exc:
@@ -416,8 +459,10 @@ class DockerWorkspaceManager(_LifecycleMixin):
                     "workspace delete: failed to inspect cache volume %r: %s", name, exc
                 )
                 continue
-            volume.reload()
-            proof = classify_cache_volume(volume.attrs.get("Labels") or {})
+            proof = classify_cache_volume(
+                volume.attrs.get("Labels") or {},
+                expected_repository_id=expected_repository_id,
+            )
             if not proof.positively_owned:
                 _logger.warning(
                     "workspace delete: leaving cache volume %r untouched because ownership is "
