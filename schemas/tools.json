@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.7.8",
+  "contract_version": "0.8.0",
   "tools": [
     {
       "description": "Delete a repository file or directory (\u00a713.5).",
@@ -1641,6 +1641,530 @@
           "result"
         ],
         "title": "repository_listOutput",
+        "type": "object"
+      }
+    },
+    {
+      "description": "Bounded read-only inventory of MCP-owned operational resources, cleanup debt, and degraded/unavailable observations (PMOR-001..003).",
+      "input_schema": {
+        "properties": {
+          "max_diagnostics": {
+            "default": 64,
+            "maximum": 64,
+            "minimum": 1,
+            "title": "Max Diagnostics",
+            "type": "integer"
+          },
+          "max_inspections": {
+            "default": 256,
+            "maximum": 256,
+            "minimum": 1,
+            "title": "Max Inspections",
+            "type": "integer"
+          },
+          "max_resources": {
+            "default": 256,
+            "maximum": 256,
+            "minimum": 1,
+            "title": "Max Resources",
+            "type": "integer"
+          },
+          "repository_id": {
+            "anyOf": [
+              {
+                "description": "Opaque resource identity; never a host filesystem path.",
+                "maxLength": 512,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Repository Id"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "description": "Opaque resource identity; never a host filesystem path.",
+                "maxLength": 512,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Workspace Id"
+          }
+        },
+        "title": "resource_inventoryArguments",
+        "type": "object"
+      },
+      "name": "resource_inventory",
+      "output_schema": {
+        "$defs": {
+          "ByteObservationOutput": {
+            "additionalProperties": false,
+            "properties": {
+              "provenance": {
+                "$ref": "#/$defs/ByteProvenance"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Value"
+              }
+            },
+            "required": [
+              "value",
+              "provenance"
+            ],
+            "title": "ByteObservationOutput",
+            "type": "object"
+          },
+          "ByteProvenance": {
+            "enum": [
+              "measured",
+              "accounted",
+              "estimated",
+              "unavailable"
+            ],
+            "title": "ByteProvenance",
+            "type": "string"
+          },
+          "CleanupDebtSummaryOutput": {
+            "additionalProperties": false,
+            "properties": {
+              "bytes": {
+                "$ref": "#/$defs/ByteObservationOutput"
+              },
+              "count": {
+                "minimum": 0,
+                "title": "Count",
+                "type": "integer"
+              },
+              "status": {
+                "enum": [
+                  "complete",
+                  "partial"
+                ],
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "count",
+              "bytes"
+            ],
+            "title": "CleanupDebtSummaryOutput",
+            "type": "object"
+          },
+          "InventoryDiagnosticOutput": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[a-z0-9_]+$",
+                "title": "Code",
+                "type": "string"
+              },
+              "message": {
+                "maxLength": 512,
+                "title": "Message",
+                "type": "string"
+              },
+              "resource_id": {
+                "anyOf": [
+                  {
+                    "description": "Opaque resource identity; never a host filesystem path.",
+                    "maxLength": 512,
+                    "minLength": 1,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Resource Id"
+              },
+              "resource_kind": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ResourceKind"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "title": "InventoryDiagnosticOutput",
+            "type": "object"
+          },
+          "InventoryResourceOutput": {
+            "additionalProperties": false,
+            "properties": {
+              "bytes": {
+                "$ref": "#/$defs/ByteObservationOutput"
+              },
+              "kind": {
+                "$ref": "#/$defs/ResourceKind"
+              },
+              "lifecycle_state": {
+                "$ref": "#/$defs/ResourceLifecycleState"
+              },
+              "metadata": {
+                "$ref": "#/$defs/ResourceMetadataOutput"
+              },
+              "metrics": {
+                "$ref": "#/$defs/ResourceMetricsOutput"
+              },
+              "ownership": {
+                "$ref": "#/$defs/OwnershipProofOutput"
+              },
+              "repository_id": {
+                "anyOf": [
+                  {
+                    "description": "Opaque resource identity; never a host filesystem path.",
+                    "maxLength": 512,
+                    "minLength": 1,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Repository Id"
+              },
+              "resource_id": {
+                "description": "Opaque resource identity; never a host filesystem path.",
+                "maxLength": 512,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                "title": "Resource Id",
+                "type": "string"
+              },
+              "workspace_id": {
+                "anyOf": [
+                  {
+                    "description": "Opaque resource identity; never a host filesystem path.",
+                    "maxLength": 512,
+                    "minLength": 1,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Workspace Id"
+              }
+            },
+            "required": [
+              "kind",
+              "resource_id",
+              "lifecycle_state",
+              "ownership",
+              "bytes",
+              "metrics",
+              "metadata"
+            ],
+            "title": "InventoryResourceOutput",
+            "type": "object"
+          },
+          "InventoryScopeOutput": {
+            "additionalProperties": false,
+            "properties": {
+              "repository_id": {
+                "anyOf": [
+                  {
+                    "description": "Opaque resource identity; never a host filesystem path.",
+                    "maxLength": 512,
+                    "minLength": 1,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Repository Id"
+              },
+              "workspace_id": {
+                "anyOf": [
+                  {
+                    "description": "Opaque resource identity; never a host filesystem path.",
+                    "maxLength": 512,
+                    "minLength": 1,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Workspace Id"
+              }
+            },
+            "title": "InventoryScopeOutput",
+            "type": "object"
+          },
+          "OwnershipProofOutput": {
+            "additionalProperties": false,
+            "properties": {
+              "evidence": {
+                "items": {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "maxItems": 8,
+                "title": "Evidence",
+                "type": "array"
+              },
+              "reason": {
+                "maxLength": 512,
+                "title": "Reason",
+                "type": "string"
+              },
+              "status": {
+                "$ref": "#/$defs/OwnershipStatus"
+              }
+            },
+            "required": [
+              "status",
+              "evidence",
+              "reason"
+            ],
+            "title": "OwnershipProofOutput",
+            "type": "object"
+          },
+          "OwnershipStatus": {
+            "enum": [
+              "owned",
+              "foreign",
+              "unknown"
+            ],
+            "title": "OwnershipStatus",
+            "type": "string"
+          },
+          "ResourceKind": {
+            "enum": [
+              "workspace_container",
+              "cache_volume",
+              "job_log_directory",
+              "job_log_cleanup",
+              "ssh_agent",
+              "state_storage",
+              "docker_image"
+            ],
+            "title": "ResourceKind",
+            "type": "string"
+          },
+          "ResourceLifecycleState": {
+            "enum": [
+              "active",
+              "retained",
+              "cleanup_pending",
+              "orphaned_owned",
+              "foreign",
+              "unknown",
+              "degraded"
+            ],
+            "title": "ResourceLifecycleState",
+            "type": "string"
+          },
+          "ResourceMetadataOutput": {
+            "additionalProperties": false,
+            "properties": {
+              "docker_status": {
+                "anyOf": [
+                  {
+                    "maxLength": 64,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Docker Status"
+              },
+              "last_error_recorded": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Last Error Recorded"
+              },
+              "ssh_agent_pid": {
+                "anyOf": [
+                  {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Ssh Agent Pid"
+              }
+            },
+            "title": "ResourceMetadataOutput",
+            "type": "object"
+          },
+          "ResourceMetricsOutput": {
+            "additionalProperties": false,
+            "properties": {
+              "filesystem_capacity_bytes": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ByteObservationOutput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "filesystem_free_bytes": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ByteObservationOutput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "title": "ResourceMetricsOutput",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Bounded public snapshot; no host path field exists in this model.",
+        "properties": {
+          "cleanup_debt": {
+            "$ref": "#/$defs/CleanupDebtSummaryOutput"
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/$defs/InventoryDiagnosticOutput"
+            },
+            "maxItems": 64,
+            "title": "Diagnostics",
+            "type": "array"
+          },
+          "diagnostics_truncated": {
+            "title": "Diagnostics Truncated",
+            "type": "boolean"
+          },
+          "incomplete": {
+            "title": "Incomplete",
+            "type": "boolean"
+          },
+          "inspected_count": {
+            "maximum": 256,
+            "minimum": 0,
+            "title": "Inspected Count",
+            "type": "integer"
+          },
+          "inspection_limit": {
+            "maximum": 256,
+            "minimum": 1,
+            "title": "Inspection Limit",
+            "type": "integer"
+          },
+          "resources": {
+            "items": {
+              "$ref": "#/$defs/InventoryResourceOutput"
+            },
+            "maxItems": 256,
+            "title": "Resources",
+            "type": "array"
+          },
+          "result_limit": {
+            "maximum": 256,
+            "minimum": 1,
+            "title": "Result Limit",
+            "type": "integer"
+          },
+          "scope": {
+            "$ref": "#/$defs/InventoryScopeOutput"
+          },
+          "status": {
+            "enum": [
+              "complete",
+              "degraded"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "status",
+          "scope",
+          "resources",
+          "diagnostics",
+          "cleanup_debt",
+          "inspected_count",
+          "result_limit",
+          "inspection_limit",
+          "truncated",
+          "incomplete",
+          "diagnostics_truncated"
+        ],
+        "title": "ResourceInventoryOutput",
         "type": "object"
       }
     },

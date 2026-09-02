@@ -15,11 +15,6 @@ jobs:
     # alone would work too (unique to this repo) but pairing both is the
     # documented convention and makes the intent explicit at a glance.
     runs-on: [self-hosted, mcp-chatgpt-sandbox]
-    # One-run O3 schema capture only. The capture step restores this workflow
-    # from master before it commits, so the branch immediately returns to
-    # the normal read-only token on the next run.
-    permissions:
-      contents: write
     steps:
       # HR-029 (`docs/HARDENING_SPEC.md` §12): full history, not the
       # default shallow single-commit checkout — the contract_version
@@ -36,47 +31,6 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --group dev
-
-      # One-run O3 development helper: the sandbox cannot upload the generated
-      # 79 KiB contract directly. Generate it on the trusted same-repository
-      # self-hosted runner, restore this workflow from master in the same commit,
-      # push the exact generated artifact, and stop this superseded run before
-      # any test code executes with a write-capable token.
-      - name: Capture O3 generated contract once
-        if: github.event_name == 'pull_request' && github.head_ref == 'post-mvp/o3-resource-inventory'
-        run: |
-          git checkout -B "$GITHUB_HEAD_REF" "origin/$GITHUB_HEAD_REF"
-          config_dir="$(mktemp -d)"
-          cat > "$config_dir/config.yml" <<EOF
-          version: 1
-          state_db_path: $config_dir/state.db
-          docker:
-            default_image: mcp-dev-ubuntu:24.04
-          ssh:
-            keys_dir: $config_dir/keys
-            known_hosts: $config_dir/known_hosts
-          audit:
-            path: $config_dir/audit.jsonl
-          EOF
-          uv run dev-workspace-mcp export-schemas \
-            --config "$config_dir/config.yml" \
-            --out schemas/tools.json
-          # Fail closed if this is not the expected O3 contract generation.
-          test "$(jq -r .contract_version schemas/tools.json)" = "0.8.0"
-          test "$(jq -r '[.tools[] | select(.name == "resource_inventory")] | length' schemas/tools.json)" = "1"
-          # Do not leave write-token CI configuration on the feature branch.
-          git checkout "origin/$GITHUB_BASE_REF" -- .github/workflows/ci.yml
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add schemas/tools.json .github/workflows/ci.yml
-          if git diff --cached --quiet; then
-            echo "::error::O3 schema capture produced no commit; refusing to continue with write-capable CI"
-            exit 1
-          fi
-          git commit -m "docs: regenerate O3 MCP contract"
-          git push origin "HEAD:$GITHUB_HEAD_REF"
-          echo "::error::O3 schema was captured and CI permissions restored; this run is intentionally superseded"
-          exit 1
 
       # §71's "Docker-backed integration tests" needs a running Docker
       # daemon — true of `ubuntu-latest` by default; the self-hosted
