@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -129,10 +130,8 @@ def _release(process: subprocess.Popen[str], release_path: Path) -> None:
 def _remove_if_present(client: docker.DockerClient, container_id: str | None) -> None:
     if not container_id:
         return
-    try:
+    with contextlib.suppress(docker.errors.NotFound):
         client.containers.get(container_id).remove(force=True)
-    except docker.errors.NotFound:
-        pass
 
 
 def test_g3at_015_two_live_test_contexts_do_not_adopt_or_delete_each_other(
