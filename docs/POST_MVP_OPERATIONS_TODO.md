@@ -2,7 +2,7 @@
 
 **Spec:** `docs/POST_MVP_OPERATIONS_SPEC.md` (`PMOR-001`..`PMOR-012`, `PMOAT-001`..`PMOAT-012`)
 
-**Status:** open — O1 complete; O2-O12 remain
+**Status:** open — O1-O2 complete; O3-O12 remain
 
 This TODO deliberately starts read-only and moves the destructive boundary later. Do not implement prune execution before the inventory/ownership model and dry-run plan are independently tested.
 
@@ -66,15 +66,27 @@ Do not skip directly to O8. A safe prune executor depends on the ownership/inven
 
 **Satisfies:** PMOR-002, PMOR-003 · **Verified by:** PMOAT-002, PMOAT-003
 
-- [ ] Add an internal inventory service independent of MCP schema first
-- [ ] Enumerate managed containers, cache volumes, job-log accounting/debt, and state-storage observations
-- [ ] Add explicit result/work bounds
-- [ ] Report truncation/incomplete state rather than silently dropping excess resources
-- [ ] Isolate per-resource inspection failure and preserve sanitized diagnostics
-- [ ] Distinguish measured, accounted/estimated, and unavailable byte values
-- [ ] Never convert an unavailable measurement into zero
-- [ ] Prove inventory performs no Docker/filesystem mutation
-- [ ] Add unit/fake-Docker tests before exposing a tool
+- [x] Add an internal inventory service independent of MCP schema first
+- [x] Enumerate managed containers, cache volumes, job-log accounting/debt, and state-storage observations
+- [x] Add explicit result/work bounds
+- [x] Report truncation/incomplete state rather than silently dropping excess resources
+- [x] Isolate per-resource inspection failure and preserve sanitized diagnostics
+- [x] Distinguish measured, accounted/estimated, and unavailable byte values
+- [x] Never convert an unavailable measurement into zero
+- [x] Prove inventory performs no Docker/filesystem mutation
+- [x] Add unit/fake-Docker tests before exposing a tool
+
+**O2 completion evidence:**
+
+- PMOAT-002/003 RED: Actions run `33675126641` on pre-feature head `c9b5afd33f7b06020b59c99f9f2f0572144515d5` passed Docker build, Ruff format/lint, mypy, MCP contract, contract-version, and docs drift, then failed exactly the five new O2 acceptance cases because `dev_workspace_mcp.operations.inventory` did not exist; the remainder of the suite was green (`5 failed, 1121 passed`).
+- Implementation: `operations/inventory.py` adds the internal `ResourceInventoryService` without changing the MCP schema. It inventories positively classified workspace containers/cache volumes plus durable job-log rows, cleanup debt, SSH-agent tracking, and state-storage observations. The service consumes the already-open SQLite connection rather than opening or creating state during collection.
+- Bounds are explicit and observable: `InventoryLimits` independently caps returned resources, per-resource inspections, and diagnostics; results expose result/inspection limits plus `truncated` and `incomplete` instead of silently dropping work. Container discovery uses a real Docker server-side `limit`; Docker's volume-list API has no equivalent server-side pagination/limit, so O2 performs one ownership-filtered list call and bounds all subsequent volume inspection/result work while marking oversize results incomplete.
+- Failure isolation/provenance: per-resource Docker inspection failures become sanitized diagnostics and degraded observations without aborting healthy resources. Byte observations distinguish `measured`, `accounted`, `estimated`, and `unavailable`; unavailable or invalid negative measurements carry `value=None` rather than being converted to a reassuring zero.
+- Ownership correlation: durable workspace/repository contradictions are reported as `foreign` ownership, while a positively owned container whose durable container ID is stale remains an owned orphan. This preserves the O1 distinction future prune planning depends on.
+- Mutation proof: fake-Docker acceptance rejects container stop/kill/remove, volume remove, and prune calls. A dedicated PMOAT-002 host-filesystem test patches common `Path`/`os` mutation APIs to fail immediately during `collect()`, verifies the state-file sentinel bytes remain unchanged, and still permits read-only size/stat observation.
+- Core GREEN: Actions run `33676474645` on exact implementation head `f2684ae7889b5a856a846f74fe86dc26e9d0ea44` passed Docker build, Ruff format/lint, mypy, MCP contract, contract-version, docs drift, and `1129 passed` with 92% overall coverage.
+- Final O2 GREEN including explicit filesystem non-mutation proof: Actions run `33678931433` on exact head `b89915e140fd47119d9e76c9e12e3ac246b55f46` passed every CI gate and the complete Docker-backed suite: `1130 passed` in 630.69s, 92% overall coverage.
+- Revert/pre-feature verification is the clean `33675126641` RED: reverting the O2 implementation removes the inventory module and causes the PMOAT-002/003 acceptance surface to fail before any tool exposure, while all unrelated tests remain green.
 
 ### O3 — Expose `resource_inventory` through MCP
 
