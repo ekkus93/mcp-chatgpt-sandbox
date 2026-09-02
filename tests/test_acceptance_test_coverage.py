@@ -382,11 +382,6 @@ _DISPOSITIONS: dict[tuple[str, int], _Disposition] = {
         "the acceptance surface is CI's real Ruff format/lint gate",
         ".github/workflows/ci.yml",
     ),
-    ("G3AT", 17): _Disposition(
-        "deferred",
-        "G3AT-017 belongs to Y17",
-        "Y17",
-    ),
 }
 
 

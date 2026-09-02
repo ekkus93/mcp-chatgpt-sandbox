@@ -14,17 +14,17 @@ A pruned job stays queryable — `exec_status` still reports its final
 state, exit code, and byte counts — with `logs_pruned: true` and empty
 content from `exec_output`, since its files are gone.
 
-G3R-007 (`docs/GAP3_SPEC.md`) adds a second lifecycle: workspace deletion
-removes `job` rows, but their host log directories may fail to delete.
-Those failures are represented by `job_log_cleanup` tombstones that have
-no FK back to the deleted workspace/job rows. The tombstone is created in
-the same DB transaction that removes those rows; maintenance retries the
-directory and clears the tombstone only after the directory is proven
-gone. This module provides the on-demand maintenance path. G3R-014/Y14
-will put the same functions on a real periodic scheduler; until then,
-`tools/execution.py` invokes `prune_job_logs` opportunistically on every
-`exec_start`; production maintenance derives the trusted state root from the
-main SQLite database path, while in-memory tests can pass it explicitly.
+G3R-007 / G3AT-007 (`docs/GAP3_SPEC.md`): workspace deletion can remove
+`job` rows before their host log directories are gone. A `job_log_cleanup`
+tombstone is created in the same DB transaction as row deletion and remains
+until the directory is proven absent, so failed cleanup stays durable,
+retryable, and included in retention accounting.
+
+G3R-014 / G3AT-014: the server-lifecycle scheduler runs the same cleanup and
+retention paths without client traffic. `tools/execution.py` also invokes
+`prune_job_logs` on `exec_start` as defense in depth. Production maintenance
+derives the trusted state root from the main SQLite database path; in-memory
+tests may pass it explicitly.
 """
 
 from __future__ import annotations

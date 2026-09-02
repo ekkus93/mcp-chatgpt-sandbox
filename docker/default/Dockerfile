@@ -9,7 +9,7 @@
 # under Bash before Bash startup controls have been stripped. The Python
 # wrapper sanitizes that Bash-specific state before execing entrypoint.sh.
 #
-# G3R-001 (`docs/GAP3_SPEC.md`): Python itself has an earlier startup
+# G3R-001 / G3AT-001 (`docs/GAP3_SPEC.md`): Python itself has an earlier startup
 # boundary. In normal mode `PYTHONPATH` can make `sitecustomize.py` execute
 # before the wrapper reaches its first line, while the container is still
 # root. The real ENTRYPOINT therefore invokes the absolute interpreter with
