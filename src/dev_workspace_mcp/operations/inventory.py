@@ -41,6 +41,7 @@ from dev_workspace_mcp.workspace.naming import (
 class ByteProvenance(StrEnum):
     MEASURED = "measured"
     ACCOUNTED = "accounted"
+    ESTIMATED = "estimated"
     UNAVAILABLE = "unavailable"
 
 
@@ -52,11 +53,21 @@ class ByteObservation:
 
     @classmethod
     def measured(cls, value: int) -> ByteObservation:
-        return cls(value=max(value, 0), provenance=ByteProvenance.MEASURED)
+        if value < 0:
+            return cls.unavailable("negative measured byte count is invalid")
+        return cls(value=value, provenance=ByteProvenance.MEASURED)
 
     @classmethod
     def accounted(cls, value: int) -> ByteObservation:
-        return cls(value=max(value, 0), provenance=ByteProvenance.ACCOUNTED)
+        if value < 0:
+            return cls.unavailable("negative accounted byte count is invalid")
+        return cls(value=value, provenance=ByteProvenance.ACCOUNTED)
+
+    @classmethod
+    def estimated(cls, value: int, reason: str) -> ByteObservation:
+        if value < 0:
+            return cls.unavailable("negative estimated byte count is invalid")
+        return cls(value=value, provenance=ByteProvenance.ESTIMATED, reason=reason)
 
     @classmethod
     def unavailable(cls, reason: str) -> ByteObservation:
@@ -87,7 +98,7 @@ class InventoryResource:
 @dataclass(frozen=True, slots=True)
 class InventoryLimits:
     max_resources: int = 256
-    max_inspections: int = 512
+    max_inspections: int = 256
     max_diagnostics: int = 64
 
     def __post_init__(self) -> None:
@@ -244,12 +255,14 @@ class ResourceInventoryService:
         return items[:budget]
 
     def _collect_containers(self) -> None:
-        if self._remaining_candidate_budget() <= 0:
+        budget = self._remaining_candidate_budget()
+        if budget <= 0:
             self._mark_budget_exhausted()
             return
         try:
             candidates = self._docker.containers.list(
                 all=True,
+                limit=budget + 1,
                 filters={"label": f"{LABEL_MANAGED}=true"},
             )
         except DockerException as exc:
@@ -293,8 +306,9 @@ class ResourceInventoryService:
             proof = classify_workspace_container(labels)
             workspace_id = labels.get(LABEL_WORKSPACE_ID)
             repository_id = labels.get(LABEL_REPOSITORY_ID)
-            lifecycle = self._container_lifecycle(
+            lifecycle, proof = self._container_lifecycle_and_ownership(
                 container_id=resource_id,
+                labels=labels,
                 workspace_id=workspace_id,
                 repository_id=repository_id,
                 proof=proof,
@@ -312,20 +326,21 @@ class ResourceInventoryService:
                 )
             )
 
-    def _container_lifecycle(
+    def _container_lifecycle_and_ownership(
         self,
         *,
         container_id: str,
+        labels: Mapping[str, str],
         workspace_id: str | None,
         repository_id: str | None,
         proof: OwnershipProof,
-    ) -> ResourceLifecycleState:
+    ) -> tuple[ResourceLifecycleState, OwnershipProof]:
         if proof.status is OwnershipStatus.FOREIGN:
-            return ResourceLifecycleState.FOREIGN
+            return ResourceLifecycleState.FOREIGN, proof
         if proof.status is OwnershipStatus.UNKNOWN:
-            return ResourceLifecycleState.UNKNOWN
+            return ResourceLifecycleState.UNKNOWN, proof
         if workspace_id is None or repository_id is None:
-            return ResourceLifecycleState.UNKNOWN
+            return ResourceLifecycleState.UNKNOWN, proof
         try:
             row = self._connection.execute(
                 "SELECT repository_id, container_id, state FROM workspace WHERE id = ?",
@@ -338,22 +353,39 @@ class ResourceInventoryService:
                 resource_kind=ResourceKind.WORKSPACE_CONTAINER,
                 resource_id=container_id,
             )
-            return ResourceLifecycleState.DEGRADED
+            return (
+                ResourceLifecycleState.DEGRADED,
+                OwnershipProof(
+                    OwnershipStatus.UNKNOWN,
+                    proof.evidence,
+                    "durable workspace correspondence could not be inspected",
+                ),
+            )
         if row is None:
-            return ResourceLifecycleState.ORPHANED_OWNED
-        if row["repository_id"] != repository_id:
-            return ResourceLifecycleState.FOREIGN
+            return ResourceLifecycleState.ORPHANED_OWNED, proof
+
+        correlated = classify_workspace_container(
+            labels,
+            expected_workspace_id=workspace_id,
+            expected_repository_id=row["repository_id"],
+        )
+        if not correlated.positively_owned:
+            return ResourceLifecycleState.FOREIGN, correlated
         if row["container_id"] != container_id:
-            return ResourceLifecycleState.ORPHANED_OWNED
+            return ResourceLifecycleState.ORPHANED_OWNED, correlated
         if row["state"] in {"running", "starting", "creating", "rebuilding"}:
-            return ResourceLifecycleState.ACTIVE
-        return ResourceLifecycleState.RETAINED
+            return ResourceLifecycleState.ACTIVE, correlated
+        return ResourceLifecycleState.RETAINED, correlated
 
     def _collect_volumes(self) -> None:
         if self._remaining_candidate_budget() <= 0:
             self._mark_budget_exhausted()
             return
         try:
+            # Docker Engine's volume-list endpoint has no server-side limit or
+            # pagination parameter. Keep this to one ownership-filtered call,
+            # then bound every per-volume reload/result operation below. An
+            # oversized response is explicitly reported as truncated/incomplete.
             candidates = self._docker.volumes.list(
                 filters={"label": f"{LABEL_MANAGED}=true"},
             )
@@ -440,7 +472,7 @@ class ResourceInventoryService:
         usage = attrs.get("UsageData")
         if isinstance(usage, Mapping):
             size = usage.get("Size")
-            if isinstance(size, int) and size >= 0:
+            if isinstance(size, int):
                 return ByteObservation.measured(size)
         return ByteObservation.unavailable(
             "bounded Docker volume metadata did not provide a size measurement"

@@ -16,6 +16,7 @@ from dev_workspace_mcp.db.schema import apply_migrations
 from dev_workspace_mcp.operations.resources import (
     LABEL_RESOURCE_KIND,
     RESOURCE_KIND_CACHE_VOLUME,
+    OwnershipStatus,
     ResourceKind,
 )
 from dev_workspace_mcp.workspace.naming import (
@@ -81,8 +82,13 @@ class _Volume:
 class _Collection:
     def __init__(self, items: list[Any]) -> None:
         self._items = items
+        self.list_calls: list[dict[str, Any]] = []
 
-    def list(self, *_args: object, **_kwargs: object) -> list[Any]:
+    def list(self, *_args: object, **kwargs: object) -> list[Any]:
+        self.list_calls.append(dict(kwargs))
+        limit = kwargs.get("limit")
+        if isinstance(limit, int):
+            return list(self._items[:limit])
         return list(self._items)
 
     def prune(self, *_args: object, **_kwargs: object) -> None:
@@ -153,10 +159,11 @@ def test_pmoat_002_inventory_is_bounded_and_side_effect_free(tmp_path: Path) -> 
     containers = [
         _Container(f"c{index}", _container_labels(f"ws{index}"), mutations) for index in range(8)
     ]
+    docker_client = _Docker(containers=containers)
 
     result = inventory.ResourceInventoryService(
         connection=_db(),
-        docker_client=_Docker(containers=containers),
+        docker_client=docker_client,
         state_db_path=tmp_path / "state.db",
         limits=inventory.InventoryLimits(max_resources=3, max_inspections=4, max_diagnostics=3),
     ).collect()
@@ -167,6 +174,30 @@ def test_pmoat_002_inventory_is_bounded_and_side_effect_free(tmp_path: Path) -> 
     assert result.incomplete is True
     assert mutations.calls == []
     assert {item.lifecycle_state.value for item in result.resources} == {"orphaned_owned"}
+    assert docker_client.containers.list_calls[0]["limit"] == 4
+
+
+def test_pmoat_002_inspection_bound_is_independent_of_result_bound(tmp_path: Path) -> None:
+    inventory = _inventory_module()
+    mutations = _Mutations()
+    containers = [
+        _Container(f"c{index}", _container_labels(f"ws{index}"), mutations) for index in range(6)
+    ]
+
+    result = inventory.ResourceInventoryService(
+        connection=_db(),
+        docker_client=_Docker(containers=containers),
+        state_db_path=tmp_path / "state.db",
+        limits=inventory.InventoryLimits(max_resources=10, max_inspections=2, max_diagnostics=3),
+    ).collect()
+
+    assert len(result.resources) == 2
+    assert result.inspected_count == 2
+    assert result.result_limit == 10
+    assert result.inspection_limit == 2
+    assert result.truncated is True
+    assert result.incomplete is True
+    assert mutations.calls == []
 
 
 def test_pmoat_002_per_resource_failure_is_isolated_and_sanitized(tmp_path: Path) -> None:
@@ -197,6 +228,27 @@ def test_pmoat_002_per_resource_failure_is_isolated_and_sanitized(tmp_path: Path
     assert "super-secret" not in diagnostic.message
     assert "/host/private" not in diagnostic.message
     assert result.incomplete is True
+    assert mutations.calls == []
+
+
+def test_pmoat_002_durable_repository_mismatch_is_foreign_ownership(tmp_path: Path) -> None:
+    inventory = _inventory_module()
+    connection = _db()
+    _insert_workspace(connection, state="running")
+    with connection:
+        connection.execute("UPDATE workspace SET container_id = ? WHERE id = ?", ("c1", "ws"))
+
+    mutations = _Mutations()
+    container = _Container("c1", _container_labels("ws", repository_id="other"), mutations)
+    result = inventory.ResourceInventoryService(
+        connection=connection,
+        docker_client=_Docker(containers=[container]),
+        state_db_path=tmp_path / "state.db",
+    ).collect()
+
+    item = next(resource for resource in result.resources if resource.resource_id == "c1")
+    assert item.lifecycle_state.value == "foreign"
+    assert item.ownership.status is OwnershipStatus.FOREIGN
     assert mutations.calls == []
 
 
@@ -233,6 +285,32 @@ def test_pmoat_003_job_log_and_cleanup_bytes_are_accounted(tmp_path: Path) -> No
     assert (job_log.bytes.value, job_log.bytes.provenance.value) == (30, "accounted")
     assert debt.kind is ResourceKind.JOB_LOG_CLEANUP
     assert (debt.bytes.value, debt.bytes.provenance.value) == (41, "accounted")
+
+
+def test_pmoat_003_invalid_negative_accounting_is_unavailable_not_zero(tmp_path: Path) -> None:
+    inventory = _inventory_module()
+    connection = _db()
+    _insert_workspace(connection, state="running")
+    with connection:
+        connection.execute(
+            """
+            INSERT INTO job
+                (id, workspace_id, command, cwd, state, stdout_total_bytes, stderr_total_bytes)
+            VALUES (?, ?, 'bad counters', '/workspace', 'failed', -2, 1)
+            """,
+            ("job-negative", "ws"),
+        )
+
+    result = inventory.ResourceInventoryService(
+        connection=connection,
+        docker_client=_Docker(),
+        state_db_path=tmp_path / "state.db",
+    ).collect()
+
+    job_log = next(item for item in result.resources if item.resource_id == "job-negative")
+    assert job_log.bytes.value is None
+    assert job_log.bytes.provenance.value == "unavailable"
+    assert job_log.bytes.reason == "negative accounted byte count is invalid"
 
 
 def test_pmoat_003_unavailable_metrics_never_become_zero(
