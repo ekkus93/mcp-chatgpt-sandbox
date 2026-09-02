@@ -274,9 +274,7 @@ def _matches_scope(
 ) -> bool:
     if scope.repository_id is not None and repository_id != scope.repository_id:
         return False
-    if scope.workspace_id is not None and resource.workspace_id != scope.workspace_id:
-        return False
-    return True
+    return scope.workspace_id is None or resource.workspace_id == scope.workspace_id
 
 
 def _cleanup_debt_summary(
