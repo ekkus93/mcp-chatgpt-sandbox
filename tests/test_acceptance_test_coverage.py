@@ -6,12 +6,14 @@ criterion must now be backed by one of:
 * an acceptance identifier attached directly to a real ``test_*`` function;
 * an explicit acceptance-ID -> exact pytest-node mapping whose target still
   exists; or
-* a formal ``Coverage status`` in the source spec with a reason and owner/task.
+* a formal ``Coverage status`` in source specification with a reason and
+  owner/task.
 
 The node registry is executable evidence metadata, not an allowlist: every
 target is parsed from the real test tree and a deleted or renamed target makes
-this audit fail. Source-spec dispositions are parsed from the specs themselves;
-the audit carries no private exception list.
+this audit fail. Source-spec dispositions are parsed from the owning specs and
+the normative GAP3 acceptance-coverage addendum; the audit carries no private
+exception list.
 """
 
 import ast
@@ -23,6 +25,7 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _TESTS_DIR = Path(__file__).resolve().parent
+_DISPOSITION_SPEC_PATH = _REPO_ROOT / "docs" / "GAP3_ACCEPTANCE_COVERAGE_SPEC.md"
 
 _COVERAGE_MARKER_RE = re.compile(r"^\s*\*\*Coverage status:\*\*", re.MULTILINE | re.IGNORECASE)
 _COVERAGE_STATUS_RE = re.compile(
@@ -31,6 +34,10 @@ _COVERAGE_STATUS_RE = re.compile(
     r"(.+?);\s*owner/task:\s*(\S.+)$",
     re.MULTILINE | re.IGNORECASE,
 )
+_DISPOSITION_HEADING_RE = re.compile(
+    r"^### (?P<prefix>[A-Z][A-Z0-9]*)-(?P<number>\d{3})\b",
+    re.MULTILINE,
+)
 
 
 @dataclass(frozen=True)
@@ -38,6 +45,39 @@ class _CoverageDisposition:
     kind: str
     reason: str
     owner_task: str
+
+
+def _parse_disposition_entry(acceptance_id: str, entry: str) -> _CoverageDisposition | None:
+    marker_count = len(_COVERAGE_MARKER_RE.findall(entry))
+    if marker_count == 0:
+        return None
+    assert marker_count == 1, f"{acceptance_id} has {marker_count} Coverage status markers"
+    status = _COVERAGE_STATUS_RE.search(entry)
+    assert status is not None, (
+        f"{acceptance_id} has a malformed Coverage status; expected "
+        "'<kind> — <reason>; owner/task: <owner>'"
+    )
+    disposition = _CoverageDisposition(
+        kind=status.group(1).lower(),
+        reason=status.group(2).strip(),
+        owner_task=status.group(3).strip(),
+    )
+    assert disposition.reason, f"{acceptance_id} coverage status has no reason"
+    assert disposition.owner_task, f"{acceptance_id} coverage status has no owner/task"
+    return disposition
+
+
+def _addendum_entries(path: Path = _DISPOSITION_SPEC_PATH) -> dict[tuple[str, int], str]:
+    """Return exact acceptance-ID entries from the normative disposition addendum."""
+    text = path.read_text()
+    matches = list(_DISPOSITION_HEADING_RE.finditer(text))
+    entries: dict[tuple[str, int], str] = {}
+    for index, match in enumerate(matches):
+        key = (match.group("prefix"), int(match.group("number")))
+        assert key not in entries, f"duplicate source-spec disposition heading: {key}"
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        entries[key] = text[match.start() : end]
+    return entries
 
 
 @dataclass(frozen=True)
@@ -60,28 +100,25 @@ class _Series:
         return entries
 
     def formal_dispositions(self) -> dict[int, _CoverageDisposition]:
-        """Parse complete source-spec coverage dispositions, failing on malformed markers."""
+        """Parse inline and addendum dispositions, failing closed on drift."""
         dispositions: dict[int, _CoverageDisposition] = {}
         for number, entry in self.spec_entries().items():
-            marker_count = len(_COVERAGE_MARKER_RE.findall(entry))
-            if marker_count == 0:
+            disposition = _parse_disposition_entry(f"{self.prefix}-{number:03d}", entry)
+            if disposition is not None:
+                dispositions[number] = disposition
+
+        for (prefix, number), entry in _addendum_entries().items():
+            if prefix != self.prefix:
                 continue
-            assert marker_count == 1, (
-                f"{self.prefix}-{number:03d} has {marker_count} Coverage status markers"
+            assert number in self.spec_numbers(), (
+                f"source-spec disposition names nonexistent acceptance ID: {prefix}-{number:03d}"
             )
-            status = _COVERAGE_STATUS_RE.search(entry)
-            assert status is not None, (
-                f"{self.prefix}-{number:03d} has a malformed Coverage status; expected "
-                "'<kind> — <reason>; owner/task: <owner>'"
+            assert number not in dispositions, (
+                f"duplicate source-spec disposition for {prefix}-{number:03d}"
             )
-            disposition = _CoverageDisposition(
-                kind=status.group(1).lower(),
-                reason=status.group(2).strip(),
-                owner_task=status.group(3).strip(),
-            )
-            assert disposition.reason, f"{self.prefix}-{number:03d} coverage status has no reason"
-            assert disposition.owner_task, (
-                f"{self.prefix}-{number:03d} coverage status has no owner/task"
+            disposition = _parse_disposition_entry(f"{prefix}-{number:03d}", entry)
+            assert disposition is not None, (
+                f"{prefix}-{number:03d} addendum entry has no Coverage status"
             )
             dispositions[number] = disposition
         return dispositions
@@ -469,6 +506,17 @@ def test_g3at_016_registered_executable_coverage_points_to_real_tests() -> None:
 def test_g3at_016_source_spec_dispositions_are_narrow_reasoned_and_owned() -> None:
     """A source-spec disposition is explicit state, never a hidden test allowlist."""
     source, node_ids = _iter_test_nodes()
+
+    addendum_keys = set(_addendum_entries())
+    unknown_addendum = sorted(
+        key
+        for key in addendum_keys
+        if key[0] not in _BY_PREFIX or key[1] not in _BY_PREFIX[key[0]].spec_numbers()
+    )
+    assert not unknown_addendum, (
+        f"source-spec disposition addendum names nonexistent acceptance IDs: {unknown_addendum}"
+    )
+
     for series in _SERIES:
         for number, disposition in series.formal_dispositions().items():
             assert disposition.kind in {"superseded", "deferred", "non-automated", "ci-gate"}
@@ -550,3 +598,18 @@ def test_meta_malformed_source_spec_disposition_fails_closed(tmp_path: Path) -> 
     )
     with pytest.raises(AssertionError, match="malformed Coverage status"):
         series.formal_dispositions()
+
+
+def test_meta_addendum_entries_are_split_by_exact_acceptance_heading(tmp_path: Path) -> None:
+    """One series' disposition cannot absorb a later series' marker."""
+    addendum = tmp_path / "addendum.md"
+    addendum.write_text(
+        "### HAT-002\n\n"
+        "**Coverage status:** superseded — first reason; owner/task: H36\n\n"
+        "### RAT-001\n\n"
+        "**Coverage status:** superseded — second reason; owner/task: H36\n"
+    )
+    entries = _addendum_entries(addendum)
+    assert set(entries) == {("HAT", 2), ("RAT", 1)}
+    assert len(_COVERAGE_MARKER_RE.findall(entries[("HAT", 2)])) == 1
+    assert len(_COVERAGE_MARKER_RE.findall(entries[("RAT", 1)])) == 1
