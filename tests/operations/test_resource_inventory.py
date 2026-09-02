@@ -25,100 +25,79 @@ from dev_workspace_mcp.workspace.naming import (
 )
 
 
-class _MutationRecorder:
+class _Mutations:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    def record(self, name: str) -> None:
+    def reject(self, name: str) -> None:
         self.calls.append(name)
         raise AssertionError(f"read-only inventory attempted Docker mutation: {name}")
 
 
-class _FakeContainer:
+class _Container:
     def __init__(
         self,
-        *,
         container_id: str,
         labels: dict[str, str],
-        status: str = "exited",
+        mutations: _Mutations,
+        *,
         reload_error: BaseException | None = None,
-        recorder: _MutationRecorder,
     ) -> None:
         self.id = container_id
         self.name = f"container-{container_id}"
         self.labels = labels
-        self.status = status
-        self.attrs: dict[str, Any] = {"Config": {"Labels": labels}, "State": {"Status": status}}
+        self.status = "exited"
+        self.attrs: dict[str, Any] = {"Config": {"Labels": labels}}
         self._reload_error = reload_error
-        self._recorder = recorder
+        self._mutations = mutations
 
     def reload(self) -> None:
         if self._reload_error is not None:
             raise self._reload_error
 
     def stop(self, *_args: object, **_kwargs: object) -> None:
-        self._recorder.record("container.stop")
+        self._mutations.reject("container.stop")
 
     def kill(self, *_args: object, **_kwargs: object) -> None:
-        self._recorder.record("container.kill")
+        self._mutations.reject("container.kill")
 
     def remove(self, *_args: object, **_kwargs: object) -> None:
-        self._recorder.record("container.remove")
+        self._mutations.reject("container.remove")
 
 
-class _FakeVolume:
-    def __init__(
-        self,
-        *,
-        name: str,
-        labels: dict[str, str],
-        reload_error: BaseException | None = None,
-        recorder: _MutationRecorder,
-    ) -> None:
+class _Volume:
+    def __init__(self, name: str, labels: dict[str, str], mutations: _Mutations) -> None:
         self.name = name
         self.attrs: dict[str, Any] = {"Name": name, "Labels": labels}
-        self._reload_error = reload_error
-        self._recorder = recorder
+        self._mutations = mutations
 
     def reload(self) -> None:
-        if self._reload_error is not None:
-            raise self._reload_error
+        return None
 
     def remove(self, *_args: object, **_kwargs: object) -> None:
-        self._recorder.record("volume.remove")
+        self._mutations.reject("volume.remove")
 
 
-class _FakeContainerCollection:
-    def __init__(self, items: list[_FakeContainer]) -> None:
+class _Collection:
+    def __init__(self, items: list[Any]) -> None:
         self._items = items
 
-    def list(self, *_args: object, **_kwargs: object) -> list[_FakeContainer]:
+    def list(self, *_args: object, **_kwargs: object) -> list[Any]:
         return list(self._items)
 
     def prune(self, *_args: object, **_kwargs: object) -> None:
-        raise AssertionError("read-only inventory attempted container prune")
+        raise AssertionError("read-only inventory attempted prune")
 
 
-class _FakeVolumeCollection:
-    def __init__(self, items: list[_FakeVolume]) -> None:
-        self._items = items
-
-    def list(self, *_args: object, **_kwargs: object) -> list[_FakeVolume]:
-        return list(self._items)
-
-    def prune(self, *_args: object, **_kwargs: object) -> None:
-        raise AssertionError("read-only inventory attempted volume prune")
-
-
-class _FakeDocker:
+class _Docker:
     def __init__(
         self,
         *,
-        containers: list[_FakeContainer] | None = None,
-        volumes: list[_FakeVolume] | None = None,
+        containers: list[_Container] | None = None,
+        volumes: list[_Volume] | None = None,
     ) -> None:
-        self.containers = _FakeContainerCollection(containers or [])
-        self.volumes = _FakeVolumeCollection(volumes or [])
+        self.containers = _Collection(list(containers or []))
+        self.volumes = _Collection(list(volumes or []))
 
 
 def _inventory_module() -> ModuleType:
@@ -136,7 +115,7 @@ def _db() -> sqlite3.Connection:
     return connection
 
 
-def _managed_container_labels(*, workspace_id: str, repository_id: str = "repo") -> dict[str, str]:
+def _container_labels(workspace_id: str, repository_id: str = "repo") -> dict[str, str]:
     return {
         LABEL_MANAGED: "true",
         LABEL_WORKSPACE_ID: workspace_id,
@@ -144,7 +123,7 @@ def _managed_container_labels(*, workspace_id: str, repository_id: str = "repo")
     }
 
 
-def _managed_cache_labels(*, repository_id: str = "repo") -> dict[str, str]:
+def _cache_labels(repository_id: str = "repo") -> dict[str, str]:
     return {
         LABEL_MANAGED: "true",
         LABEL_RESOURCE_KIND: RESOURCE_KIND_CACHE_VOLUME,
@@ -152,22 +131,33 @@ def _managed_cache_labels(*, repository_id: str = "repo") -> dict[str, str]:
     }
 
 
+def _insert_workspace(connection: sqlite3.Connection, *, state: str) -> None:
+    with connection:
+        connection.execute(
+            "INSERT INTO repository (id, canonical_path) VALUES (?, ?)",
+            ("repo", "/repo"),
+        )
+        connection.execute(
+            """
+            INSERT INTO workspace
+                (id, repository_id, mode, workspace_path, state, created_at, last_used_at)
+            VALUES (?, ?, 'persistent', '/workspace', ?, ?, ?)
+            """,
+            ("ws", "repo", state, "2026-09-02T00:00:00Z", "2026-09-02T00:00:00Z"),
+        )
+
+
 def test_pmoat_002_inventory_is_bounded_and_side_effect_free(tmp_path: Path) -> None:
     inventory = _inventory_module()
-    recorder = _MutationRecorder()
+    mutations = _Mutations()
     containers = [
-        _FakeContainer(
-            container_id=f"c{index}",
-            labels=_managed_container_labels(workspace_id=f"ws{index}"),
-            recorder=recorder,
-        )
+        _Container(f"c{index}", _container_labels(f"ws{index}"), mutations)
         for index in range(8)
     ]
-    docker_client = _FakeDocker(containers=containers)
 
     result = inventory.ResourceInventoryService(
         connection=_db(),
-        docker_client=docker_client,
+        docker_client=_Docker(containers=containers),
         state_db_path=tmp_path / "state.db",
         limits=inventory.InventoryLimits(max_resources=3, max_inspections=4, max_diagnostics=3),
     ).collect()
@@ -176,28 +166,24 @@ def test_pmoat_002_inventory_is_bounded_and_side_effect_free(tmp_path: Path) -> 
     assert result.inspected_count <= 4
     assert result.truncated is True
     assert result.incomplete is True
-    assert recorder.calls == []
+    assert mutations.calls == []
     assert {item.lifecycle_state.value for item in result.resources} == {"orphaned_owned"}
 
 
-def test_pmoat_002_per_resource_inspection_failure_is_isolated(tmp_path: Path) -> None:
+def test_pmoat_002_per_resource_failure_is_isolated_and_sanitized(tmp_path: Path) -> None:
     inventory = _inventory_module()
-    recorder = _MutationRecorder()
-    broken = _FakeContainer(
-        container_id="broken",
-        labels=_managed_container_labels(workspace_id="ws-broken"),
-        reload_error=DockerException("token=super-secret should not be echoed"),
-        recorder=recorder,
+    mutations = _Mutations()
+    broken = _Container(
+        "broken",
+        _container_labels("ws-broken"),
+        mutations,
+        reload_error=DockerException("token=super-secret at /host/private"),
     )
-    healthy = _FakeContainer(
-        container_id="healthy",
-        labels=_managed_container_labels(workspace_id="ws-healthy"),
-        recorder=recorder,
-    )
+    healthy = _Container("healthy", _container_labels("ws-healthy"), mutations)
 
     result = inventory.ResourceInventoryService(
         connection=_db(),
-        docker_client=_FakeDocker(containers=[broken, healthy]),
+        docker_client=_Docker(containers=[broken, healthy]),
         state_db_path=tmp_path / "state.db",
     ).collect()
 
@@ -210,27 +196,16 @@ def test_pmoat_002_per_resource_inspection_failure_is_isolated(tmp_path: Path) -
         item for item in result.diagnostics if item.code == "docker_container_inspection_failed"
     )
     assert "super-secret" not in diagnostic.message
-    assert "token=" not in diagnostic.message
+    assert "/host/private" not in diagnostic.message
     assert result.incomplete is True
-    assert recorder.calls == []
+    assert mutations.calls == []
 
 
-def test_pmoat_003_job_log_and_cleanup_bytes_are_accounted_not_measured(tmp_path: Path) -> None:
+def test_pmoat_003_job_log_and_cleanup_bytes_are_accounted(tmp_path: Path) -> None:
     inventory = _inventory_module()
     connection = _db()
+    _insert_workspace(connection, state="running")
     with connection:
-        connection.execute(
-            "INSERT INTO repository (id, canonical_path) VALUES (?, ?)",
-            ("repo", "/repo"),
-        )
-        connection.execute(
-            """
-            INSERT INTO workspace
-                (id, repository_id, mode, workspace_path, state, created_at, last_used_at)
-            VALUES (?, ?, 'persistent', '/workspace', 'running', '2026-09-02T00:00:00Z', '2026-09-02T00:00:00Z')
-            """,
-            ("ws", "repo"),
-        )
         connection.execute(
             """
             INSERT INTO job
@@ -241,30 +216,27 @@ def test_pmoat_003_job_log_and_cleanup_bytes_are_accounted_not_measured(tmp_path
         )
         connection.execute(
             """
-            INSERT INTO job_log_cleanup
-                (job_id, workspace_id, created_at, bytes_hint)
-            VALUES (?, ?, '2026-09-02T00:00:00Z', 41)
+            INSERT INTO job_log_cleanup (job_id, workspace_id, created_at, bytes_hint)
+            VALUES (?, ?, ?, 41)
             """,
-            ("job-debt", "ws"),
+            ("job-debt", "ws", "2026-09-02T00:00:00Z"),
         )
 
     result = inventory.ResourceInventoryService(
         connection=connection,
-        docker_client=_FakeDocker(),
+        docker_client=_Docker(),
         state_db_path=tmp_path / "state.db",
     ).collect()
 
     job_log = next(item for item in result.resources if item.resource_id == "job-live")
     debt = next(item for item in result.resources if item.resource_id == "job-debt")
     assert job_log.kind is ResourceKind.JOB_LOG_DIRECTORY
-    assert job_log.bytes.value == 30
-    assert job_log.bytes.provenance.value == "accounted"
+    assert (job_log.bytes.value, job_log.bytes.provenance.value) == (30, "accounted")
     assert debt.kind is ResourceKind.JOB_LOG_CLEANUP
-    assert debt.bytes.value == 41
-    assert debt.bytes.provenance.value == "accounted"
+    assert (debt.bytes.value, debt.bytes.provenance.value) == (41, "accounted")
 
 
-def test_pmoat_003_unavailable_state_metrics_never_become_zero(
+def test_pmoat_003_unavailable_metrics_never_become_zero(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     inventory = _inventory_module()
@@ -273,65 +245,43 @@ def test_pmoat_003_unavailable_state_metrics_never_become_zero(
         raise OSError(13, "permission denied at /secret/state")
 
     monkeypatch.setattr(inventory.os, "statvfs", unavailable)
-
     result = inventory.ResourceInventoryService(
         connection=_db(),
-        docker_client=_FakeDocker(),
+        docker_client=_Docker(),
         state_db_path=tmp_path / "missing" / "state.db",
     ).collect()
 
     state = next(item for item in result.resources if item.kind is ResourceKind.STATE_STORAGE)
     observations = [state.bytes, *state.metrics.values()]
-    unavailable_observations = [
-        item for item in observations if item.provenance.value == "unavailable"
-    ]
-    assert unavailable_observations
-    assert all(item.value is None for item in unavailable_observations)
-    assert all(item.value != 0 for item in unavailable_observations)
+    missing = [item for item in observations if item.provenance.value == "unavailable"]
+    assert missing
+    assert all(item.value is None for item in missing)
+    assert all(item.value != 0 for item in missing)
     assert result.incomplete is True
-    assert all("/secret/state" not in diagnostic.message for diagnostic in result.diagnostics)
+    assert all("/secret/state" not in item.message for item in result.diagnostics)
 
 
-def test_pmoat_002_inventory_enumerates_cache_and_ssh_tracking_without_mutation(
-    tmp_path: Path,
-) -> None:
+def test_pmoat_002_inventory_includes_cache_ssh_and_state(tmp_path: Path) -> None:
     inventory = _inventory_module()
     connection = _db()
+    _insert_workspace(connection, state="stopped")
     with connection:
-        connection.execute(
-            "INSERT INTO repository (id, canonical_path) VALUES (?, ?)",
-            ("repo", "/repo"),
-        )
-        connection.execute(
-            """
-            INSERT INTO workspace
-                (id, repository_id, mode, workspace_path, state, created_at, last_used_at)
-            VALUES (?, ?, 'persistent', '/workspace', 'stopped', '2026-09-02T00:00:00Z', '2026-09-02T00:00:00Z')
-            """,
-            ("ws", "repo"),
-        )
         connection.execute(
             """
             INSERT INTO ssh_agent (workspace_id, pid, socket_path, created_at)
-            VALUES (?, 1234, '/tmp/agent.sock', '2026-09-02T00:00:00Z')
+            VALUES (?, 1234, '/tmp/agent.sock', ?)
             """,
-            ("ws",),
+            ("ws", "2026-09-02T00:00:00Z"),
         )
 
-    recorder = _MutationRecorder()
-    volume = _FakeVolume(
-        name="cache-owned",
-        labels=_managed_cache_labels(),
-        recorder=recorder,
-    )
+    mutations = _Mutations()
+    volume = _Volume("cache-owned", _cache_labels(), mutations)
     result = inventory.ResourceInventoryService(
         connection=connection,
-        docker_client=_FakeDocker(volumes=[volume]),
+        docker_client=_Docker(volumes=[volume]),
         state_db_path=tmp_path / "state.db",
     ).collect()
 
-    by_kind = {item.kind for item in result.resources}
-    assert ResourceKind.CACHE_VOLUME in by_kind
-    assert ResourceKind.SSH_AGENT in by_kind
-    assert ResourceKind.STATE_STORAGE in by_kind
-    assert recorder.calls == []
+    kinds = {item.kind for item in result.resources}
+    assert {ResourceKind.CACHE_VOLUME, ResourceKind.SSH_AGENT, ResourceKind.STATE_STORAGE} <= kinds
+    assert mutations.calls == []
