@@ -132,11 +132,7 @@ def _namespace_proof(labels: Mapping[str, str]) -> OwnershipProof | None:
             (),
             "test resource namespace does not match this process",
         )
-    evidence = (
-        "production namespace"
-        if expected is None
-        else f"{LABEL_TEST_NAMESPACE}={expected}"
-    )
+    evidence = "production namespace" if expected is None else f"{LABEL_TEST_NAMESPACE}={expected}"
     return OwnershipProof(OwnershipStatus.OWNED, (evidence,), "namespace matches")
 
 
