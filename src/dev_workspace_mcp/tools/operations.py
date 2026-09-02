@@ -8,6 +8,7 @@ accidentally disclose arbitrary host paths.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,17 +35,27 @@ from dev_workspace_mcp.operations.resources import (
     ResourceKind,
     ResourceLifecycleState,
 )
+from dev_workspace_mcp.workspace.naming import (
+    LABEL_REPOSITORY_ID,
+    LABEL_TEST_NAMESPACE,
+    LABEL_WORKSPACE_ID,
+)
 
 _MAX_RESOURCES = 256
 _MAX_INSPECTIONS = 256
 _MAX_DIAGNOSTICS = 64
+_OPAQUE_RESOURCE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+_OPAQUE_RESOURCE_ID_RE = re.compile(_OPAQUE_RESOURCE_ID_PATTERN)
+_DYNAMIC_OWNERSHIP_LABELS = frozenset(
+    {LABEL_REPOSITORY_ID, LABEL_WORKSPACE_ID, LABEL_TEST_NAMESPACE}
+)
 
 OpaqueResourceId = Annotated[
     str,
     Field(
         min_length=1,
         max_length=512,
-        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+        pattern=_OPAQUE_RESOURCE_ID_PATTERN,
         description="Opaque resource identity; never a host filesystem path.",
     ),
 ]
@@ -157,6 +168,10 @@ class _Scope:
     repository_id: str | None
     workspace_id: str | None
 
+    @property
+    def narrow(self) -> bool:
+        return self.repository_id is not None or self.workspace_id is not None
+
 
 class _DockerCollectionAdapter:
     """Expose only the read-side collection method O2 inventory consumes."""
@@ -188,6 +203,21 @@ class _UnavailableDocker:
     volumes = _UnavailableCollection()
 
 
+def _public_opaque_id(value: str | None) -> str | None:
+    """Return only IDs that satisfy the public path-free opaque-ID contract."""
+    if value is None or len(value) > 512 or _OPAQUE_RESOURCE_ID_RE.fullmatch(value) is None:
+        return None
+    return value
+
+
+def _public_evidence(value: str) -> str:
+    """Redact Docker-controlled dynamic label values at the MCP boundary."""
+    key, separator, _raw_value = value.partition("=")
+    if separator and key in _DYNAMIC_OWNERSHIP_LABELS:
+        return f"{key}=<opaque-id>"
+    return value
+
+
 def _byte_output(observation: ByteObservation) -> ByteObservationOutput:
     return ByteObservationOutput(
         value=observation.value,
@@ -199,7 +229,7 @@ def _byte_output(observation: ByteObservation) -> ByteObservationOutput:
 def _ownership_output(proof: OwnershipProof) -> OwnershipProofOutput:
     return OwnershipProofOutput(
         status=proof.status,
-        evidence=list(proof.evidence),
+        evidence=[_public_evidence(value) for value in proof.evidence],
         reason=proof.reason,
     )
 
@@ -221,8 +251,8 @@ def _resource_output(
         lifecycle_state=resource.lifecycle_state,
         ownership=_ownership_output(resource.ownership),
         bytes=_byte_output(resource.bytes),
-        repository_id=repository_id,
-        workspace_id=resource.workspace_id,
+        repository_id=_public_opaque_id(repository_id),
+        workspace_id=_public_opaque_id(resource.workspace_id),
         metrics=ResourceMetricsOutput(
             filesystem_capacity_bytes=(
                 _byte_output(resource.metrics["filesystem_capacity_bytes"])
@@ -248,7 +278,7 @@ def _diagnostic_output(diagnostic: InventoryDiagnostic) -> InventoryDiagnosticOu
         code=diagnostic.code,
         message=diagnostic.message,
         resource_kind=diagnostic.resource_kind,
-        resource_id=diagnostic.resource_id,
+        resource_id=_public_opaque_id(diagnostic.resource_id),
     )
 
 
@@ -295,21 +325,48 @@ def _matches_scope(
     return scope.workspace_id is None or resource.workspace_id == scope.workspace_id
 
 
+def _diagnostic_relevant(
+    diagnostic: InventoryDiagnostic,
+    *,
+    scope: _Scope,
+    scoped_resource_keys: set[tuple[ResourceKind, str]],
+) -> bool:
+    if not scope.narrow:
+        return True
+    if diagnostic.resource_id is not None:
+        return (diagnostic.resource_kind, diagnostic.resource_id) in scoped_resource_keys
+    # Diagnostics without a kind identify a shared durable-state source. Docker
+    # list failures are also source-wide: if enumeration itself failed, we cannot
+    # prove the requested repository/workspace had no matching Docker resources.
+    if diagnostic.resource_kind is None:
+        return True
+    return diagnostic.code in {"docker_container_list_failed", "docker_volume_list_failed"}
+
+
 def _cleanup_debt_summary(
     resources: list[InventoryResourceOutput],
     *,
     complete: bool,
 ) -> CleanupDebtSummaryOutput:
     debt = [resource for resource in resources if resource.kind is ResourceKind.JOB_LOG_CLEANUP]
-    accounted_bytes = sum(resource.bytes.value or 0 for resource in debt)
-    return CleanupDebtSummaryOutput(
-        status="complete" if complete else "partial",
-        count=len(debt),
-        bytes=ByteObservationOutput(
-            value=accounted_bytes,
+    values = [resource.bytes.value for resource in debt]
+    bytes_complete = all(value is not None for value in values)
+    if bytes_complete:
+        byte_observation = ByteObservationOutput(
+            value=sum(value for value in values if value is not None),
             provenance=ByteProvenance.ACCOUNTED,
             reason=None,
-        ),
+        )
+    else:
+        byte_observation = ByteObservationOutput(
+            value=None,
+            provenance=ByteProvenance.UNAVAILABLE,
+            reason="one or more cleanup-debt byte observations are unavailable",
+        )
+    return CleanupDebtSummaryOutput(
+        status="complete" if complete and bytes_complete else "partial",
+        count=len(debt),
+        bytes=byte_observation,
     )
 
 
@@ -320,13 +377,38 @@ def _result_output(
     scope: _Scope,
 ) -> ResourceInventoryOutput:
     workspace_repositories = _workspace_repository_map(db, result.resources)
-    resources: list[InventoryResourceOutput] = []
+    scoped_resources: list[tuple[InventoryResource, str | None]] = []
     for resource in result.resources:
         repository_id = _resource_repository_id(resource, workspace_repositories)
         if _matches_scope(resource, repository_id=repository_id, scope=scope):
-            resources.append(_resource_output(resource, repository_id=repository_id))
+            scoped_resources.append((resource, repository_id))
 
-    incomplete = result.incomplete
+    resources = [
+        _resource_output(resource, repository_id=repository_id)
+        for resource, repository_id in scoped_resources
+    ]
+    scoped_resource_keys = {
+        (resource.kind, resource.resource_id) for resource, _ in scoped_resources
+    }
+    relevant_diagnostics = [
+        item
+        for item in result.diagnostics
+        if _diagnostic_relevant(item, scope=scope, scoped_resource_keys=scoped_resource_keys)
+    ]
+
+    scoped_degraded = any(
+        resource.lifecycle_state is ResourceLifecycleState.DEGRADED
+        for resource, _repository_id in scoped_resources
+    )
+    if scope.narrow:
+        incomplete = (
+            result.truncated
+            or result.diagnostics_truncated
+            or bool(relevant_diagnostics)
+            or scoped_degraded
+        )
+    else:
+        incomplete = result.incomplete
     cleanup_debt = _cleanup_debt_summary(resources, complete=not incomplete)
     return ResourceInventoryOutput(
         status="degraded" if incomplete else "complete",
@@ -335,7 +417,7 @@ def _result_output(
             workspace_id=scope.workspace_id,
         ),
         resources=resources,
-        diagnostics=[_diagnostic_output(item) for item in result.diagnostics],
+        diagnostics=[_diagnostic_output(item) for item in relevant_diagnostics],
         cleanup_debt=cleanup_debt,
         inspected_count=result.inspected_count,
         result_limit=result.result_limit,
