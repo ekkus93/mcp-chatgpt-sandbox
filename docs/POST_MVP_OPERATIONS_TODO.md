@@ -2,7 +2,7 @@
 
 **Spec:** `docs/POST_MVP_OPERATIONS_SPEC.md` (`PMOR-001`..`PMOR-012`, `PMOAT-001`..`PMOAT-012`)
 
-**Status:** open — O1-O2 complete; O3-O12 remain
+**Status:** open — O1-O3 complete; O4-O12 remain
 
 This TODO deliberately starts read-only and moves the destructive boundary later. Do not implement prune execution before the inventory/ownership model and dry-run plan are independently tested.
 
@@ -92,15 +92,27 @@ Do not skip directly to O8. A safe prune executor depends on the ownership/inven
 
 **Satisfies:** PMOR-001..PMOR-003 · **Verified by:** PMOAT-001..PMOAT-003
 
-- [ ] Define bounded Pydantic input/output models
-- [ ] Keep default operation global/read-only with optional narrow repository/workspace filtering
-- [ ] Do not expose arbitrary host filesystem paths
-- [ ] Include cleanup-debt summaries and explicit degraded/unavailable observations
-- [ ] Add tool registration and docs/TOOLS.md row
-- [ ] Bump `contract_version`
-- [ ] Regenerate `schemas/tools.json`
-- [ ] Run contract-version and docs-drift checks
-- [ ] Exercise through the real MCP tool surface
+- [x] Define bounded Pydantic input/output models
+- [x] Keep default operation global/read-only with optional narrow repository/workspace filtering
+- [x] Do not expose arbitrary host filesystem paths
+- [x] Include cleanup-debt summaries and explicit degraded/unavailable observations
+- [x] Add tool registration and docs/TOOLS.md row
+- [x] Bump `contract_version`
+- [x] Regenerate `schemas/tools.json`
+- [x] Run contract-version and docs-drift checks
+- [x] Exercise through the real MCP tool surface
+
+**O3 completion evidence:**
+
+- PMOAT-001..003 pre-feature RED: Actions run `33691099187` on the test-only pre-O3 branch cleared Docker build, Ruff format/lint, mypy, MCP contract, contract-version, and docs drift, then failed exactly the four new MCP-surface acceptance cases because `resource_inventory` was not registered (`4 failed, 1130 passed`). This is the clean revert/pre-feature proof for the public tool boundary.
+- Implementation: `tools/operations.py` exposes bounded Pydantic input/output models and a mutation-free `resource_inventory` MCP tool over O2's already-proven `ResourceInventoryService`; `server.py` registers it without making Docker reachability a server-start prerequisite. Optional scope accepts only opaque repository/workspace IDs, while the default remains global/read-only.
+- Public-boundary safety: output uses an allowlisted metadata shape rather than serializing internal `details`; invalid/path-shaped Docker-controlled repository/workspace IDs are suppressed, managed-label evidence values are rendered as `<opaque-id>`, and scoped calls omit diagnostics attached only to out-of-scope resources. Source-wide/budget failures still keep the scoped result incomplete rather than being hidden.
+- Cleanup-debt/provenance safety: the public summary preserves `unavailable` byte observations as `value=None`/`provenance=unavailable` and reports partial accounting instead of coercing an unavailable value to zero. Docker/statfs probe failures remain explicit degraded/unavailable observations rather than fabricated healthy values.
+- Contract/docs: `resource_inventory` is documented in `docs/TOOLS.md`; `contract_version` is `0.8.0`; canonical `schemas/tools.json` contains the 22-tool contract; contract-version and docs-drift gates pass.
+- Initial implementation GREEN: Actions run `33691982931` passed every CI gate and the complete Docker-backed suite before the final public-boundary hardening review.
+- Hardening RED: Actions run `33693182599` cleared every non-test gate, then failed exactly the three adversarial boundary cases for out-of-scope diagnostic leakage, unavailable cleanup-debt bytes becoming `0/accounted`, and path-shaped Docker identities reaching output validation (`3 failed, 1134 passed`).
+- Final GREEN: Actions run `33693690086` on exact implementation head `f4a9a4468db633bfee5ea94ef302e4833118bd6e` passed Docker build, Ruff format/lint, mypy, MCP contract, contract-version, docs drift, and the complete Docker-backed suite: `1137 passed` in 623.55s with 92% overall coverage.
+- Revert verification is represented by the clean pre-feature RED `33691099187` plus the narrower hardening RED `33693182599`; both failed only the acceptance behavior subsequently supplied by O3 while unrelated gates/tests remained green.
 
 ### O4 — Add evidence-based disk and PID-pressure diagnostics
 

@@ -10,8 +10,8 @@ from `schemas/tools.json`'s own tool names, so "stale" here means "not yet
 regenerated locally," not "silently drifted since the last release."
 
 Current tool surface — `docs/SPEC.md` §34.1 lists the fixed MVP set this
-implements in full (21 tools; §34.2 records what was folded into `exec` or
-an existing tool instead of getting one of its own, and why):
+implements in full; Post-MVP Operations adds explicitly versioned operator
+tools beyond that original set (22 tools total as of O3):
 
 ## Repositories
 
@@ -37,6 +37,12 @@ an existing tool instead of getting one of its own, and why):
 | `workspace_open` | Open (creating and starting as needed) a repository's workspace (§8.3). |
 | `workspace_info` | Report current workspace state (§25). |
 | `server_info` | Server version, capabilities, and health (§25). |
+
+## Operations
+
+| Tool | Purpose |
+| --- | --- |
+| `resource_inventory` | Bounded, read-only inventory of MCP-owned operational resources, cleanup debt, and degraded/unavailable observations (PMOR-001..003). Optional repository/workspace filters are opaque IDs only; no host path filter is accepted. |
 
 ## Execution (§14, §15.3)
 
