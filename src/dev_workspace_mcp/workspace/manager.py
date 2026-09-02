@@ -39,18 +39,36 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
-from dev_workspace_mcp.errors import WorkspaceNotFoundError
+from docker.errors import DockerException
+from docker.errors import NotFound as DockerNotFound
+from docker.models.containers import Container
+
+from dev_workspace_mcp.errors import (
+    ContainerCreateFailedError,
+    ContainerRuntimeFailedError,
+    WorkspaceNotFoundError,
+)
 from dev_workspace_mcp.jobs.retention import (
     attempt_job_log_cleanup,
     get_job_log_cleanup_debt,
 )
+from dev_workspace_mcp.operations.resources import (
+    cache_volume_labels,
+    classify_cache_volume,
+    classify_workspace_container,
+)
 from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.workspace.manager_lifecycle import _LifecycleMixin
+from dev_workspace_mcp.workspace.naming import LABEL_WORKSPACE_ID
 from dev_workspace_mcp.workspace.records import (
     WorkspaceRecord,
     WorkspaceState,
+    _now,
+    _oom_killed_from_docker_container,
     _state_from_docker_container,
     touch_last_used,
 )
@@ -136,13 +154,279 @@ def get_authorized(
 
 
 class DockerWorkspaceManager(_LifecycleMixin):
-    """The full workspace manager: `_LifecycleMixin` (creation, lifecycle
-    transitions) composed onto `_CoreMixin` (persistence, container
-    lookup, reconciliation) it inherits from in turn — see this module's
-    own docstring above for why the split landed on these three pieces.
-    Every method a caller could previously reach on `DockerWorkspaceManager`
-    is still reachable on it exactly the same way; only where each body
-    physically lives changed."""
+    """Workspace lifecycle with PMOR-001 positive resource ownership.
+
+    O1 intentionally overrides the few inherited Docker-resource chokepoints
+    rather than teaching later inventory/prune code a second ownership model.
+    Deterministic names remain addresses only: no container or volume is
+    adopted, removed, or reused unless its labels positively prove ownership.
+    """
+
+    def _find_container(self, record: WorkspaceRecord) -> Container | None:
+        if record.container_id is None:
+            return None
+        try:
+            container = self._docker.containers.get(record.container_id)
+        except DockerNotFound:
+            return None
+        except DockerException as exc:
+            raise ContainerRuntimeFailedError(
+                f"failed to look up container {record.container_id!r} "
+                f"for workspace {record.id!r}: {exc}",
+                details={"workspace_id": record.id},
+            ) from exc
+
+        proof = classify_workspace_container(
+            container.labels,
+            expected_workspace_id=record.id,
+            expected_repository_id=record.repository_id,
+        )
+        if not proof.positively_owned:
+            raise ContainerRuntimeFailedError(
+                f"container {record.container_id!r} for workspace {record.id!r} "
+                f"does not have positive MCP ownership proof: {proof.reason}",
+                details={
+                    "workspace_id": record.id,
+                    "container_id": record.container_id,
+                    "ownership_status": proof.status.value,
+                },
+                recoverable=False,
+            )
+        return container
+
+    def reconcile(self, workspace_id: str) -> WorkspaceRecord:
+        """Reconcile only containers with full PMOR-001 ownership proof."""
+        record = self._get_or_raise(workspace_id)
+        try:
+            discovered = self._docker.containers.list(
+                all=True, filters={"label": f"{LABEL_WORKSPACE_ID}={workspace_id}"}
+            )
+        except DockerException as exc:
+            raise ContainerRuntimeFailedError(
+                f"failed to list containers for workspace {workspace_id!r}: {exc}",
+                details={"workspace_id": workspace_id},
+            ) from exc
+
+        owned: list[Container] = []
+        for container in discovered:
+            proof = classify_workspace_container(
+                container.labels,
+                expected_workspace_id=record.id,
+                expected_repository_id=record.repository_id,
+            )
+            if proof.positively_owned:
+                owned.append(container)
+            else:
+                _logger.warning(
+                    "workspace %s: ignoring container %s claiming the workspace label "
+                    "without positive ownership proof (%s: %s)",
+                    workspace_id,
+                    container.id,
+                    proof.status.value,
+                    proof.reason,
+                )
+
+        if len(owned) > 1:
+            raise ContainerRuntimeFailedError(
+                f"multiple positively owned containers are labeled for workspace {workspace_id!r}; "
+                "this requires operator reconciliation (§69)",
+                details={"workspace_id": workspace_id, "container_ids": [c.id for c in owned]},
+                recoverable=False,
+            )
+
+        if record.container_id is not None:
+            container = self._find_container(record)
+            if container is None:
+                return self._save(
+                    replace(
+                        record,
+                        container_id=None,
+                        state=WorkspaceState.ABSENT,
+                        oom_killed=False,
+                        last_used_at=_now(),
+                    )
+                )
+            return self._save(
+                replace(
+                    record,
+                    state=_state_from_docker_container(container),
+                    oom_killed=_oom_killed_from_docker_container(container),
+                    last_used_at=_now(),
+                )
+            )
+
+        if owned:
+            (container,) = owned
+            return self._save(
+                replace(
+                    record,
+                    container_id=container.id,
+                    state=_state_from_docker_container(container),
+                    oom_killed=_oom_killed_from_docker_container(container),
+                    last_used_at=_now(),
+                )
+            )
+        return record
+
+    def _ensure_owned_volume_mounts(self, record: WorkspaceRecord, run_kwargs: dict[str, Any]) -> None:
+        """Explicitly create/verify volume mounts before Docker can mount them.
+
+        All volume-type mounts assembled for a workspace are dependency-cache
+        volumes in the current architecture. Creating them explicitly is
+        load-bearing: Docker's implicit mount-time creation cannot attach
+        ownership labels, and an already-existing same-named volume cannot be
+        safely relabeled/adopted because the name itself is not proof.
+        """
+        sources: set[str] = set()
+        for mount in run_kwargs.get("mounts") or []:
+            if mount.get("Type") != "volume":
+                continue
+            source = mount.get("Source")
+            if not isinstance(source, str) or not source:
+                raise ContainerCreateFailedError(
+                    "workspace volume mount has no valid named-volume source",
+                    details={"workspace_id": record.id},
+                )
+            sources.add(source)
+
+        labels = cache_volume_labels(repository_id=record.repository_id)
+        for source in sorted(sources):
+            try:
+                volume = self._docker.volumes.get(source)
+            except DockerNotFound:
+                try:
+                    self._docker.volumes.create(name=source, labels=labels)
+                except DockerException as exc:
+                    raise ContainerCreateFailedError(
+                        f"failed to create owned cache volume {source!r}: {exc}",
+                        details={"workspace_id": record.id, "volume_name": source},
+                    ) from exc
+                continue
+            except DockerException as exc:
+                raise ContainerCreateFailedError(
+                    f"failed to inspect cache volume {source!r}: {exc}",
+                    details={"workspace_id": record.id, "volume_name": source},
+                ) from exc
+
+            volume.reload()
+            proof = classify_cache_volume(
+                volume.attrs.get("Labels") or {},
+                expected_repository_id=record.repository_id,
+            )
+            if not proof.positively_owned:
+                raise ContainerCreateFailedError(
+                    f"refusing to reuse cache volume {source!r} without positive MCP ownership "
+                    f"proof: {proof.reason}",
+                    details={
+                        "workspace_id": record.id,
+                        "volume_name": source,
+                        "ownership_status": proof.status.value,
+                    },
+                )
+
+    def _run_container(
+        self,
+        record: WorkspaceRecord,
+        *,
+        image: str,
+        run_kwargs: dict[str, Any],
+        allow_adopt: bool = True,
+    ) -> WorkspaceRecord:
+        try:
+            self._ensure_owned_volume_mounts(record, run_kwargs)
+            return super()._run_container(
+                record,
+                image=image,
+                run_kwargs=run_kwargs,
+                allow_adopt=allow_adopt,
+            )
+        except ContainerCreateFailedError:
+            self._save(
+                replace(
+                    record,
+                    container_id=None,
+                    state=WorkspaceState.FAILED,
+                    oom_killed=False,
+                    last_used_at=_now(),
+                )
+            )
+            raise
+
+    def _adopt_or_remove_by_name(
+        self, record: WorkspaceRecord, *, allow_adopt: bool
+    ) -> WorkspaceRecord | None:
+        """Resolve deterministic-name collisions without name-as-ownership fallback."""
+        assert record.container_name is not None
+        existing = self._find_container_by_name(record.container_name)
+        if existing is None:
+            return None
+        proof = classify_workspace_container(
+            existing.labels,
+            expected_workspace_id=record.id,
+            expected_repository_id=record.repository_id,
+        )
+        if not proof.positively_owned:
+            raise ContainerCreateFailedError(
+                f"container name {record.container_name!r} is occupied by a resource whose MCP "
+                f"ownership cannot be proven; refusing to adopt or remove it: {proof.reason}",
+                details={
+                    "workspace_id": record.id,
+                    "container_name": record.container_name,
+                    "container_id": existing.id,
+                    "ownership_status": proof.status.value,
+                },
+            )
+        if allow_adopt:
+            return self._save(
+                replace(
+                    record,
+                    container_id=existing.id,
+                    state=_state_from_docker_container(existing),
+                    oom_killed=_oom_killed_from_docker_container(existing),
+                    last_used_at=_now(),
+                )
+            )
+        try:
+            existing.remove(force=True)
+        except DockerException as exc:
+            raise ContainerCreateFailedError(
+                f"failed to remove positively owned container {existing.id!r} before recreation: "
+                f"{exc}",
+                details={"workspace_id": record.id, "container_id": existing.id},
+            ) from exc
+        return None
+
+    def _remove_cache_volumes(self, cache_volume_names: list[str]) -> None:
+        """Best-effort delete only positively owned cache volumes.
+
+        The workspace row is already gone when this inherited lifecycle hook
+        runs, so failure remains non-fatal per RR-012. Unproven volumes are not
+        cleanup failures: they are foreign/unknown resources this daemon has no
+        authority to delete, even when their names match configured caches.
+        """
+        for name in cache_volume_names:
+            try:
+                volume = self._docker.volumes.get(name)
+            except DockerNotFound:
+                continue
+            except DockerException as exc:
+                _logger.warning("workspace delete: failed to inspect cache volume %r: %s", name, exc)
+                continue
+            volume.reload()
+            proof = classify_cache_volume(volume.attrs.get("Labels") or {})
+            if not proof.positively_owned:
+                _logger.warning(
+                    "workspace delete: leaving cache volume %r untouched because ownership is "
+                    "not proven (%s: %s)",
+                    name,
+                    proof.status.value,
+                    proof.reason,
+                )
+                continue
+            try:
+                volume.remove(force=True)
+            except DockerException as exc:
+                _logger.warning("workspace delete: failed to remove cache volume %r: %s", name, exc)
 
     def _remove_job_log_dirs(self, state_dir: Path, job_ids: list[str]) -> None:
         """G3R-007: consume the durable tombstones created before job deletion.

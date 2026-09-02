@@ -9,34 +9,23 @@ and dependency caches carry: running this suite on a machine serving real
 workspaces destroyed them, reproduced during the 2026-08-27 review.
 
 Every container this daemon creates goes through
-`docker.models.containers.ContainerCollection.run` — production code
-(`workspace/manager.py`'s `_run_container`) and the handful of tests that
-create a second container directly both go through it, and since
-`docker.from_env()` hands back a fresh `DockerClient` per call, patching
-the *class* method is the one interception point that sees every container
-this process creates, regardless of which client instance triggered it.
-Cache volumes (S30) are never created through an explicit
-`client.volumes.create(...)` call — they come into existence implicitly,
-as a side effect of the first container that mounts a not-yet-existing
-named volume — so they are tracked the same way: read out of that same
-`run()` call's `mounts` kwarg.
+`docker.models.containers.ContainerCollection.run` — production code and
+the handful of tests that create a second container directly both go
+through it. PMOR-001/O1 now also makes production cache-volume creation
+explicit through `docker.models.volumes.VolumeCollection.create` so those
+volumes can carry positive ownership labels. The tracker therefore hooks
+both class methods and records exact resource IDs/names created by this
+pytest process. It never discovers cleanup targets by managed label or
+name prefix.
 
-RR-024 (`docs/REMEDIATION_SPEC.md` §17): reading a volume-type mount's
-`Source` out of `run()`'s own kwargs, unconditionally, tracks every volume
-this call *references* — including one that already existed before this
-call ever ran, which a container legitimately mounts (that's what reusing
-a cache volume across workspace opens *means*) without having created it.
-`cache_volume_name` is deterministic, so a real deployment on the same
-host serving a repository this suite also happens to use an id for (the
-tests' own `repository` fixture uses `"example"`, a name plausible enough
-to collide with a real operator's own config) would have that repository's
-real cache volume — and its contents — silently destroyed by a suite run,
-the exact class of incident the label/name-filter rewrite above already
-fixed for containers, recurring one layer down for volumes specifically.
-Closed by checking each mount's volume for existence *before* `run()` is
-called: a volume Docker already reports at that instant is never tracked
-for removal, no matter how this call goes on to reference it — only a
-volume this call actually brings into existence is.
+RR-024 (`docs/REMEDIATION_SPEC.md` §17) remains load-bearing for legacy
+implicit volume creation and direct test runs: a volume-type mount may
+reference a volume that existed before this test. `_tracking_run` checks
+that existence *before* the container call and tracks only a volume that
+call genuinely caused Docker to create. `_tracking_volume_create` applies
+the same preexistence rule to O1's new explicit creation path. A
+pre-existing production-shaped volume is therefore never queued for test
+teardown merely because a test references or inspects it.
 """
 
 import contextlib
@@ -49,6 +38,7 @@ from typing import Any
 
 import docker
 import docker.models.containers
+import docker.models.volumes
 import pytest
 
 from dev_workspace_mcp.config.models import SSHConfig
@@ -67,11 +57,8 @@ KEEP_ALIVE_RUN_KWARGS = {"command": ["sleep", "3600"]}
 #: whatever an operator has actually deployed under that name.
 DEFAULT_IMAGE_TEST_TAG = "mcp-dev-test-s7:24.04"
 
-#: Populated by `_tracking_run` below (installed by `_track_created_docker_resources`,
-#: an autouse fixture) and drained by `docker_client`'s teardown once per test.
-#: Module-level and lock-protected rather than per-fixture-instance: the
-#: monkeypatch on the shared `ContainerCollection` class is necessarily
-#: process-global, so the tracking state it writes into has to be too.
+#: Populated by the process-global class-method interceptors installed by
+#: `_track_created_docker_resources` and drained by `docker_client` teardown.
 _created_container_ids: list[str] = []
 _created_volume_names: list[str] = []
 _tracking_lock = threading.Lock()
@@ -80,6 +67,7 @@ _tracking_lock = threading.Lock()
 @pytest.fixture(scope="session", autouse=True)
 def _track_created_docker_resources() -> Iterator[None]:
     original_run = docker.models.containers.ContainerCollection.run
+    original_volume_create = docker.models.volumes.VolumeCollection.create
 
     def _tracking_run(
         self: docker.models.containers.ContainerCollection, *args: Any, **kwargs: Any
@@ -119,11 +107,38 @@ def _track_created_docker_resources() -> Iterator[None]:
                     _created_volume_names.append(source)
         return result
 
+    def _tracking_volume_create(
+        self: docker.models.volumes.VolumeCollection, *args: Any, **kwargs: Any
+    ) -> Any:
+        # PMOR-001: explicit cache creation must remain compatible with H1's
+        # exact-resource teardown. A create call naming a volume that was
+        # already present is a reference/collision, never proof this test owns
+        # the pre-existing resource.
+        name = kwargs.get("name")
+        if name is None and args:
+            name = args[0]
+        preexisting = False
+        if isinstance(name, str) and name:
+            try:
+                self.get(name)
+            except docker.errors.NotFound:
+                pass
+            else:
+                preexisting = True
+        result = original_volume_create(self, *args, **kwargs)
+        created_name = getattr(result, "name", None)
+        if not preexisting and isinstance(created_name, str) and created_name:
+            with _tracking_lock:
+                _created_volume_names.append(created_name)
+        return result
+
     docker.models.containers.ContainerCollection.run = _tracking_run  # type: ignore[method-assign]
+    docker.models.volumes.VolumeCollection.create = _tracking_volume_create  # type: ignore[method-assign]
     try:
         yield
     finally:
         docker.models.containers.ContainerCollection.run = original_run  # type: ignore[method-assign]
+        docker.models.volumes.VolumeCollection.create = original_volume_create  # type: ignore[method-assign]
 
 
 @pytest.fixture(scope="session")
