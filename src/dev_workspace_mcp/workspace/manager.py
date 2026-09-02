@@ -235,8 +235,8 @@ class DockerWorkspaceManager(_LifecycleMixin):
             )
 
         if record.container_id is not None:
-            container = self._find_container(record)
-            if container is None:
+            recorded_container = self._find_container(record)
+            if recorded_container is None:
                 return self._save(
                     replace(
                         record,
@@ -249,8 +249,8 @@ class DockerWorkspaceManager(_LifecycleMixin):
             return self._save(
                 replace(
                     record,
-                    state=_state_from_docker_container(container),
-                    oom_killed=_oom_killed_from_docker_container(container),
+                    state=_state_from_docker_container(recorded_container),
+                    oom_killed=_oom_killed_from_docker_container(recorded_container),
                     last_used_at=_now(),
                 )
             )
