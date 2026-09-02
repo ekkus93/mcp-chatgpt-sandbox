@@ -377,7 +377,7 @@ def register(
             max_inspections=max_inspections,
             max_diagnostics=max_diagnostics,
         )
-        inventory_docker = (
+        inventory_docker: Any = (
             _DockerInventoryAdapter(docker_client)
             if docker_client is not None
             else _UnavailableDocker()
