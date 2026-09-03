@@ -22,9 +22,7 @@ def _configured(
     (repo_path / ".git").mkdir()
     return minimal_config.model_copy(
         update={
-            "docker": minimal_config.docker.model_copy(
-                update={"default_image": default_image_tag}
-            ),
+            "docker": minimal_config.docker.model_copy(update={"default_image": default_image_tag}),
             "repositories": [
                 RepositoryConfig(id="example", path=repo_path, github="owner/example")
             ],
