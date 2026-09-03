@@ -75,12 +75,16 @@ def test_o4_container_enospc_requires_failed_exec_signal() -> None:
     assert diagnostic.classification.value == "enospc"
     assert diagnostic.evidence == "container_stderr_enospc"
 
-    assert pressure.classify_container_command_failure(
-        exit_code=1, stderr="application-specific error: disk full"
-    ) is None
-    assert pressure.classify_container_command_failure(
-        exit_code=0, stderr="No space left on device"
-    ) is None
+    assert (
+        pressure.classify_container_command_failure(
+            exit_code=1, stderr="application-specific error: disk full"
+        )
+        is None
+    )
+    assert (
+        pressure.classify_container_command_failure(exit_code=0, stderr="No space left on device")
+        is None
+    )
 
 
 def test_o4_pressure_context_preserves_primary_workspace_error() -> None:
