@@ -50,7 +50,9 @@ def test_o5_inventory_preserves_full_y2_ssh_agent_identity_internally(tmp_path: 
         state_db_path=state_db_path,
     ).collect()
 
-    agent = next(resource for resource in result.resources if resource.kind is ResourceKind.SSH_AGENT)
+    agent = next(
+        resource for resource in result.resources if resource.kind is ResourceKind.SSH_AGENT
+    )
     assert agent.details["pid"] == 4242
     assert agent.details["boot_id"] == "boot-opaque"
     assert agent.details["process_start_time"] == 123456
