@@ -42,13 +42,13 @@ tools beyond that original set (22 tools total as of O3):
 
 | Tool | Purpose |
 | --- | --- |
-| `resource_inventory` | Bounded, read-only inventory of MCP-owned operational resources, cleanup debt, and degraded/unavailable observations (PMOR-001..003). Optional repository/workspace filters are opaque IDs only; no host path filter is accepted. |
+| `resource_inventory` | Bounded, read-only inventory of MCP-owned operational resources, cleanup debt, degraded/unavailable observations, and optional Linux PID pressure (PMOR-001..005). PID pressure trusts only cgroup v2: `/proc/self/cgroup` selects the daemon cgroup and `pids.current`/`pids.max` under `/sys/fs/cgroup` provide usage/limit; unavailable sources are explicit and never become zero. Optional repository/workspace filters are opaque IDs only; no host path filter is accepted. |
 
 ## Execution (§14, §15.3)
 
 | Tool | Purpose |
 | --- | --- |
-| `exec` | Run a command synchronously in a workspace (§14). |
+| `exec` | Run a command synchronously in a workspace (§14); failed commands may include additive container-filesystem ENOSPC pressure context only when canonical `No space left on device` stderr evidence is present. |
 | `exec_start` | Start a command as a background job (§15.3, §63). |
 | `exec_status` | Report a job's current state and recent output (§15.3, §64). |
 | `exec_output` | Retrieve a job's captured output by offset, range, or line window (§15.3). |

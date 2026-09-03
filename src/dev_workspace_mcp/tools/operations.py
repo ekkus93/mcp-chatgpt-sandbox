@@ -29,6 +29,7 @@ from dev_workspace_mcp.operations.inventory import (
     ResourceInventoryResult,
     ResourceInventoryService,
 )
+from dev_workspace_mcp.operations.pressure import PidPressureStatus, observe_pid_pressure
 from dev_workspace_mcp.operations.resources import (
     OwnershipProof,
     OwnershipStatus,
@@ -145,12 +146,26 @@ class InventoryScopeOutput(BaseModel):
     workspace_id: OpaqueResourceId | None = None
 
 
+class PidPressureOutput(BaseModel):
+    """Optional Linux cgroup-v2 PID pressure; unavailable is never zero."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: PidPressureStatus
+    source: Literal["cgroup_v2"] | None = None
+    current: Annotated[int, Field(ge=0)] | None = None
+    limit: Annotated[int, Field(ge=0)] | None = None
+    unlimited: bool | None = None
+    reason: BoundedText | None = None
+
+
 class ResourceInventoryOutput(BaseModel):
     """Bounded public snapshot; no host path field exists in this model."""
 
     model_config = ConfigDict(extra="forbid")
 
     status: Literal["complete", "degraded"]
+    pid_pressure: PidPressureOutput
     scope: InventoryScopeOutput
     resources: Annotated[list[InventoryResourceOutput], Field(max_length=_MAX_RESOURCES)]
     diagnostics: Annotated[list[InventoryDiagnosticOutput], Field(max_length=_MAX_DIAGNOSTICS)]
@@ -410,8 +425,17 @@ def _result_output(
     else:
         incomplete = result.incomplete
     cleanup_debt = _cleanup_debt_summary(resources, complete=not incomplete)
+    pid_pressure = observe_pid_pressure()
     return ResourceInventoryOutput(
         status="degraded" if incomplete else "complete",
+        pid_pressure=PidPressureOutput(
+            status=pid_pressure.status,
+            source=pid_pressure.source,
+            current=pid_pressure.current,
+            limit=pid_pressure.limit,
+            unlimited=pid_pressure.unlimited,
+            reason=pid_pressure.reason,
+        ),
         scope=InventoryScopeOutput(
             repository_id=scope.repository_id,
             workspace_id=scope.workspace_id,

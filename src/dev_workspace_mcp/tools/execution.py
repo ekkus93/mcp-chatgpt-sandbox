@@ -46,6 +46,10 @@ from dev_workspace_mcp.execution.log_capture import read_log_bytes, read_log_tai
 from dev_workspace_mcp.execution.service import ExecutionService, tail_text
 from dev_workspace_mcp.jobs.retention import prune_job_logs
 from dev_workspace_mcp.jobs.store import JobRecord, JobStore
+from dev_workspace_mcp.operations.pressure import (
+    PressureDiagnostic,
+    classify_container_command_failure,
+)
 from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.workspace.container_config import resolve_exec_user
 from dev_workspace_mcp.workspace.manager import (
@@ -145,6 +149,7 @@ class ExecOutput:
     stderr_truncated: bool
     stdout_total_bytes: int
     stderr_total_bytes: int
+    pressure: PressureDiagnostic | None
 
 
 @dataclass
@@ -479,6 +484,10 @@ async def run_exec(
         stderr_truncated=result.stderr_truncated,
         stdout_total_bytes=result.stdout_total_bytes,
         stderr_total_bytes=result.stderr_total_bytes,
+        pressure=classify_container_command_failure(
+            exit_code=result.exit_code,
+            stderr=result.stderr_tail,
+        ),
     )
 
 
