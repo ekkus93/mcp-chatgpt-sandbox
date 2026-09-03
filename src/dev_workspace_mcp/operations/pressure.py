@@ -123,9 +123,7 @@ def classify_docker_storage_failure(exc: DockerException) -> PressureDiagnostic 
     )
 
 
-def classify_container_command_failure(
-    *, exit_code: int, stderr: str
-) -> PressureDiagnostic | None:
+def classify_container_command_failure(*, exit_code: int, stderr: str) -> PressureDiagnostic | None:
     """Recognize container-filesystem ENOSPC from a failed command only."""
     if exit_code == 0:
         return None
