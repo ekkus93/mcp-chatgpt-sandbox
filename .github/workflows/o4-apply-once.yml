@@ -1,0 +1,52 @@
+name: Apply O4 implementation once
+
+on:
+  push:
+    branches: [post-mvp/o4-pressure-diagnostics]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.head_commit.message == 'ci: stage O4 implementation patch'
+    runs-on: [self-hosted, mcp-chatgpt-sandbox]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: post-mvp/o4-pressure-diagnostics
+
+      - name: Verify staged patch identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          cat <<'EOF' | sha256sum -c -
+          a8224d88c8a3a60470c7d5de73e1550431b19295e039c2c1f578ce20edf4a284  .o4-part1.patch
+          f3c700af7f6b437b6125cf731e64783e72b85c5313c5ec9bb7491691466ea892  .o4-part2a.patch
+          b7593635040a71905534a25739120ebc4753d60e082e1620761ee9f1f37f631b  .o4-part2b.patch
+          EOF
+          git apply --check .o4-part1.patch
+          git apply --check .o4-part2a.patch
+          git apply --check .o4-part2b.patch
+
+      - name: Apply and publish implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply .o4-part1.patch
+          git apply .o4-part2a.patch
+          git apply .o4-part2b.patch
+          git rm .o4-part1.patch .o4-part2a.patch .o4-part2b.patch .github/workflows/o4-apply-once.yml
+          git diff --check
+          git add docs/TOOLS.md \
+            src/dev_workspace_mcp/errors.py \
+            src/dev_workspace_mcp/operations/pressure.py \
+            src/dev_workspace_mcp/schema_export.py \
+            src/dev_workspace_mcp/tools/execution.py \
+            src/dev_workspace_mcp/tools/operations.py
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat: add evidence-based disk and PID-pressure diagnostics'
+          git push origin HEAD:post-mvp/o4-pressure-diagnostics
