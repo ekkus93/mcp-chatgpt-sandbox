@@ -2,7 +2,7 @@
 
 **Spec:** `docs/POST_MVP_OPERATIONS_SPEC.md` (`PMOR-001`..`PMOR-012`, `PMOAT-001`..`PMOAT-012`)
 
-**Status:** open — O1-O3 complete; O4-O12 remain
+**Status:** open — O1-O4 complete; O5-O12 remain
 
 This TODO deliberately starts read-only and moves the destructive boundary later. Do not implement prune execution before the inventory/ownership model and dry-run plan are independently tested.
 
@@ -118,14 +118,26 @@ Do not skip directly to O8. A safe prune executor depends on the ownership/inven
 
 **Satisfies:** PMOR-004, PMOR-005 · **Verified by:** PMOAT-004, PMOAT-005
 
-- [ ] Define diagnostic states for state-filesystem pressure, Docker-storage no-space, container ENOSPC, and non-space I/O failure
-- [ ] Preserve original structured errors while attaching only evidence-supported pressure context
-- [ ] Avoid broad message-substring classification where errno/API evidence exists
-- [ ] Define Linux PID/process pressure sources and document procfs/cgroup assumptions
-- [ ] Report unsupported/unavailable metrics explicitly rather than zero
-- [ ] Ensure unavailable PID metrics do not block ordinary workspace operation
-- [ ] Add forced state ENOSPC, Docker no-space, container ENOSPC, and non-space I/O cases
-- [ ] Add supported/unavailable PID-pressure cases
+- [x] Define diagnostic states for state-filesystem pressure, Docker-storage no-space, container ENOSPC, and non-space I/O failure
+- [x] Preserve original structured errors while attaching only evidence-supported pressure context
+- [x] Avoid broad message-substring classification where errno/API evidence exists
+- [x] Define Linux PID/process pressure sources and document procfs/cgroup assumptions
+- [x] Report unsupported/unavailable metrics explicitly rather than zero
+- [x] Ensure unavailable PID metrics do not block ordinary workspace operation
+- [x] Add forced state ENOSPC, Docker no-space, container ENOSPC, and non-space I/O cases
+- [x] Add supported/unavailable PID-pressure cases
+
+**O4 completion evidence:**
+
+- PMOAT-004/005 module-level RED: Actions run `33704861730` cleared Docker build, Ruff format/lint, mypy, MCP contract, contract-version, and docs drift, then failed exactly the seven new pressure/PID acceptance cases because `dev_workspace_mcp.operations.pressure` did not exist (`7 failed, 1137 passed`). This is the clean pre-feature/revert proof for the O4 diagnostic primitives.
+- Public-boundary RED: Actions run `33705719797` again cleared every non-test gate, then failed only the nine O4 acceptance cases (`9 failed, 1137 passed`): the seven missing pressure primitives plus missing Docker-error enrichment and missing synchronous `exec.pressure`. This proves the behavior is wired through real MCP/Docker surfaces rather than existing only as helper functions.
+- Implementation: `operations/pressure.py` defines explicit `state_filesystem`, `docker_storage`, and `container_filesystem` domains. State ENOSPC requires native `errno.ENOSPC`; contradictory non-space errno remains `non_space_io`. Docker-storage ENOSPC requires a Docker `APIError` daemon explanation carrying the canonical OS signal; generic `DockerException` text is ignored. Container ENOSPC requires a failed command plus canonical `No space left on device`; successful commands and vague `disk full` wording are not promoted.
+- Primary-error preservation: `errors.to_tool_error()` enriches an existing chained Docker `WorkspaceError` only by adding sanitized `details.pressure`; the original code, message, recoverability, and pre-existing details remain primary. Synchronous `exec` returns additive pressure evidence for failed container commands without changing its exit/result semantics.
+- PID source/availability contract: `observe_pid_pressure()` supports only Linux cgroup v2. `/proc/self/cgroup` locates the daemon's unified cgroup and `pids.current`/`pids.max` under `/sys/fs/cgroup` supply usage/limit. There is deliberately no cgroup-v1 or host `pid_max` fallback. Missing, inaccessible, malformed, or unsupported sources return typed `unavailable` with `current=None`/`limit=None`, never zero, and never block ordinary `resource_inventory` operation.
+- Contract/docs: `resource_inventory.pid_pressure` and `exec.pressure` are additive output fields; `contract_version` is `0.8.1`; canonical `schemas/tools.json` remains a 22-tool contract; `docs/TOOLS.md`, schema drift, and contract-version gates pass.
+- Superseded non-behavioral run: `33731124137` stopped at Ruff format on one function-signature normalization and therefore is not RED/GREEN acceptance evidence. Commit `1079d74150ac05dec71c83c1ce3cc4a9a38194b8` applied only Ruff's requested formatting.
+- Final GREEN: Actions run `33731708015` on O4 head `1079d74150ac05dec71c83c1ce3cc4a9a38194b8` passed Docker build, Ruff format/lint, mypy (`66 source files`), MCP contract, contract-version, docs drift, and the complete Docker-backed suite: `1146 passed in 625.55s` with 92% overall coverage.
+- Revert/pre-feature verification is represented by `33704861730` plus the stronger real-surface RED `33705719797`; both failed only the O4 behavior subsequently supplied by this task while unrelated gates/tests remained green.
 
 ---
 

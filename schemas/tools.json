@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.8.0",
+  "contract_version": "0.8.1",
   "tools": [
     {
       "description": "Delete a repository file or directory (\u00a713.5).",
@@ -117,10 +117,60 @@
       },
       "name": "exec",
       "output_schema": {
+        "$defs": {
+          "PressureClassification": {
+            "enum": [
+              "enospc",
+              "non_space_io"
+            ],
+            "title": "PressureClassification",
+            "type": "string"
+          },
+          "PressureDiagnostic": {
+            "properties": {
+              "classification": {
+                "$ref": "#/$defs/PressureClassification"
+              },
+              "domain": {
+                "$ref": "#/$defs/PressureDomain"
+              },
+              "evidence": {
+                "title": "Evidence",
+                "type": "string"
+              }
+            },
+            "required": [
+              "domain",
+              "classification",
+              "evidence"
+            ],
+            "title": "PressureDiagnostic",
+            "type": "object"
+          },
+          "PressureDomain": {
+            "enum": [
+              "state_filesystem",
+              "docker_storage",
+              "container_filesystem"
+            ],
+            "title": "PressureDomain",
+            "type": "string"
+          }
+        },
         "properties": {
           "exit_code": {
             "title": "Exit Code",
             "type": "integer"
+          },
+          "pressure": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PressureDiagnostic"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "stderr_tail": {
             "title": "Stderr Tail",
@@ -154,7 +204,8 @@
           "stdout_truncated",
           "stderr_truncated",
           "stdout_total_bytes",
-          "stderr_total_bytes"
+          "stderr_total_bytes",
+          "pressure"
         ],
         "title": "ExecOutput",
         "type": "object"
@@ -1986,6 +2037,92 @@
             "title": "OwnershipStatus",
             "type": "string"
           },
+          "PidPressureOutput": {
+            "additionalProperties": false,
+            "description": "Optional Linux cgroup-v2 PID pressure; unavailable is never zero.",
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Current"
+              },
+              "limit": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Limit"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
+              },
+              "source": {
+                "anyOf": [
+                  {
+                    "const": "cgroup_v2",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source"
+              },
+              "status": {
+                "$ref": "#/$defs/PidPressureStatus"
+              },
+              "unlimited": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Unlimited"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "title": "PidPressureOutput",
+            "type": "object"
+          },
+          "PidPressureStatus": {
+            "enum": [
+              "available",
+              "unavailable"
+            ],
+            "title": "PidPressureStatus",
+            "type": "string"
+          },
           "ResourceKind": {
             "enum": [
               "workspace_container",
@@ -2121,6 +2258,9 @@
             "title": "Inspection Limit",
             "type": "integer"
           },
+          "pid_pressure": {
+            "$ref": "#/$defs/PidPressureOutput"
+          },
           "resources": {
             "items": {
               "$ref": "#/$defs/InventoryResourceOutput"
@@ -2153,6 +2293,7 @@
         },
         "required": [
           "status",
+          "pid_pressure",
           "scope",
           "resources",
           "diagnostics",

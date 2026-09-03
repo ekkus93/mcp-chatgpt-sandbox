@@ -27,6 +27,7 @@ from enum import StrEnum
 from functools import wraps
 from typing import Any, ClassVar
 
+from docker.errors import APIError
 from mcp.server.mcpserver.exceptions import ToolError as MCPToolError
 
 # --- §31 codes -------------------------------------------------------------
@@ -486,6 +487,21 @@ def to_tool_error(exc: WorkspaceError) -> MCPToolError:
     Applying this once here, universally, covers every one of those call
     sites without touching them individually.
     """
+    # O4 (PMOR-004): a structured WorkspaceError remains the primary
+    # failure.  If its immediate cause is a Docker daemon API error carrying
+    # authoritative ENOSPC explanation evidence, enrich only ``details``.
+    # Generic DockerException text is deliberately ignored.
+    from dev_workspace_mcp.operations.pressure import (
+        classify_docker_storage_failure,
+        enrich_workspace_error,
+    )
+
+    cause = exc.__cause__
+    if isinstance(cause, APIError):
+        pressure = classify_docker_storage_failure(cause)
+        if pressure is not None:
+            enrich_workspace_error(exc, pressure)
+
     payload = exc.to_dict()
     payload["details"] = redact_secrets(payload["details"])
     redacted_message = _redact(payload["message"])
