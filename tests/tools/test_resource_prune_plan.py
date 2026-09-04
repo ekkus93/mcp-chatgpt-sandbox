@@ -144,7 +144,8 @@ def _seed_retained_state(path: Path) -> sqlite3.Connection:
     db = open_db(path)
     with db:
         db.execute(
-            "INSERT INTO repository (id, canonical_path) VALUES ('retained-repo', '/host/private/repo')"
+            "INSERT INTO repository (id, canonical_path) "
+            "VALUES ('retained-repo', '/host/private/repo')"
         )
         db.execute(
             """
