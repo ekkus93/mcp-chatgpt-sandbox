@@ -282,16 +282,12 @@ async def test_o7_plan_filters_are_narrow_and_never_expand_default_eligibility(
         )
     ).structured_content
     assert [candidate["kind"] for candidate in cache_only["candidates"]] == ["cache_volume"]
-    assert [candidate["resource_id"] for candidate in cache_only["candidates"]] == [
-        "cache-orphan"
-    ]
+    assert [candidate["resource_id"] for candidate in cache_only["candidates"]] == ["cache-orphan"]
 
     workspace = (
         await server.call_tool("resource_prune_plan", {"workspace_id": "ws-orphan"})
     ).structured_content
-    assert [candidate["kind"] for candidate in workspace["candidates"]] == [
-        "workspace_container"
-    ]
+    assert [candidate["kind"] for candidate in workspace["candidates"]] == ["workspace_container"]
     assert mutations.calls == []
 
 
