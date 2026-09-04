@@ -28,6 +28,7 @@ REGISTERED_TOOLS = {
     "git_pull",
     "git_push",
     "resource_inventory",
+    "resource_prune_plan",
 }
 
 

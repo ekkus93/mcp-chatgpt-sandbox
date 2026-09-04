@@ -399,7 +399,7 @@ def register(
             workspace_id=request.workspace_id,
             metadata={
                 "dry_run": True,
-                "plan_token": plan.token,
+                "plan_id": plan.token,
                 "candidate_count": len(plan.candidates),
                 "candidates": [
                     {"candidate_id": candidate.candidate_id, "kind": candidate.kind.value}

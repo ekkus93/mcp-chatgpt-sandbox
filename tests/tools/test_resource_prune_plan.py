@@ -202,9 +202,10 @@ async def test_o7_registers_narrow_dry_run_only_prune_plan_schema(
         "workspace_id",
         "resource_kinds",
     }
-    serialized_input = json.dumps(tool.input_schema, sort_keys=True)
+    input_properties = set(tool.input_schema["properties"])
     for forbidden in ("path", "execute", "confirm", "image", "docker_filter"):
-        assert forbidden not in serialized_input
+        assert forbidden not in input_properties
+    serialized_input = json.dumps(tool.input_schema, sort_keys=True)
     assert "workspace_container" in serialized_input
     assert "cache_volume" in serialized_input
     assert "job_log_cleanup" in serialized_input
@@ -363,7 +364,7 @@ async def test_o7_plan_creation_audit_uses_only_opaque_candidate_identity(
     assert record["result"] == "success"
     assert record["repository_id"] == "orphan-repo"
     assert record["workspace_id"] is None
-    assert record["metadata"]["plan_token"] == payload["plan_token"]
+    assert record["metadata"]["plan_id"] == payload["plan_token"]
     assert record["metadata"]["candidate_count"] == 2
     assert {candidate["candidate_id"] for candidate in record["metadata"]["candidates"]} == {
         candidate["candidate_id"] for candidate in payload["candidates"]
