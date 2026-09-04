@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.8.1",
+  "contract_version": "0.9.0",
   "tools": [
     {
       "description": "Delete a repository file or directory (\u00a713.5).",
@@ -2306,6 +2306,347 @@
           "diagnostics_truncated"
         ],
         "title": "ResourceInventoryOutput",
+        "type": "object"
+      }
+    },
+    {
+      "description": "Create an immutable dry-run resource reclamation plan from positively owned eligible resources. Planning never deletes, stops, kills, prunes, or executes.",
+      "input_schema": {
+        "properties": {
+          "repository_id": {
+            "anyOf": [
+              {
+                "description": "Opaque daemon/resource identity; never a host filesystem path.",
+                "maxLength": 512,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Repository Id"
+          },
+          "resource_kinds": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "workspace_container",
+                    "cache_volume",
+                    "job_log_cleanup",
+                    "ssh_agent"
+                  ],
+                  "type": "string"
+                },
+                "maxItems": 4,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resource Kinds"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "description": "Opaque daemon/resource identity; never a host filesystem path.",
+                "maxLength": 512,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Workspace Id"
+          }
+        },
+        "title": "resource_prune_planArguments",
+        "type": "object"
+      },
+      "name": "resource_prune_plan",
+      "output_schema": {
+        "$defs": {
+          "ByteObservationOutput": {
+            "additionalProperties": false,
+            "properties": {
+              "provenance": {
+                "$ref": "#/$defs/ByteProvenance"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Value"
+              }
+            },
+            "required": [
+              "value",
+              "provenance"
+            ],
+            "title": "ByteObservationOutput",
+            "type": "object"
+          },
+          "ByteProvenance": {
+            "enum": [
+              "measured",
+              "accounted",
+              "estimated",
+              "unavailable"
+            ],
+            "title": "ByteProvenance",
+            "type": "string"
+          },
+          "CandidateOwnershipOutput": {
+            "additionalProperties": false,
+            "properties": {
+              "evidence": {
+                "items": {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "maxItems": 8,
+                "title": "Evidence",
+                "type": "array"
+              },
+              "reason": {
+                "maxLength": 512,
+                "title": "Reason",
+                "type": "string"
+              },
+              "status": {
+                "const": "owned",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "evidence",
+              "reason"
+            ],
+            "title": "CandidateOwnershipOutput",
+            "type": "object"
+          },
+          "CandidatePreconditionsOutput": {
+            "additionalProperties": false,
+            "description": "Safe public summary; raw Y2 process identity remains plan-internal.",
+            "properties": {
+              "docker_status": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "exited",
+                      "dead"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Docker Status"
+              },
+              "ssh_agent_boot_id_bound": {
+                "title": "Ssh Agent Boot Id Bound",
+                "type": "boolean"
+              },
+              "ssh_agent_pid": {
+                "anyOf": [
+                  {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Ssh Agent Pid"
+              },
+              "ssh_agent_process_start_time_bound": {
+                "title": "Ssh Agent Process Start Time Bound",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ssh_agent_boot_id_bound",
+              "ssh_agent_process_start_time_bound"
+            ],
+            "title": "CandidatePreconditionsOutput",
+            "type": "object"
+          },
+          "ProjectedBytesOutput": {
+            "additionalProperties": false,
+            "properties": {
+              "complete": {
+                "title": "Complete",
+                "type": "boolean"
+              },
+              "known_bytes": {
+                "minimum": 0,
+                "title": "Known Bytes",
+                "type": "integer"
+              },
+              "unknown_candidate_count": {
+                "minimum": 0,
+                "title": "Unknown Candidate Count",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "known_bytes",
+              "unknown_candidate_count",
+              "complete"
+            ],
+            "title": "ProjectedBytesOutput",
+            "type": "object"
+          },
+          "PruneCandidateOutput": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "enum": [
+                  "remove_exact_container",
+                  "remove_exact_cache_volume",
+                  "retry_job_log_cleanup",
+                  "terminate_exact_ssh_agent"
+                ],
+                "title": "Action",
+                "type": "string"
+              },
+              "bytes": {
+                "$ref": "#/$defs/ByteObservationOutput"
+              },
+              "candidate_id": {
+                "maxLength": 35,
+                "minLength": 35,
+                "pattern": "^pc_[0-9a-f]{32}$",
+                "title": "Candidate Id",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "workspace_container",
+                  "cache_volume",
+                  "job_log_cleanup",
+                  "ssh_agent"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "ownership": {
+                "$ref": "#/$defs/CandidateOwnershipOutput"
+              },
+              "preconditions": {
+                "$ref": "#/$defs/CandidatePreconditionsOutput"
+              },
+              "reason": {
+                "maxLength": 512,
+                "title": "Reason",
+                "type": "string"
+              },
+              "required_lifecycle_state": {
+                "enum": [
+                  "orphaned_owned",
+                  "cleanup_pending"
+                ],
+                "title": "Required Lifecycle State",
+                "type": "string"
+              },
+              "resource_id": {
+                "description": "Opaque daemon/resource identity; never a host filesystem path.",
+                "maxLength": 512,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                "title": "Resource Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "candidate_id",
+              "kind",
+              "resource_id",
+              "reason",
+              "ownership",
+              "required_lifecycle_state",
+              "action",
+              "bytes",
+              "preconditions"
+            ],
+            "title": "PruneCandidateOutput",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Immutable dry-run response; there is no execute field or mode switch.",
+        "properties": {
+          "candidate_count": {
+            "maximum": 256,
+            "minimum": 0,
+            "title": "Candidate Count",
+            "type": "integer"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/$defs/PruneCandidateOutput"
+            },
+            "maxItems": 256,
+            "title": "Candidates",
+            "type": "array"
+          },
+          "dry_run": {
+            "const": true,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "plan_token": {
+            "maxLength": 67,
+            "minLength": 67,
+            "pattern": "^pp_[0-9a-f]{64}$",
+            "title": "Plan Token",
+            "type": "string"
+          },
+          "projected_bytes": {
+            "$ref": "#/$defs/ProjectedBytesOutput"
+          }
+        },
+        "required": [
+          "dry_run",
+          "plan_token",
+          "candidate_count",
+          "candidates",
+          "projected_bytes"
+        ],
+        "title": "ResourcePrunePlanOutput",
         "type": "object"
       }
     },
