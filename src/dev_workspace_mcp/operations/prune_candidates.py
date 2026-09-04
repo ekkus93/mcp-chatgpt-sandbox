@@ -108,12 +108,7 @@ def _preconditions(resource: InventoryResource) -> Mapping[str, PreconditionValu
         pid = _positive_int(resource.details.get("pid"))
         boot_id = resource.details.get("boot_id")
         process_start_time = _nonnegative_int(resource.details.get("process_start_time"))
-        if (
-            pid is None
-            or not isinstance(boot_id, str)
-            or not boot_id
-            or process_start_time is None
-        ):
+        if pid is None or not isinstance(boot_id, str) or not boot_id or process_start_time is None:
             return None
         return MappingProxyType(
             {
