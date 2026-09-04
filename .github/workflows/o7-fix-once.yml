@@ -1,0 +1,61 @@
+name: O7 fix once
+
+on:
+  push:
+    branches:
+      - post-mvp/o7-resource-prune-plan
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: [self-hosted, mcp-chatgpt-sandbox]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: post-mvp/o7-resource-prune-plan
+          fetch-depth: 0
+      - name: Apply exact O7 fixes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          server = Path('tests/test_server.py')
+          text = server.read_text()
+          old = '    "resource_inventory",\n}'
+          new = '    "resource_inventory",\n    "resource_prune_plan",\n}'
+          if old not in text:
+              raise SystemExit('expected REGISTERED_TOOLS anchor missing')
+          server.write_text(text.replace(old, new, 1))
+
+          test = Path('tests/tools/test_resource_prune_plan.py')
+          text = test.read_text()
+          old = '''    serialized_input = json.dumps(tool.input_schema, sort_keys=True)\n    for forbidden in ("path", "execute", "confirm", "image", "docker_filter"):\n        assert forbidden not in serialized_input\n'''
+          new = '''    input_properties = set(tool.input_schema["properties"])\n    for forbidden in ("path", "execute", "confirm", "image", "docker_filter"):\n        assert forbidden not in input_properties\n    serialized_input = json.dumps(tool.input_schema, sort_keys=True)\n'''
+          if old not in text:
+              raise SystemExit('expected schema assertion anchor missing')
+          text = text.replace(old, new, 1)
+          old = '    assert record["metadata"]["plan_token"] == payload["plan_token"]\n'
+          new = '    assert record["metadata"]["plan_id"] == payload["plan_token"]\n'
+          if old not in text:
+              raise SystemExit('expected audit assertion anchor missing')
+          test.write_text(text.replace(old, new, 1))
+
+          prune = Path('src/dev_workspace_mcp/tools/prune.py')
+          text = prune.read_text()
+          old = '                "plan_token": plan.token,\n'
+          new = '                "plan_id": plan.token,\n'
+          if old not in text:
+              raise SystemExit('expected audit metadata anchor missing')
+          prune.write_text(text.replace(old, new, 1))
+          PY
+          git diff --check
+      - name: Commit exact fixes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/test_server.py tests/tools/test_resource_prune_plan.py src/dev_workspace_mcp/tools/prune.py
+          git commit -m "fix: close O7 public-surface regressions"
+          git push origin HEAD:post-mvp/o7-resource-prune-plan
