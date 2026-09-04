@@ -554,6 +554,7 @@ class ResourceInventoryService:
         rows = self._bounded_rows(
             """
             SELECT ssh_agent.workspace_id, ssh_agent.pid,
+                   ssh_agent.boot_id, ssh_agent.process_start_time,
                    CASE WHEN workspace.id IS NULL THEN 0 ELSE 1 END AS workspace_present
             FROM ssh_agent
             LEFT JOIN workspace ON workspace.id = ssh_agent.workspace_id
@@ -577,7 +578,11 @@ class ResourceInventoryService:
                     ownership=_owned_state_proof("durable ssh_agent row"),
                     bytes=ByteObservation.unavailable("ssh-agent byte size is not meaningful"),
                     workspace_id=row["workspace_id"],
-                    details={"pid": int(row["pid"])},
+                    details={
+                        "pid": int(row["pid"]),
+                        "boot_id": row["boot_id"],
+                        "process_start_time": row["process_start_time"],
+                    },
                 )
             )
 
