@@ -13,7 +13,6 @@ import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TypeAlias
 
 from dev_workspace_mcp.operations.inventory import (
     ByteObservation,
@@ -27,8 +26,8 @@ from dev_workspace_mcp.operations.resources import (
     ResourceLifecycleState,
 )
 
-PruneAction: TypeAlias = str
-PreconditionValue: TypeAlias = str | int | bool | None
+type PruneAction = str
+type PreconditionValue = str | int | bool | None
 
 
 @dataclass(frozen=True, slots=True)
