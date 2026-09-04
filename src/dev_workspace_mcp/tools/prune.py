@@ -13,7 +13,7 @@ import re
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 import docker
 from docker.errors import DockerException
@@ -212,11 +212,18 @@ def _byte_output(observation: ByteObservation) -> ByteObservationOutput:
 
 def _preconditions_output(candidate: PruneCandidate) -> CandidatePreconditionsOutput:
     docker_status_raw = candidate.preconditions.get("docker_status")
-    docker_status: Literal["exited", "dead"] | None = (
-        docker_status_raw if docker_status_raw in {"exited", "dead"} else None
-    )
+    if docker_status_raw == "exited":
+        docker_status: Literal["exited", "dead"] | None = "exited"
+    elif docker_status_raw == "dead":
+        docker_status = "dead"
+    else:
+        docker_status = None
     pid_raw = candidate.preconditions.get("pid")
-    pid = pid_raw if isinstance(pid_raw, int) and not isinstance(pid_raw, bool) and pid_raw > 0 else None
+    pid = (
+        pid_raw
+        if isinstance(pid_raw, int) and not isinstance(pid_raw, bool) and pid_raw > 0
+        else None
+    )
     boot_id = candidate.preconditions.get("boot_id")
     process_start_time = candidate.preconditions.get("process_start_time")
     return CandidatePreconditionsOutput(
@@ -234,7 +241,7 @@ def _preconditions_output(candidate: PruneCandidate) -> CandidatePreconditionsOu
 def _candidate_output(candidate: PruneCandidate) -> PruneCandidateOutput:
     return PruneCandidateOutput(
         candidate_id=candidate.candidate_id,
-        kind=candidate.kind.value,
+        kind=cast(PlanResourceKind, candidate.kind.value),
         resource_id=_public_opaque_id(candidate.resource_id),
         reason=candidate.reason,
         ownership=CandidateOwnershipOutput(
@@ -242,8 +249,10 @@ def _candidate_output(candidate: PruneCandidate) -> PruneCandidateOutput:
             evidence=[_public_evidence(value) for value in candidate.ownership.evidence],
             reason=candidate.ownership.reason,
         ),
-        required_lifecycle_state=candidate.required_lifecycle_state.value,
-        action=candidate.action,
+        required_lifecycle_state=cast(
+            PlanLifecycleState, candidate.required_lifecycle_state.value
+        ),
+        action=cast(PlanAction, candidate.action),
         bytes=_byte_output(candidate.bytes),
         preconditions=_preconditions_output(candidate),
     )
