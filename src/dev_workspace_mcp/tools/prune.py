@@ -249,9 +249,7 @@ def _candidate_output(candidate: PruneCandidate) -> PruneCandidateOutput:
             evidence=[_public_evidence(value) for value in candidate.ownership.evidence],
             reason=candidate.ownership.reason,
         ),
-        required_lifecycle_state=cast(
-            PlanLifecycleState, candidate.required_lifecycle_state.value
-        ),
+        required_lifecycle_state=cast(PlanLifecycleState, candidate.required_lifecycle_state.value),
         action=cast(PlanAction, candidate.action),
         bytes=_byte_output(candidate.bytes),
         preconditions=_preconditions_output(candidate),
