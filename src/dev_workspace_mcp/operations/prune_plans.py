@@ -213,14 +213,10 @@ def revalidate_prune_plan(
         for candidate in plan.candidates
     )
     valid = tuple(
-        decision.candidate
-        for decision in decisions
-        if decision.status is RevalidationStatus.VALID
+        decision.candidate for decision in decisions if decision.status is RevalidationStatus.VALID
     )
     stale = tuple(
-        decision.candidate
-        for decision in decisions
-        if decision.status is RevalidationStatus.STALE
+        decision.candidate for decision in decisions if decision.status is RevalidationStatus.STALE
     )
     return PrunePlanRevalidation(
         decisions=decisions,
