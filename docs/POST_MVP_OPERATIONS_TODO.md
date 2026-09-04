@@ -2,7 +2,7 @@
 
 **Spec:** `docs/POST_MVP_OPERATIONS_SPEC.md` (`PMOR-001`..`PMOR-012`, `PMOAT-001`..`PMOAT-012`)
 
-**Status:** open — O1-O5 complete; O6-O12 remain
+**Status:** open — O1-O6 complete; O7-O12 remain
 
 This TODO deliberately starts read-only and moves the destructive boundary later. Do not implement prune execution before the inventory/ownership model and dry-run plan are independently tested.
 
@@ -170,15 +170,27 @@ Do not skip directly to O8. A safe prune executor depends on the ownership/inven
 
 **Satisfies:** PMOR-006, PMOR-007 · **Verified by:** PMOAT-006, PMOAT-007
 
-- [ ] Define plan identifier/token bound to exact candidates and material preconditions
-- [ ] Persist plans only if needed; if persisted, define bounded retention and restart behavior
-- [ ] Never silently recompute/expand an old plan at execute time
-- [ ] Revalidate each candidate immediately before destruction
-- [ ] Mark changed/active/unprovable candidates stale/skipped
-- [ ] Permit independently valid candidates to proceed only with explicit mixed-result reporting
-- [ ] Add race test: candidate becomes active after planning
-- [ ] Add identity-change test: label/resource identity changes after planning
-- [ ] Add unknown-ownership test that fails closed
+- [x] Define plan identifier/token bound to exact candidates and material preconditions
+- [x] Persist plans only if needed; if persisted, define bounded retention and restart behavior
+- [x] Never silently recompute/expand an old plan at execute time
+- [x] Revalidate each candidate immediately before destruction
+- [x] Mark changed/active/unprovable candidates stale/skipped
+- [x] Permit independently valid candidates to proceed only with explicit mixed-result reporting
+- [x] Add race test: candidate becomes active after planning
+- [x] Add identity-change test: label/resource identity changes after planning
+- [x] Add unknown-ownership test that fails closed
+
+**O6 completion evidence:**
+
+- PMOAT-007 clean pre-feature RED: Actions run `33869101421` on test-only head `2539134ebba8be3766e8e92aa1340bcea8908baf` passed Docker build, Ruff format/lint, mypy, MCP contract, contract-version, and docs drift, then failed exactly the ten new O6 acceptance cases because `dev_workspace_mcp.operations.prune_plans` did not exist; every unrelated test remained green (`10 failed, 1154 passed in 624.32s`). This is the direct revert/pre-feature proof for O6.
+- Implementation: `operations/prune_plans.py` freezes the exact O5 candidate set behind a deterministic opaque `pp_<sha256>` token whose canonical digest covers candidate identity, reason/action, ownership proof, required lifecycle state, byte provenance/value, repository/workspace scope, and sorted material preconditions. Duplicate planned identities fail closed rather than creating an ambiguous authorization boundary.
+- Plan lifetime is intentionally ephemeral rather than durable: `PrunePlanStore` is bounded in memory (hard ceiling 256; bounded configurable capacity), evicts oldest entries when full, and a daemon restart forgets every token. Unknown/expired tokens raise `PlanNotFoundError`; callers must explicitly create a fresh plan instead of silently reconstructing old authorization from current inventory.
+- Revalidation never calls candidate discovery over the whole fresh inventory and never appends newly eligible resources. It indexes the fresh snapshot only to look up identities already frozen in the plan, so execute-time scope cannot expand. Every planned candidate receives an explicit `valid` or `stale` decision and the aggregate reports valid/stale tuples plus `mixed` when independent candidates diverge.
+- Fail-closed stale semantics cover candidate-becomes-active/lifecycle races, foreign ownership, unknown/unprovable ownership, repository/workspace scope changes, ownership-evidence changes, material precondition changes, duplicate fresh identity, and missing-resource ambiguity. A resource is reported `resource_absent` only when the fresh inventory is complete; a missing candidate in incomplete/truncated inventory is `inventory_incomplete`, not a fabricated absence proof.
+- O6 remains an internal planning boundary only; it adds no MCP tool or public output field, so the existing MCP contract/schema and `contract_version` correctly remain unchanged. O7 owns public dry-run exposure.
+- Superseded non-behavioral implementation run `33870040074` stopped at Ruff formatting before lint, mypy, contracts, or pytest and is not acceptance evidence. Commit `315aa8a808b20b15f60bb17045478e134b36e081` applied only Ruff's requested formatting normalization after the implementation commit.
+- Final implementation GREEN: Actions run `33870108969`, job `101013785834`, on exact branch head `315aa8a808b20b15f60bb17045478e134b36e081` passed Docker build, Ruff format/lint, mypy (`68 source files`), MCP contract, contract-version, docs drift, and the complete Docker-backed suite: `1164 passed in 625.06s` with 93% overall coverage.
+- Revert/pre-feature verification is the clean test-only RED `33869101421`: removing the O6 implementation restores exactly the ten PMOAT-007 failures while the prior 1154-test baseline remains green.
 
 ### O7 — Expose `resource_prune_plan` as dry-run only
 
