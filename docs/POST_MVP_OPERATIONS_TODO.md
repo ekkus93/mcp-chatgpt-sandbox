@@ -2,7 +2,7 @@
 
 **Spec:** `docs/POST_MVP_OPERATIONS_SPEC.md` (`PMOR-001`..`PMOR-012`, `PMOAT-001`..`PMOAT-012`)
 
-**Status:** open — O1-O4 complete; O5-O12 remain
+**Status:** open — O1-O5 complete; O6-O12 remain
 
 This TODO deliberately starts read-only and moves the destructive boundary later. Do not implement prune execution before the inventory/ownership model and dry-run plan are independently tested.
 
@@ -147,13 +147,24 @@ Do not skip directly to O8. A safe prune executor depends on the ownership/inven
 
 **Satisfies:** PMOR-006 · **Verified by:** PMOAT-006
 
-- [ ] Define which lifecycle states are eligible for explicit reclamation in this workstream
-- [ ] Exclude `active`, `foreign`, and `unknown/degraded` resources
-- [ ] Produce per-candidate reason, ownership evidence, lifecycle preconditions, and expected action
-- [ ] Include accounted/estimated bytes where known without fabricating measurements
-- [ ] Keep Docker image deletion out of initial candidates
-- [ ] Prove candidate construction is read-only
-- [ ] Prove healthy retained resources are not accidentally eligible unless the spec explicitly permits that kind
+- [x] Define which lifecycle states are eligible for explicit reclamation in this workstream
+- [x] Exclude `active`, `foreign`, and `unknown/degraded` resources
+- [x] Produce per-candidate reason, ownership evidence, lifecycle preconditions, and expected action
+- [x] Include accounted/estimated bytes where known without fabricating measurements
+- [x] Keep Docker image deletion out of initial candidates
+- [x] Prove candidate construction is read-only
+- [x] Prove healthy retained resources are not accidentally eligible unless the spec explicitly permits that kind
+
+**O5 completion evidence:**
+
+- PMOAT-006 initial RED: Actions run `33740510473` cleared Docker build, Ruff format/lint, mypy, MCP contract, contract-version, and docs drift, then failed exactly the seven new O5 acceptance cases because `dev_workspace_mcp.operations.prune_candidates` did not exist (`7 failed, 1146 passed`). This is the clean pre-feature/revert proof for deterministic candidate construction.
+- SSH-identity hardening RED: Actions run `33741713552` again cleared every non-test gate, then failed exactly eight O5 cases (`8 failed, 1146 passed`): the original seven missing-builder cases plus the production inventory handoff dropping the Y2 SSH-agent `boot_id`/`process_start_time` identity. This proves O5 cannot silently degrade SSH-agent ownership to PID-only identity.
+- Implementation: `operations/prune_candidates.py` is a pure snapshot-only builder over `ResourceInventoryResult`; it has no Docker, filesystem, process, or state mutation dependency. It emits only explicitly supported positively owned candidates in exact reclaimable lifecycle states, uses deterministic opaque `pc_<sha256-prefix>` IDs, preserves ownership proof and byte value/provenance, records exact future action and material preconditions, sorts deterministically, and fails closed on duplicate candidate identity.
+- Eligibility is intentionally conservative: orphaned owned workspace containers are eligible only when observed `exited`/`dead`; orphaned owned cache volumes are eligible; durable `cleanup_pending` job-log debt is eligible for exact retry; orphaned owned SSH agents are eligible only with PID + boot ID + process-start-time. `active`, healthy `retained`, `foreign`, `unknown/degraded`, physically running/ambiguous orphan containers, unsupported kinds, and Docker images are omitted rather than guessed into a reclaim action.
+- Internal SSH-agent inventory now carries the Y2 durable process identity needed by later plan/execution revalidation while the existing public `resource_inventory` metadata allowlist remains unchanged, so O5 adds no new host-path/identity disclosure and requires no MCP contract bump.
+- Superseded non-behavioral implementation runs `33857321769` and its predecessor stopped at Ruff formatting only and are not acceptance evidence; the final formatting-only fix did not alter O5 semantics.
+- Final GREEN: Actions run `33858085926` on exact O5 head `da54317f1f34d0ac75948251c16ad77867fa9413` passed Docker build, Ruff format/lint, mypy (`67 source files`), MCP contract, contract-version, docs drift, and the complete Docker-backed suite: `1154 passed in 639.54s` with 92% overall coverage.
+- Revert/pre-feature verification is represented by the clean RED `33740510473` plus the stronger inventory-identity RED `33741713552`; both failed only O5 behavior subsequently supplied by this task while unrelated gates/tests remained green.
 
 ### O6 — Add immutable/stale-aware prune plans
 
