@@ -320,6 +320,7 @@ async def test_o7_candidate_projection_preserves_bytes_and_safe_preconditions(
         "ssh_agent_pid": None,
         "ssh_agent_boot_id_bound": False,
         "ssh_agent_process_start_time_bound": False,
+        "ssh_agent_cleanup_identity_bound": False,
     }
 
     volume = by_kind["cache_volume"]
