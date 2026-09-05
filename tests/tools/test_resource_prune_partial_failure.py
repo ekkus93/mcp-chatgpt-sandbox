@@ -278,9 +278,12 @@ async def test_o9_cleanup_retry_refuses_replaced_socket_identity(
     assert result["outcomes"][0]["status"] == "failed"
     assert result["outcomes"][0]["reason"] == "identity_changed"
     assert socket_path.read_bytes() == b"foreign-replacement-sentinel"
-    assert db.execute(
-        "SELECT 1 FROM ssh_agent_cleanup WHERE workspace_id = ?", (workspace_id,)
-    ).fetchone() is not None
+    assert (
+        db.execute(
+            "SELECT 1 FROM ssh_agent_cleanup WHERE workspace_id = ?", (workspace_id,)
+        ).fetchone()
+        is not None
+    )
 
 
 def test_o9_cleanup_debt_schema_persists_identity_not_host_path(
