@@ -19,7 +19,7 @@ def _table_names(connection: sqlite3.Connection) -> set[str]:
     return {row["name"] for row in rows}
 
 
-def test_open_db_creates_all_six_tables() -> None:
+def test_open_db_creates_all_seven_tables() -> None:
     connection = open_db(":memory:")
     assert _table_names(connection) == {
         "repository",
@@ -28,6 +28,7 @@ def test_open_db_creates_all_six_tables() -> None:
         "audit_event",
         "ssh_agent",
         "job_log_cleanup",
+        "ssh_agent_cleanup",
     }
 
 
