@@ -49,10 +49,15 @@ def _owned_resource(
     bytes_observation: ByteObservation | None = None,
     evidence: tuple[str, ...] = ("durable owned fixture",),
 ) -> InventoryResource:
+    lifecycle_state = (
+        ResourceLifecycleState.CLEANUP_PENDING
+        if kind in {ResourceKind.JOB_LOG_CLEANUP, ResourceKind.SSH_AGENT_CLEANUP}
+        else ResourceLifecycleState.RETAINED
+    )
     return InventoryResource(
         kind=kind,
         resource_id=resource_id,
-        lifecycle_state=ResourceLifecycleState.RETAINED,
+        lifecycle_state=lifecycle_state,
         ownership=OwnershipProof(
             status=OwnershipStatus.OWNED,
             evidence=evidence,
