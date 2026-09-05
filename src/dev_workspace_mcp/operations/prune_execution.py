@@ -473,7 +473,10 @@ class PruneExecutionService:
             kind=ResourceKind.SSH_AGENT_CLEANUP,
             resource_id=debt.workspace_id,
             lifecycle_state=ResourceLifecycleState.CLEANUP_PENDING,
-            ownership=_owned_state_proof("durable ssh_agent_cleanup tombstone row"),
+            ownership=_owned_state_proof(
+                "durable ssh_agent_cleanup tombstone row",
+                "socket target is reconstructed beneath configured state_dir",
+            ),
             bytes=bytes_observation,
             workspace_id=debt.workspace_id,
             details={
