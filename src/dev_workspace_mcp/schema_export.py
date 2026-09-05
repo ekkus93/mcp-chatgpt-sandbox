@@ -102,7 +102,10 @@ async def export_schemas(
 ) -> str:
     """Writes the schema document to `out_path` (creating parent
     directories as needed) and returns the content written."""
-    content = render_schema_document(await collect_tool_schemas(server), contract_version=contract_version)
+    content = render_schema_document(
+        await collect_tool_schemas(server),
+        contract_version=contract_version,
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(content, encoding="utf-8")
     return content
