@@ -130,7 +130,9 @@ def _pid_health() -> PidOperationalHealthOutput:
     pressure: Literal["normal", "pressured", "unknown"]
     if observation.unlimited is True:
         pressure = "normal"
-    elif observation.current is not None and observation.limit is not None and observation.limit > 0:
+    elif (
+        observation.current is not None and observation.limit is not None and observation.limit > 0
+    ):
         utilization_percent = round((observation.current * 100.0) / observation.limit, 2)
         pressure = (
             "pressured" if utilization_percent >= _PID_PRESSURE_UTILIZATION_PERCENT else "normal"
