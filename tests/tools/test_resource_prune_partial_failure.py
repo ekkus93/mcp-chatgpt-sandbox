@@ -25,6 +25,7 @@ async def test_pmoat_010_partial_secondary_cleanup_is_durable_accounted_and_retr
 
     socket_path.parent.mkdir(parents=True, exist_ok=True)
     socket_path.write_bytes(socket_payload)
+    original_socket_stat = socket_path.lstat()
     job_dir.mkdir(parents=True, exist_ok=True)
     (job_dir / "stdout.log").write_bytes(b"job-log")
 
@@ -95,7 +96,7 @@ async def test_pmoat_010_partial_secondary_cleanup_is_durable_accounted_and_retr
 
     debt = db.execute(
         """
-        SELECT workspace_id, bytes_hint, last_error
+        SELECT workspace_id, bytes_hint, last_error, socket_device, socket_inode
         FROM ssh_agent_cleanup
         WHERE workspace_id = ?
         """,
@@ -105,6 +106,8 @@ async def test_pmoat_010_partial_secondary_cleanup_is_durable_accounted_and_retr
     assert debt["workspace_id"] == workspace_id
     assert debt["bytes_hint"] == len(socket_payload)
     assert debt["last_error"] is not None
+    assert debt["socket_device"] == original_socket_stat.st_dev
+    assert debt["socket_inode"] == original_socket_stat.st_ino
 
     inventory = (await server.call_tool("resource_inventory", {})).structured_content
     cleanup_resources = [
@@ -146,17 +149,21 @@ async def test_pmoat_010_partial_secondary_cleanup_is_durable_accounted_and_retr
     # recreate debt, then prove a fresh cleanup-specific plan can reclaim it.
     socket_path.parent.mkdir(parents=True, exist_ok=True)
     socket_path.write_bytes(socket_payload)
+    retry_socket_stat = socket_path.lstat()
     db.execute(
         """
         INSERT INTO ssh_agent_cleanup
-            (workspace_id, created_at, last_attempt_at, last_error, bytes_hint)
-        VALUES (?, ?, NULL, ?, ?)
+            (workspace_id, created_at, last_attempt_at, last_error, bytes_hint,
+             socket_device, socket_inode)
+        VALUES (?, ?, NULL, ?, ?, ?, ?)
         """,
         (
             workspace_id,
             "2026-09-05T00:01:00+00:00",
             "forced persisted debt",
             len(socket_payload),
+            retry_socket_stat.st_dev,
+            retry_socket_stat.st_ino,
         ),
     )
     db.commit()
@@ -170,6 +177,7 @@ async def test_pmoat_010_partial_secondary_cleanup_is_durable_accounted_and_retr
     assert retry_plan["candidate_count"] == 1
     assert retry_plan["candidates"][0]["kind"] == "ssh_agent_cleanup"
     assert retry_plan["candidates"][0]["bytes"]["value"] == len(socket_payload)
+    assert retry_plan["candidates"][0]["preconditions"]["ssh_agent_cleanup_identity_bound"] is True
 
     retry = (
         await server.call_tool(
@@ -206,6 +214,75 @@ async def test_pmoat_010_partial_secondary_cleanup_is_durable_accounted_and_retr
     assert final_inventory["cleanup_debt"]["count"] == 0
 
 
+async def test_o9_cleanup_retry_refuses_replaced_socket_identity(
+    minimal_config: ServerConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_dir = minimal_config.state_db_path.parent
+    workspace_id = "ws-o9-replaced-socket"
+    socket_path = state_dir / "ssh-agents" / workspace_id / "agent.sock"
+    replacement_path = socket_path.with_name("replacement.sock")
+    socket_path.parent.mkdir(parents=True, exist_ok=True)
+    socket_path.write_bytes(b"original-owned-artifact")
+    original_stat = socket_path.lstat()
+    replacement_path.write_bytes(b"foreign-replacement-sentinel")
+    replacement_stat = replacement_path.lstat()
+    assert (original_stat.st_dev, original_stat.st_ino) != (
+        replacement_stat.st_dev,
+        replacement_stat.st_ino,
+    )
+
+    db = open_db(minimal_config.state_db_path)
+    db.execute(
+        """
+        INSERT INTO ssh_agent_cleanup
+            (workspace_id, created_at, last_attempt_at, last_error, bytes_hint,
+             socket_device, socket_inode)
+        VALUES (?, ?, NULL, ?, ?, ?, ?)
+        """,
+        (
+            workspace_id,
+            "2026-09-05T00:02:00+00:00",
+            "pending retry",
+            original_stat.st_size,
+            original_stat.st_dev,
+            original_stat.st_ino,
+        ),
+    )
+    db.commit()
+
+    socket_path.unlink()
+    replacement_path.rename(socket_path)
+    assert socket_path.read_bytes() == b"foreign-replacement-sentinel"
+
+    monkeypatch.setattr("dev_workspace_mcp.server._try_docker_client", lambda: None)
+    server = create_server(minimal_config)
+    plan = (
+        await server.call_tool(
+            "resource_prune_plan",
+            {"resource_kinds": ["ssh_agent_cleanup"]},
+        )
+    ).structured_content
+    assert plan["candidate_count"] == 1
+
+    result = (
+        await server.call_tool(
+            "resource_prune_execute",
+            {"plan_token": plan["plan_token"], "confirm": True},
+        )
+    ).structured_content
+
+    assert result["status"] == "degraded"
+    assert result["reclaimed_count"] == 0
+    assert result["failed_count"] == 1
+    assert result["outcomes"][0]["status"] == "failed"
+    assert result["outcomes"][0]["reason"] == "identity_changed"
+    assert socket_path.read_bytes() == b"foreign-replacement-sentinel"
+    assert db.execute(
+        "SELECT 1 FROM ssh_agent_cleanup WHERE workspace_id = ?", (workspace_id,)
+    ).fetchone() is not None
+
+
 def test_o9_cleanup_debt_schema_persists_identity_not_host_path(
     minimal_config: ServerConfig,
 ) -> None:
@@ -220,6 +297,8 @@ def test_o9_cleanup_debt_schema_persists_identity_not_host_path(
         "last_attempt_at",
         "last_error",
         "bytes_hint",
+        "socket_device",
+        "socket_inode",
     }
     assert "socket_path" not in columns
     assert columns["workspace_id"]["pk"] == 1
