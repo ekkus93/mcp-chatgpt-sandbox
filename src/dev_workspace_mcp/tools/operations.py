@@ -1,4 +1,4 @@
-"""Read-only operational resource tooling (Post-MVP Operations O3).
+"""Read-only operational resource tooling (Post-MVP Operations O3/O9).
 
 The public MCP shape is intentionally narrower than the internal inventory
 objects. It accepts only opaque repository/workspace IDs and serializes an
@@ -35,6 +35,9 @@ from dev_workspace_mcp.operations.resources import (
     OwnershipStatus,
     ResourceKind,
     ResourceLifecycleState,
+)
+from dev_workspace_mcp.operations.ssh_agent_cleanup import (
+    augment_inventory_with_ssh_agent_cleanup_debt,
 )
 from dev_workspace_mcp.workspace.naming import (
     LABEL_REPOSITORY_ID,
@@ -363,7 +366,11 @@ def _cleanup_debt_summary(
     *,
     complete: bool,
 ) -> CleanupDebtSummaryOutput:
-    debt = [resource for resource in resources if resource.kind is ResourceKind.JOB_LOG_CLEANUP]
+    debt = [
+        resource
+        for resource in resources
+        if resource.lifecycle_state is ResourceLifecycleState.CLEANUP_PENDING
+    ]
     values = [resource.bytes.value for resource in debt]
     bytes_complete = all(value is not None for value in values)
     if bytes_complete:
@@ -459,7 +466,7 @@ def register(
     docker_client: docker.DockerClient | None,
     state_db_path: Path,
 ) -> None:
-    """Register O3's bounded read-only operational inventory tool."""
+    """Register O3/O9's bounded read-only operational inventory tool."""
 
     @server.tool(
         name="resource_inventory",
@@ -498,6 +505,11 @@ def register(
                 max_diagnostics=request.max_diagnostics,
             ),
         ).collect()
+        result = augment_inventory_with_ssh_agent_cleanup_debt(
+            db,
+            result,
+            max_diagnostics=request.max_diagnostics,
+        )
         return _result_output(
             result,
             db=db,
