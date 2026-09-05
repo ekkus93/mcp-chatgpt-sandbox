@@ -88,9 +88,10 @@ async def test_pmoat_010_partial_secondary_cleanup_is_durable_accounted_and_retr
     assert outcomes["ssh_agent"]["reason"] == "secondary_cleanup_failed"
     assert not job_dir.exists()
     assert socket_path.exists()
-    assert db.execute(
-        "SELECT 1 FROM ssh_agent WHERE workspace_id = ?", (workspace_id,)
-    ).fetchone() is None
+    assert (
+        db.execute("SELECT 1 FROM ssh_agent WHERE workspace_id = ?", (workspace_id,)).fetchone()
+        is None
+    )
 
     debt = db.execute(
         """
@@ -107,9 +108,7 @@ async def test_pmoat_010_partial_secondary_cleanup_is_durable_accounted_and_retr
 
     inventory = (await server.call_tool("resource_inventory", {})).structured_content
     cleanup_resources = [
-        resource
-        for resource in inventory["resources"]
-        if resource["kind"] == "ssh_agent_cleanup"
+        resource for resource in inventory["resources"] if resource["kind"] == "ssh_agent_cleanup"
     ]
     assert len(cleanup_resources) == 1
     assert cleanup_resources[0]["resource_id"] == workspace_id
@@ -136,9 +135,12 @@ async def test_pmoat_010_partial_secondary_cleanup_is_durable_accounted_and_retr
     assert original_retry["reclaimed_count"] == 1
     assert original_retry["already_absent_count"] == 1
     assert not socket_path.exists()
-    assert db.execute(
-        "SELECT 1 FROM ssh_agent_cleanup WHERE workspace_id = ?", (workspace_id,)
-    ).fetchone() is None
+    assert (
+        db.execute(
+            "SELECT 1 FROM ssh_agent_cleanup WHERE workspace_id = ?", (workspace_id,)
+        ).fetchone()
+        is None
+    )
 
     # Durable retry must also survive loss of the original authorization token:
     # recreate debt, then prove a fresh cleanup-specific plan can reclaim it.
@@ -179,9 +181,12 @@ async def test_pmoat_010_partial_secondary_cleanup_is_durable_accounted_and_retr
     assert retry["reclaimed_count"] == 1
     assert retry["failed_count"] == 0
     assert not socket_path.exists()
-    assert db.execute(
-        "SELECT 1 FROM ssh_agent_cleanup WHERE workspace_id = ?", (workspace_id,)
-    ).fetchone() is None
+    assert (
+        db.execute(
+            "SELECT 1 FROM ssh_agent_cleanup WHERE workspace_id = ?", (workspace_id,)
+        ).fetchone()
+        is None
+    )
 
     repeated = (
         await server.call_tool(
@@ -196,8 +201,7 @@ async def test_pmoat_010_partial_secondary_cleanup_is_durable_accounted_and_retr
 
     final_inventory = (await server.call_tool("resource_inventory", {})).structured_content
     assert not any(
-        resource["kind"] == "ssh_agent_cleanup"
-        for resource in final_inventory["resources"]
+        resource["kind"] == "ssh_agent_cleanup" for resource in final_inventory["resources"]
     )
     assert final_inventory["cleanup_debt"]["count"] == 0
 
@@ -207,8 +211,7 @@ def test_o9_cleanup_debt_schema_persists_identity_not_host_path(
 ) -> None:
     db = open_db(minimal_config.state_db_path)
     columns = {
-        row["name"]: row
-        for row in db.execute("PRAGMA table_info(ssh_agent_cleanup)").fetchall()
+        row["name"]: row for row in db.execute("PRAGMA table_info(ssh_agent_cleanup)").fetchall()
     }
 
     assert set(columns) == {
