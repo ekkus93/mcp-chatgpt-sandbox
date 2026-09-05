@@ -124,10 +124,14 @@ def _preconditions(resource: InventoryResource) -> Mapping[str, PreconditionValu
         )
 
     if resource.kind is ResourceKind.SSH_AGENT_CLEANUP:
+        socket_device = _nonnegative_int(resource.details.get("socket_device"))
+        socket_inode = _nonnegative_int(resource.details.get("socket_inode"))
+        if socket_device is None or socket_inode is None:
+            return None
         return MappingProxyType(
             {
-                "socket_device": _nonnegative_int(resource.details.get("socket_device")),
-                "socket_inode": _nonnegative_int(resource.details.get("socket_inode")),
+                "socket_device": socket_device,
+                "socket_inode": socket_inode,
             }
         )
 
