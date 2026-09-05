@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 import docker
 from pydantic import BaseModel, ConfigDict, Field
@@ -159,7 +159,7 @@ def get_operational_health(
     state_db_path: Path,
 ) -> OperationalHealthOutput:
     """Return one bounded, mutation-free operational health snapshot."""
-    inventory_docker = (
+    inventory_docker: Any = (
         operations_tools._DockerInventoryAdapter(docker_client)
         if docker_client is not None
         else operations_tools._UnavailableDocker()
