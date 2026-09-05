@@ -29,6 +29,10 @@ from dev_workspace_mcp.jobs.retention import (
 )
 from dev_workspace_mcp.jobs.store import NON_TERMINAL_STATES, TERMINAL_STATES, JobStore
 from dev_workspace_mcp.logging_config import redacted_extra
+from dev_workspace_mcp.operations.ssh_agent_cleanup import (
+    attempt_ssh_agent_cleanup,
+    list_ssh_agent_cleanup_debt,
+)
 from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
 from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager
 
@@ -166,6 +170,7 @@ class MaintenanceScheduler:
 
             self._run_idle_sweep(failures, manager=manager, job_store=job_store, db=db)
             self._run_job_log_maintenance(failures, job_store=job_store, db=db)
+            self._run_ssh_agent_cleanup_maintenance(failures, db=db)
             self._finish_cycle(failures)
         finally:
             if docker_client is not None:
@@ -300,6 +305,39 @@ class MaintenanceScheduler:
         except Exception as exc:  # noqa: BLE001 - isolate retention from idle maintenance
             _logger.exception("maintenance: job-log retention failed")
             failures.append(("job_log_retention", None, _safe_reason(exc)))
+
+    def _run_ssh_agent_cleanup_maintenance(
+        self,
+        failures: list[tuple[str, str | None, str]],
+        *,
+        db: sqlite3.Connection,
+    ) -> None:
+        """Retry only exact durable O9 secondary-cleanup tombstones."""
+        try:
+            debts = list_ssh_agent_cleanup_debt(db)
+        except Exception as exc:  # noqa: BLE001 - isolate this maintenance family
+            _logger.exception("maintenance: failed to list SSH-agent cleanup debt")
+            failures.append(("ssh_agent_cleanup_debt", None, _safe_reason(exc)))
+            return
+
+        for debt in debts:
+            try:
+                failure = attempt_ssh_agent_cleanup(
+                    db,
+                    state_dir=self._config.state_db_path.parent,
+                    debt=debt,
+                )
+            except Exception as exc:  # noqa: BLE001 - one debt item must not block the cycle
+                _logger.exception(
+                    "maintenance: SSH-agent cleanup retry failed unexpectedly for %s",
+                    debt.workspace_id,
+                )
+                failures.append(
+                    ("ssh_agent_cleanup_debt", debt.workspace_id, _safe_reason(exc))
+                )
+                continue
+            if failure is not None:
+                failures.append(("ssh_agent_cleanup_debt", debt.workspace_id, failure))
 
     def _record_over_budget(
         self,
