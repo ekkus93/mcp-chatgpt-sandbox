@@ -29,7 +29,10 @@ from dev_workspace_mcp.operations.inventory import (
     ResourceInventoryResult,
     ResourceInventoryService,
 )
-from dev_workspace_mcp.operations.pressure import PidPressureStatus, observe_pid_pressure
+from dev_workspace_mcp.operations.pressure import (
+    PidPressureStatus,
+    observe_pid_pressure as observe_pid_pressure,
+)
 from dev_workspace_mcp.operations.resources import (
     OwnershipProof,
     OwnershipStatus,
@@ -131,19 +134,19 @@ class InventoryDiagnosticOutput(BaseModel):
     resource_id: OpaqueResourceId | None = None
 
 
+class InventoryScopeOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    repository_id: OpaqueResourceId | None = None
+    workspace_id: OpaqueResourceId | None = None
+
+
 class CleanupDebtSummaryOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: Literal["complete", "partial"]
     count: Annotated[int, Field(ge=0)]
     bytes: ByteObservationOutput
-
-
-class InventoryScopeOutput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    repository_id: OpaqueResourceId | None = None
-    workspace_id: OpaqueResourceId | None = None
 
 
 class PidPressureOutput(BaseModel):
