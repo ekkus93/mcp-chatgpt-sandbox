@@ -11,12 +11,16 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 import docker
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
-from dev_workspace_mcp.operations.inventory import InventoryLimits, ResourceInventoryService
+from dev_workspace_mcp.operations.inventory import (
+    InventoryLimits,
+    ResourceInventoryResult,
+    ResourceInventoryService,
+)
 from dev_workspace_mcp.operations.pressure import PidPressureStatus
 from dev_workspace_mcp.operations.resources import ResourceKind
 from dev_workspace_mcp.tools import operations as operations_tools
@@ -24,13 +28,16 @@ from dev_workspace_mcp.tools import operations as operations_tools
 _STATE_FILESYSTEM_PRESSURE_FREE_PERCENT = 10.0
 _PID_PRESSURE_UTILIZATION_PERCENT = 90.0
 
+NonnegativeInt = Annotated[int, Field(ge=0)]
+Percent = Annotated[float, Field(ge=0.0, le=100.0)]
+
 
 class OperationalInventoryHealthOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: Literal["complete", "degraded"]
     incomplete: bool
-    diagnostic_count: int
+    diagnostic_count: NonnegativeInt
 
 
 class StateFilesystemHealthOutput(BaseModel):
@@ -38,9 +45,9 @@ class StateFilesystemHealthOutput(BaseModel):
 
     status: Literal["available", "unavailable"]
     pressure: Literal["normal", "pressured", "unknown"]
-    capacity_bytes: int | None
-    free_bytes: int | None
-    free_percent: float | None
+    capacity_bytes: NonnegativeInt | None
+    free_bytes: NonnegativeInt | None
+    free_percent: Percent | None
 
 
 class PidOperationalHealthOutput(BaseModel):
@@ -49,11 +56,11 @@ class PidOperationalHealthOutput(BaseModel):
     status: Literal["available", "unavailable"]
     pressure: Literal["normal", "pressured", "unknown"]
     source: Literal["cgroup_v2"] | None
-    current: int | None
-    limit: int | None
-    utilization_percent: float | None
+    current: NonnegativeInt | None
+    limit: NonnegativeInt | None
+    utilization_percent: Percent | None
     unlimited: bool | None
-    reason: str | None
+    reason: Annotated[str, Field(max_length=512)] | None
 
 
 class OperationalHealthOutput(BaseModel):
@@ -65,10 +72,13 @@ class OperationalHealthOutput(BaseModel):
     pid_pressure: PidOperationalHealthOutput
 
 
-def _state_filesystem_health(result: object) -> StateFilesystemHealthOutput:
-    resources = getattr(result, "resources")
+def _state_filesystem_health(result: ResourceInventoryResult) -> StateFilesystemHealthOutput:
     state_storage = next(
-        (resource for resource in resources if resource.kind is ResourceKind.STATE_STORAGE),
+        (
+            resource
+            for resource in result.resources
+            if resource.kind == ResourceKind.STATE_STORAGE
+        ),
         None,
     )
     if state_storage is None:
@@ -84,7 +94,7 @@ def _state_filesystem_health(result: object) -> StateFilesystemHealthOutput:
     free_observation = state_storage.metrics.get("filesystem_free_bytes")
     capacity = capacity_observation.value if capacity_observation is not None else None
     free = free_observation.value if free_observation is not None else None
-    if capacity is None or free is None:
+    if capacity is None or free is None or capacity <= 0:
         return StateFilesystemHealthOutput(
             status="unavailable",
             pressure="unknown",
@@ -93,13 +103,12 @@ def _state_filesystem_health(result: object) -> StateFilesystemHealthOutput:
             free_percent=None,
         )
 
-    free_percent = round((free * 100.0) / capacity, 2) if capacity > 0 else None
-    if free_percent is None:
-        pressure: Literal["normal", "pressured", "unknown"] = "unknown"
-    elif free_percent <= _STATE_FILESYSTEM_PRESSURE_FREE_PERCENT:
-        pressure = "pressured"
-    else:
-        pressure = "normal"
+    free_percent = round((free * 100.0) / capacity, 2)
+    pressure: Literal["normal", "pressured", "unknown"] = (
+        "pressured"
+        if free_percent <= _STATE_FILESYSTEM_PRESSURE_FREE_PERCENT
+        else "normal"
+    )
     return StateFilesystemHealthOutput(
         status="available",
         pressure=pressure,
@@ -111,7 +120,7 @@ def _state_filesystem_health(result: object) -> StateFilesystemHealthOutput:
 
 def _pid_health() -> PidOperationalHealthOutput:
     observation = operations_tools.observe_pid_pressure()
-    if observation.status is PidPressureStatus.UNAVAILABLE:
+    if observation.status == PidPressureStatus.UNAVAILABLE:
         return PidOperationalHealthOutput(
             status="unavailable",
             pressure="unknown",
@@ -174,7 +183,14 @@ def get_operational_health(
     state_filesystem = _state_filesystem_health(result)
     pid_pressure = _pid_health()
 
-    if result.incomplete:
+    probe_degraded = (
+        result.incomplete
+        or state_filesystem.status == "unavailable"
+        or state_filesystem.pressure == "unknown"
+        or pid_pressure.status == "unavailable"
+        or pid_pressure.pressure == "unknown"
+    )
+    if probe_degraded:
         status: Literal["healthy", "pressured", "degraded"] = "degraded"
     elif state_filesystem.pressure == "pressured" or pid_pressure.pressure == "pressured":
         status = "pressured"
