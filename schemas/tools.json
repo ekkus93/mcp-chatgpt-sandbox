@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.9.0",
+  "contract_version": "0.10.0",
   "tools": [
     {
       "description": "Delete a repository file or directory (\u00a713.5).",
@@ -2306,6 +2306,149 @@
           "diagnostics_truncated"
         ],
         "title": "ResourceInventoryOutput",
+        "type": "object"
+      }
+    },
+    {
+      "description": "Execute only a previously returned immutable reclamation plan. Explicit confirmation is required; every exact candidate is independently revalidated.",
+      "input_schema": {
+        "properties": {
+          "confirm": {
+            "default": false,
+            "title": "Confirm",
+            "type": "boolean"
+          },
+          "plan_token": {
+            "maxLength": 67,
+            "minLength": 67,
+            "pattern": "^pp_[0-9a-f]{64}$",
+            "title": "Plan Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "plan_token"
+        ],
+        "title": "resource_prune_executeArguments",
+        "type": "object"
+      },
+      "name": "resource_prune_execute",
+      "output_schema": {
+        "$defs": {
+          "PruneExecutionOutcomeOutput": {
+            "additionalProperties": false,
+            "properties": {
+              "candidate_id": {
+                "maxLength": 35,
+                "minLength": 35,
+                "pattern": "^pc_[0-9a-f]{32}$",
+                "title": "Candidate Id",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "workspace_container",
+                  "cache_volume",
+                  "job_log_cleanup",
+                  "ssh_agent"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
+              },
+              "status": {
+                "enum": [
+                  "not_confirmed",
+                  "reclaimed",
+                  "already_absent",
+                  "stale",
+                  "failed"
+                ],
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "candidate_id",
+              "kind",
+              "status"
+            ],
+            "title": "PruneExecutionOutcomeOutput",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "already_absent_count": {
+            "maximum": 256,
+            "minimum": 0,
+            "title": "Already Absent Count",
+            "type": "integer"
+          },
+          "candidate_count": {
+            "maximum": 256,
+            "minimum": 0,
+            "title": "Candidate Count",
+            "type": "integer"
+          },
+          "confirmed": {
+            "title": "Confirmed",
+            "type": "boolean"
+          },
+          "executed": {
+            "title": "Executed",
+            "type": "boolean"
+          },
+          "failed_count": {
+            "maximum": 256,
+            "minimum": 0,
+            "title": "Failed Count",
+            "type": "integer"
+          },
+          "outcomes": {
+            "items": {
+              "$ref": "#/$defs/PruneExecutionOutcomeOutput"
+            },
+            "maxItems": 256,
+            "title": "Outcomes",
+            "type": "array"
+          },
+          "reclaimed_count": {
+            "maximum": 256,
+            "minimum": 0,
+            "title": "Reclaimed Count",
+            "type": "integer"
+          },
+          "stale_count": {
+            "maximum": 256,
+            "minimum": 0,
+            "title": "Stale Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "confirmed",
+          "executed",
+          "candidate_count",
+          "reclaimed_count",
+          "already_absent_count",
+          "stale_count",
+          "failed_count",
+          "outcomes"
+        ],
+        "title": "ResourcePruneExecuteOutput",
         "type": "object"
       }
     },
