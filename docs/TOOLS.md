@@ -11,7 +11,7 @@ regenerated locally," not "silently drifted since the last release."
 
 Current tool surface — `docs/SPEC.md` §34.1 lists the fixed MVP set this
 implements in full; Post-MVP Operations adds explicitly versioned operator
-tools beyond that original set (24 tools total as of O9):
+tools beyond that original set (24 tools total as of O10):
 
 ## Repositories
 
@@ -36,7 +36,7 @@ tools beyond that original set (24 tools total as of O9):
 | --- | --- |
 | `workspace_open` | Open (creating and starting as needed) a repository's workspace (§8.3). |
 | `workspace_info` | Report current workspace state (§25). |
-| `server_info` | Server version, capabilities, and health (§25). |
+| `server_info` | Server version, capabilities, and health (§25, PMOR-004, PMOR-005, PMOR-011). O10 adds a read-only `operations` summary alongside the existing audit and maintenance sections. It reports bounded inventory completeness, state-filesystem capacity/free space and pressure, and cgroup-v2 PID usage/limit and pressure. State-filesystem free space at or below 10% and bounded PID utilization at or above 90% are reported as `pressured`; optional probe failure is explicit `degraded`/`unavailable` with `None` metric values rather than fabricated zero. These observations never create or execute a prune plan and are not server-startup prerequisites. |
 
 ## Operations
 
@@ -51,7 +51,7 @@ tools beyond that original set (24 tools total as of O9):
 | Tool | Purpose |
 | --- | --- |
 | `exec` | Run a command synchronously in a workspace (§14); failed commands may include additive container-filesystem ENOSPC pressure context only when canonical `No space left on device` stderr evidence is present. |
-| `exec_start` | Start a command as a background job (§15.3, §63). |
+| `exec_start` | Start a command as a background job (§15.3). |
 | `exec_status` | Report a job's current state and recent output (§15.3, §64). |
 | `exec_output` | Retrieve a job's captured output by offset, range, or line window (§15.3). |
 | `exec_cancel` | Request cancellation of a running job (§15.3). |
