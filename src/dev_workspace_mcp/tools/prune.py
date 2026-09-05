@@ -1,10 +1,10 @@
-"""Public plan-first reclamation tools for O7/O8 / PMOR-006..009.
+"""Public plan-first reclamation tools for O7-O9 / PMOR-006..010.
 
 ``resource_prune_plan`` remains mutation-free and freezes the exact positive-
 ownership candidates in a bounded ephemeral store. ``resource_prune_execute``
 accepts only one token from that same store plus explicit confirmation. It has
 no discovery/filter/path input and delegates candidate-by-candidate exact
-revalidation and action to O8's execution service.
+revalidation and action to the plan-scoped execution service.
 """
 
 from __future__ import annotations
@@ -39,6 +39,9 @@ from dev_workspace_mcp.operations.prune_plans import (
     PrunePlanStore,
     create_prune_plan,
 )
+from dev_workspace_mcp.operations.ssh_agent_cleanup import (
+    augment_inventory_with_ssh_agent_cleanup_debt,
+)
 from dev_workspace_mcp.workspace.naming import (
     LABEL_REPOSITORY_ID,
     LABEL_TEST_NAMESPACE,
@@ -59,12 +62,14 @@ PlanResourceKind = Literal[
     "cache_volume",
     "job_log_cleanup",
     "ssh_agent",
+    "ssh_agent_cleanup",
 ]
 PlanAction = Literal[
     "remove_exact_container",
     "remove_exact_cache_volume",
     "retry_job_log_cleanup",
     "terminate_exact_ssh_agent",
+    "retry_ssh_agent_cleanup",
 ]
 PlanLifecycleState = Literal["orphaned_owned", "cleanup_pending"]
 ExecuteOutcomeStatus = Literal[
@@ -74,6 +79,7 @@ ExecuteOutcomeStatus = Literal[
     "stale",
     "failed",
 ]
+ExecuteAggregateStatus = Literal["not_confirmed", "success", "mixed", "degraded"]
 OpaqueId = Annotated[
     str,
     Field(
@@ -86,7 +92,7 @@ OpaqueId = Annotated[
 PlanToken = Annotated[str, Field(pattern=r"^pp_[0-9a-f]{64}$", min_length=67, max_length=67)]
 CandidateId = Annotated[str, Field(pattern=r"^pc_[0-9a-f]{32}$", min_length=35, max_length=35)]
 BoundedText = Annotated[str, Field(max_length=512)]
-ResourceKindFilter = Annotated[list[PlanResourceKind], Field(min_length=1, max_length=4)]
+ResourceKindFilter = Annotated[list[PlanResourceKind], Field(min_length=1, max_length=5)]
 
 
 class ResourcePrunePlanInput(BaseModel):
@@ -134,7 +140,7 @@ class CandidateOwnershipOutput(BaseModel):
 
 
 class CandidatePreconditionsOutput(BaseModel):
-    """Safe public summary; raw Y2 process identity remains plan-internal."""
+    """Safe public summary; raw host/process identity remains plan-internal."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -142,6 +148,7 @@ class CandidatePreconditionsOutput(BaseModel):
     ssh_agent_pid: Annotated[int, Field(ge=1)] | None = None
     ssh_agent_boot_id_bound: bool
     ssh_agent_process_start_time_bound: bool
+    ssh_agent_cleanup_identity_bound: bool
 
 
 class PruneCandidateOutput(BaseModel):
@@ -192,6 +199,7 @@ class ResourcePruneExecuteOutput(BaseModel):
 
     confirmed: bool
     executed: bool
+    status: ExecuteAggregateStatus
     candidate_count: Annotated[int, Field(ge=0, le=_MAX_RESOURCES)]
     reclaimed_count: Annotated[int, Field(ge=0, le=_MAX_RESOURCES)]
     already_absent_count: Annotated[int, Field(ge=0, le=_MAX_RESOURCES)]
@@ -218,7 +226,7 @@ class _DockerCollectionAdapter:
 
 
 class _DockerInventoryAdapter:
-    """Narrow Docker SDK access so O7 planning cannot call mutation methods."""
+    """Narrow Docker SDK access so planning cannot call mutation methods."""
 
     def __init__(self, client: docker.DockerClient) -> None:
         self.containers = _DockerCollectionAdapter(client.containers)
@@ -272,6 +280,16 @@ def _preconditions_output(candidate: PruneCandidate) -> CandidatePreconditionsOu
     )
     boot_id = candidate.preconditions.get("boot_id")
     process_start_time = candidate.preconditions.get("process_start_time")
+    socket_device = candidate.preconditions.get("socket_device")
+    socket_inode = candidate.preconditions.get("socket_inode")
+    cleanup_identity_bound = (
+        isinstance(socket_device, int)
+        and not isinstance(socket_device, bool)
+        and socket_device >= 0
+        and isinstance(socket_inode, int)
+        and not isinstance(socket_inode, bool)
+        and socket_inode >= 0
+    )
     return CandidatePreconditionsOutput(
         docker_status=docker_status,
         ssh_agent_pid=pid,
@@ -281,6 +299,7 @@ def _preconditions_output(candidate: PruneCandidate) -> CandidatePreconditionsOu
             and not isinstance(process_start_time, bool)
             and process_start_time >= 0
         ),
+        ssh_agent_cleanup_identity_bound=cleanup_identity_bound,
     )
 
 
@@ -382,7 +401,7 @@ def register(
     state_db_path: Path,
     audit_config: AuditConfig,
 ) -> None:
-    """Register O7 planning and O8 explicit plan-scoped execution."""
+    """Register plan creation and explicit plan-scoped execution."""
 
     plan_store = PrunePlanStore()
 
@@ -419,6 +438,11 @@ def register(
                 max_diagnostics=_MAX_DIAGNOSTICS,
             ),
         ).collect()
+        inventory = augment_inventory_with_ssh_agent_cleanup_debt(
+            db,
+            inventory,
+            max_diagnostics=_MAX_DIAGNOSTICS,
+        )
         candidates = build_prune_candidates(inventory)
         scope = _Scope(
             repository_id=request.repository_id,
@@ -490,6 +514,7 @@ def register(
         return ResourcePruneExecuteOutput(
             confirmed=result.confirmed,
             executed=result.confirmed,
+            status=cast(ExecuteAggregateStatus, result.status.value),
             candidate_count=len(outputs),
             reclaimed_count=sum(
                 outcome.status is PruneExecutionStatus.RECLAIMED for outcome in result.outcomes
