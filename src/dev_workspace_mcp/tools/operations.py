@@ -29,10 +29,8 @@ from dev_workspace_mcp.operations.inventory import (
     ResourceInventoryResult,
     ResourceInventoryService,
 )
-from dev_workspace_mcp.operations.pressure import (
-    PidPressureStatus,
-    observe_pid_pressure as observe_pid_pressure,
-)
+from dev_workspace_mcp.operations.pressure import PidPressureStatus
+from dev_workspace_mcp.operations.pressure import observe_pid_pressure as observe_pid_pressure
 from dev_workspace_mcp.operations.resources import (
     OwnershipProof,
     OwnershipStatus,
