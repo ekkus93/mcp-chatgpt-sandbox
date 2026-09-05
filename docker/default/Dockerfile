@@ -38,6 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gzip \
     sudo \
     openssh-client \
+    openssh-server \
     passwd \
     util-linux \
     && rm -rf /var/lib/apt/lists/*
