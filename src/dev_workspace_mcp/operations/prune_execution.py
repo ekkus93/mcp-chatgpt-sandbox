@@ -658,6 +658,6 @@ class PruneExecutionService:
             return PruneExecutionOutcome(
                 candidate=candidate,
                 status=PruneExecutionStatus.FAILED,
-                reason="secondary_cleanup_failed" if reason == "secondary_cleanup_failed" else reason,
+                reason=reason,
             )
         return None
