@@ -4,7 +4,7 @@ from dev_workspace_mcp import __version__
 from dev_workspace_mcp.config.models import ServerConfig
 from dev_workspace_mcp.server import SERVER_NAME, create_server
 
-#: §34.1's tool surface, as much of it as is registered through S22.
+#: §34.1's tool surface plus explicitly versioned Post-MVP operator tools.
 REGISTERED_TOOLS = {
     "repository_list",
     "list_files",
@@ -29,6 +29,7 @@ REGISTERED_TOOLS = {
     "git_push",
     "resource_inventory",
     "resource_prune_plan",
+    "resource_prune_execute",
 }
 
 

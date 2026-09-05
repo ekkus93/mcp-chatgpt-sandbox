@@ -1,7 +1,7 @@
 """Exports the server's `tools/list` response to `schemas/tools.json`
 (§33.1) — the authoritative tool contract. `docs/SPEC.md` §62-§66's JSON
-examples are illustrative; this file, generated from the running server
-rather than hand-maintained, is what governs.
+examples are illustrative; this file, generated from the running server rather
+than hand-maintained, is what governs.
 """
 
 from __future__ import annotations
@@ -59,7 +59,10 @@ from mcp.server import MCPServer
 #: 0.9.0 (Post-MVP Operations O7): minor bump — one new additive dry-run-only
 #: tool, `resource_prune_plan`, exposing immutable plan tokens and a bounded,
 #: path-free projection of positively owned reclamation candidates.
-CONTRACT_VERSION = "0.9.0"
+#: 0.10.0 (Post-MVP Operations O8): minor bump — one new additive destructive
+#: tool, `resource_prune_execute`, requiring an existing immutable plan token
+#: plus explicit confirmation and returning bounded per-candidate outcomes.
+CONTRACT_VERSION = "0.10.0"
 
 
 async def collect_tool_schemas(server: MCPServer) -> list[dict[str, Any]]:
