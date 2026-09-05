@@ -11,7 +11,7 @@ regenerated locally," not "silently drifted since the last release."
 
 Current tool surface — `docs/SPEC.md` §34.1 lists the fixed MVP set this
 implements in full; Post-MVP Operations adds explicitly versioned operator
-tools beyond that original set (22 tools total as of O3):
+tools beyond that original set (23 tools total as of O7):
 
 ## Repositories
 
@@ -43,6 +43,7 @@ tools beyond that original set (22 tools total as of O3):
 | Tool | Purpose |
 | --- | --- |
 | `resource_inventory` | Bounded, read-only inventory of MCP-owned operational resources, cleanup debt, degraded/unavailable observations, and optional Linux PID pressure (PMOR-001..005). PID pressure trusts only cgroup v2: `/proc/self/cgroup` selects the daemon cgroup and `pids.current`/`pids.max` under `/sys/fs/cgroup` provide usage/limit; unavailable sources are explicit and never become zero. Optional repository/workspace filters are opaque IDs only; no host path filter is accepted. |
+| `resource_prune_plan` | Dry-run-only immutable reclamation planning (PMOR-006..007). Accepts only optional opaque repository/workspace scope plus an optional subset of the four O5-supported reclaimable kinds; it has no execute/confirmation/path/generic-Docker input. Returns an immutable `pp_…` plan token, positively owned candidate IDs/kinds/reasons/preconditions/actions, and projected bytes while preserving unavailable byte values. Planning performs no stop/kill/remove/prune action; raw SSH boot/process-start identity remains bound inside the plan and is not exposed. |
 
 ## Execution (§14, §15.3)
 

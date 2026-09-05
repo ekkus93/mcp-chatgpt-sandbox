@@ -2,7 +2,7 @@
 
 **Spec:** `docs/POST_MVP_OPERATIONS_SPEC.md` (`PMOR-001`..`PMOR-012`, `PMOAT-001`..`PMOAT-012`)
 
-**Status:** open — O1-O6 complete; O7-O12 remain
+**Status:** open — O1-O7 complete; O8-O12 remain
 
 This TODO deliberately starts read-only and moves the destructive boundary later. Do not implement prune execution before the inventory/ownership model and dry-run plan are independently tested.
 
@@ -196,13 +196,24 @@ Do not skip directly to O8. A safe prune executor depends on the ownership/inven
 
 **Satisfies:** PMOR-006, PMOR-007 · **Verified by:** PMOAT-006, PMOAT-007
 
-- [ ] Add MCP tool that creates/returns a plan and performs no destructive actions
-- [ ] Support only narrow documented filters
-- [ ] Default omission of filters to the safest documented eligible set, not "everything Docker can delete"
-- [ ] Return plan token, candidates, reasons, preconditions, and projected/accounted bytes
-- [ ] Add audit event for plan creation without leaking host paths
-- [ ] Bump contract version and regenerate schemas/docs
-- [ ] Instrument Docker calls in acceptance test and prove zero mutation
+- [x] Add MCP tool that creates/returns a plan and performs no destructive actions
+- [x] Support only narrow documented filters
+- [x] Default omission of filters to the safest documented eligible set, not "everything Docker can delete"
+- [x] Return plan token, candidates, reasons, preconditions, and projected/accounted bytes
+- [x] Add audit event for plan creation without leaking host paths
+- [x] Bump contract version and regenerate schemas/docs
+- [x] Instrument Docker calls in acceptance test and prove zero mutation
+
+**O7 completion evidence:**
+
+- PMOAT-006/007 clean public-surface RED: Actions run `33880769977`, job `101048591808`, on test-only head `c1755b0ae62bf62652ba55e16c6ffea39f031356` passed Docker build, Ruff format/lint, mypy (`68 source files`), MCP contract, contract-version, and docs drift, then failed exactly the five new O7 acceptance cases because `resource_prune_plan` was not registered; every unrelated test remained green (`5 failed, 1164 passed in 624.72s`). This is the direct revert/pre-feature proof for O7.
+- Superseded pre-RED runs `33880530332` and `33880651732` stopped at test-file Ruff format/lint respectively and are not behavioral evidence; `c1755b0a…` is the clean RED generation.
+- Implementation: `tools/prune.py` exposes a dedicated dry-run-only `resource_prune_plan` tool over O2/O5/O6. Its input accepts only optional opaque repository/workspace IDs and an optional non-empty subset of `workspace_container`, `cache_volume`, `job_log_cleanup`, and `ssh_agent`; there is no path, execute, confirmation, image, or generic Docker filter. Planning uses a read-only Docker adapter and the bounded inventory service, then O5 eligibility and O6 immutable plan-token binding; no stop/kill/remove/prune method is available to the planning layer.
+- Public projection preserves candidate reason, positively owned evidence, lifecycle precondition, exact future action, and byte provenance/value. Unknown bytes remain `None`/`unavailable`; aggregate projected bytes report known bytes plus unknown-candidate count instead of fabricating zero. Raw Y2 SSH boot ID and process-start-time remain bound inside the immutable plan and are exposed only as boolean binding indicators, not raw host/process identity values.
+- Audit: plan creation writes `resource_prune_plan/success` with plan token, candidate count, opaque candidate IDs/kinds, and dry-run status. Host paths, candidate resource names, secret-shaped state error text, and dynamic ownership label values are not added to the audit metadata.
+- Contract/docs: `resource_prune_plan` is the 23rd MCP tool, `contract_version` is `0.9.0`, canonical `schemas/tools.json` was regenerated from the running server, `docs/TOOLS.md` documents the dry-run-only/no-execute boundary, and schema/version/docs drift gates pass.
+- Final implementation GREEN: Actions run `33924178173`, job `101188938338`, on exact branch head `477a33606c276e7dd5b89d3aebe1889433bda14f` passed Docker build, Ruff format/lint, mypy (`69 source files`), MCP contract, contract-version, docs drift, and the complete Docker-backed suite: `1169 passed in 630.22s` with 93% overall coverage.
+- Revert/pre-feature verification is the clean `33880769977` RED: removing the O7 implementation restores exactly the five public planning failures while the prior 1164-test O6 baseline remains green.
 
 ---
 

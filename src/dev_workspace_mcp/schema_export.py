@@ -56,7 +56,10 @@ from mcp.server import MCPServer
 #: 0.8.1 (Post-MVP Operations O4): patch bump — `exec` gained additive
 #: evidence-based pressure context and `resource_inventory` gained optional
 #: cgroup-v2 PID-pressure observation; no new tools.
-CONTRACT_VERSION = "0.8.1"
+#: 0.9.0 (Post-MVP Operations O7): minor bump — one new additive dry-run-only
+#: tool, `resource_prune_plan`, exposing immutable plan tokens and a bounded,
+#: path-free projection of positively owned reclamation candidates.
+CONTRACT_VERSION = "0.9.0"
 
 
 async def collect_tool_schemas(server: MCPServer) -> list[dict[str, Any]]:
