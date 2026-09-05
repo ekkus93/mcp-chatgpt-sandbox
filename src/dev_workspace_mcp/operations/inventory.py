@@ -179,6 +179,7 @@ class ResourceInventoryService:
         self._collect_volumes()
         self._collect_job_logs()
         self._collect_cleanup_debt()
+        self._collect_ssh_agent_cleanup_debt()
         self._collect_ssh_agents()
         self._collect_state_storage()
         return ResourceInventoryResult(
@@ -547,6 +548,43 @@ class ResourceInventoryService:
                     bytes=ByteObservation.accounted(int(row["bytes_hint"])),
                     workspace_id=row["workspace_id"],
                     details={"last_error_recorded": row["last_error"] is not None},
+                )
+            )
+
+    def _collect_ssh_agent_cleanup_debt(self) -> None:
+        rows = self._bounded_rows(
+            """
+            SELECT workspace_id, bytes_hint, last_error, socket_device, socket_inode
+            FROM ssh_agent_cleanup
+            ORDER BY created_at, workspace_id
+            LIMIT ?
+            """
+        )
+        for row in rows:
+            if not self._begin_inspection():
+                break
+            bytes_hint = row["bytes_hint"]
+            byte_observation = (
+                ByteObservation.accounted(int(bytes_hint))
+                if bytes_hint is not None
+                else ByteObservation.unavailable("ssh-agent cleanup byte count unavailable")
+            )
+            self._resources.append(
+                InventoryResource(
+                    kind=ResourceKind.SSH_AGENT_CLEANUP,
+                    resource_id=row["workspace_id"],
+                    lifecycle_state=ResourceLifecycleState.CLEANUP_PENDING,
+                    ownership=_owned_state_proof(
+                        "durable ssh_agent_cleanup tombstone row",
+                        "socket target is reconstructed beneath configured state_dir",
+                    ),
+                    bytes=byte_observation,
+                    workspace_id=row["workspace_id"],
+                    details={
+                        "last_error_recorded": row["last_error"] is not None,
+                        "socket_device": row["socket_device"],
+                        "socket_inode": row["socket_inode"],
+                    },
                 )
             )
 
