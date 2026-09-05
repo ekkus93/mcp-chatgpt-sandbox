@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.10.1",
+  "contract_version": "0.10.2",
   "tools": [
     {
       "description": "Delete a repository file or directory (\u00a713.5).",
@@ -3064,6 +3064,240 @@
             ],
             "title": "MaintenanceHealth",
             "type": "object"
+          },
+          "OperationalHealthOutput": {
+            "additionalProperties": false,
+            "properties": {
+              "inventory": {
+                "$ref": "#/$defs/OperationalInventoryHealthOutput"
+              },
+              "pid_pressure": {
+                "$ref": "#/$defs/PidOperationalHealthOutput"
+              },
+              "state_filesystem": {
+                "$ref": "#/$defs/StateFilesystemHealthOutput"
+              },
+              "status": {
+                "enum": [
+                  "healthy",
+                  "pressured",
+                  "degraded"
+                ],
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "inventory",
+              "state_filesystem",
+              "pid_pressure"
+            ],
+            "title": "OperationalHealthOutput",
+            "type": "object"
+          },
+          "OperationalInventoryHealthOutput": {
+            "additionalProperties": false,
+            "properties": {
+              "diagnostic_count": {
+                "minimum": 0,
+                "title": "Diagnostic Count",
+                "type": "integer"
+              },
+              "incomplete": {
+                "title": "Incomplete",
+                "type": "boolean"
+              },
+              "status": {
+                "enum": [
+                  "complete",
+                  "degraded"
+                ],
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "incomplete",
+              "diagnostic_count"
+            ],
+            "title": "OperationalInventoryHealthOutput",
+            "type": "object"
+          },
+          "PidOperationalHealthOutput": {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Current"
+              },
+              "limit": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Limit"
+              },
+              "pressure": {
+                "enum": [
+                  "normal",
+                  "pressured",
+                  "unknown"
+                ],
+                "title": "Pressure",
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Reason"
+              },
+              "source": {
+                "anyOf": [
+                  {
+                    "const": "cgroup_v2",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Source"
+              },
+              "status": {
+                "enum": [
+                  "available",
+                  "unavailable"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "unlimited": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Unlimited"
+              },
+              "utilization_percent": {
+                "anyOf": [
+                  {
+                    "maximum": 100.0,
+                    "minimum": 0.0,
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Utilization Percent"
+              }
+            },
+            "required": [
+              "status",
+              "pressure",
+              "source",
+              "current",
+              "limit",
+              "utilization_percent",
+              "unlimited",
+              "reason"
+            ],
+            "title": "PidOperationalHealthOutput",
+            "type": "object"
+          },
+          "StateFilesystemHealthOutput": {
+            "additionalProperties": false,
+            "properties": {
+              "capacity_bytes": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Capacity Bytes"
+              },
+              "free_bytes": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Free Bytes"
+              },
+              "free_percent": {
+                "anyOf": [
+                  {
+                    "maximum": 100.0,
+                    "minimum": 0.0,
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Free Percent"
+              },
+              "pressure": {
+                "enum": [
+                  "normal",
+                  "pressured",
+                  "unknown"
+                ],
+                "title": "Pressure",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "available",
+                  "unavailable"
+                ],
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "pressure",
+              "capacity_bytes",
+              "free_bytes",
+              "free_percent"
+            ],
+            "title": "StateFilesystemHealthOutput",
+            "type": "object"
           }
         },
         "properties": {
@@ -3107,6 +3341,9 @@
           "maintenance": {
             "$ref": "#/$defs/MaintenanceHealth"
           },
+          "operations": {
+            "$ref": "#/$defs/OperationalHealthOutput"
+          },
           "running_jobs": {
             "title": "Running Jobs",
             "type": "integer"
@@ -3126,7 +3363,8 @@
           "configured_repositories",
           "capabilities",
           "audit",
-          "maintenance"
+          "maintenance",
+          "operations"
         ],
         "title": "ServerInfoOutput",
         "type": "object"
