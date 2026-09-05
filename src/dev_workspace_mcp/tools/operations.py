@@ -36,9 +36,6 @@ from dev_workspace_mcp.operations.resources import (
     ResourceKind,
     ResourceLifecycleState,
 )
-from dev_workspace_mcp.operations.ssh_agent_cleanup import (
-    augment_inventory_with_ssh_agent_cleanup_debt,
-)
 from dev_workspace_mcp.workspace.naming import (
     LABEL_REPOSITORY_ID,
     LABEL_TEST_NAMESPACE,
@@ -366,11 +363,8 @@ def _cleanup_debt_summary(
     *,
     complete: bool,
 ) -> CleanupDebtSummaryOutput:
-    debt = [
-        resource
-        for resource in resources
-        if resource.lifecycle_state is ResourceLifecycleState.CLEANUP_PENDING
-    ]
+    cleanup_kinds = {ResourceKind.JOB_LOG_CLEANUP, ResourceKind.SSH_AGENT_CLEANUP}
+    debt = [resource for resource in resources if resource.kind in cleanup_kinds]
     values = [resource.bytes.value for resource in debt]
     bytes_complete = all(value is not None for value in values)
     if bytes_complete:
@@ -505,11 +499,6 @@ def register(
                 max_diagnostics=request.max_diagnostics,
             ),
         ).collect()
-        result = augment_inventory_with_ssh_agent_cleanup_debt(
-            db,
-            result,
-            max_diagnostics=request.max_diagnostics,
-        )
         return _result_output(
             result,
             db=db,
