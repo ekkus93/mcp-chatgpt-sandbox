@@ -514,7 +514,7 @@ def register(
         return ResourcePruneExecuteOutput(
             confirmed=result.confirmed,
             executed=result.confirmed,
-            status=cast(ExecuteAggregateStatus, result.status.value),
+            status=result.status.value,
             candidate_count=len(outputs),
             reclaimed_count=sum(
                 outcome.status is PruneExecutionStatus.RECLAIMED for outcome in result.outcomes
