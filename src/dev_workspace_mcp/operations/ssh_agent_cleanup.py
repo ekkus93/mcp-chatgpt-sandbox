@@ -101,7 +101,10 @@ def augment_inventory_with_ssh_agent_cleanup_debt(
     *,
     max_diagnostics: int = 64,
 ) -> ResourceInventoryResult:
-    """Append bounded cleanup debt without weakening O2's work/result limits."""
+    """Append bounded cleanup debt only for inventories that do not collect it natively."""
+    if any(resource.kind is ResourceKind.SSH_AGENT_CLEANUP for resource in inventory.resources):
+        return inventory
+
     resources = list(inventory.resources)
     diagnostics = list(inventory.diagnostics)
     budget = min(
