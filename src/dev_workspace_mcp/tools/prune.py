@@ -39,9 +39,6 @@ from dev_workspace_mcp.operations.prune_plans import (
     PrunePlanStore,
     create_prune_plan,
 )
-from dev_workspace_mcp.operations.ssh_agent_cleanup import (
-    augment_inventory_with_ssh_agent_cleanup_debt,
-)
 from dev_workspace_mcp.workspace.naming import (
     LABEL_REPOSITORY_ID,
     LABEL_TEST_NAMESPACE,
@@ -438,11 +435,6 @@ def register(
                 max_diagnostics=_MAX_DIAGNOSTICS,
             ),
         ).collect()
-        inventory = augment_inventory_with_ssh_agent_cleanup_debt(
-            db,
-            inventory,
-            max_diagnostics=_MAX_DIAGNOSTICS,
-        )
         candidates = build_prune_candidates(inventory)
         scope = _Scope(
             repository_id=request.repository_id,
