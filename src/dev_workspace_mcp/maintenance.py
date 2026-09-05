@@ -332,9 +332,7 @@ class MaintenanceScheduler:
                     "maintenance: SSH-agent cleanup retry failed unexpectedly for %s",
                     debt.workspace_id,
                 )
-                failures.append(
-                    ("ssh_agent_cleanup_debt", debt.workspace_id, _safe_reason(exc))
-                )
+                failures.append(("ssh_agent_cleanup_debt", debt.workspace_id, _safe_reason(exc)))
                 continue
             if failure is not None:
                 failures.append(("ssh_agent_cleanup_debt", debt.workspace_id, failure))
