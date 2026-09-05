@@ -74,11 +74,7 @@ class OperationalHealthOutput(BaseModel):
 
 def _state_filesystem_health(result: ResourceInventoryResult) -> StateFilesystemHealthOutput:
     state_storage = next(
-        (
-            resource
-            for resource in result.resources
-            if resource.kind == ResourceKind.STATE_STORAGE
-        ),
+        (resource for resource in result.resources if resource.kind == ResourceKind.STATE_STORAGE),
         None,
     )
     if state_storage is None:
@@ -105,9 +101,7 @@ def _state_filesystem_health(result: ResourceInventoryResult) -> StateFilesystem
 
     free_percent = round((free * 100.0) / capacity, 2)
     pressure: Literal["normal", "pressured", "unknown"] = (
-        "pressured"
-        if free_percent <= _STATE_FILESYSTEM_PRESSURE_FREE_PERCENT
-        else "normal"
+        "pressured" if free_percent <= _STATE_FILESYSTEM_PRESSURE_FREE_PERCENT else "normal"
     )
     return StateFilesystemHealthOutput(
         status="available",
@@ -136,16 +130,10 @@ def _pid_health() -> PidOperationalHealthOutput:
     pressure: Literal["normal", "pressured", "unknown"]
     if observation.unlimited is True:
         pressure = "normal"
-    elif (
-        observation.current is not None
-        and observation.limit is not None
-        and observation.limit > 0
-    ):
+    elif observation.current is not None and observation.limit is not None and observation.limit > 0:
         utilization_percent = round((observation.current * 100.0) / observation.limit, 2)
         pressure = (
-            "pressured"
-            if utilization_percent >= _PID_PRESSURE_UTILIZATION_PERCENT
-            else "normal"
+            "pressured" if utilization_percent >= _PID_PRESSURE_UTILIZATION_PERCENT else "normal"
         )
     else:
         pressure = "unknown"
