@@ -33,6 +33,7 @@ from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.tools import execution as execution_tools
 from dev_workspace_mcp.tools import filesystem as filesystem_tools
 from dev_workspace_mcp.tools import git as git_tools
+from dev_workspace_mcp.tools import operational_health as operational_health_tools
 from dev_workspace_mcp.tools import operations as operations_tools
 from dev_workspace_mcp.tools import prune as prune_tools
 from dev_workspace_mcp.tools import repository as repository_tools
@@ -49,6 +50,7 @@ class ServerInfoOutput(workspace_tools.ServerInfoOutput):
 
     audit: AuditHealth
     maintenance: MaintenanceHealth
+    operations: operational_health_tools.OperationalHealthOutput
 
 
 def create_server(
@@ -199,9 +201,9 @@ def _replace_server_info_with_daemon_health(
     """Extend the base workspace diagnostic with daemon subsystem health.
 
     `workspace_tools.get_server_info` remains the single builder for the
-    existing Docker/workspace/job/capability fields. Audit and maintenance
-    health are process-level state, so server assembly adds them without
-    duplicating or weakening those established base checks.
+    existing Docker/workspace/job/capability fields. Audit, maintenance, and
+    O10 operational pressure are process-level diagnostics, so server assembly
+    adds them without duplicating or weakening those established base checks.
     """
     server.remove_tool("server_info")
     job_store = JobStore(db)
@@ -219,6 +221,11 @@ def _replace_server_info_with_daemon_health(
             **asdict(base),
             audit=get_audit_health(config.audit),
             maintenance=maintenance.health(),
+            operations=operational_health_tools.get_operational_health(
+                db=db,
+                docker_client=docker_client,
+                state_db_path=config.state_db_path,
+            ),
         )
 
 
