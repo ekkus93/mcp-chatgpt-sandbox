@@ -65,7 +65,11 @@ from mcp.server import MCPServer
 #: 0.10.1 (Post-MVP Operations O9): patch bump — reclamation contracts gained
 #: durable `ssh_agent_cleanup` retry candidates, cleanup identity binding, and
 #: aggregate execution status; no new tools.
-CONTRACT_VERSION = "0.10.1"
+#: 0.10.2 (Post-MVP Operations O10): patch bump — `server_info` gained an
+#: additive `operations` health summary for bounded inventory degradation,
+#: state-filesystem pressure/availability, and cgroup-v2 PID pressure;
+#: no new tools.
+CONTRACT_VERSION = "0.10.2"
 
 
 async def collect_tool_schemas(server: MCPServer) -> list[dict[str, Any]]:
@@ -98,8 +102,7 @@ async def export_schemas(
 ) -> str:
     """Writes the schema document to `out_path` (creating parent
     directories as needed) and returns the content written."""
-    tool_schemas = await collect_tool_schemas(server)
-    content = render_schema_document(tool_schemas, contract_version=contract_version)
+    content = render_schema_document(await collect_tool_schemas(server), contract_version=contract_version)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(content)
+    out_path.write_text(content, encoding="utf-8")
     return content
