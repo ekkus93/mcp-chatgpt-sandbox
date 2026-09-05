@@ -482,7 +482,7 @@ def register(
             PruneExecutionOutcomeOutput(
                 candidate_id=outcome.candidate.candidate_id,
                 kind=cast(PlanResourceKind, outcome.candidate.kind.value),
-                status=cast(ExecuteOutcomeStatus, outcome.status.value),
+                status=outcome.status.value,
                 reason=outcome.reason,
             )
             for outcome in result.outcomes
