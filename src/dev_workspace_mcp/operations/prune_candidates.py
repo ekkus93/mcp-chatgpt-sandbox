@@ -75,6 +75,11 @@ _RULES: Mapping[ResourceKind, _Rule] = {
         action="terminate_exact_ssh_agent",
         reason="positively owned SSH agent is orphaned from durable workspace state",
     ),
+    ResourceKind.SSH_AGENT_CLEANUP: _Rule(
+        lifecycle=ResourceLifecycleState.CLEANUP_PENDING,
+        action="retry_ssh_agent_cleanup",
+        reason="durable SSH-agent socket cleanup debt is pending",
+    ),
 }
 
 
@@ -115,6 +120,14 @@ def _preconditions(resource: InventoryResource) -> Mapping[str, PreconditionValu
                 "pid": pid,
                 "boot_id": boot_id,
                 "process_start_time": process_start_time,
+            }
+        )
+
+    if resource.kind is ResourceKind.SSH_AGENT_CLEANUP:
+        return MappingProxyType(
+            {
+                "socket_device": _nonnegative_int(resource.details.get("socket_device")),
+                "socket_inode": _nonnegative_int(resource.details.get("socket_inode")),
             }
         )
 
