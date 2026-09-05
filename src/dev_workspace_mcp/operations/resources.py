@@ -32,6 +32,7 @@ class ResourceKind(StrEnum):
     JOB_LOG_DIRECTORY = "job_log_directory"
     JOB_LOG_CLEANUP = "job_log_cleanup"
     SSH_AGENT = "ssh_agent"
+    SSH_AGENT_CLEANUP = "ssh_agent_cleanup"
     STATE_STORAGE = "state_storage"
     DOCKER_IMAGE = "docker_image"
 
@@ -105,6 +106,14 @@ OWNERSHIP_RULES: Mapping[ResourceKind, ResourceOwnershipRule] = {
         positive_evidence=(
             "durable ssh_agent row",
             "GAP3 Y2 boot-id/process-start-time identity proof when signaling",
+        ),
+    ),
+    ResourceKind.SSH_AGENT_CLEANUP: ResourceOwnershipRule(
+        kind=ResourceKind.SSH_AGENT_CLEANUP,
+        positive_evidence=(
+            "durable ssh_agent_cleanup tombstone row",
+            "socket target reconstructed beneath configured state directory",
+            "stored device/inode identity binds an existing retry target",
         ),
     ),
     ResourceKind.STATE_STORAGE: ResourceOwnershipRule(
