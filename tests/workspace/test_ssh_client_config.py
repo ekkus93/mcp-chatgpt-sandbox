@@ -190,37 +190,28 @@ async def test_at_034_substituted_host_key_fails_closed_no_prompt(
     prompt on a non-interactive `exec` anyway); with it, a real client
     hitting a mismatch fails outright rather than hanging."""
     config = _configured(minimal_config, default_image_tag, tmp_path / "work" / "example")
-    # `exec.timeout_seconds` is clamped to `execution.sync_timeout_seconds`;
-    # the shared test fixture keeps the production default ceiling of 30s.
-    # This acceptance test deliberately performs a network-backed apt install,
-    # so make its configured ceiling match the 120s timeout requested below
-    # instead of accidentally testing the 30s clamp.
-    config = config.model_copy(
-        update={"execution": config.execution.model_copy(update={"sync_timeout_seconds": 120})}
-    )
     server = create_server(config)
     workspace_id = await _open(server)
 
-    install = await server.call_tool(
+    # `openssh-server` is baked into the real S7 default image. Keep this
+    # acceptance test network-independent during pytest: generate any missing
+    # host keys locally, create sshd's runtime directory, and start the daemon.
+    start_sshd = await server.call_tool(
         "exec",
         {
             "workspace_id": workspace_id,
             "shell": (
-                "sudo apt-get update -qq && sudo apt-get install -y -qq openssh-server "
+                "sudo ssh-keygen -A "
                 "&& sudo mkdir -p /run/sshd "
                 "&& sudo /usr/sbin/sshd -p 2222 "
                 "&& sleep 1"
             ),
-            "timeout_seconds": 120,
         },
     )
-    assert install.structured_content["exit_code"] == 0, install.structured_content
+    assert start_sshd.structured_content["exit_code"] == 0, start_sshd.structured_content
 
-    # A separate exec call, deliberately: apt-get's install log is huge
-    # and `stdout_tail` is bounded (§15.5) — keeping ssh-keyscan's real
-    # output in its own call is what makes it reliably the *whole*
-    # response rather than something that might get truncated off the
-    # end of a much longer combined one.
+    # A separate exec call keeps ssh-keyscan's real output isolated and makes
+    # the host-key line we parse unambiguous.
     keyscan = await server.call_tool(
         "exec",
         {
