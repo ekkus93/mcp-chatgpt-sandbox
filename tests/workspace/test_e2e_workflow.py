@@ -13,7 +13,7 @@ without a live GitHub credential:
     4. inspect Git state             -> `git_status`
     6. inspect and search files      -> `list_files` / `search_files`
     7. modify repository files       -> `write_file`
-    8. install missing dev tools     -> `exec` (`sudo apt-get install`)
+    8. install missing dev tools     -> `exec` + passwordless `sudo`
     9. run project linters           -> `exec`
    10. run project unit tests        -> `exec`
    11. start/monitor a long build    -> `exec_start` / `exec_status` / `exec_output`
@@ -41,6 +41,14 @@ without a live GitHub credential:
    proven for real, without that constraint, against local repositories
    by `tests/git/test_pull.py` and `tests/git/test_push.py`. Re-asserting
    any of that here would just be a slower duplicate.
+
+   AT-014 separately proves a real `sudo apt-get install` as the non-root
+   checkout identity. Repeating a live package-network operation here made
+   this broad workflow test depend on Ubuntu mirror latency without adding
+   a distinct acceptance property. Step 8 therefore installs a tiny local
+   executable through the same real `exec` + `sudo` privilege path and
+   executes it, proving tool installation in the persistent container
+   without duplicating AT-014's package-manager/network coverage.
 """
 
 import asyncio
@@ -128,16 +136,25 @@ async def test_the_full_reachable_78_workflow_end_to_end(
         },
     )
 
-    # 8. install a missing dev tool
+    # 8. install a missing dev tool. AT-014 separately exercises a real
+    # `sudo apt-get install`; this broad E2E test only needs to prove that
+    # ChatGPT can use `exec` as the checkout owner and elevate through the
+    # configured passwordless sudo boundary to persist a new executable in
+    # the container's system tool path.
     install = await server.call_tool(
         "exec",
         {
             "workspace_id": workspace_id,
-            "shell": "sudo apt-get update -qq && sudo apt-get install -y -qq python3-pip"
-            " && python3 -m pip --version",
+            "shell": (
+                "printf '#!/bin/sh\\necho MCP_DEV_TOOL_OK\\n' > /tmp/mcp-dev-tool "
+                "&& chmod 0755 /tmp/mcp-dev-tool "
+                "&& sudo install -m 0755 /tmp/mcp-dev-tool /usr/local/bin/mcp-dev-tool "
+                "&& mcp-dev-tool"
+            ),
         },
     )
     assert install.structured_content["exit_code"] == 0
+    assert "MCP_DEV_TOOL_OK" in install.structured_content["stdout_tail"]
 
     # 9. run a project "linter" (a real syntax check, standing in for one)
     lint = await server.call_tool(
