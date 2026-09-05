@@ -1,10 +1,11 @@
-"""Exact, plan-scoped destructive reclamation for O8 / PMOR-008..009.
+"""Exact, plan-scoped destructive reclamation for O8/O9 / PMOR-008..010.
 
 Execution never discovers deletion targets. The caller supplies an immutable
 ``PrunePlan`` created by O6/O7, and every candidate is independently inspected
-by its exact recorded identity immediately before its exact action. A missing
-exact target is an idempotent success/no-op; an unprovable identity is not.
-There is deliberately no label-wide, prefix-wide, or system-wide fallback.
+by its exact recorded identity immediately before its exact action. O9 keeps
+post-primary SSH-agent socket cleanup durable and retryable instead of losing
+that obligation after the primary process/row is gone. There is deliberately
+no label-wide, prefix-wide, path-wide, or system-wide fallback.
 """
 
 from __future__ import annotations
@@ -43,6 +44,13 @@ from dev_workspace_mcp.operations.resources import (
     classify_cache_volume,
     classify_workspace_container,
 )
+from dev_workspace_mcp.operations.ssh_agent_cleanup import (
+    SSHAgentCleanupDebt,
+    attempt_ssh_agent_cleanup,
+    get_ssh_agent_cleanup_debt,
+    observe_socket_identity,
+    transition_ssh_agent_to_cleanup_debt,
+)
 from dev_workspace_mcp.workspace.naming import LABEL_REPOSITORY_ID, LABEL_WORKSPACE_ID
 from dev_workspace_mcp.workspace.ssh_agent import (
     SSHAgentRecord,
@@ -61,6 +69,13 @@ class PruneExecutionStatus(StrEnum):
     FAILED = "failed"
 
 
+class PruneExecutionAggregateStatus(StrEnum):
+    NOT_CONFIRMED = "not_confirmed"
+    SUCCESS = "success"
+    MIXED = "mixed"
+    DEGRADED = "degraded"
+
+
 @dataclass(frozen=True, slots=True)
 class PruneExecutionOutcome:
     candidate: PruneCandidate
@@ -71,6 +86,7 @@ class PruneExecutionOutcome:
 @dataclass(frozen=True, slots=True)
 class PruneExecutionResult:
     confirmed: bool
+    status: PruneExecutionAggregateStatus
     outcomes: tuple[PruneExecutionOutcome, ...]
 
 
@@ -120,6 +136,24 @@ def _volume_bytes(attrs: Mapping[str, Any]) -> ByteObservation:
     )
 
 
+def _aggregate_status(
+    outcomes: tuple[PruneExecutionOutcome, ...],
+) -> PruneExecutionAggregateStatus:
+    has_success = any(
+        outcome.status in {PruneExecutionStatus.RECLAIMED, PruneExecutionStatus.ALREADY_ABSENT}
+        for outcome in outcomes
+    )
+    has_problem = any(
+        outcome.status in {PruneExecutionStatus.STALE, PruneExecutionStatus.FAILED}
+        for outcome in outcomes
+    )
+    if has_problem and has_success:
+        return PruneExecutionAggregateStatus.MIXED
+    if has_problem:
+        return PruneExecutionAggregateStatus.DEGRADED
+    return PruneExecutionAggregateStatus.SUCCESS
+
+
 class PruneExecutionService:
     """Execute only exact candidates frozen in a previously stored plan."""
 
@@ -139,6 +173,7 @@ class PruneExecutionService:
         if not confirmed:
             return PruneExecutionResult(
                 confirmed=False,
+                status=PruneExecutionAggregateStatus.NOT_CONFIRMED,
                 outcomes=tuple(
                     PruneExecutionOutcome(
                         candidate=candidate,
@@ -152,7 +187,11 @@ class PruneExecutionService:
         outcomes = tuple(
             self._execute_candidate(plan.token, candidate) for candidate in plan.candidates
         )
-        return PruneExecutionResult(confirmed=True, outcomes=outcomes)
+        return PruneExecutionResult(
+            confirmed=True,
+            status=_aggregate_status(outcomes),
+            outcomes=outcomes,
+        )
 
     def _execute_candidate(
         self,
@@ -161,6 +200,10 @@ class PruneExecutionService:
     ) -> PruneExecutionOutcome:
         probe = self._probe(candidate)
         if probe.status is _ProbeStatus.ABSENT:
+            if candidate.kind is ResourceKind.SSH_AGENT:
+                linked = self._retry_linked_ssh_cleanup(candidate)
+                if linked is not None:
+                    return linked
             return PruneExecutionOutcome(
                 candidate=candidate,
                 status=PruneExecutionStatus.ALREADY_ABSENT,
@@ -208,6 +251,37 @@ class PruneExecutionService:
             reason="deletion_unproven",
         )
 
+    def _retry_linked_ssh_cleanup(
+        self,
+        candidate: PruneCandidate,
+    ) -> PruneExecutionOutcome | None:
+        try:
+            debt = get_ssh_agent_cleanup_debt(self._connection, candidate.resource_id)
+        except sqlite3.Error:
+            return PruneExecutionOutcome(
+                candidate=candidate,
+                status=PruneExecutionStatus.FAILED,
+                reason="identity_probe_failed",
+            )
+        if debt is None:
+            return None
+        reason = attempt_ssh_agent_cleanup(
+            self._connection,
+            state_dir=self._state_dir,
+            debt=debt,
+        )
+        if reason is not None:
+            return PruneExecutionOutcome(
+                candidate=candidate,
+                status=PruneExecutionStatus.FAILED,
+                reason=reason,
+            )
+        return PruneExecutionOutcome(
+            candidate=candidate,
+            status=PruneExecutionStatus.RECLAIMED,
+            reason=None,
+        )
+
     def _probe(self, candidate: PruneCandidate) -> _Probe:
         if candidate.kind is ResourceKind.WORKSPACE_CONTAINER:
             return self._probe_container(candidate)
@@ -217,6 +291,8 @@ class PruneExecutionService:
             return self._probe_job_log_cleanup(candidate)
         if candidate.kind is ResourceKind.SSH_AGENT:
             return self._probe_ssh_agent(candidate)
+        if candidate.kind is ResourceKind.SSH_AGENT_CLEANUP:
+            return self._probe_ssh_agent_cleanup(candidate)
         return _Probe(_ProbeStatus.FAILED, reason="unsupported_candidate_kind")
 
     def _probe_container(self, candidate: PruneCandidate) -> _Probe:
@@ -381,6 +457,33 @@ class PruneExecutionService:
         )
         return _Probe(_ProbeStatus.PRESENT, resource=resource, target=record)
 
+    def _probe_ssh_agent_cleanup(self, candidate: PruneCandidate) -> _Probe:
+        try:
+            debt = get_ssh_agent_cleanup_debt(self._connection, candidate.resource_id)
+        except sqlite3.Error:
+            return _Probe(_ProbeStatus.FAILED, reason="identity_probe_failed")
+        if debt is None:
+            return _Probe(_ProbeStatus.ABSENT)
+        bytes_observation = (
+            ByteObservation.accounted(debt.bytes_hint)
+            if debt.bytes_hint is not None
+            else ByteObservation.unavailable("SSH-agent cleanup byte accounting is unavailable")
+        )
+        resource = InventoryResource(
+            kind=ResourceKind.SSH_AGENT_CLEANUP,
+            resource_id=debt.workspace_id,
+            lifecycle_state=ResourceLifecycleState.CLEANUP_PENDING,
+            ownership=_owned_state_proof("durable ssh_agent_cleanup tombstone row"),
+            bytes=bytes_observation,
+            workspace_id=debt.workspace_id,
+            details={
+                "last_error_recorded": debt.last_error is not None,
+                "socket_device": debt.socket_device,
+                "socket_inode": debt.socket_inode,
+            },
+        )
+        return _Probe(_ProbeStatus.PRESENT, resource=resource, target=debt)
+
     def _act(
         self,
         candidate: PruneCandidate,
@@ -394,6 +497,8 @@ class PruneExecutionService:
             return self._retry_job_log_cleanup(candidate, target)
         if candidate.action == "terminate_exact_ssh_agent":
             return self._terminate_ssh_agent(candidate, target)
+        if candidate.action == "retry_ssh_agent_cleanup":
+            return self._retry_ssh_agent_cleanup(candidate, target)
         return PruneExecutionOutcome(
             candidate=candidate,
             status=PruneExecutionStatus.FAILED,
@@ -459,6 +564,30 @@ class PruneExecutionService:
             )
         return None
 
+    def _retry_ssh_agent_cleanup(
+        self,
+        candidate: PruneCandidate,
+        target: object | None,
+    ) -> PruneExecutionOutcome | None:
+        if not isinstance(target, SSHAgentCleanupDebt):
+            return PruneExecutionOutcome(
+                candidate=candidate,
+                status=PruneExecutionStatus.FAILED,
+                reason="identity_probe_failed",
+            )
+        reason = attempt_ssh_agent_cleanup(
+            self._connection,
+            state_dir=self._state_dir,
+            debt=target,
+        )
+        if reason is not None:
+            return PruneExecutionOutcome(
+                candidate=candidate,
+                status=PruneExecutionStatus.FAILED,
+                reason=reason,
+            )
+        return None
+
     def _terminate_ssh_agent(
         self,
         candidate: PruneCandidate,
@@ -506,42 +635,29 @@ class PruneExecutionService:
         candidate: PruneCandidate,
         record: SSHAgentRecord,
     ) -> PruneExecutionOutcome | None:
+        identity = observe_socket_identity(record.socket_path)
         try:
-            with self._connection:
-                cursor = self._connection.execute(
-                    """
-                    DELETE FROM ssh_agent
-                    WHERE workspace_id = ? AND pid = ? AND boot_id = ?
-                      AND process_start_time = ? AND socket_path = ?
-                    """,
-                    (
-                        record.workspace_id,
-                        record.pid,
-                        record.boot_id,
-                        record.process_start_time,
-                        str(record.socket_path),
-                    ),
-                )
+            debt = transition_ssh_agent_to_cleanup_debt(
+                self._connection,
+                record,
+                identity,
+            )
         except sqlite3.Error:
             return PruneExecutionOutcome(
                 candidate=candidate,
                 status=PruneExecutionStatus.FAILED,
                 reason="deletion_unproven",
             )
-        if cursor.rowcount != 1:
+
+        reason = attempt_ssh_agent_cleanup(
+            self._connection,
+            state_dir=self._state_dir,
+            debt=debt,
+        )
+        if reason is not None:
             return PruneExecutionOutcome(
                 candidate=candidate,
                 status=PruneExecutionStatus.FAILED,
-                reason="deletion_unproven",
-            )
-        try:
-            record.socket_path.unlink(missing_ok=True)
-        except OSError:
-            # The exact process and durable row are already gone. O9 owns
-            # durable secondary-cleanup debt for failures after primary deletion.
-            return PruneExecutionOutcome(
-                candidate=candidate,
-                status=PruneExecutionStatus.FAILED,
-                reason="secondary_cleanup_failed",
+                reason="secondary_cleanup_failed" if reason == "secondary_cleanup_failed" else reason,
             )
         return None
