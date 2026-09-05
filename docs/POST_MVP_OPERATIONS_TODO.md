@@ -2,7 +2,7 @@
 
 **Spec:** `docs/POST_MVP_OPERATIONS_SPEC.md` (`PMOR-001`..`PMOR-012`, `PMOAT-001`..`PMOAT-012`)
 
-**Status:** open — O1-O7 complete; O8-O12 remain
+**Status:** open — O1-O8 complete; O9-O12 remain
 
 This TODO deliberately starts read-only and moves the destructive boundary later. Do not implement prune execution before the inventory/ownership model and dry-run plan are independently tested.
 
@@ -135,7 +135,7 @@ Do not skip directly to O8. A safe prune executor depends on the ownership/inven
 - Primary-error preservation: `errors.to_tool_error()` enriches an existing chained Docker `WorkspaceError` only by adding sanitized `details.pressure`; the original code, message, recoverability, and pre-existing details remain primary. Synchronous `exec` returns additive pressure evidence for failed container commands without changing its exit/result semantics.
 - PID source/availability contract: `observe_pid_pressure()` supports only Linux cgroup v2. `/proc/self/cgroup` locates the daemon's unified cgroup and `pids.current`/`pids.max` under `/sys/fs/cgroup` supply usage/limit. There is deliberately no cgroup-v1 or host `pid_max` fallback. Missing, inaccessible, malformed, or unsupported sources return typed `unavailable` with `current=None`/`limit=None`, never zero, and never block ordinary `resource_inventory` operation.
 - Contract/docs: `resource_inventory.pid_pressure` and `exec.pressure` are additive output fields; `contract_version` is `0.8.1`; canonical `schemas/tools.json` remains a 22-tool contract; `docs/TOOLS.md`, schema drift, and contract-version gates pass.
-- Superseded non-behavioral run: `33731124137` stopped at Ruff format on one function-signature normalization and therefore is not RED/GREEN acceptance evidence. Commit `1079d74150ac05dec71c83c1ce3cc4a9a38194b8` applied only Ruff's requested formatting.
+- Superseded non-behavioral run: `33731124137` stopped at Ruff format on one function-signature normalization and therefore is not acceptance evidence. Commit `1079d74150ac05dec71c83c1ce3cc4a9a38194b8` applied only Ruff's requested formatting.
 - Final GREEN: Actions run `33731708015` on O4 head `1079d74150ac05dec71c83c1ce3cc4a9a38194b8` passed Docker build, Ruff format/lint, mypy (`66 source files`), MCP contract, contract-version, docs drift, and the complete Docker-backed suite: `1146 passed in 625.55s` with 92% overall coverage.
 - Revert/pre-feature verification is represented by `33704861730` plus the stronger real-surface RED `33705719797`; both failed only the O4 behavior subsequently supplied by this task while unrelated gates/tests remained green.
 
@@ -223,15 +223,26 @@ Do not skip directly to O8. A safe prune executor depends on the ownership/inven
 
 **Satisfies:** PMOR-008, PMOR-009 · **Verified by:** PMOAT-008, PMOAT-009
 
-- [ ] Add execution service that accepts only an existing immutable plan
-- [ ] Require explicit confirmation; absent/false confirmation is non-destructive
-- [ ] Revalidate ownership and lifecycle preconditions per candidate immediately before action
-- [ ] Delete only the exact resource identity recorded in the plan
-- [ ] Never fall back to label-wide, prefix-wide, or system-wide prune
-- [ ] Make already-proven-absent resources idempotent success/no-op
-- [ ] Treat unknown identity/deletion proof as failure/degraded, not success
-- [ ] Real-Docker test with owned disposable resources plus foreign lookalike container and volume
-- [ ] Prove foreign sentinels survive unchanged
+- [x] Add execution service that accepts only an existing immutable plan
+- [x] Require explicit confirmation; absent/false confirmation is non-destructive
+- [x] Revalidate ownership and lifecycle preconditions per candidate immediately before action
+- [x] Delete only the exact resource identity recorded in the plan
+- [x] Never fall back to label-wide, prefix-wide, or system-wide prune
+- [x] Make already-proven-absent resources idempotent success/no-op
+- [x] Treat unknown identity/deletion proof as failure/degraded, not success
+- [x] Real-Docker test with owned disposable resources plus foreign lookalike container and volume
+- [x] Prove foreign sentinels survive unchanged
+
+**O8 completion evidence:**
+
+- PMOAT-008/009 clean public-surface RED: Actions run `33951375472`, job `101266721515`, on test-only head `706f7d527bc66a87cfb355b7254ab77f9230ce09` passed Docker build, Ruff format/lint, mypy, MCP contract, contract-version, and docs drift, then failed exactly the six new O8 acceptance cases because `resource_prune_execute` did not exist; every unrelated test remained green (`6 failed, 1169 passed`). This is the direct revert/pre-feature proof for O8.
+- Implementation: `operations/prune_execution.py` executes only a `PrunePlan` already frozen by O6/O7. Confirmation false returns `not_confirmed` outcomes without probing or mutating resources. Confirmation true probes each candidate by its exact recorded identity, reconstructs only that candidate's current ownership/lifecycle observation, and reuses O6 revalidation before the candidate-specific action; no candidate discovery or plan expansion occurs at execution time.
+- Exact-action/fail-closed semantics: Docker containers and cache volumes are removed only through the exact object returned by `get(resource_id)`, job-log cleanup retries the exact durable cleanup-debt record through the trusted GAP3 Y7 path, and SSH-agent termination requires the exact durable workspace/PID/boot-ID/process-start/socket identity before deletion. There is no collection prune, label-wide, prefix-wide, path-wide, or system-wide fallback. Proven exact absence is `already_absent`; identity-probe failure, unprovable deletion, and post-action proof failure are explicit failures rather than success.
+- Public boundary: `resource_prune_execute` accepts only `plan_token` plus `confirm=false` by default. Unknown/expired plan tokens fail rather than regenerating authorization. Output reports bounded per-candidate `reclaimed`, `already_absent`, `stale`, `failed`, or `not_confirmed` outcomes plus aggregate counts. The additive tool is the 24th MCP tool; `contract_version` is `0.10.0`; `schemas/tools.json` and `docs/TOOLS.md` are current and all contract/docs drift gates pass.
+- PMOAT-008 fake-Docker cases prove omitted/false confirmation causes zero mutation, exact valid candidates are reclaimed, a materially changed container becomes stale while an independent valid volume proceeds, exact pre-action absence is idempotent, and an unprovable exact identity is a failed outcome.
+- PMOAT-009 real-Docker acceptance runs under GAP3 Y15's physical test namespace with owned disposable container/volume candidates beside foreign lookalike container/volume sentinels. Only the exact owned plan candidates are removed; the foreign container remains running with unchanged labels and the foreign volume remains present with unchanged attributes.
+- Implementation GREEN: Actions run `33952442801`, job `101269629139`, on exact implementation head `95ff6c117778d50309c59466ccf613af5442f053` passed Docker build, Ruff format/lint, mypy (`70 source files`), MCP contract, contract-version, docs drift, and the complete Docker-backed suite: `1175 passed in 605.77s` with 92% overall coverage.
+- Revert/pre-feature verification is the clean `33951375472` RED: removing O8 returns exactly the six new prune-execution failures while the prior 1169-test O7 baseline remains green.
 
 ### O9 — Make partial reclamation failure durable and retryable
 
