@@ -1,10 +1,10 @@
-"""Dry-run-only public prune planning for O7 / PMOR-006..007.
+"""Public plan-first reclamation tools for O7/O8 / PMOR-006..009.
 
-The MCP surface intentionally stops at immutable plan creation. It consumes the
-bounded read-only inventory, applies O5's positive-ownership candidate rules,
-freezes the exact filtered candidates behind O6's ephemeral plan token, and
-returns a path-free public projection. No execution/confirmation parameter or
-mutation-capable fallback exists in this module.
+``resource_prune_plan`` remains mutation-free and freezes the exact positive-
+ownership candidates in a bounded ephemeral store. ``resource_prune_execute``
+accepts only one token from that same store plus explicit confirmation. It has
+no discovery/filter/path input and delegates candidate-by-candidate exact
+revalidation and action to O8's execution service.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from dev_workspace_mcp.audit import write_audit_event
 from dev_workspace_mcp.config.models import AuditConfig
-from dev_workspace_mcp.errors import translate_workspace_errors
+from dev_workspace_mcp.errors import InvalidArgumentError, translate_workspace_errors
 from dev_workspace_mcp.operations.inventory import (
     ByteObservation,
     ByteProvenance,
@@ -30,7 +30,15 @@ from dev_workspace_mcp.operations.inventory import (
     ResourceInventoryService,
 )
 from dev_workspace_mcp.operations.prune_candidates import PruneCandidate, build_prune_candidates
-from dev_workspace_mcp.operations.prune_plans import PrunePlanStore, create_prune_plan
+from dev_workspace_mcp.operations.prune_execution import (
+    PruneExecutionService,
+    PruneExecutionStatus,
+)
+from dev_workspace_mcp.operations.prune_plans import (
+    PlanNotFoundError,
+    PrunePlanStore,
+    create_prune_plan,
+)
 from dev_workspace_mcp.workspace.naming import (
     LABEL_REPOSITORY_ID,
     LABEL_TEST_NAMESPACE,
@@ -59,6 +67,13 @@ PlanAction = Literal[
     "terminate_exact_ssh_agent",
 ]
 PlanLifecycleState = Literal["orphaned_owned", "cleanup_pending"]
+ExecuteOutcomeStatus = Literal[
+    "not_confirmed",
+    "reclaimed",
+    "already_absent",
+    "stale",
+    "failed",
+]
 OpaqueId = Annotated[
     str,
     Field(
@@ -91,6 +106,15 @@ class ResourcePrunePlanInput(BaseModel):
         if value is not None and len(value) != len(set(value)):
             raise ValueError("resource_kinds must not contain duplicates")
         return value
+
+
+class ResourcePruneExecuteInput(BaseModel):
+    """O8 destructive request: exact stored plan token plus explicit consent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    plan_token: PlanToken
+    confirm: bool = False
 
 
 class ByteObservationOutput(BaseModel):
@@ -152,6 +176,28 @@ class ResourcePrunePlanOutput(BaseModel):
     candidate_count: Annotated[int, Field(ge=0, le=_MAX_RESOURCES)]
     candidates: Annotated[list[PruneCandidateOutput], Field(max_length=_MAX_RESOURCES)]
     projected_bytes: ProjectedBytesOutput
+
+
+class PruneExecutionOutcomeOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_id: CandidateId
+    kind: PlanResourceKind
+    status: ExecuteOutcomeStatus
+    reason: BoundedText | None = None
+
+
+class ResourcePruneExecuteOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirmed: bool
+    executed: bool
+    candidate_count: Annotated[int, Field(ge=0, le=_MAX_RESOURCES)]
+    reclaimed_count: Annotated[int, Field(ge=0, le=_MAX_RESOURCES)]
+    already_absent_count: Annotated[int, Field(ge=0, le=_MAX_RESOURCES)]
+    stale_count: Annotated[int, Field(ge=0, le=_MAX_RESOURCES)]
+    failed_count: Annotated[int, Field(ge=0, le=_MAX_RESOURCES)]
+    outcomes: Annotated[list[PruneExecutionOutcomeOutput], Field(max_length=_MAX_RESOURCES)]
 
 
 @dataclass(frozen=True, slots=True)
@@ -336,7 +382,7 @@ def register(
     state_db_path: Path,
     audit_config: AuditConfig,
 ) -> None:
-    """Register O7's dry-run-only resource planning surface."""
+    """Register O7 planning and O8 explicit plan-scoped execution."""
 
     plan_store = PrunePlanStore()
 
@@ -408,3 +454,54 @@ def register(
             },
         )
         return output
+
+    @server.tool(
+        name="resource_prune_execute",
+        description=(
+            "Execute only a previously returned immutable reclamation plan. Explicit "
+            "confirmation is required; every exact candidate is independently revalidated."
+        ),
+    )
+    @translate_workspace_errors
+    async def resource_prune_execute(
+        plan_token: PlanToken,
+        confirm: bool = False,
+    ) -> ResourcePruneExecuteOutput:
+        request = ResourcePruneExecuteInput(plan_token=plan_token, confirm=confirm)
+        try:
+            plan = plan_store.get(request.plan_token)
+        except PlanNotFoundError as exc:
+            raise InvalidArgumentError("unknown or expired prune plan token") from exc
+
+        result = PruneExecutionService(
+            connection=db,
+            docker_client=docker_client,
+            state_dir=state_db_path.parent,
+        ).execute(plan, confirmed=request.confirm)
+        outputs = [
+            PruneExecutionOutcomeOutput(
+                candidate_id=outcome.candidate.candidate_id,
+                kind=cast(PlanResourceKind, outcome.candidate.kind.value),
+                status=outcome.status.value,
+                reason=outcome.reason,
+            )
+            for outcome in result.outcomes
+        ]
+        return ResourcePruneExecuteOutput(
+            confirmed=result.confirmed,
+            executed=result.confirmed,
+            candidate_count=len(outputs),
+            reclaimed_count=sum(
+                outcome.status is PruneExecutionStatus.RECLAIMED for outcome in result.outcomes
+            ),
+            already_absent_count=sum(
+                outcome.status is PruneExecutionStatus.ALREADY_ABSENT for outcome in result.outcomes
+            ),
+            stale_count=sum(
+                outcome.status is PruneExecutionStatus.STALE for outcome in result.outcomes
+            ),
+            failed_count=sum(
+                outcome.status is PruneExecutionStatus.FAILED for outcome in result.outcomes
+            ),
+            outcomes=outputs,
+        )
