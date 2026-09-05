@@ -495,8 +495,7 @@ def register(
                 outcome.status is PruneExecutionStatus.RECLAIMED for outcome in result.outcomes
             ),
             already_absent_count=sum(
-                outcome.status is PruneExecutionStatus.ALREADY_ABSENT
-                for outcome in result.outcomes
+                outcome.status is PruneExecutionStatus.ALREADY_ABSENT for outcome in result.outcomes
             ),
             stale_count=sum(
                 outcome.status is PruneExecutionStatus.STALE for outcome in result.outcomes

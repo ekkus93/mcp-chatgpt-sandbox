@@ -33,7 +33,6 @@ from dev_workspace_mcp.operations.prune_candidates import PruneCandidate
 from dev_workspace_mcp.operations.prune_plans import (
     PrunePlan,
     RevalidationStatus,
-    create_prune_plan,
     revalidate_prune_plan,
 )
 from dev_workspace_mcp.operations.resources import (
@@ -150,10 +149,16 @@ class PruneExecutionService:
                 ),
             )
 
-        outcomes = tuple(self._execute_candidate(candidate) for candidate in plan.candidates)
+        outcomes = tuple(
+            self._execute_candidate(plan.token, candidate) for candidate in plan.candidates
+        )
         return PruneExecutionResult(confirmed=True, outcomes=outcomes)
 
-    def _execute_candidate(self, candidate: PruneCandidate) -> PruneExecutionOutcome:
+    def _execute_candidate(
+        self,
+        plan_token: str,
+        candidate: PruneCandidate,
+    ) -> PruneExecutionOutcome:
         probe = self._probe(candidate)
         if probe.status is _ProbeStatus.ABSENT:
             return PruneExecutionOutcome(
@@ -169,7 +174,7 @@ class PruneExecutionService:
             )
 
         validation = revalidate_prune_plan(
-            create_prune_plan((candidate,)),
+            PrunePlan(token=plan_token, candidates=(candidate,)),
             _single_inventory(probe.resource),
         )
         decision = validation.decisions[0]
