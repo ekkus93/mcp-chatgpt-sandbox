@@ -1,4 +1,4 @@
-"""Read-only operational resource tooling (Post-MVP Operations O3).
+"""Read-only operational resource tooling (Post-MVP Operations O3/O9).
 
 The public MCP shape is intentionally narrower than the internal inventory
 objects. It accepts only opaque repository/workspace IDs and serializes an
@@ -363,7 +363,8 @@ def _cleanup_debt_summary(
     *,
     complete: bool,
 ) -> CleanupDebtSummaryOutput:
-    debt = [resource for resource in resources if resource.kind is ResourceKind.JOB_LOG_CLEANUP]
+    cleanup_kinds = {ResourceKind.JOB_LOG_CLEANUP, ResourceKind.SSH_AGENT_CLEANUP}
+    debt = [resource for resource in resources if resource.kind in cleanup_kinds]
     values = [resource.bytes.value for resource in debt]
     bytes_complete = all(value is not None for value in values)
     if bytes_complete:
@@ -459,7 +460,7 @@ def register(
     docker_client: docker.DockerClient | None,
     state_db_path: Path,
 ) -> None:
-    """Register O3's bounded read-only operational inventory tool."""
+    """Register O3/O9's bounded read-only operational inventory tool."""
 
     @server.tool(
         name="resource_inventory",

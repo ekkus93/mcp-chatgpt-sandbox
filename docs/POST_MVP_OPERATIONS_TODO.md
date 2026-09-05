@@ -2,7 +2,7 @@
 
 **Spec:** `docs/POST_MVP_OPERATIONS_SPEC.md` (`PMOR-001`..`PMOR-012`, `PMOAT-001`..`PMOAT-012`)
 
-**Status:** open — O1-O8 complete; O9-O12 remain
+**Status:** open — O1-O9 complete; O10-O12 remain
 
 This TODO deliberately starts read-only and moves the destructive boundary later. Do not implement prune execution before the inventory/ownership model and dry-run plan are independently tested.
 
@@ -248,14 +248,26 @@ Do not skip directly to O8. A safe prune executor depends on the ownership/inven
 
 **Satisfies:** PMOR-010 · **Verified by:** PMOAT-010
 
-- [ ] Return per-candidate outcome and aggregate mixed/degraded state
-- [ ] Preserve the primary failure for each candidate
-- [ ] Reuse GAP3 Y7 durable cleanup debt for job-log secondary cleanup where applicable
-- [ ] Add durable debt/state for any new post-primary cleanup class that otherwise becomes warning-and-forget
-- [ ] Keep pending bytes in accounting until absence is proven
-- [ ] Retry and clear debt safely
-- [ ] Prove repeated execute/retry is idempotent
-- [ ] Force secondary cleanup failure after primary deletion and verify no false blanket success
+- [x] Return per-candidate outcome and aggregate mixed/degraded state
+- [x] Preserve the primary failure for each candidate
+- [x] Reuse GAP3 Y7 durable cleanup debt for job-log secondary cleanup where applicable
+- [x] Add durable debt/state for any new post-primary cleanup class that otherwise becomes warning-and-forget
+- [x] Keep pending bytes in accounting until absence is proven
+- [x] Retry and clear debt safely
+- [x] Prove repeated execute/retry is idempotent
+- [x] Force secondary cleanup failure after primary deletion and verify no false blanket success
+
+**O9 completion evidence:**
+
+- PMOAT-010 clean pre-feature RED: Actions run `33960914920`, job `101292527894`, on the test-only pre-implementation generation passed Docker build, Ruff format/lint, mypy (`70 source files`), MCP contract, contract-version, and docs drift, then failed exactly the two O9 cases while the O8 baseline remained green (`2 failed, 1175 passed`). The public execute result had no aggregate `status`, and the `ssh_agent_cleanup` durable-debt table did not exist. This is the direct pre-feature/revert proof for O9's durable partial-failure boundary.
+- Durable secondary-cleanup state: schema migration 9 adds path-free `ssh_agent_cleanup` tombstones keyed by opaque `workspace_id`, with created/attempt/error/accounting state plus exact `st_dev`/`st_ino` identity. The primary `ssh_agent` row and secondary tombstone transition happen atomically; no arbitrary socket path is persisted for replay.
+- Failure/accounting semantics: after primary SSH-agent deletion, a failed exact socket unlink returns that candidate as `failed` with `secondary_cleanup_failed` while independent successes remain successes and the aggregate becomes `mixed`/`degraded` rather than blanket success. The tombstone remains `cleanup_pending` in `resource_inventory`; its accounted bytes remain in cleanup-debt totals until exact absence is proven. Persisted failure text is sanitized to error class/errno rather than retaining host paths or arbitrary exception text.
+- Retry/idempotency semantics: execution of the original still-live SSH-agent plan detects linked cleanup debt after the primary row is already absent and retries it. If the original ephemeral authorization token is gone, a new explicitly requested `ssh_agent_cleanup` prune plan can retry only that durable debt. Successful retry proves socket absence before clearing the tombstone; executing the same plan again becomes `already_absent` idempotent success.
+- Identity-race hardening: cleanup paths are reconstructed only as `<state_dir>/ssh-agents/<validated-workspace-id>/agent.sock`. Planning binds the durable cleanup candidate to device/inode identity, execution revalidates the same positive ownership evidence, and the action rechecks device/inode immediately before unlink. If a foreign replacement occupies the trusted path, execution returns `identity_changed`, leaves the replacement sentinel untouched, and preserves the cleanup debt for operator-visible retry rather than deleting by pathname alone.
+- GAP3 Y7 remains the existing durable mechanism for job-log cleanup; O9 adds only the new SSH-agent post-primary cleanup class. There is still no collection-wide, label-wide, prefix-wide, path-wide, or system-wide reclamation fallback.
+- Public contract/docs: `resource_prune_plan` now accepts the fifth exact kind `ssh_agent_cleanup` and exposes only an identity-bound boolean rather than raw device/inode values; `resource_prune_execute` exposes aggregate `not_confirmed`/`success`/`mixed`/`degraded` status. The tool count remains 24, `contract_version` is `0.10.1`, and `schemas/tools.json` plus `docs/TOOLS.md` are synchronized.
+- Final implementation GREEN: Actions run `33971923778`, job `101321839893`, on exact O9 head `07ca1ec1d88466558f4b7ddb8c62e2a7da78b86c` passed Docker build, Ruff format/lint, mypy (`71 source files`), MCP contract, contract-version, docs drift, and the complete Docker-backed suite: `1178 passed in 601.79s` with 92% overall coverage. The PMOAT-010 partial-failure/retry, durable-schema, and replacement-identity cases all pass in this generation.
+- Revert/pre-feature verification is the clean `33960914920` RED against the O8 behavior: reverting O9 removes the aggregate partial-result state and the durable SSH cleanup surface before the new retry/identity semantics can exist, while the prior 1175-test baseline remains green.
 
 ---
 

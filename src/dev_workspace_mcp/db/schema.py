@@ -219,6 +219,27 @@ MIGRATIONS: list[list[str]] = [
         END
         """,
     ],
+    # --- version 8 -> 9: durable ssh-agent secondary cleanup debt (O9) --------
+    [
+        # PMOR-010: the primary process and ssh_agent row can already be gone
+        # when unlinking its socket fails. Keep a separate tombstone rather
+        # than resurrecting primary metadata. The deletion target itself is
+        # never persisted: callers reconstruct it below the trusted state
+        # root. device+inode bind retries to the exact artifact observed
+        # before primary deletion so a replaced path fails closed.
+        """
+        CREATE TABLE ssh_agent_cleanup (
+            workspace_id   TEXT PRIMARY KEY,
+            created_at     TEXT NOT NULL,
+            last_attempt_at TEXT,
+            last_error     TEXT,
+            bytes_hint     INTEGER CHECK (bytes_hint IS NULL OR bytes_hint >= 0),
+            socket_device  INTEGER,
+            socket_inode   INTEGER
+        )
+        """,
+        "CREATE INDEX idx_ssh_agent_cleanup_created_at ON ssh_agent_cleanup (created_at)",
+    ],
 ]
 
 

@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.10.0",
+  "contract_version": "0.10.1",
   "tools": [
     {
       "description": "Delete a repository file or directory (\u00a713.5).",
@@ -2130,6 +2130,7 @@
               "job_log_directory",
               "job_log_cleanup",
               "ssh_agent",
+              "ssh_agent_cleanup",
               "state_storage",
               "docker_image"
             ],
@@ -2350,7 +2351,8 @@
                   "workspace_container",
                   "cache_volume",
                   "job_log_cleanup",
-                  "ssh_agent"
+                  "ssh_agent",
+                  "ssh_agent_cleanup"
                 ],
                 "title": "Kind",
                 "type": "string"
@@ -2436,11 +2438,22 @@
             "minimum": 0,
             "title": "Stale Count",
             "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "not_confirmed",
+              "success",
+              "mixed",
+              "degraded"
+            ],
+            "title": "Status",
+            "type": "string"
           }
         },
         "required": [
           "confirmed",
           "executed",
+          "status",
           "candidate_count",
           "reclaimed_count",
           "already_absent_count",
@@ -2480,11 +2493,12 @@
                     "workspace_container",
                     "cache_volume",
                     "job_log_cleanup",
-                    "ssh_agent"
+                    "ssh_agent",
+                    "ssh_agent_cleanup"
                   ],
                   "type": "string"
                 },
-                "maxItems": 4,
+                "maxItems": 5,
                 "minItems": 1,
                 "type": "array"
               },
@@ -2600,7 +2614,7 @@
           },
           "CandidatePreconditionsOutput": {
             "additionalProperties": false,
-            "description": "Safe public summary; raw Y2 process identity remains plan-internal.",
+            "description": "Safe public summary; raw host/process identity remains plan-internal.",
             "properties": {
               "docker_status": {
                 "anyOf": [
@@ -2620,6 +2634,10 @@
               },
               "ssh_agent_boot_id_bound": {
                 "title": "Ssh Agent Boot Id Bound",
+                "type": "boolean"
+              },
+              "ssh_agent_cleanup_identity_bound": {
+                "title": "Ssh Agent Cleanup Identity Bound",
                 "type": "boolean"
               },
               "ssh_agent_pid": {
@@ -2642,7 +2660,8 @@
             },
             "required": [
               "ssh_agent_boot_id_bound",
-              "ssh_agent_process_start_time_bound"
+              "ssh_agent_process_start_time_bound",
+              "ssh_agent_cleanup_identity_bound"
             ],
             "title": "CandidatePreconditionsOutput",
             "type": "object"
@@ -2681,7 +2700,8 @@
                   "remove_exact_container",
                   "remove_exact_cache_volume",
                   "retry_job_log_cleanup",
-                  "terminate_exact_ssh_agent"
+                  "terminate_exact_ssh_agent",
+                  "retry_ssh_agent_cleanup"
                 ],
                 "title": "Action",
                 "type": "string"
@@ -2701,7 +2721,8 @@
                   "workspace_container",
                   "cache_volume",
                   "job_log_cleanup",
-                  "ssh_agent"
+                  "ssh_agent",
+                  "ssh_agent_cleanup"
                 ],
                 "title": "Kind",
                 "type": "string"

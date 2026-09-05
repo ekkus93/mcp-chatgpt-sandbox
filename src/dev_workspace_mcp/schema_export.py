@@ -62,7 +62,10 @@ from mcp.server import MCPServer
 #: 0.10.0 (Post-MVP Operations O8): minor bump — one new additive destructive
 #: tool, `resource_prune_execute`, requiring an existing immutable plan token
 #: plus explicit confirmation and returning bounded per-candidate outcomes.
-CONTRACT_VERSION = "0.10.0"
+#: 0.10.1 (Post-MVP Operations O9): patch bump — reclamation contracts gained
+#: durable `ssh_agent_cleanup` retry candidates, cleanup identity binding, and
+#: aggregate execution status; no new tools.
+CONTRACT_VERSION = "0.10.1"
 
 
 async def collect_tool_schemas(server: MCPServer) -> list[dict[str, Any]]:
