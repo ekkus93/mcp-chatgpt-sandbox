@@ -5,6 +5,7 @@ from __future__ import annotations
 import errno
 import json
 import logging
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -145,7 +146,10 @@ async def test_r3_legacy_raw_cleanup_error_is_not_republished(
 
     # Keep the legacy row present so the scheduler reports the existing debt
     # rather than retrying/clearing it during this compatibility assertion.
-    monkeypatch.setattr("dev_workspace_mcp.maintenance.prune_job_logs", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        "dev_workspace_mcp.maintenance.prune_job_logs",
+        lambda *args, **kwargs: [],
+    )
     scheduler = MaintenanceScheduler(minimal_config)
     failures: list[tuple[str, str | None, str]] = []
     scheduler._run_job_log_maintenance(failures, job_store=JobStore(db), db=db)
@@ -155,12 +159,12 @@ async def test_r3_legacy_raw_cleanup_error_is_not_republished(
     assert health.last_failure_task == "job_log_cleanup_debt"
     assert health.last_failure_item == job_id
     assert health.last_failure_reason == "cleanup_failure_recorded"
-    assert _LEGACY_DETAIL not in json.dumps(health.__dict__ if hasattr(health, "__dict__") else {
-        "last_failure_reason": health.last_failure_reason,
-        "last_failure_item": health.last_failure_item,
-    })
+    assert _LEGACY_DETAIL not in json.dumps(asdict(health), sort_keys=True)
 
-    monkeypatch.setattr("dev_workspace_mcp.server._try_docker_client", lambda: None)
+    monkeypatch.setattr(
+        "dev_workspace_mcp.server._try_docker_client",
+        lambda: None,
+    )
     server = create_server(minimal_config)
     inventory = (await server.call_tool("resource_inventory", {})).structured_content
     plan = (
