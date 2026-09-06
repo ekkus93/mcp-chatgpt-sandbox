@@ -29,10 +29,6 @@ from dev_workspace_mcp.jobs.retention import (
 )
 from dev_workspace_mcp.jobs.store import NON_TERMINAL_STATES, TERMINAL_STATES, JobStore
 from dev_workspace_mcp.logging_config import redacted_extra
-from dev_workspace_mcp.operations.ssh_agent_cleanup import (
-    attempt_ssh_agent_cleanup,
-    list_ssh_agent_cleanup_debt,
-)
 from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
 from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager
 
@@ -313,6 +309,13 @@ class MaintenanceScheduler:
         db: sqlite3.Connection,
     ) -> None:
         """Retry only exact durable O9 secondary-cleanup tombstones."""
+        # Import lazily to avoid the existing operations/resources <-> workspace
+        # package import cycle during CLI/server module initialization.
+        from dev_workspace_mcp.operations.ssh_agent_cleanup import (
+            attempt_ssh_agent_cleanup,
+            list_ssh_agent_cleanup_debt,
+        )
+
         try:
             debts = list_ssh_agent_cleanup_debt(db)
         except Exception as exc:  # noqa: BLE001 - isolate this maintenance family
