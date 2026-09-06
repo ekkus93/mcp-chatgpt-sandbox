@@ -77,6 +77,19 @@ _SAFE_AUDIT_FAILURE_CLASSIFICATIONS = frozenset(
         "unsupported_candidate_kind",
     }
 )
+_SAFE_PUBLIC_EXECUTION_REASONS = _SAFE_AUDIT_FAILURE_CLASSIFICATIONS | frozenset(
+    {
+        "identity_ambiguous",
+        "inventory_incomplete",
+        "lifecycle_changed",
+        "ownership_changed",
+        "ownership_evidence_changed",
+        "ownership_unprovable",
+        "precondition_changed",
+        "resource_absent",
+        "scope_changed",
+    }
+)
 
 PlanResourceKind = Literal[
     "workspace_container",
@@ -433,6 +446,19 @@ def _audit_failure_classification(reason: str | None) -> str | None:
     return "failure_detail_redacted"
 
 
+def _public_execution_reason(
+    status: PruneExecutionStatus,
+    reason: str | None,
+) -> str | None:
+    if reason is None:
+        return None
+    if status not in {PruneExecutionStatus.STALE, PruneExecutionStatus.FAILED}:
+        return reason if reason in _SAFE_PUBLIC_EXECUTION_REASONS else None
+    if reason in _SAFE_PUBLIC_EXECUTION_REASONS:
+        return reason
+    return "failure_detail_redacted"
+
+
 def _audit_reclaimed_bytes(result: PruneExecutionResult) -> dict[str, int]:
     values = [
         outcome.candidate.bytes.value
@@ -584,7 +610,7 @@ def register(
                 candidate_id=outcome.candidate.candidate_id,
                 kind=cast(PlanResourceKind, outcome.candidate.kind.value),
                 status=outcome.status.value,
-                reason=outcome.reason,
+                reason=_public_execution_reason(outcome.status, outcome.reason),
             )
             for outcome in result.outcomes
         ]
