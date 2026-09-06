@@ -15,13 +15,23 @@ split `test_schema_export.py`'s own MCP contract check already
 establishes.
 """
 
+import json
 import re
 from pathlib import Path
 
 from dev_workspace_mcp.config.models import ServerConfig
 from dev_workspace_mcp.server import create_server
 
-_DOCS_PATH = Path(__file__).resolve().parent.parent / "docs" / "TOOLS.md"
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_DOCS_PATH = _REPO_ROOT / "docs" / "TOOLS.md"
+_SCHEMA_PATH = _REPO_ROOT / "schemas" / "tools.json"
+
+_R5_DESCRIPTION_TOOLS = {
+    "resource_inventory",
+    "resource_prune_plan",
+    "resource_prune_execute",
+    "server_info",
+}
 
 #: The same shape `.github/workflows/ci.yml`'s `grep -oP` pattern matches:
 #: a markdown table row whose first cell is a single backtick-quoted tool
@@ -31,6 +41,37 @@ _DOCS_PATH = Path(__file__).resolve().parent.parent / "docs" / "TOOLS.md"
 #: future digit-containing name (still a correctly-formatted row) is
 #: matched rather than silently excluded and reported as missing/stale.
 _TOOL_ROW = re.compile(r"^\| `([a-z0-9_]+)` \|", re.MULTILINE)
+_TOOL_PURPOSE_ROW = re.compile(r"^\| `([a-z0-9_]+)` \| (.*) \|$", re.MULTILINE)
+
+
+def _documented_tool_purposes() -> dict[str, str]:
+    return dict(_TOOL_PURPOSE_ROW.findall(_DOCS_PATH.read_text()))
+
+
+def _schema_tool_descriptions() -> dict[str, str]:
+    document = json.loads(_SCHEMA_PATH.read_text())
+    return {str(tool["name"]): str(tool["description"]) for tool in document["tools"]}
+
+
+def _description_drift(
+    registered: dict[str, str],
+    schema: dict[str, str],
+    documented: dict[str, str],
+) -> dict[str, str]:
+    drift: dict[str, str] = {}
+    for name in sorted(_R5_DESCRIPTION_TOOLS):
+        live_description = registered.get(name)
+        schema_description = schema.get(name)
+        docs_purpose = documented.get(name)
+        if live_description is None:
+            drift[name] = "tool is not registered"
+        elif schema_description != live_description:
+            drift[name] = "exported schema description differs from registered description"
+        elif docs_purpose is None:
+            drift[name] = "docs/TOOLS.md row is missing"
+        elif not docs_purpose.startswith(live_description):
+            drift[name] = "docs/TOOLS.md purpose does not begin with registered description"
+    return drift
 
 
 def _documented_tool_names() -> set[str]:
@@ -72,3 +113,34 @@ def test_rr028_a_tool_name_containing_a_digit_is_matched() -> None:
     the same way on a real CI run."""
     sample = "| `git_oauth2_refresh` | some description |\n"
     assert _TOOL_ROW.findall(sample) == ["git_oauth2_refresh"]
+
+
+async def test_r5_tool_description_docs_drift_is_detected(
+    minimal_config: ServerConfig,
+) -> None:
+    """PMORRAT-005: live descriptions, exported schema descriptions, and
+    the human tool table must agree for the four operations-review tools.
+
+    `docs/TOOLS.md` may retain richer explanatory text after the registered
+    description, but the public description itself must appear verbatim at
+    the start of the purpose cell. A controlled mutation proves this check
+    does not satisfy itself merely because all current files agree.
+    """
+    server = create_server(minimal_config)
+    registered = {
+        tool.name: tool.description or ""
+        for tool in await server.list_tools()
+        if tool.name in _R5_DESCRIPTION_TOOLS
+    }
+    schema = _schema_tool_descriptions()
+    documented = _documented_tool_purposes()
+
+    drift = _description_drift(registered, schema, documented)
+    assert not drift, f"operations tool description/docs drift: {drift}"
+
+    controlled_docs = dict(documented)
+    controlled_docs["resource_inventory"] = "stale controlled purpose"
+    controlled_drift = _description_drift(registered, schema, controlled_docs)
+    assert controlled_drift == {
+        "resource_inventory": "docs/TOOLS.md purpose does not begin with registered description"
+    }
