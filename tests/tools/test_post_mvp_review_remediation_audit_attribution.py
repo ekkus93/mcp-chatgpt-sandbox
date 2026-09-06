@@ -29,7 +29,7 @@ def _assert_bounded_request_attribution(record: dict[str, Any]) -> None:
     assert "OPENAI_API_KEY" not in request_id
 
 
-async def test_pmorrat_001_reclamation_audit_has_request_attribution(
+async def test_r1_reclamation_audit_has_request_attribution(
     minimal_config: ServerConfig,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
