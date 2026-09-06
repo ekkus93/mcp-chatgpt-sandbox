@@ -1,6 +1,6 @@
 # Post-MVP Operations Spec — Resource Visibility and Safe Reclamation
 
-**Status:** proposed next workstream
+**Status:** complete — O1-O12 implemented and verified
 **Date:** 2026-09-02
 **Depends on:** completed GAP3 (`docs/GAP3_SPEC.md`, `docs/GAP3_TODO.md`)
 **Requirement series:** `PMOR-001`..`PMOR-012`

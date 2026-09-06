@@ -2,7 +2,7 @@
 
 **Spec:** `docs/POST_MVP_OPERATIONS_SPEC.md` (`PMOR-001`..`PMOR-012`, `PMOAT-001`..`PMOAT-012`)
 
-**Status:** open — O1-O11 complete; O12 remains
+**Status:** complete — O1-O12 complete
 
 This TODO deliberately starts read-only and moves the destructive boundary later. Do not implement prune execution before the inventory/ownership model and dry-run plan are independently tested.
 
@@ -322,38 +322,51 @@ Do not skip directly to O8. A safe prune executor depends on the ownership/inven
 
 **Satisfies:** PMOR-012 · **Verified by:** PMOAT-012
 
-- [ ] Audit plan creation and execution with opaque candidate IDs/kinds/reasons/outcomes
-- [ ] Record reclaimed bytes where known
-- [ ] Sanitize secret-shaped failure data
-- [ ] Do not add arbitrary host paths to audit output
-- [ ] Add mixed-result redaction acceptance test
-- [ ] Audit all PMOR/PMOAT citations and TODO checkboxes
-- [ ] Verify no broad-prune fallback exists in source/comments/docs
-- [ ] Run full schema/contract/docs drift checks
-- [ ] Run complete Docker-backed suite with foreign sentinel present
-- [ ] Revert-verify final acceptance coverage
-- [ ] Mark this TODO complete only after exact-head CI passes
+- [x] Audit plan creation and execution with opaque candidate IDs/kinds/reasons/outcomes
+- [x] Record reclaimed bytes where known
+- [x] Sanitize secret-shaped failure data
+- [x] Do not add arbitrary host paths to audit output
+- [x] Add mixed-result redaction acceptance test
+- [x] Audit all PMOR/PMOAT citations and TODO checkboxes
+- [x] Verify no broad-prune fallback exists in source/comments/docs
+- [x] Run full schema/contract/docs drift checks
+- [x] Run complete Docker-backed suite with foreign sentinel present
+- [x] Revert-verify final acceptance coverage
+- [x] Mark this TODO complete only after exact-head CI passes
+
+**O12 completion evidence:**
+
+- PMOAT-012 clean acceptance RED: Actions run `34012778089`, job `101431325149`, on acceptance-only head `d74321e27dae3e4d82e34597e65a4df76ef2285d` passed Docker build, Ruff format/lint, mypy (`72 source files`), MCP contract, contract-version, and docs drift, then failed exactly the new O12 acceptance case while the O11 baseline remained green (`1 failed, 1183 passed in 622.85s`). The only audit operation present was `resource_prune_plan`; `resource_prune_execute` emitted no audit event. This is the direct pre-feature/revert proof for PMOR-012.
+- Implementation: plan audit metadata now records the immutable plan ID plus opaque candidate IDs/kinds, a bounded allowlisted/fallback reason, and `planned` decision. Execute audit metadata records the same plan ID, confirmation and aggregate state, per-candidate decision/outcome, and reclaimed bytes where known. Free-form execution failure text is never copied into audit metadata: known safe classifications are allowlisted and every other value becomes `failure_detail_redacted`.
+- PMOAT-012 redaction acceptance drives the real MCP `resource_prune_plan` / `resource_prune_execute` tool boundary with a mixed result containing both a GitHub-token-shaped secret and `/home/phil/.ssh/id_rsa`; neither appears in audit JSONL. The reclaimed candidate records 17 known bytes and the failed candidate records only `failure_detail_redacted`, with no arbitrary host path.
+- Broad-prune closure audit: the execution service remains exact-plan/exact-identity only and explicitly states that no label-wide, prefix-wide, path-wide, or system-wide fallback exists. Repository searches found no `containers.prune`, `volumes.prune`, or `images.prune` execution API. Remaining `docker system prune` text is prohibition/specification language or historical examples of out-of-band deletion, not an MCP cleanup fallback.
+- Citation/TODO audit: O1-O12 task headers collectively cover PMOR-001..PMOR-012 and PMOAT-001..PMOAT-012; O12 is explicitly `PMOR-012` / `PMOAT-012`. All O1-O12 task checkboxes and final definition-of-done items are closed in this generation.
+- Foreign-resource closure evidence: the complete O12 implementation suite includes the existing PMOAT-009 real-Docker destructive acceptance under GAP3 Y15 (`tests/workspace/test_post_mvp_o8_prune_execution.py`), which passed while its foreign lookalike container/volume sentinels remained outside the authorized plan. O12 adds audit behavior only and does not broaden deletion scope.
+- Public contract remains unchanged: O12 adds audit metadata only, not an MCP tool or response field. The tool count remains 24 and `contract_version` remains `0.10.2`; schema export, contract-version, and docs-drift checks all pass.
+- Superseded implementation run `34013769642` stopped only at Ruff formatting before lint/mypy/contracts/pytest. The follow-up changed one blank line and no O12 semantics.
+- Final implementation GREEN: Actions run `34013939043`, job `101434386535`, on exact implementation head `6d1c3a1d87ce9c7746b91958bb9a5c15d184bf82` passed Docker build, Ruff format/lint, mypy (`72 source files`), MCP contract, contract-version, docs drift, and the complete Docker-backed suite: `1184 passed in 618.06s` with 92% overall coverage. PMOAT-012 passes in this generation.
+- Revert/pre-feature verification is the clean `34012778089` RED: removing O12 restores exactly the missing execute-audit failure while the prior 1183-test O11 baseline remains green.
 
 ---
 
 ## Definition of done
 
-- [ ] O1-O12 complete
-- [ ] PMOR-001..PMOR-012 implemented
-- [ ] PMOAT-001..PMOAT-012 automated and passing
-- [ ] `resource_inventory` is bounded and mutation-free
-- [ ] prune planning is dry-run and immutable/stale-aware
-- [ ] execution requires explicit confirmation
-- [ ] every destructive candidate has positive ownership proof and is revalidated
-- [ ] no broad Docker/name-prefix prune fallback exists
-- [ ] foreign container/volume sentinels survive destructive acceptance tests
-- [ ] partial failures remain visible/durable/retryable
-- [ ] size metrics distinguish measured/accounted/unavailable
-- [ ] ENOSPC/PID pressure classification is evidence-based
-- [ ] maintenance does not silently become broad automatic pruning
-- [ ] reclamation audit is complete and redacted
-- [ ] MCP schemas, `contract_version`, and docs/TOOLS are current
-- [ ] Ruff format/lint and mypy pass
-- [ ] focused suites pass
-- [ ] full Docker-backed suite passes with no foreign resource modified
-- [ ] each task has revert-verification evidence
+- [x] O1-O12 complete
+- [x] PMOR-001..PMOR-012 implemented
+- [x] PMOAT-001..PMOAT-012 automated and passing
+- [x] `resource_inventory` is bounded and mutation-free
+- [x] prune planning is dry-run and immutable/stale-aware
+- [x] execution requires explicit confirmation
+- [x] every destructive candidate has positive ownership proof and is revalidated
+- [x] no broad Docker/name-prefix prune fallback exists
+- [x] foreign container/volume sentinels survive destructive acceptance tests
+- [x] partial failures remain visible/durable/retryable
+- [x] size metrics distinguish measured/accounted/unavailable
+- [x] ENOSPC/PID pressure classification is evidence-based
+- [x] maintenance does not silently become broad automatic pruning
+- [x] reclamation audit is complete and redacted
+- [x] MCP schemas, `contract_version`, and docs/TOOLS are current
+- [x] Ruff format/lint and mypy pass
+- [x] focused suites pass
+- [x] full Docker-backed suite passes with no foreign resource modified
+- [x] each task has revert-verification evidence
