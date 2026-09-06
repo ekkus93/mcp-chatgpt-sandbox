@@ -64,26 +64,24 @@ async def test_pmoat_012_mixed_reclamation_audit_is_complete_and_redacted(
         confirmed: bool,
     ) -> PruneExecutionResult:
         assert confirmed is True
-        outcomes = tuple(
-            PruneExecutionOutcome(
-                candidate=candidate,
-                status=(
-                    PruneExecutionStatus.RECLAIMED
-                    if candidate.resource_id == "job-o12-reclaimed"
-                    else PruneExecutionStatus.FAILED
-                ),
-                reason=(
-                    None
-                    if candidate.resource_id == "job-o12-reclaimed"
-                    else hostile_failure_detail
-                ),
+        outcomes = []
+        for candidate in stored_plan.candidates:
+            reclaimed = candidate.resource_id == "job-o12-reclaimed"
+            outcomes.append(
+                PruneExecutionOutcome(
+                    candidate=candidate,
+                    status=(
+                        PruneExecutionStatus.RECLAIMED
+                        if reclaimed
+                        else PruneExecutionStatus.FAILED
+                    ),
+                    reason=None if reclaimed else hostile_failure_detail,
+                )
             )
-            for candidate in stored_plan.candidates
-        )
         return PruneExecutionResult(
             confirmed=True,
             status=PruneExecutionAggregateStatus.MIXED,
-            outcomes=outcomes,
+            outcomes=tuple(outcomes),
         )
 
     monkeypatch.setattr(PruneExecutionService, "execute", _mixed_result)
@@ -105,10 +103,8 @@ async def test_pmoat_012_mixed_reclamation_audit_is_complete_and_redacted(
     plan_event, execute_event = records
     assert plan_event["result"] == "success"
     assert plan_event["metadata"]["plan_id"] == plan["plan_token"]
-    assert all(
-        candidate["decision"] == "planned"
-        for candidate in plan_event["metadata"]["candidates"]
-    )
+    plan_candidates = plan_event["metadata"]["candidates"]
+    assert [candidate["decision"] for candidate in plan_candidates] == ["planned", "planned"]
 
     assert execute_event["result"] == "mixed"
     metadata = execute_event["metadata"]
