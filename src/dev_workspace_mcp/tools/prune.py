@@ -413,7 +413,6 @@ def _projected_bytes(candidates: tuple[PruneCandidate, ...]) -> ProjectedBytesOu
     )
 
 
-
 def _audit_plan_reason(candidate: PruneCandidate) -> str:
     if candidate.reason in _SAFE_AUDIT_PLAN_REASONS:
         return candidate.reason
