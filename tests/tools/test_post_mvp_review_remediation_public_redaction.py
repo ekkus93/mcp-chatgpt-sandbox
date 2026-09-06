@@ -116,6 +116,5 @@ async def test_r2_public_prune_execute_failure_detail_is_classified_redacted(
     execute_event = audit_records[-1]
     assert execute_event["operation"] == "resource_prune_execute"
     assert [
-        candidate["failure_classification"]
-        for candidate in execute_event["metadata"]["candidates"]
+        candidate["failure_classification"] for candidate in execute_event["metadata"]["candidates"]
     ] == ["deletion_unproven", "failure_detail_redacted"]
