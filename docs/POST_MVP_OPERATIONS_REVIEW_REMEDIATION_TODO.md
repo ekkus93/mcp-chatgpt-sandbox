@@ -60,55 +60,58 @@ This TODO tracks the remediation pass created from the Post-MVP Operations code 
 **Satisfies:** PMORR-002  
 **Verified by:** PMORRAT-002
 
-- [ ] Define the safe public failure-classification allowlist/fallback policy
-- [ ] Decide whether to constrain existing `reason` values or add a public `failure_classification` field
-- [ ] If schema/output shape changes, bump `contract_version` and regenerate `schemas/tools.json`
-- [ ] Update `docs/TOOLS.md` for the public failure-detail policy
-- [ ] Apply the policy to public per-candidate `resource_prune_execute` output
-- [ ] Preserve useful known classifications such as `identity_changed`, `secondary_cleanup_failed`, and `deletion_unproven`
-- [ ] Convert arbitrary raw failure detail to `failure_detail_redacted` or an equivalent safe fallback
-- [ ] Add PMORRAT-002 with hostile secret/path/environment/Docker/SSH-shaped failure detail
-- [ ] Prove PMORRAT-002 RED against current public raw-reason behavior
-- [ ] Verify audit redaction remains intact
-- [ ] Run focused prune execute/audit tests
-- [ ] Run full CI and record exact GREEN evidence
-- [ ] Revert-verify PMORRAT-002
+- [x] Define the safe public failure-classification allowlist/fallback policy
+- [x] Decide whether to constrain existing `reason` values or add a public `failure_classification` field
+- [x] If schema/output shape changes, bump `contract_version` and regenerate `schemas/tools.json`
+- [x] Update `docs/TOOLS.md` for the public failure-detail policy
+- [x] Apply the policy to public per-candidate `resource_prune_execute` output
+- [x] Preserve useful known classifications such as `identity_changed`, `secondary_cleanup_failed`, and `deletion_unproven`
+- [x] Convert arbitrary raw failure detail to `failure_detail_redacted` or an equivalent safe fallback
+- [x] Add PMORRAT-002 with hostile secret/path/environment/Docker/SSH-shaped failure detail
+- [x] Prove PMORRAT-002 RED against current public raw-reason behavior
+- [x] Verify audit redaction remains intact
+- [x] Run focused prune execute/audit tests
+- [x] Run full CI and record exact GREEN evidence
+- [x] Revert-verify PMORRAT-002
 
 **R2 completion evidence:**
 
-- RED run/head/job: TODO
-- RED failure shape: TODO
-- Implementation summary: TODO
-- Schema/contract decision: TODO
-- GREEN run/head/job/test count/coverage: TODO
-- Revert verification: TODO
+- RED run/head/job: `34023768817` / `be14b4dccfcb982a7f68e32607b520207b12c358` / `101461001006`.
+- RED failure shape: Docker build, Ruff format/lint, mypy, MCP contract, contract-version, and docs drift all passed; pytest then failed only `tests/tools/test_post_mvp_review_remediation_public_redaction.py::test_r2_public_prune_execute_failure_detail_is_classified_redacted` because public `outcomes[].reason` returned the injected raw host-path/authorization/Docker/SSH/environment-shaped failure string instead of `failure_detail_redacted`; final count `1 failed, 1186 passed in 627.94s (0:10:27)`, coverage `92%` with TOTAL `6513` statements / `544` misses.
+- Implementation summary: the existing public `reason` field is retained and constrained through a fail-closed allowlist in `tools/prune.py`; useful stable classifications including `identity_changed`, `secondary_cleanup_failed`, and `deletion_unproven` remain visible while arbitrary free-form values become `failure_detail_redacted`. PMOR-012 audit redaction remains intact. `docs/TOOLS.md` now states the same public-output rule explicitly.
+- Schema/contract decision: no response field or type changed, so `schemas/tools.json` and `contract_version` did not require a bump; the schema/contract CI gates passed on the implementation and post-merge generations.
+- Focused prune/audit evidence: covered inside the GREEN full suite by PMORRAT-002, PMOAT-012, `tests/tools/test_resource_prune_execute.py`, `tests/tools/test_resource_prune_partial_failure.py`, and the reclamation audit tests.
+- GREEN run/head/job/test count/coverage: `34023990812` / `d6b1ab97147a20c482a7a29da4695d3c84126e54` / `101461594019`; all gates passed; pytest `1187 passed in 649.32s`, coverage `92%` with TOTAL `6522` statements / `544` misses.
+- Merge/post-merge verification: PR #42 was squash-merged as `a13b3a8a84204ebe853a0f09cd85bd95ab6547a6`; post-merge `master` CI `34043698202` / job `101514867270` passed with `1187 passed in 617.68s` and TOTAL `6522` / `544` at `92%` coverage.
+- Revert verification: the clean acceptance-only RED run `34023768817` is the revert proof: with PMORRAT-002 present and the public-output sanitization absent, the real MCP surface exposed the raw hostile reason and failed exactly the new requirement.
 
 ### R3 — Sanitize durable cleanup error storage
 
 **Satisfies:** PMORR-004  
 **Verified by:** PMORRAT-004
 
-- [ ] Inventory durable cleanup error fields for job-log cleanup and SSH-agent cleanup
-- [ ] Define allowed durable error classification/category/errno fields
-- [ ] Replace arbitrary job-log cleanup raw exception persistence with safe bounded classification data where feasible
-- [ ] Confirm SSH-agent cleanup persistence already follows the safer path or align it if needed
-- [ ] Preserve retry visibility and operator-useful failure distinction
-- [ ] Add migration/backward-compatibility handling if schema changes
-- [ ] Ensure legacy raw durable error text is not exposed through inventory, audit, health, or logs
-- [ ] Add PMORRAT-004 for secret/path-shaped cleanup exceptions
-- [ ] Prove PMORRAT-004 RED against current raw job-log durable error storage, if applicable
-- [ ] Run focused job retention, SSH cleanup, inventory, and maintenance tests
-- [ ] Run full CI and record exact GREEN evidence
-- [ ] Revert-verify PMORRAT-004
+- [x] Inventory durable cleanup error fields for job-log cleanup and SSH-agent cleanup
+- [x] Define allowed durable error classification/category/errno fields
+- [x] Replace arbitrary job-log cleanup raw exception persistence with safe bounded classification data where feasible
+- [x] Confirm SSH-agent cleanup persistence already follows the safer path or align it if needed
+- [x] Preserve retry visibility and operator-useful failure distinction
+- [x] Add migration/backward-compatibility handling if schema changes
+- [x] Ensure legacy raw durable error text is not exposed through inventory, audit, health, or logs
+- [x] Add PMORRAT-004 for secret/path-shaped cleanup exceptions
+- [x] Prove PMORRAT-004 RED against current raw job-log durable error storage, if applicable
+- [x] Run focused job retention, SSH cleanup, inventory, and maintenance tests
+- [x] Run full CI and record exact GREEN evidence
+- [x] Revert-verify PMORRAT-004
 
 **R3 completion evidence:**
 
-- RED run/head/job: TODO
-- RED failure shape: TODO
-- Implementation summary: TODO
-- Migration/schema decision: TODO
-- GREEN run/head/job/test count/coverage: TODO
-- Revert verification: TODO
+- RED run/head/job: `34046819180` / `61c409cebfc6b3bd320bb41a4ea766ce6d21e9e3` / `101523226967`.
+- RED failure shape: all non-pytest gates passed, then both PMORRAT-004 assertions failed for the intended pre-fix behavior: new `job_log_cleanup.last_error` stored raw `PermissionError` text containing host-path/Docker/SSH-shaped detail, and maintenance health republished a legacy raw durable `last_error`; final count `2 failed, 1187 passed in 621.84s (0:10:21)`, coverage `92%` with TOTAL `6522` statements / `540` misses.
+- Implementation summary: job-log cleanup now persists a bounded classification plus exception class and optional errno (for example `cleanup_failed: PermissionError: errno=13`) instead of `str(exc)`; path-bearing exception text is also removed from the affected operational log messages. Durable job-log debt reads accept only the bounded safe format and map legacy/free-form values fail-closed to `cleanup_failure_recorded`, preventing legacy text from propagating into maintenance health, inventory, prune planning, or audit surfaces. SSH-agent cleanup already used the safer reason + class/errno pattern and was retained; PMORRAT-004 locks that behavior in alongside the job-log fix. Retry tombstones, timestamps, and byte accounting remain unchanged.
+- Migration/schema decision: no SQLite schema change is required. Both tables retain their existing nullable `last_error TEXT` columns. New job-log writes are bounded safe classifications; backward compatibility is handled at the durable read boundary so old free-form rows remain retryable but are represented externally as `cleanup_failure_recorded`. Therefore no DB migration, public MCP schema change, or `contract_version` bump is required.
+- Focused retention/SSH/inventory/maintenance evidence: covered inside the GREEN full suite by `tests/jobs/test_retention.py`, PMORRAT-004, `tests/tools/test_resource_inventory.py`, prune execution/partial-failure tests, `tests/workspace/test_gap3_job_log_cleanup_debt.py`, `tests/workspace/test_post_mvp_o11_conservative_maintenance.py`, and SSH-agent cleanup/lifecycle tests.
+- GREEN run/head/job/test count/coverage: `34049300413` / `27e4c81fd8415313ed576dcdfd4cd39321e7c56d` / `101529902230`; Docker build, Ruff format (`229 files already formatted`), Ruff lint, mypy (`72 source files`), MCP contract, contract-version, docs drift, and pytest all passed; pytest `1189 passed in 628.54s (0:10:28)`, coverage `92%` with TOTAL `6532` statements / `540` misses.
+- Revert verification: the clean acceptance-only RED run `34046819180` at `61c409cebfc6b3bd320bb41a4ea766ce6d21e9e3` is the revert proof: with PMORRAT-004 present and R3 sanitization absent, both the new-write durable storage and legacy-health republishing failures reproduced exactly.
 
 ## Phase 2 — Acceptance and documentation hardening
 
