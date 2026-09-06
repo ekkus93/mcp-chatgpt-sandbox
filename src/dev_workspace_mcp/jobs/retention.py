@@ -146,7 +146,11 @@ def _safe_persisted_cleanup_error(value: object) -> str | None:
     """Fail closed when reading legacy free-form durable cleanup diagnostics."""
     if value is None:
         return None
-    if isinstance(value, str) and len(value) <= 128 and _SAFE_DURABLE_CLEANUP_ERROR_RE.fullmatch(value):
+    if (
+        isinstance(value, str)
+        and len(value) <= 128
+        and _SAFE_DURABLE_CLEANUP_ERROR_RE.fullmatch(value)
+    ):
         return value
     return "cleanup_failure_recorded"
 
