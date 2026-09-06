@@ -46,6 +46,12 @@ tools beyond that original set (24 tools total as of O10):
 | `resource_prune_plan` | Dry-run-only immutable reclamation planning (PMOR-006..007, PMOR-010). Accepts only optional opaque repository/workspace scope plus an optional subset of the five supported reclaimable kinds, including durable `ssh_agent_cleanup` debt; it has no execute/confirmation/path/generic-Docker input. Returns an immutable `pp_…` plan token, positively owned candidate IDs/kinds/reasons/preconditions/actions, and projected bytes while preserving unavailable byte values. Planning performs no stop/kill/remove/prune action; raw SSH boot/process-start and cleanup device/inode identity remain plan-internal, while the public preconditions report only whether cleanup identity is bound. |
 | `resource_prune_execute` | Explicit plan-scoped reclamation execution (PMOR-008..010). Accepts only an existing immutable `pp_…` plan token plus `confirm` (default `false`); omitted/false confirmation performs no resource inspection or mutation. With explicit confirmation, each exact planned identity is independently revalidated immediately before its candidate-specific action. The executor never recomputes/expands the plan and has no label-wide, prefix-wide, path-wide, or system-prune fallback. Per-candidate results distinguish reclaimed, already-proven-absent, stale, and failed/unprovable identities; aggregate status distinguishes `success`, `mixed`, and `degraded` (or `not_confirmed`). If SSH-agent primary reclamation succeeds but socket cleanup fails, the primary failure context is preserved as a failed candidate while path-free durable cleanup debt remains discoverable, byte-accounted, and safely retryable by the original plan or a fresh cleanup-debt plan. |
 
+### Automatic maintenance boundary
+
+Lifecycle maintenance may retry cleanup debt that existing lifecycle semantics have already authorized, including GAP3 Y7 job-log cleanup debt and O9 exact-identity SSH-agent secondary-cleanup debt. It does not create or execute a `resource_prune_plan` merely because inventory reports an old, stopped, retained, visible, or pressured resource.
+
+Automatic age- or pressure-based resource reclamation is not implemented. Any future policy that automatically reclaims healthy retained caches, stopped-but-retained workspaces, or images requires a separate explicit configuration contract, conservative defaults, and its own acceptance criteria before it may cross the destructive boundary.
+
 ## Execution (§14, §15.3)
 
 | Tool | Purpose |
