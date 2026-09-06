@@ -208,7 +208,14 @@ def _replace_server_info_with_daemon_health(
     server.remove_tool("server_info")
     job_store = JobStore(db)
 
-    @server.tool(name="server_info", description="Server version, capabilities, and health (§25).")
+    @server.tool(
+        name="server_info",
+        description=(
+            "Report server version, capabilities, workspace health, audit health, "
+            "maintenance state, and bounded operations health "
+            "(§25, PMOR-004, PMOR-005, PMOR-011)."
+        ),
+    )
     @translate_workspace_errors
     async def server_info() -> ServerInfoOutput:
         base = workspace_tools.get_server_info(

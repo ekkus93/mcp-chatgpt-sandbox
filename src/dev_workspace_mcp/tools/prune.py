@@ -510,8 +510,10 @@ def register(
     @server.tool(
         name="resource_prune_plan",
         description=(
-            "Create an immutable dry-run resource reclamation plan from positively owned "
-            "eligible resources. Planning never deletes, stops, kills, prunes, or executes."
+            "Create a dry-run-only immutable reclamation plan from positively owned "
+            "eligible resources, optionally scoped by opaque repository/workspace IDs "
+            "and supported resource kinds; planning never mutates resources "
+            "(PMOR-006..007, PMOR-010, PMOR-012)."
         ),
     )
     @translate_workspace_errors
@@ -585,8 +587,10 @@ def register(
     @server.tool(
         name="resource_prune_execute",
         description=(
-            "Execute only a previously returned immutable reclamation plan. Explicit "
-            "confirmation is required; every exact candidate is independently revalidated."
+            "Execute only a previously returned immutable reclamation plan after explicit "
+            "confirmation; each exact planned candidate is independently revalidated, "
+            "and execution never recomputes or expands the plan "
+            "(PMOR-008..010, PMOR-012)."
         ),
     )
     @translate_workspace_errors

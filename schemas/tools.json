@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.10.2",
+  "contract_version": "0.10.3",
   "tools": [
     {
       "description": "Delete a repository file or directory (\u00a713.5).",
@@ -1696,7 +1696,7 @@
       }
     },
     {
-      "description": "Bounded read-only inventory of MCP-owned operational resources, cleanup debt, and degraded/unavailable observations (PMOR-001..003).",
+      "description": "Bounded read-only inventory of MCP-owned operational resources, cleanup debt, degraded/unavailable observations, and optional cgroup-v2 PID pressure (PMOR-001..005, PMOR-010).",
       "input_schema": {
         "properties": {
           "max_diagnostics": {
@@ -2311,7 +2311,7 @@
       }
     },
     {
-      "description": "Execute only a previously returned immutable reclamation plan. Explicit confirmation is required; every exact candidate is independently revalidated.",
+      "description": "Execute only a previously returned immutable reclamation plan after explicit confirmation; each exact planned candidate is independently revalidated, and execution never recomputes or expands the plan (PMOR-008..010, PMOR-012).",
       "input_schema": {
         "properties": {
           "confirm": {
@@ -2466,7 +2466,7 @@
       }
     },
     {
-      "description": "Create an immutable dry-run resource reclamation plan from positively owned eligible resources. Planning never deletes, stops, kills, prunes, or executes.",
+      "description": "Create a dry-run-only immutable reclamation plan from positively owned eligible resources, optionally scoped by opaque repository/workspace IDs and supported resource kinds; planning never mutates resources (PMOR-006..007, PMOR-010, PMOR-012).",
       "input_schema": {
         "properties": {
           "repository_id": {
@@ -2924,7 +2924,7 @@
       }
     },
     {
-      "description": "Server version, capabilities, and health (\u00a725).",
+      "description": "Report server version, capabilities, workspace health, audit health, maintenance state, and bounded operations health (\u00a725, PMOR-004, PMOR-005, PMOR-011).",
       "input_schema": {
         "properties": {},
         "title": "server_infoArguments",

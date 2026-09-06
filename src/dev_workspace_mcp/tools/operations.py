@@ -466,8 +466,9 @@ def register(
     @server.tool(
         name="resource_inventory",
         description=(
-            "Bounded read-only inventory of MCP-owned operational resources, "
-            "cleanup debt, and degraded/unavailable observations (PMOR-001..003)."
+            "Bounded read-only inventory of MCP-owned operational resources, cleanup "
+            "debt, degraded/unavailable observations, and optional cgroup-v2 PID "
+            "pressure (PMOR-001..005, PMOR-010)."
         ),
     )
     @translate_workspace_errors
