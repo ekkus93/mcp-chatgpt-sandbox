@@ -1,0 +1,32 @@
+name: R3 Apply Durable Cleanup Hygiene
+
+on:
+  push:
+    branches:
+      - post-mvp/review-remediation
+    paths:
+      - .github/workflows/r3-apply.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: post-mvp/review-remediation
+          fetch-depth: 0
+      - name: Apply narrow R3 patch
+        run: |
+          python scripts/r3_apply.py
+          python -m py_compile src/dev_workspace_mcp/jobs/retention.py
+      - name: Commit implementation and self-clean helper
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm scripts/r3_apply.py .github/workflows/r3-apply.yml
+          git add src/dev_workspace_mcp/jobs/retention.py
+          git commit -m "fix: sanitize R3 durable cleanup errors"
+          git push origin HEAD:post-mvp/review-remediation
