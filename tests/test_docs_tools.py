@@ -115,6 +115,7 @@ def test_rr028_a_tool_name_containing_a_digit_is_matched() -> None:
     assert _TOOL_ROW.findall(sample) == ["git_oauth2_refresh"]
 
 
+# Covers: PMORRAT-005
 async def test_r5_tool_description_docs_drift_is_detected(
     minimal_config: ServerConfig,
 ) -> None:
