@@ -30,7 +30,7 @@ def patch_audit() -> None:
     replace_once(
         path,
         "_AUDIT_HEALTH_LOCK = threading.Lock()\n_AUDIT_HEALTH_BY_PATH: dict[str, AuditHealth] = {}\n\n\ndef _audit_health_key(config: AuditConfig) -> str:\n",
-        "_AUDIT_HEALTH_LOCK = threading.Lock()\n_AUDIT_HEALTH_BY_PATH: dict[str, AuditHealth] = {}\n_AUDIT_CORRELATION_ID_RE = re.compile(r\"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$\")\n\n\ndef _safe_audit_correlation_id(value: str | None) -> str | None:\n    \"\"\"Return a bounded audit correlation ID, or drop unsafe values.\n\n    PMORR-001: audit attribution is useful only when it is also safe to\n    persist. The audit writer therefore accepts only short opaque\n    identifiers made from this project's non-path ID alphabet. Raw\n    headers, prompts, environment values, paths, and free-form client\n    metadata fail closed to `None` instead of being copied into JSONL.\n    \"\"\"\n    if value is None:\n        return None\n    if _AUDIT_CORRELATION_ID_RE.fullmatch(value) is None:\n        return None\n    if \"/\" in value or \\\"\\\\\\\" in value:\n        return None\n    return value\n\n\ndef _audit_health_key(config: AuditConfig) -> str:\n",
+        "_AUDIT_HEALTH_LOCK = threading.Lock()\n_AUDIT_HEALTH_BY_PATH: dict[str, AuditHealth] = {}\n_AUDIT_CORRELATION_ID_RE = re.compile(r\"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$\")\n\n\ndef _safe_audit_correlation_id(value: str | None) -> str | None:\n    \"\"\"Return a bounded audit correlation ID, or drop unsafe values.\n\n    PMORR-001: audit attribution is useful only when it is also safe to\n    persist. The audit writer therefore accepts only short opaque\n    identifiers made from this project's non-path ID alphabet. Raw\n    headers, prompts, environment values, paths, and free-form client\n    metadata fail closed to `None` instead of being copied into JSONL.\n    \"\"\"\n    if value is None:\n        return None\n    if _AUDIT_CORRELATION_ID_RE.fullmatch(value) is None:\n        return None\n    return value\n\n\ndef _audit_health_key(config: AuditConfig) -> str:\n",
     )
     replace_once(
         path,
@@ -93,10 +93,26 @@ def main() -> None:
     patch_prune()
     patch_tests()
     cleanup_self()
-    run("python", "-m", "compileall", "-q", "src", "tests/test_audit.py", "tests/tools/test_post_mvp_review_remediation_audit_attribution.py")
+    run(
+        "python",
+        "-m",
+        "compileall",
+        "-q",
+        "src",
+        "tests/test_audit.py",
+        "tests/tools/test_post_mvp_review_remediation_audit_attribution.py",
+    )
     run("git", "config", "user.name", "Phillip Chin")
     run("git", "config", "user.email", "ekkus93@gmail.com")
-    run("git", "add", "src/dev_workspace_mcp/audit.py", "src/dev_workspace_mcp/tools/prune.py", "tests/test_audit.py", ".github/workflows/r1-apply-audit-attribution.yml", "scripts/r1_apply_audit_attribution.py")
+    run(
+        "git",
+        "add",
+        "src/dev_workspace_mcp/audit.py",
+        "src/dev_workspace_mcp/tools/prune.py",
+        "tests/test_audit.py",
+        ".github/workflows/r1-apply-audit-attribution.yml",
+        "scripts/r1_apply_audit_attribution.py",
+    )
     run("git", "commit", "-m", "feat: add R1 reclamation audit attribution")
     run("git", "push", "origin", "HEAD:post-mvp/review-remediation")
 
