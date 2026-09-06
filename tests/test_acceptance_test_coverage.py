@@ -125,7 +125,7 @@ class _Series:
 
     def citation_re(self, n: int) -> str:
         sep = r"[-_]" if self.prefix == "AT" else r"[-_]?"
-        return rf"{self.prefix}{sep}0*{n}(?!\d)"
+        return rf"(?<![A-Z0-9]){self.prefix}{sep}0*{n}(?!\d)"
 
 
 _SERIES = (
@@ -171,8 +171,31 @@ _SERIES = (
         heading_re=re.compile(r"^### G3AT-(\d{3})\b", re.MULTILINE),
         expected_total=17,
     ),
+    _Series(
+        prefix="PMOAT",
+        spec_path=_REPO_ROOT / "docs" / "POST_MVP_OPERATIONS_SPEC.md",
+        heading_re=re.compile(r"^### PMOAT-(\d{3})\b", re.MULTILINE),
+        expected_total=12,
+    ),
+    _Series(
+        prefix="PMORRAT",
+        spec_path=_REPO_ROOT / "docs" / "POST_MVP_OPERATIONS_REVIEW_REMEDIATION_SPEC.md",
+        heading_re=re.compile(r"^### PMORRAT-(\d{3})\b", re.MULTILINE),
+        expected_total=7,
+    ),
 )
 _BY_PREFIX = {series.prefix: series for series in _SERIES}
+
+_CLAIM_PATHS: dict[str, tuple[Path, ...]] = {
+    "PMOAT": (
+        _REPO_ROOT / "docs" / "POST_MVP_OPERATIONS_SPEC.md",
+        _REPO_ROOT / "docs" / "POST_MVP_OPERATIONS_TODO.md",
+    ),
+    "PMORRAT": (
+        _REPO_ROOT / "docs" / "POST_MVP_OPERATIONS_REVIEW_REMEDIATION_SPEC.md",
+        _REPO_ROOT / "docs" / "POST_MVP_OPERATIONS_REVIEW_REMEDIATION_TODO.md",
+    ),
+}
 
 
 def _node(path: str, test_name: str) -> str:
@@ -182,6 +205,18 @@ def _node(path: str, test_name: str) -> str:
 # Acceptance IDs whose real tests use requirement-oriented names. Multiple
 # node IDs are deliberate where one acceptance criterion is composite.
 _EXECUTABLE_COVERAGE: dict[tuple[str, int], tuple[str, ...]] = {
+    ("AT", 6): (
+        _node(
+            "tests/workspace/test_async_execution_tools_cancel.py",
+            "test_at_h028_exec_start_disconnect_reconnect_job_still_queryable",
+        ),
+    ),
+    ("AT", 10): (
+        _node(
+            "tests/git/test_push.py",
+            "test_real_diverged_push_is_rejected_with_a_recognized_marker",
+        ),
+    ),
     ("AT", 20): (
         _node(
             "tests/git/test_status.py",
@@ -414,6 +449,84 @@ _EXECUTABLE_COVERAGE: dict[tuple[str, int], tuple[str, ...]] = {
             "test_a_leaky_configure_logging_call_does_not_alter_state_for_later_tests",
         ),
     ),
+    ("PMOAT", 4): (
+        _node(
+            "tests/operations/test_pressure_diagnostics.py",
+            "test_o4_state_filesystem_enospc_requires_errno_evidence",
+        ),
+        _node(
+            "tests/operations/test_pressure_diagnostics.py",
+            "test_o4_docker_storage_enospc_requires_docker_api_evidence",
+        ),
+        _node(
+            "tests/operations/test_pressure_diagnostics.py",
+            "test_o4_container_enospc_requires_failed_exec_signal",
+        ),
+        _node(
+            "tests/operations/test_pressure_diagnostics.py",
+            "test_o4_pressure_context_preserves_primary_workspace_error",
+        ),
+    ),
+    ("PMOAT", 5): (
+        _node(
+            "tests/operations/test_pressure_diagnostics.py",
+            "test_o4_pid_pressure_reads_cgroup_v2_usage_and_limit",
+        ),
+        _node(
+            "tests/operations/test_pressure_diagnostics.py",
+            "test_o4_pid_pressure_unavailable_is_typed_and_never_zero",
+        ),
+        _node(
+            "tests/operations/test_pressure_diagnostics.py",
+            "test_o4_resource_inventory_exposes_unavailable_pid_pressure_without_failing",
+        ),
+    ),
+    ("PMOAT", 7): (
+        _node(
+            "tests/operations/test_prune_plans.py",
+            "test_o6_plan_token_binds_exact_candidates_and_material_preconditions",
+        ),
+        _node(
+            "tests/operations/test_prune_plans.py",
+            "test_o6_revalidation_never_expands_old_plan_with_newly_eligible_resource",
+        ),
+        _node(
+            "tests/operations/test_prune_plans.py",
+            "test_o6_candidate_becoming_active_is_stale_while_independent_candidate_remains_valid",
+        ),
+        _node(
+            "tests/operations/test_prune_plans.py",
+            "test_o6_identity_or_ownership_change_fails_closed",
+        ),
+    ),
+    ("PMORRAT", 1): (
+        _node(
+            "tests/tools/test_post_mvp_review_remediation_audit_attribution.py",
+            "test_r1_reclamation_audit_has_request_attribution",
+        ),
+    ),
+    ("PMORRAT", 2): (
+        _node(
+            "tests/tools/test_post_mvp_review_remediation_public_redaction.py",
+            "test_r2_public_prune_execute_failure_detail_is_classified_redacted",
+        ),
+    ),
+    ("PMORRAT", 3): (
+        _node(
+            "tests/test_post_mvp_review_remediation_acceptance_coverage.py",
+            "test_r4_missing_and_unknown_acceptance_ids_fail_closed",
+        ),
+    ),
+    ("PMORRAT", 4): (
+        _node(
+            "tests/tools/test_post_mvp_review_remediation_durable_cleanup_error_storage.py",
+            "test_r3_cleanup_failures_persist_only_safe_bounded_classification",
+        ),
+        _node(
+            "tests/tools/test_post_mvp_review_remediation_durable_cleanup_error_storage.py",
+            "test_r3_legacy_raw_cleanup_error_is_not_republished",
+        ),
+    ),
 }
 
 
@@ -474,6 +587,17 @@ def _uncovered(series: _Series, source: str, node_ids: set[str]) -> set[int]:
         - _registered_numbers(series, node_ids)
         - _disposition_numbers(series)
     )
+
+
+def _unknown_claims(series: _Series, *, paths: tuple[Path, ...]) -> set[int]:
+    claim_re = re.compile(
+        rf"(?<![A-Z0-9]){series.prefix}[-_]?0*(\d+)(?!\d)",
+        re.IGNORECASE,
+    )
+    claimed: set[int] = set()
+    for path in paths:
+        claimed.update(int(match) for match in claim_re.findall(path.read_text()))
+    return claimed - series.spec_numbers()
 
 
 def test_the_spec_defines_exactly_37_acceptance_tests() -> None:
@@ -537,6 +661,14 @@ def test_g3at_016_every_active_acceptance_test_has_executable_coverage() -> None
         )
 
 
+def test_authoritative_acceptance_claims_name_only_existing_ids() -> None:
+    """PMORRAT-003: authoritative PMOAT/PMORRAT claims fail closed on unknown IDs."""
+    for prefix, paths in _CLAIM_PATHS.items():
+        series = _BY_PREFIX[prefix]
+        unknown = sorted(_unknown_claims(series, paths=paths))
+        assert not unknown, f"{prefix} authoritative docs claim nonexistent IDs: {unknown}"
+
+
 def test_registry_is_not_a_stale_duplicate_of_a_direct_citation() -> None:
     """Direct citations are preferred once a test carries the acceptance ID itself."""
     source, _ = _iter_test_nodes()
@@ -549,7 +681,7 @@ def test_registry_is_not_a_stale_duplicate_of_a_direct_citation() -> None:
 
 
 def test_meta_removing_every_citation_for_an_at_makes_the_audit_fail_for_it() -> None:
-    target = 10
+    target = 9
     series = _BY_PREFIX["AT"]
     source, node_ids = _iter_test_nodes()
     scrubbed = re.sub(series.citation_re(target), "SCRUBBED", source, flags=re.I)

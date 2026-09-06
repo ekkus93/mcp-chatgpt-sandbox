@@ -174,13 +174,19 @@ Force job-log cleanup and SSH-agent cleanup failure paths with exception strings
 
 Create a controlled schema/docs mismatch involving the operations tool descriptions or documentation rows. CI/meta-tests SHALL fail until the exported schema, contract version, and docs are reconciled according to existing rules.
 
+**Coverage status:** deferred — R5 will add executable description/docs drift coverage after R4 establishes the series gate; owner/task: R5
+
 ### PMORRAT-006 — Removing obsolete SSH cleanup helper code is no-regression
 
 After removing obsolete helper code, focused SSH cleanup, inventory, maintenance, and prune tests SHALL still pass, and no public schema/output drift SHALL occur.
 
+**Coverage status:** deferred — R6 will add the no-regression/dead-code-removal proof after the caller audit and removal; owner/task: R6
+
 ### PMORRAT-007 — Docker-volume inventory post-list work is bounded
 
 Using fake Docker volume data larger than configured inventory limits, prove that per-volume inspection/output/diagnostic work is locally bounded, truncation/incomplete state is reported, and unavailable/over-limit byte observations are not converted to zero.
+
+**Coverage status:** deferred — R7 will add bounded Docker-volume post-list work coverage when that remediation is implemented; owner/task: R7
 
 ## Required workflow
 

@@ -23,6 +23,27 @@ why the criterion is no longer an active pytest obligation or where its real
 acceptance surface lives. New exceptions should be rare; executable coverage is
 the default.
 
+## Adding a future acceptance series
+
+A new acceptance family must be wired into the executable audit when it becomes
+normative. Add a `_Series` entry in `tests/test_acceptance_test_coverage.py`
+with the owning spec, exact heading pattern, and contiguous expected count. When
+a docs/TODO pair is authoritative for that family, register those claim paths
+so a claimed nonexistent ID fails closed.
+
+Executable evidence must come from a real `test_*` function name, a directly
+preceding `# Covers:` marker, or `_EXECUTABLE_COVERAGE` pointing to exact pytest
+nodes that still exist. Module/function prose, README examples, and incidental
+documentation mentions are not executable evidence. Acceptance-family matching
+must be prefix-safe so a longer family such as `PMOAT` cannot satisfy `AT`.
+
+If a criterion is intentionally not executable yet, record a source-spec
+`Coverage status` with an allowed kind, a concrete reason, and `owner/task`.
+Remove that disposition when executable coverage is added; the meta-test treats
+a disposition plus executable evidence as stale duplication. Finally, add a
+meta-test that proves both missing required coverage and unknown authoritative
+claims are rejected for the new family.
+
 ### HAT-002
 
 **Coverage status:** superseded — H36 removed the host-side structured Git read surface this acceptance criterion was written to exercise; owner/task: H36
