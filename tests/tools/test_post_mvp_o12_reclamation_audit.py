@@ -67,9 +67,7 @@ async def test_pmoat_012_mixed_reclamation_audit_is_complete_and_redacted(
         outcomes = []
         for candidate in stored_plan.candidates:
             reclaimed = candidate.resource_id == "job-o12-reclaimed"
-            status = (
-                PruneExecutionStatus.RECLAIMED if reclaimed else PruneExecutionStatus.FAILED
-            )
+            status = PruneExecutionStatus.RECLAIMED if reclaimed else PruneExecutionStatus.FAILED
             outcomes.append(
                 PruneExecutionOutcome(
                     candidate=candidate,
