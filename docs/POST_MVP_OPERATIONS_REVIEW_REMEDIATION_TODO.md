@@ -146,26 +146,26 @@ This TODO tracks the remediation pass created from the Post-MVP Operations code 
 **Satisfies:** PMORR-005  
 **Verified by:** PMORRAT-005
 
-- [ ] Audit registered descriptions for `resource_inventory`, `resource_prune_plan`, `resource_prune_execute`, and `server_info`
-- [ ] Update descriptions to reflect current operations scope without overstating behavior
-- [ ] Keep `docs/TOOLS.md` aligned with actual public behavior and maintenance boundaries
-- [ ] Determine whether description changes affect exported `schemas/tools.json`
-- [ ] If exported schema changes, regenerate schemas and bump `contract_version`
-- [ ] Strengthen docs/schema drift checks if they only compare tool names and miss relevant descriptions
-- [ ] Add PMORRAT-005 for description/docs drift
-- [ ] Prove PMORRAT-005 RED against current stale/narrow description behavior, if feasible
-- [ ] Run schema export, contract-version, and docs drift checks
-- [ ] Run full CI and record exact GREEN evidence
-- [ ] Revert-verify PMORRAT-005
+- [x] Audit registered descriptions for `resource_inventory`, `resource_prune_plan`, `resource_prune_execute`, and `server_info`
+- [x] Update descriptions to reflect current operations scope without overstating behavior
+- [x] Keep `docs/TOOLS.md` aligned with actual public behavior and maintenance boundaries
+- [x] Determine whether description changes affect exported `schemas/tools.json`
+- [x] If exported schema changes, regenerate schemas and bump `contract_version`
+- [x] Strengthen docs/schema drift checks if they only compare tool names and miss relevant descriptions
+- [x] Add PMORRAT-005 for description/docs drift
+- [x] Prove PMORRAT-005 RED against current stale/narrow description behavior, if feasible
+- [x] Run schema export, contract-version, and docs drift checks
+- [x] Run full CI and record exact GREEN evidence
+- [x] Revert-verify PMORRAT-005
 
 **R5 completion evidence:**
 
-- RED run/head/job: TODO
-- RED failure shape or justified non-behavioral disposition: TODO
-- Implementation summary: TODO
-- Schema/contract decision: TODO
-- GREEN run/head/job/test count/coverage: TODO
-- Revert verification: TODO
+- RED run/head/job: `34056560940` / `bc646c981f0efeb5ee64e7cf2c8f7beaf8343bd4` / `101549429821`.
+- RED failure shape: Docker build, Ruff format/lint, mypy, MCP contract/schema export, contract-version, and docs tool-name drift checks all passed; pytest failed only `tests/test_docs_tools.py::test_r5_tool_description_docs_drift_is_detected`, reporting that the purpose rows for `resource_inventory`, `resource_prune_plan`, `resource_prune_execute`, and `server_info` did not begin with their live registered descriptions; final count `1 failed, 1191 passed in 614.43s (0:10:14)`, coverage `92%` with TOTAL `6532` statements / `540` misses.
+- Implementation summary: the four registered MCP descriptions now state their implemented Post-MVP Operations scope without broadening behavior; `docs/TOOLS.md` begins each corresponding purpose row with the exact live public description while retaining richer human operational detail. `tests/test_docs_tools.py` now compares the real server's descriptions to committed `schemas/tools.json`, requires the docs purpose prefix to match the live description, and injects a controlled mismatch proving description drift is detected. PMORRAT-005 is now executable acceptance evidence rather than a deferred disposition.
+- Schema/contract decision: registered description changes alter exported tool schema content, so `schemas/tools.json` was regenerated and `contract_version` was patch-bumped from `0.10.2` to `0.10.3`. No tool was added or removed and no input/output field or type changed. The schema export, contract-version, and docs drift gates all passed on the implementation generation.
+- GREEN run/head/job/test count/coverage: `34058442269` / `09680947760c8f1c7a06e330e19d069875fee2d0` / `101554527526`; Docker build, Ruff format (`230 files already formatted`), Ruff lint, mypy (`72 source files`), MCP contract/schema export, contract-version, docs drift, and pytest all passed; pytest `1192 passed in 620.63s (0:10:20)`, coverage `92%` with TOTAL `6532` statements / `540` misses.
+- Revert verification: the clean acceptance-only RED run `34056560940` at `bc646c981f0efeb5ee64e7cf2c8f7beaf8343bd4` is the revert proof: with PMORRAT-005 present and the description/schema/docs reconciliation absent, the suite failed exactly on the four stale/narrow description rows.
 
 ## Phase 3 — Cleanup and explicit bounds
 
