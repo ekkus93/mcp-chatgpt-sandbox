@@ -120,25 +120,26 @@ This TODO tracks the remediation pass created from the Post-MVP Operations code 
 **Satisfies:** PMORR-003  
 **Verified by:** PMORRAT-003
 
-- [ ] Extend `tests/test_acceptance_test_coverage.py` or its backing metadata to enforce `PMOAT-001`..`PMOAT-012`
-- [ ] Register `PMORRAT-001`..`PMORRAT-007` as this workstream's acceptance series
-- [ ] Ensure missing required IDs fail the meta-test
-- [ ] Ensure unknown/nonexistent claimed IDs fail the meta-test
-- [ ] Distinguish executable acceptance tests from incidental docs-only mentions
-- [ ] Document the process for adding future acceptance series
-- [ ] Add PMORRAT-003 proving the meta-test catches both missing and unknown IDs
-- [ ] Prove PMORRAT-003 RED against current lack of PMOAT coverage enforcement
-- [ ] Run focused meta-test and representative acceptance tests
-- [ ] Run full CI and record exact GREEN evidence
-- [ ] Revert-verify PMORRAT-003
+- [x] Extend `tests/test_acceptance_test_coverage.py` or its backing metadata to enforce `PMOAT-001`..`PMOAT-012`
+- [x] Register `PMORRAT-001`..`PMORRAT-007` as this workstream's acceptance series
+- [x] Ensure missing required IDs fail the meta-test
+- [x] Ensure unknown/nonexistent claimed IDs fail the meta-test
+- [x] Distinguish executable acceptance tests from incidental docs-only mentions
+- [x] Document the process for adding future acceptance series
+- [x] Add PMORRAT-003 proving the meta-test catches both missing and unknown IDs
+- [x] Prove PMORRAT-003 RED against current lack of PMOAT coverage enforcement
+- [x] Run focused meta-test and representative acceptance tests
+- [x] Run full CI and record exact GREEN evidence
+- [x] Revert-verify PMORRAT-003
 
 **R4 completion evidence:**
 
-- RED run/head/job: TODO
-- RED failure shape: TODO
-- Implementation summary: TODO
-- GREEN run/head/job/test count/coverage: TODO
-- Revert verification: TODO
+- RED run/head/job: `34052582734` / `8aa42963c15cb186692aedcc4ad1471cbab33f71` / `101538714269`.
+- RED failure shape: Docker build, Ruff format/lint, mypy, MCP contract, contract-version, and docs drift all passed; pytest failed only `tests/test_post_mvp_review_remediation_acceptance_coverage.py::test_r4_missing_and_unknown_acceptance_ids_fail_closed` because `PMOAT` was absent from `_BY_PREFIX`; final count `1 failed, 1189 passed in 615.68s (0:10:15)`, coverage `92%` with TOTAL `6532` statements / `540` misses.
+- Implementation summary: `tests/test_acceptance_test_coverage.py` now registers the complete `PMOAT-001..012` and `PMORRAT-001..007` series, binds requirement-named criteria to exact live pytest nodes, rejects unknown IDs claimed by the authoritative operations/remediation spec+TODO pairs, and makes acceptance-family matching prefix-safe so longer families such as `PMOAT`/`PMORRAT` cannot accidentally satisfy `AT`/`RAT`. The stricter matcher exposed latent `AT-006` and `AT-010` dependencies on suffix matches, so those criteria are now bound explicitly to their real executable tests. PMORRAT-005..007 are formally deferred to R5..R7 until their executable proofs are added, and `docs/GAP3_ACCEPTANCE_COVERAGE_SPEC.md` documents how future acceptance families must be registered. No public MCP schema/output changed; schema, contract-version, and docs-drift gates remained green.
+- Focused evidence: the acceptance/meta-audit focused simulation passed `14/14` before publication; the exact implementation CI then passed `tests/test_acceptance_test_coverage.py`, PMORRAT-003, all existing PMOAT tests, and the representative exact-node targets under the complete Docker-backed suite.
+- GREEN run/head/job/test count/coverage: `34054232951` / `95f937b414242fe3ae485c4c939f48688c981e04` / `101543066829`; Docker build, Ruff format (`230 files already formatted`), Ruff lint, mypy (`72 source files`), MCP contract, contract-version, docs drift, and pytest all passed; pytest `1191 passed in 628.76s (0:10:28)`, coverage `92%` with TOTAL `6532` statements / `540` misses.
+- Revert verification: the clean acceptance-only RED run `34052582734` at `8aa42963c15cb186692aedcc4ad1471cbab33f71` is the revert proof: with PMORRAT-003 present and the acceptance-series enforcement absent, the suite failed exactly because `PMOAT` was not registered.
 
 ### R5 — Align tool descriptions, exported schemas, and docs
 
