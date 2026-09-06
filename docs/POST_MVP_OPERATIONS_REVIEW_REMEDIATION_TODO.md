@@ -30,27 +30,28 @@ This TODO tracks the remediation pass created from the Post-MVP Operations code 
 **Satisfies:** PMORR-001  
 **Verified by:** PMORRAT-001
 
-- [ ] Identify whether the MCP framework exposes a safe request/session/caller identifier at tool invocation time
-- [ ] If no safe framework value exists, generate an opaque per-tool-call request correlation ID
-- [ ] Thread bounded request attribution into `write_audit_event` without exposing unsafe metadata
-- [ ] Ensure `resource_prune_plan` audit records include non-null request attribution
-- [ ] Ensure `resource_prune_execute` audit records include non-null request attribution
-- [ ] Preserve existing PMOR-012 plan/candidate/outcome/reclaimed-byte audit metadata
-- [ ] Ensure attribution fields do not contain host paths, secrets, prompt text, raw authorization data, Docker credentials, SSH material, or raw environment values
-- [ ] Preserve audit health behavior when audit writes fail
-- [ ] Add PMORRAT-001 through the real MCP tool surface
-- [ ] Prove PMORRAT-001 RED against current null `request_id`/`session_id` behavior
-- [ ] Run focused audit/prune tests
-- [ ] Run full CI and record exact GREEN evidence
-- [ ] Revert-verify PMORRAT-001
+- [x] Identify whether the MCP framework exposes a safe request/session/caller identifier at tool invocation time
+- [x] If no safe framework value exists, generate an opaque per-tool-call request correlation ID
+- [x] Thread bounded request attribution into `write_audit_event` without exposing unsafe metadata
+- [x] Ensure `resource_prune_plan` audit records include non-null request attribution
+- [x] Ensure `resource_prune_execute` audit records include non-null request attribution
+- [x] Preserve existing PMOR-012 plan/candidate/outcome/reclaimed-byte audit metadata
+- [x] Ensure attribution fields do not contain host paths, secrets, prompt text, raw authorization data, Docker credentials, SSH material, or raw environment values
+- [x] Preserve audit health behavior when audit writes fail
+- [x] Add PMORRAT-001 through the real MCP tool surface
+- [x] Prove PMORRAT-001 RED against current null `request_id`/`session_id` behavior
+- [x] Run focused audit/prune tests
+- [x] Run full CI and record exact GREEN evidence
+- [x] Revert-verify PMORRAT-001
 
 **R1 completion evidence:**
 
-- RED run/head/job: TODO
-- RED failure shape: TODO
-- Implementation summary: TODO
-- GREEN run/head/job/test count/coverage: TODO
-- Revert verification: TODO
+- RED run/head/job: `34019098378` / `43b023f593cb64c7442fc161575026204498288f` / `101448247761`.
+- RED failure shape: clean behavioral RED after the PMORRAT naming collision was removed; Docker build, Ruff format, Ruff lint, mypy, schema export/drift, contract-version, and docs drift all passed, then pytest failed only `tests/tools/test_post_mvp_review_remediation_audit_attribution.py::test_r1_reclamation_audit_has_request_attribution` because `resource_prune_plan` emitted an audit record with `request_id: None`; final count `1 failed, 1184 passed`, coverage `92%`.
+- Implementation summary: `write_audit_event` now accepts optional bounded `request_id`/`session_id` values and drops unsafe values fail-closed; `resource_prune_plan` and `resource_prune_execute` generate opaque per-tool-call `rq_<uuid>` attribution IDs when no safe framework ID is available; PMOR-012 plan/candidate/outcome/reclaimed-byte audit metadata is preserved; public MCP schema/output is unchanged.
+- Focused audit/prune evidence: covered inside GREEN full CI by passing `tests/test_audit.py`, `tests/tools/test_post_mvp_review_remediation_audit_attribution.py`, `tests/tools/test_post_mvp_o12_reclamation_audit.py`, `tests/tools/test_resource_prune_execute.py`, `tests/tools/test_resource_prune_partial_failure.py`, and `tests/tools/test_resource_prune_plan.py`.
+- GREEN run/head/job/test count/coverage: `34019843500` / `aafc279cac595105afa23d75f1ab4aee8d369768` / `101450264818`; Docker build, Ruff format, Ruff lint, mypy, MCP contract check, contract-version check, docs/TOOLS drift check, and pytest all passed; pytest count `1186 passed in 641.90s (0:10:41)`; coverage `92%` with TOTAL `6513` statements / `544` misses.
+- Revert verification: the clean RED run `34019098378` at acceptance-only head `43b023f593cb64c7442fc161575026204498288f` is the revert proof: with the acceptance present and the implementation absent, the real MCP tool surface produced null request attribution and failed PMORRAT-001 exactly.
 
 ## Phase 1 — Public and durable redaction
 
@@ -258,4 +259,3 @@ This TODO tracks the remediation pass created from the Post-MVP Operations code 
 - [ ] No broad prune fallback exists in source, comments, or docs
 - [ ] Full exact-head CI is green
 - [ ] PR is merged with an exact-head guard
-- [ ] Post-merge `master` CI is green
