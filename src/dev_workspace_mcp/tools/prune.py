@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
@@ -413,6 +414,11 @@ def _projected_bytes(candidates: tuple[PruneCandidate, ...]) -> ProjectedBytesOu
     )
 
 
+def _new_audit_request_id() -> str:
+    """Return a bounded, opaque per-tool-call audit attribution ID."""
+    return f"rq_{uuid.uuid4().hex}"
+
+
 def _audit_plan_reason(candidate: PruneCandidate) -> str:
     if candidate.reason in _SAFE_AUDIT_PLAN_REASONS:
         return candidate.reason
@@ -530,6 +536,7 @@ def register(
             audit_config,
             operation="resource_prune_plan",
             result="success",
+            request_id=_new_audit_request_id(),
             repository_id=request.repository_id,
             workspace_id=request.workspace_id,
             metadata={
@@ -604,6 +611,7 @@ def register(
             audit_config,
             operation="resource_prune_execute",
             result=result.status.value,
+            request_id=_new_audit_request_id(),
             metadata={
                 "plan_id": plan.token,
                 "confirmed": result.confirmed,

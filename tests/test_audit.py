@@ -36,6 +36,30 @@ def test_write_audit_event_appends_a_json_line(tmp_path: Path) -> None:
     assert "timestamp" in event
 
 
+def test_write_audit_event_accepts_only_safe_correlation_ids(tmp_path: Path) -> None:
+    config = AuditConfig(enabled=True, path=tmp_path / "audit.jsonl")
+    write_audit_event(
+        config,
+        operation="safe",
+        result="success",
+        request_id="rq_" + "a" * 32,
+        session_id="session:alpha-1",
+    )
+    write_audit_event(
+        config,
+        operation="unsafe",
+        result="success",
+        request_id="/home/phil/.ssh/id_rsa",
+        session_id="Bearer ghp_" + "A" * 36,
+    )
+
+    safe, unsafe = _read_lines(config.path)
+    assert safe["request_id"] == "rq_" + "a" * 32
+    assert safe["session_id"] == "session:alpha-1"
+    assert unsafe["request_id"] is None
+    assert unsafe["session_id"] is None
+
+
 def test_write_audit_event_appends_rather_than_overwrites(tmp_path: Path) -> None:
     config = AuditConfig(enabled=True, path=tmp_path / "audit.jsonl")
     write_audit_event(config, operation="op_one", result="success")
