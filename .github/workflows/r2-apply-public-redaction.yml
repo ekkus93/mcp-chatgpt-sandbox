@@ -1,0 +1,29 @@
+name: R2 Apply Public Redaction
+
+on:
+  push:
+    branches: [post-mvp/review-remediation]
+
+permissions:
+  contents: write
+
+jobs:
+  apply-r2-public-redaction:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply R2 source patch
+        run: python tools/apply_r2_public_redaction.py
+      - name: Compile check
+        run: python -m compileall -q src tests
+      - name: Commit implementation and remove helper
+        run: |
+          rm -f tools/apply_r2_public_redaction.py .github/workflows/r2-apply-public-redaction.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/dev_workspace_mcp/tools/prune.py tools/apply_r2_public_redaction.py .github/workflows/r2-apply-public-redaction.yml
+          git commit -m "fix: redact public prune execution failure details"
+          git push origin HEAD:post-mvp/review-remediation
