@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import sqlite3
 import stat
@@ -65,7 +66,7 @@ def _cleanup_debt_from_row(row: sqlite3.Row) -> JobLogCleanupDebt:
         workspace_id=row["workspace_id"],
         created_at=row["created_at"],
         last_attempt_at=row["last_attempt_at"],
-        last_error=row["last_error"],
+        last_error=_safe_persisted_cleanup_error(row["last_error"]),
         bytes_hint=row["bytes_hint"],
     )
 
@@ -128,19 +129,42 @@ def _directory_file_bytes(path: Path) -> int:
     return total
 
 
+_SAFE_DURABLE_CLEANUP_ERROR_RE = re.compile(
+    r"^(?:cleanup_failed|identity_unprovable): "
+    r"[A-Za-z_][A-Za-z0-9_]*(?:: errno=[0-9]+)?$"
+)
+
+
 def _safe_error(exc: BaseException) -> str:
-    text = f"{type(exc).__name__}: {exc}"
-    return text[:1024]
+    """Return only exception class plus optional errno; never raw exception text."""
+    if isinstance(exc, OSError) and exc.errno is not None:
+        return f"{type(exc).__name__}: errno={exc.errno}"
+    return type(exc).__name__
+
+
+def _safe_persisted_cleanup_error(value: object) -> str | None:
+    """Fail closed when reading legacy free-form durable cleanup diagnostics."""
+    if value is None:
+        return None
+    if (
+        isinstance(value, str)
+        and len(value) <= 128
+        and _SAFE_DURABLE_CLEANUP_ERROR_RE.fullmatch(value)
+    ):
+        return value
+    return "cleanup_failure_recorded"
 
 
 def _update_cleanup_failure(
     connection: sqlite3.Connection,
     debt: JobLogCleanupDebt,
     *,
+    reason: str,
     error: BaseException,
     bytes_hint: int,
 ) -> None:
-    """Persist failure details while preserving the pre-existing tombstone."""
+    """Persist only bounded classification/class/errno on the existing tombstone."""
+    diagnostic = f"{reason}: {_safe_error(error)}"[:128]
     try:
         with connection:
             connection.execute(
@@ -149,7 +173,7 @@ def _update_cleanup_failure(
                 SET last_attempt_at = ?, last_error = ?, bytes_hint = ?
                 WHERE job_id = ?
                 """,
-                (_now(), _safe_error(error), max(bytes_hint, 0), debt.job_id),
+                (_now(), diagnostic, max(bytes_hint, 0), debt.job_id),
             )
     except sqlite3.Error as db_exc:
         # The tombstone was inserted before metadata deletion. If this
@@ -159,8 +183,8 @@ def _update_cleanup_failure(
         _logger.error(
             "job-log cleanup: failed to update cleanup debt for %s after %s: %s",
             debt.job_id,
-            _safe_error(error),
-            db_exc,
+            diagnostic,
+            _safe_error(db_exc),
         )
 
 
@@ -173,7 +197,11 @@ def _clear_cleanup_debt(connection: sqlite3.Connection, job_id: str) -> None:
         # tombstone is conservative: a later maintenance pass sees the
         # directory missing and retries this DB clear. Never erase the only
         # durable linkage before filesystem cleanup has succeeded.
-        _logger.error("job-log cleanup: failed to clear cleanup debt for %s: %s", job_id, exc)
+        _logger.error(
+            "job-log cleanup: failed to clear cleanup debt for %s: %s",
+            job_id,
+            _safe_error(exc),
+        )
 
 
 def attempt_job_log_cleanup(
@@ -192,8 +220,18 @@ def attempt_job_log_cleanup(
     try:
         job_dir = _job_log_dir(state_dir, debt.job_id)
     except ValueError as exc:
-        _update_cleanup_failure(connection, debt, error=exc, bytes_hint=debt.bytes_hint)
-        _logger.error("job-log cleanup: refusing unsafe debt %s: %s", debt.job_id, exc)
+        _update_cleanup_failure(
+            connection,
+            debt,
+            reason="identity_unprovable",
+            error=exc,
+            bytes_hint=debt.bytes_hint,
+        )
+        _logger.error(
+            "job-log cleanup: identity_unprovable for job %s: %s",
+            debt.job_id,
+            _safe_error(exc),
+        )
         return False
 
     bytes_hint = debt.bytes_hint
@@ -213,8 +251,18 @@ def attempt_job_log_cleanup(
         _clear_cleanup_debt(connection, debt.job_id)
         return True
     except OSError as exc:
-        _update_cleanup_failure(connection, debt, error=exc, bytes_hint=bytes_hint)
-        _logger.warning("job-log cleanup: failed to remove %s: %s", job_dir, exc)
+        _update_cleanup_failure(
+            connection,
+            debt,
+            reason="cleanup_failed",
+            error=exc,
+            bytes_hint=bytes_hint,
+        )
+        _logger.warning(
+            "job-log cleanup: cleanup_failed for job %s: %s",
+            debt.job_id,
+            _safe_error(exc),
+        )
         return False
 
     _clear_cleanup_debt(connection, debt.job_id)
@@ -301,7 +349,10 @@ def prune_job_logs(
         try:
             effective_state_dir = _state_dir_from_connection(job_store.connection)
         except sqlite3.Error as exc:
-            _logger.warning("prune_job_logs: failed to resolve cleanup state directory: %s", exc)
+            _logger.warning(
+                "prune_job_logs: failed to resolve cleanup state directory: %s",
+                _safe_error(exc),
+            )
 
     cleanup_bytes = 0
     if effective_state_dir is not None:
@@ -311,13 +362,19 @@ def prune_job_logs(
             # Retention is opportunistic and must not fail the unrelated
             # exec_start that triggered it. A DB-read failure also means the
             # debt remains in the database; it is not converted to success.
-            _logger.warning("prune_job_logs: failed to read/retry cleanup debt: %s", exc)
+            _logger.warning(
+                "prune_job_logs: failed to read/retry cleanup debt: %s",
+                _safe_error(exc),
+            )
     try:
         cleanup_bytes = pending_job_log_cleanup_bytes(
             job_store.connection, state_dir=effective_state_dir
         )
     except sqlite3.Error as exc:
-        _logger.warning("prune_job_logs: failed to account cleanup debt: %s", exc)
+        _logger.warning(
+            "prune_job_logs: failed to account cleanup debt: %s",
+            _safe_error(exc),
+        )
 
     candidates = [
         job
@@ -354,7 +411,11 @@ def prune_job_logs(
             # pass. G3R-007 extends the same non-aborting rule to row-less
             # cleanup debt, but gives that debt its own durable table so
             # "best effort" no longer means "warning and forget".
-            _logger.warning("prune_job_logs: failed to prune job %s: %s", job.id, exc)
+            _logger.warning(
+                "prune_job_logs: failed to prune job %s: %s",
+                job.id,
+                _safe_error(exc),
+            )
             continue
         total_bytes -= sizes[job.id]
         pruned.append(job.id)
