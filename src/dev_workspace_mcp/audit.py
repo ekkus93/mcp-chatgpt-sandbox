@@ -16,9 +16,10 @@ half-built, since its only consumer — `audit_recent` — is itself
 deferred to a later phase (§34.3); wiring the write side alone, with
 nothing to read it back, was judged not worth the same invasive
 `db`-threading `audit_denials` (S29, `tools/git.py`) was specifically
-designed to avoid for its own scope. `request_id`/`session_id` are
-always `None`: nothing in the codebase threads either through to a tool
-call yet.
+designed to avoid for its own scope. Request/session attribution is
+optional at this layer: callers that can provide bounded, non-secret
+correlation values thread them through explicitly, while older callers
+continue to write `None`.
 
 HR-015 (`docs/HARDENING_SPEC.md` §8): an unwritable audit path (a
 misconfigured `audit.path`, a full disk, a permissions change after
@@ -34,6 +35,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import threading
 from dataclasses import dataclass
@@ -58,6 +60,23 @@ class AuditHealth:
 
 _AUDIT_HEALTH_LOCK = threading.Lock()
 _AUDIT_HEALTH_BY_PATH: dict[str, AuditHealth] = {}
+_AUDIT_CORRELATION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+
+
+def _safe_audit_correlation_id(value: str | None) -> str | None:
+    """Return a bounded audit correlation ID, or drop unsafe values.
+
+    PMORR-001: audit attribution is useful only when it is also safe to
+    persist. The audit writer therefore accepts only short opaque
+    identifiers made from this project's non-path ID alphabet. Raw
+    headers, prompts, environment values, paths, and free-form client
+    metadata fail closed to `None` instead of being copied into JSONL.
+    """
+    if value is None:
+        return None
+    if _AUDIT_CORRELATION_ID_RE.fullmatch(value) is None:
+        return None
+    return value
 
 
 def _audit_health_key(config: AuditConfig) -> str:
@@ -123,6 +142,8 @@ def write_audit_event(
     result: str,
     workspace_id: str | None = None,
     repository_id: str | None = None,
+    request_id: str | None = None,
+    session_id: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> None:
     """Appends one JSON line to `config.path`. A no-op when auditing is
@@ -130,7 +151,9 @@ def write_audit_event(
     audit logging is a deliberate configuration choice, not a fault.
     `metadata` is passed through `redact_secrets` (§24.1) before being
     written, the same second layer `to_tool_error` applies to a client
-    response.
+    response. `request_id` and `session_id` are optional PMORR-001
+    attribution fields and are accepted only when they are bounded,
+    opaque, non-path correlation IDs.
 
     HR-015: an `OSError` from the filesystem operations below (an
     unwritable `audit.path`, a full disk, a permissions problem) is
@@ -144,8 +167,8 @@ def write_audit_event(
         return
     record = {
         "timestamp": datetime.now(UTC).isoformat(),
-        "request_id": None,
-        "session_id": None,
+        "request_id": _safe_audit_correlation_id(request_id),
+        "session_id": _safe_audit_correlation_id(session_id),
         "workspace_id": workspace_id,
         "repository_id": repository_id,
         "operation": operation,
