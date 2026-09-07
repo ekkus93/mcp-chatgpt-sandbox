@@ -76,9 +76,7 @@ def test_r7_docker_volume_post_list_work_is_bounded_and_limitation_is_documented
         ),
     ).collect()
 
-    assert docker_client.volumes.list_calls == [
-        {"filters": {"label": f"{LABEL_MANAGED}=true"}}
-    ]
+    assert docker_client.volumes.list_calls == [{"filters": {"label": f"{LABEL_MANAGED}=true"}}]
     assert "limit" not in docker_client.volumes.list_calls[0]
     assert [volume.reload_count for volume in volumes] == [1, 1, 0, 0, 0]
 
