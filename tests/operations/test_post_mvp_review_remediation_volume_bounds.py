@@ -59,6 +59,7 @@ def _db() -> sqlite3.Connection:
     return connection
 
 
+# Covers: PMORRAT-007
 def test_r7_docker_volume_post_list_work_is_bounded_and_limitation_is_documented(
     tmp_path: Path,
 ) -> None:

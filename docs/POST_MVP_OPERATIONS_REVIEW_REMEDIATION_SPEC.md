@@ -182,8 +182,6 @@ After removing obsolete helper code, focused SSH cleanup, inventory, maintenance
 
 Using fake Docker volume data larger than configured inventory limits, prove that per-volume inspection/output/diagnostic work is locally bounded, truncation/incomplete state is reported, and unavailable/over-limit byte observations are not converted to zero.
 
-**Coverage status:** deferred — R7 will add bounded Docker-volume post-list work coverage when that remediation is implemented; owner/task: R7
-
 ## Required workflow
 
 For every behavioral remediation task:
