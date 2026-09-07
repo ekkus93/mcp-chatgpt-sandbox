@@ -3,6 +3,7 @@
 from dev_workspace_mcp.operations import ssh_agent_cleanup
 
 
+# Covers: PMORRAT-006
 def test_r6_obsolete_inventory_augmentation_helper_is_removed() -> None:
     """The superseded inventory augmentation entry point must not remain callable."""
     assert not hasattr(

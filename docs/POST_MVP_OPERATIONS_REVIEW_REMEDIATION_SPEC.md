@@ -178,8 +178,6 @@ Create a controlled schema/docs mismatch involving the operations tool descripti
 
 After removing obsolete helper code, focused SSH cleanup, inventory, maintenance, and prune tests SHALL still pass, and no public schema/output drift SHALL occur.
 
-**Coverage status:** deferred — R6 will add the no-regression/dead-code-removal proof after the caller audit and removal; owner/task: R6
-
 ### PMORRAT-007 — Docker-volume inventory post-list work is bounded
 
 Using fake Docker volume data larger than configured inventory limits, prove that per-volume inspection/output/diagnostic work is locally bounded, truncation/incomplete state is reported, and unavailable/over-limit byte observations are not converted to zero.
