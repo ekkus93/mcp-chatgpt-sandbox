@@ -16,18 +16,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from dev_workspace_mcp.operations.inventory import (
-    ByteObservation,
-    InventoryDiagnostic,
-    InventoryResource,
-    ResourceInventoryResult,
-)
-from dev_workspace_mcp.operations.resources import (
-    OwnershipProof,
-    OwnershipStatus,
-    ResourceKind,
-    ResourceLifecycleState,
-)
 from dev_workspace_mcp.workspace.ssh_agent import SSHAgentRecord, agent_socket_path
 
 _logger = logging.getLogger(__name__)
@@ -93,97 +81,6 @@ def list_ssh_agent_cleanup_debt(connection: sqlite3.Connection) -> list[SSHAgent
         """
     ).fetchall()
     return [_debt_from_row(row) for row in rows]
-
-
-def augment_inventory_with_ssh_agent_cleanup_debt(
-    connection: sqlite3.Connection,
-    inventory: ResourceInventoryResult,
-    *,
-    max_diagnostics: int = 64,
-) -> ResourceInventoryResult:
-    """Append bounded cleanup debt only for inventories that do not collect it natively."""
-    if any(resource.kind is ResourceKind.SSH_AGENT_CLEANUP for resource in inventory.resources):
-        return inventory
-
-    resources = list(inventory.resources)
-    diagnostics = list(inventory.diagnostics)
-    budget = min(
-        max(inventory.result_limit - len(resources), 0),
-        max(inventory.inspection_limit - inventory.inspected_count, 0),
-    )
-    try:
-        rows = connection.execute(
-            """
-            SELECT workspace_id, bytes_hint, last_error, socket_device, socket_inode
-            FROM ssh_agent_cleanup
-            ORDER BY created_at, workspace_id
-            LIMIT ?
-            """,
-            (budget + 1,),
-        ).fetchall()
-    except sqlite3.Error as exc:
-        if len(diagnostics) < max_diagnostics:
-            diagnostics.append(
-                InventoryDiagnostic(
-                    code="ssh_agent_cleanup_state_query_failed",
-                    message=_safe_error(exc),
-                    resource_kind=ResourceKind.SSH_AGENT_CLEANUP,
-                )
-            )
-            diagnostics_truncated = inventory.diagnostics_truncated
-        else:
-            diagnostics_truncated = True
-        return ResourceInventoryResult(
-            resources=tuple(resources),
-            diagnostics=tuple(diagnostics),
-            inspected_count=inventory.inspected_count,
-            result_limit=inventory.result_limit,
-            inspection_limit=inventory.inspection_limit,
-            truncated=inventory.truncated or diagnostics_truncated,
-            incomplete=True,
-            diagnostics_truncated=diagnostics_truncated,
-        )
-
-    overflow = len(rows) > budget
-    inspected = inventory.inspected_count
-    for row in rows[:budget]:
-        inspected += 1
-        bytes_hint = row["bytes_hint"]
-        bytes_observation = (
-            ByteObservation.accounted(int(bytes_hint))
-            if isinstance(bytes_hint, int) and not isinstance(bytes_hint, bool)
-            else ByteObservation.unavailable("SSH-agent cleanup byte accounting is unavailable")
-        )
-        resources.append(
-            InventoryResource(
-                kind=ResourceKind.SSH_AGENT_CLEANUP,
-                resource_id=str(row["workspace_id"]),
-                lifecycle_state=ResourceLifecycleState.CLEANUP_PENDING,
-                ownership=OwnershipProof(
-                    status=OwnershipStatus.OWNED,
-                    evidence=("durable ssh_agent_cleanup tombstone row",),
-                    reason="positive durable-state ownership proof",
-                ),
-                bytes=bytes_observation,
-                workspace_id=str(row["workspace_id"]),
-                details={
-                    "last_error_recorded": row["last_error"] is not None,
-                    "socket_device": row["socket_device"],
-                    "socket_inode": row["socket_inode"],
-                },
-            )
-        )
-
-    return ResourceInventoryResult(
-        resources=tuple(resources),
-        diagnostics=tuple(diagnostics),
-        inspected_count=inspected,
-        result_limit=inventory.result_limit,
-        inspection_limit=inventory.inspection_limit,
-        truncated=inventory.truncated or overflow,
-        incomplete=inventory.incomplete or overflow,
-        diagnostics_truncated=inventory.diagnostics_truncated,
-    )
 
 
 def _validate_workspace_id(workspace_id: str) -> None:
