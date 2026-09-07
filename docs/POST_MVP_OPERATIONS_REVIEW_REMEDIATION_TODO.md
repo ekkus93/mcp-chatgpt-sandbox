@@ -1,6 +1,6 @@
 # Post-MVP Operations Review Remediation TODO
 
-**Status:** active follow-up workstream  
+**Status:** merge-ready after R8 audit; final completion pending guarded merge and post-merge `master` CI  
 **Spec:** `docs/POST_MVP_OPERATIONS_REVIEW_REMEDIATION_SPEC.md`  
 **Base:** completed Post-MVP Operations workstream at or after `97ff037b6a2ce731340c89d2a08375f7531eac5b`  
 **Task series:** `R1`..`R8`  
@@ -11,15 +11,15 @@ This TODO tracks the remediation pass created from the Post-MVP Operations code 
 
 ## Global rules
 
-- [ ] Work on `post-mvp/review-remediation`, not directly on `master`
-- [ ] Add or strengthen acceptance tests before implementation for behavioral tasks
-- [ ] Prove the acceptance test fails for the intended missing behavior before the fix
-- [ ] Preserve all O1-O12 destructive-safety invariants
-- [ ] Do not expose host paths, secrets, Docker credentials, SSH material, raw environment values, prompt text, arbitrary client metadata, or arbitrary raw failure strings in audit or public output
-- [ ] Regenerate schemas and bump `contract_version` when public MCP schema/output/description changes require it
-- [ ] Run focused tests before full CI
-- [ ] Record exact RED/GREEN evidence for each task
-- [ ] Revert-verify behavioral acceptance tests
+- [x] Work on `post-mvp/review-remediation`, not directly on `master`
+- [x] Add or strengthen acceptance tests before implementation for behavioral tasks
+- [x] Prove the acceptance test fails for the intended missing behavior before the fix
+- [x] Preserve all O1-O12 destructive-safety invariants
+- [x] Do not expose host paths, secrets, Docker credentials, SSH material, raw environment values, prompt text, arbitrary client metadata, or arbitrary raw failure strings in audit or public output
+- [x] Regenerate schemas and bump `contract_version` when public MCP schema/output/description changes require it
+- [x] Run focused tests before full CI
+- [x] Record exact RED/GREEN evidence for each task
+- [x] Revert-verify behavioral acceptance tests
 - [ ] Merge only after exact-head CI is green and the user authorizes merge
 - [ ] Verify post-merge `master` CI before marking the workstream complete
 
@@ -231,41 +231,42 @@ This TODO tracks the remediation pass created from the Post-MVP Operations code 
 **Satisfies:** PMORR-001..PMORR-007  
 **Verified by:** PMORRAT-001..PMORRAT-007
 
-- [ ] Audit that PMORR-001..PMORR-007 are implemented or explicitly dispositioned
-- [ ] Audit that PMORRAT-001..PMORRAT-007 are automated and passing
-- [ ] Confirm PMOAT-001..PMOAT-012 and PMORRAT-001..PMORRAT-007 are enforced by acceptance coverage metadata/tests
-- [ ] Confirm public prune execution output and audit output do not expose hostile failure detail
-- [ ] Confirm reclamation audit includes bounded request attribution
-- [ ] Confirm durable cleanup error storage avoids arbitrary raw exception detail for covered cleanup classes
-- [ ] Confirm tool descriptions, exported schemas, `contract_version`, and `docs/TOOLS.md` are aligned
-- [ ] Confirm obsolete helper code is removed or justified
-- [ ] Confirm Docker-volume inventory scaling limitation is tested/documented
-- [ ] Re-scan source/docs for broad prune fallback: `docker system prune`, `containers.prune`, `volumes.prune`, `images.prune`, label-wide, prefix-wide, path-wide, system-wide
-- [ ] Run complete Docker-backed CI with all gates green
+- [x] Audit that PMORR-001..PMORR-007 are implemented or explicitly dispositioned
+- [x] Audit that PMORRAT-001..PMORRAT-007 are automated and passing
+- [x] Confirm PMOAT-001..PMOAT-012 and PMORRAT-001..PMORRAT-007 are enforced by acceptance coverage metadata/tests
+- [x] Confirm public prune execution output and audit output do not expose hostile failure detail
+- [x] Confirm reclamation audit includes bounded request attribution
+- [x] Confirm durable cleanup error storage avoids arbitrary raw exception detail for covered cleanup classes
+- [x] Confirm tool descriptions, exported schemas, `contract_version`, and `docs/TOOLS.md` are aligned
+- [x] Confirm obsolete helper code is removed or justified
+- [x] Confirm Docker-volume inventory scaling limitation is tested/documented
+- [x] Re-scan source/docs for broad prune fallback: `docker system prune`, `containers.prune`, `volumes.prune`, `images.prune`, label-wide, prefix-wide, path-wide, system-wide
+- [x] Run complete Docker-backed CI with all gates green
 - [ ] Mark this remediation TODO complete only after exact-head CI passes
 - [ ] Merge with an exact-head guard
 - [ ] Verify post-merge `master` CI is green
 
 **R8 completion evidence:**
 
-- Final closure run/head/job/test count/coverage: TODO
-- Broad-prune scan result: TODO
-- Exact merge SHA: TODO
-- Post-merge master CI run/head/job/test count/coverage: TODO
+- Audit-head CI: `34148423770` / `6cb9378b7d7b2ff774e3a54192bdfb4cc46bf8b4` / `101825340040`; Docker build, Ruff format (`233 files already formatted`), Ruff lint, mypy (`72 source files`), MCP contract/schema export, contract-version, docs drift, and pytest all passed; pytest `1195 passed in 615.59s (0:10:15)`, coverage `92%` with TOTAL `6508` statements / `519` misses.
+- Final closure run/head/job/test count/coverage: pending exact-head CI for this TODO-only closure generation; the resulting run is recorded in PR #48 after the immutable commit exists.
+- Broad-prune scan result: zero executable matches for `.prune(`, `containers.prune(`, `volumes.prune(`, `images.prune(`, `prune_containers`, `prune_volumes`, `prune_images`, `prune_networks`, or `prune_builds`. Textual `docker system prune` / label-wide / prefix-wide / path-wide / system-wide hits are explicit prohibitions/negative guarantees or historical out-of-band lifecycle examples; none is an executable reclamation fallback. See `docs/POST_MVP_OPERATIONS_REVIEW_REMEDIATION_R8_AUDIT.md` for the classification and evidence.
+- Exact merge SHA: pending explicit user authorization and expected-head guarded merge of PR #48.
+- Post-merge master CI run/head/job/test count/coverage: pending the guarded merge; this evidence is necessarily external to the immutable pre-merge head that creates it.
 
 ## Definition of done
 
 - [ ] R1-R8 complete
-- [ ] PMORR-001..PMORR-007 implemented or explicitly dispositioned
-- [ ] PMORRAT-001..PMORRAT-007 automated and passing
-- [ ] Reclamation audit records include bounded request/caller attribution
-- [ ] Audit output remains redacted and path-safe
-- [ ] Public `resource_prune_execute` output does not expose arbitrary raw failure detail
-- [ ] Durable cleanup error storage avoids arbitrary raw exception text for covered cleanup classes
-- [ ] PMOAT and PMORRAT acceptance coverage is enforced by meta-tests
-- [ ] Tool descriptions, schemas, `contract_version`, and `docs/TOOLS.md` are aligned
-- [ ] Dead operational helper code is removed or justified
-- [ ] Docker-volume inventory scaling limitation is documented and tested where feasible
-- [ ] No broad prune fallback exists in source, comments, or docs
+- [x] PMORR-001..PMORR-007 implemented or explicitly dispositioned
+- [x] PMORRAT-001..PMORRAT-007 automated and passing
+- [x] Reclamation audit records include bounded request/caller attribution
+- [x] Audit output remains redacted and path-safe
+- [x] Public `resource_prune_execute` output does not expose arbitrary raw failure detail
+- [x] Durable cleanup error storage avoids arbitrary raw exception text for covered cleanup classes
+- [x] PMOAT and PMORRAT acceptance coverage is enforced by meta-tests
+- [x] Tool descriptions, schemas, `contract_version`, and `docs/TOOLS.md` are aligned
+- [x] Dead operational helper code is removed or justified
+- [x] Docker-volume inventory scaling limitation is documented and tested where feasible
+- [x] No broad prune fallback exists in source, comments, or docs
 - [ ] Full exact-head CI is green
 - [ ] PR is merged with an exact-head guard
