@@ -201,26 +201,28 @@ This TODO tracks the remediation pass created from the Post-MVP Operations code 
 **Satisfies:** PMORR-007  
 **Verified by:** PMORRAT-007
 
-- [ ] Document the Docker SDK/API limitation: volume listing lacks container-style server-side limit
-- [ ] Confirm volume discovery remains ownership-filtered and read-only
-- [ ] Confirm per-volume inspection/output/diagnostic work is locally bounded
-- [ ] Add fake-Docker oversized volume-list test for post-list bounded inspection/result work
-- [ ] Verify truncated/incomplete state is reported when bounds are exceeded
-- [ ] Verify unavailable/over-limit accounting is not converted to zero
-- [ ] Update `docs/TOOLS.md` or operations docs with the explicit limitation
-- [ ] Add PMORRAT-007 acceptance coverage
-- [ ] Prove PMORRAT-007 RED if current tests do not catch oversized post-list behavior
-- [ ] Run focused inventory tests
-- [ ] Run full CI and record exact GREEN evidence
-- [ ] Revert-verify PMORRAT-007
+- [x] Document the Docker SDK/API limitation: volume listing lacks container-style server-side limit
+- [x] Confirm volume discovery remains ownership-filtered and read-only
+- [x] Confirm per-volume inspection/output/diagnostic work is locally bounded
+- [x] Add fake-Docker oversized volume-list test for post-list bounded inspection/result work
+- [x] Verify truncated/incomplete state is reported when bounds are exceeded
+- [x] Verify unavailable/over-limit accounting is not converted to zero
+- [x] Update `docs/TOOLS.md` or operations docs with the explicit limitation
+- [x] Add PMORRAT-007 acceptance coverage
+- [x] Prove PMORRAT-007 RED if current tests do not catch oversized post-list behavior
+- [x] Run focused inventory tests
+- [x] Run full CI and record exact GREEN evidence
+- [x] Revert-verify PMORRAT-007
 
 **R7 completion evidence:**
 
-- RED run/head/job: TODO
-- RED failure shape or justified disposition: TODO
-- Implementation/documentation summary: TODO
-- GREEN run/head/job/test count/coverage: TODO
-- Revert verification: TODO
+- RED run/head/job: `34140137686` / `cda4c9e0b94da622201e49a8f307c532b14b6e28` / `101800031948`.
+- RED failure shape: Docker build, Ruff format (`232 files already formatted`), Ruff lint, mypy (`72 source files`), MCP contract/schema export, contract-version, and docs drift all passed. The oversized fake-volume runtime assertions also passed: exactly one ownership-filtered `volumes.list(filters={"label": "mcp.dev/managed=true"})` call was made without an unsupported server-side `limit`; only the first two of five returned volumes were reloaded/inspected under `max_resources=2` / `max_inspections=2`; only those two cache-volume results were emitted; `truncated` and `incomplete` were true; and missing size metadata remained `ByteObservation.unavailable` with `value=None`, never zero. Pytest failed only the final operator-documentation assertion because `docs/TOOLS.md` did not yet say that Docker volume listing has no server-side limit or pagination. Final count `1 failed, 1194 passed in 615.34s (0:10:15)`, coverage `92%` with TOTAL `6508` statements / `519` misses.
+- Implementation/documentation summary: no runtime fix was required. `ResourceInventoryService._collect_volumes()` already performs one read-only ownership-filtered Docker volume-list call, then bounds all per-volume reload/inspection/result work through the existing local inventory budgets and reports oversized responses as truncated/incomplete while preserving unavailable byte observations. R7 adds executable PMORRAT-007 coverage for that behavior and updates the `resource_inventory` row in `docs/TOOLS.md` to state the Docker SDK/API limitation explicitly: volume listing lacks server-side limit/pagination, so discovery may require one ownership-filtered list call before local bounding. The remediation spec's PMORRAT-007 deferred disposition was removed. No production source changed.
+- Schema/contract decision: R7 changes neither registered tool descriptions nor MCP input/output schema or runtime behavior. `schemas/tools.json` is unchanged, `contract_version` remains `0.10.3`, and the schema export, contract-version, and docs-drift gates passed on the GREEN generation.
+- Focused inventory/acceptance evidence: the GREEN full suite passed `tests/operations/test_post_mvp_review_remediation_volume_bounds.py`, the existing `tests/operations/test_resource_inventory.py` inventory coverage, and `tests/test_acceptance_test_coverage.py`; the direct `# Covers: PMORRAT-007` marker replaces the R7 deferral, so the acceptance meta-audit now fails closed if this executable evidence disappears.
+- GREEN run/head/job/test count/coverage: `34141199951` / `4063779b54c7aa7ed78d847d5087ca1db1a92137` / `101803355950`; Docker build, Ruff format (`232 files already formatted`), Ruff lint, mypy (`72 source files`), MCP contract/schema export, contract-version, docs drift, and pytest all passed; pytest `1195 passed in 619.52s (0:10:19)`, coverage `92%` with TOTAL `6508` statements / `519` misses.
+- Revert verification: the clean RED run `34140137686` at acceptance-only head `cda4c9e0b94da622201e49a8f307c532b14b6e28` is the revert proof. With the oversized-volume acceptance present and the R7 documentation/coverage activation absent, every bounded runtime assertion passed and the suite failed exactly on the missing Docker-volume listing limitation statement.
 
 ## Phase 4 — Final remediation closure
 
