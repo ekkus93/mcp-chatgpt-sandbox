@@ -174,23 +174,27 @@ This TODO tracks the remediation pass created from the Post-MVP Operations code 
 **Satisfies:** PMORR-006  
 **Verified by:** PMORRAT-006
 
-- [ ] Confirm current callers for `operations/ssh_agent_cleanup.py` helpers
-- [ ] Remove obsolete unused inventory augmentation helper code if no caller exists
-- [ ] Remove now-unused imports/types introduced only for obsolete helper code
-- [ ] Preserve inventory, maintenance, prune planning, and prune execution behavior
-- [ ] Avoid public schema/output changes
-- [ ] Add or strengthen focused tests only if needed to protect behavior after removal
-- [ ] Add PMORRAT-006 no-regression/dead-code-removal proof
-- [ ] Run focused SSH cleanup, maintenance, inventory, and prune tests
-- [ ] Run full CI and record exact GREEN evidence
-- [ ] Revert-verify or document why dead-code removal has no behavioral RED
+- [x] Confirm current callers for `operations/ssh_agent_cleanup.py` helpers
+- [x] Remove obsolete unused inventory augmentation helper code if no caller exists
+- [x] Remove now-unused imports/types introduced only for obsolete helper code
+- [x] Preserve inventory, maintenance, prune planning, and prune execution behavior
+- [x] Avoid public schema/output changes
+- [x] Add or strengthen focused tests only if needed to protect behavior after removal
+- [x] Add PMORRAT-006 no-regression/dead-code-removal proof
+- [x] Run focused SSH cleanup, maintenance, inventory, and prune tests
+- [x] Run full CI and record exact GREEN evidence
+- [x] Revert-verify or document why dead-code removal has no behavioral RED
 
 **R6 completion evidence:**
 
-- Caller audit: TODO
-- Removal summary: TODO
-- GREEN run/head/job/test count/coverage: TODO
-- No-regression/revert rationale: TODO
+- RED run/head/job: `34071447761` / `3089db31f1d013041314763d978a396c0a1b4afd` / `101589436057`.
+- RED failure shape: Docker build, Ruff format/lint, mypy, MCP contract/schema export, contract-version, and docs drift all passed; pytest failed only `tests/operations/test_post_mvp_review_remediation_ssh_cleanup_dead_code.py::test_r6_obsolete_inventory_augmentation_helper_is_removed` because `augment_inventory_with_ssh_agent_cleanup_debt` still existed. The companion live-API guard passed; final count `1 failed, 1193 passed in 614.01s (0:10:14)`, coverage `92%` with TOTAL `6532` statements / `540` misses.
+- Caller audit: repository-wide search found no caller for `augment_inventory_with_ssh_agent_cleanup_debt`. Live SSH cleanup APIs remain actively consumed: maintenance uses `list_ssh_agent_cleanup_debt` and `attempt_ssh_agent_cleanup`; prune execution uses `get_ssh_agent_cleanup_debt`, `observe_socket_identity`, `transition_ssh_agent_to_cleanup_debt`, and `attempt_ssh_agent_cleanup`. The canonical `ResourceInventoryService` already collects `SSH_AGENT_CLEANUP` debt natively, so the augmentation helper was obsolete duplication rather than a compatibility path.
+- Removal summary: removed only the dead augmentation helper and imports/types used exclusively by it from `operations/ssh_agent_cleanup.py`; retained all active durable-debt lookup, identity, transition, retry, and cleanup functions. PMORRAT-006 is executable via the structural dead-symbol/live-API acceptance test and its deferred disposition was removed from the remediation spec.
+- Schema/contract decision: no public MCP tool, input/output schema, registered description, or response behavior changed. `schemas/tools.json` remained unchanged, `contract_version` remains `0.10.3`, and the schema export/contract-version/docs-drift gates passed.
+- Focused/no-regression evidence: the GREEN full suite passed the new R6 structural acceptance tests plus existing SSH cleanup, inventory, maintenance, prune planning, and prune execution coverage, including `tests/workspace/test_ssh_agent_cleanup.py`, `tests/workspace/test_post_mvp_o11_conservative_maintenance.py`, `tests/tools/test_resource_inventory.py`, `tests/operations/test_prune_plans.py`, and resource prune execution/partial-failure tests.
+- GREEN run/head/job/test count/coverage: `34072041883` / `7f4f8d49b807a3cb6d5447f46cc6b0e64d15be8d` / `101591042257`; Docker build, Ruff format (`231 files already formatted`), Ruff lint, mypy (`72 source files`), MCP contract/schema export, contract-version, docs drift, and pytest all passed; pytest `1194 passed in 614.53s (0:10:14)`, coverage `92%` with TOTAL `6508` statements / `519` misses. The reduced statement/miss totals are the expected result of deleting dead code.
+- Revert verification: the clean acceptance-only RED run `34071447761` at `3089db31f1d013041314763d978a396c0a1b4afd` is the revert proof: with PMORRAT-006 present and the dead helper still in place, the suite failed exactly on the obsolete-symbol assertion while the live-API preservation assertion and all pre-pytest gates passed.
 
 ### R7 — Close Docker-volume inventory bound documentation/test gap
 
