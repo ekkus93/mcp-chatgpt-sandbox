@@ -473,7 +473,7 @@ class ResourceInventoryService:
         usage = attrs.get("UsageData")
         if isinstance(usage, Mapping):
             size = usage.get("Size")
-            if isinstance(size, int):
+            if isinstance(size, int) and not isinstance(size, bool):
                 return ByteObservation.measured(size)
         return ByteObservation.unavailable(
             "bounded Docker volume metadata did not provide a size measurement"
