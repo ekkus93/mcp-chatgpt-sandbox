@@ -11,9 +11,7 @@ from dev_workspace_mcp.operations import inventory
 def test_crhv_001_boolean_docker_volume_sizes_are_unavailable(size: bool) -> None:
     """CRHV-001: bool is not a valid Docker byte measurement."""
 
-    observation = inventory.ResourceInventoryService._volume_size(
-        {"UsageData": {"Size": size}}
-    )
+    observation = inventory.ResourceInventoryService._volume_size({"UsageData": {"Size": size}})
 
     assert observation.value is None
     assert observation.provenance is inventory.ByteProvenance.UNAVAILABLE
@@ -28,9 +26,7 @@ def test_crhv_001_malformed_docker_volume_sizes_are_unavailable(
 ) -> None:
     """CRHV-001: malformed Docker volume sizes must not become byte counts."""
 
-    observation = inventory.ResourceInventoryService._volume_size(
-        {"UsageData": {"Size": size}}
-    )
+    observation = inventory.ResourceInventoryService._volume_size({"UsageData": {"Size": size}})
 
     assert observation.value is None
     assert observation.provenance is inventory.ByteProvenance.UNAVAILABLE
@@ -54,9 +50,7 @@ def test_crhv_001_non_negative_integer_docker_volume_sizes_are_measured(
 ) -> None:
     """CRHV-001: valid non-negative integer Docker byte counts still work."""
 
-    observation = inventory.ResourceInventoryService._volume_size(
-        {"UsageData": {"Size": size}}
-    )
+    observation = inventory.ResourceInventoryService._volume_size({"UsageData": {"Size": size}})
 
     assert observation.value == size
     assert observation.provenance is inventory.ByteProvenance.MEASURED
