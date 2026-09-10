@@ -1,6 +1,6 @@
 # Post-MVP Operations Review Remediation TODO
 
-**Status:** R8 audit complete; direct-to-`master` publication complete; final completion pending exact-head `master` CI  
+**Status:** complete — R1-R8 closed; final R8 publication validated on `master`  
 **Spec:** `docs/POST_MVP_OPERATIONS_REVIEW_REMEDIATION_SPEC.md`  
 **Base:** completed Post-MVP Operations workstream at or after `97ff037b6a2ce731340c89d2a08375f7531eac5b`  
 **Task series:** `R1`..`R8`  
@@ -20,8 +20,8 @@ This TODO tracks the remediation pass created from the Post-MVP Operations code 
 - [x] Run focused tests before full CI
 - [x] Record exact RED/GREEN evidence for each task
 - [x] Revert-verify behavioral acceptance tests
-- [x] Finalization explicitly authorized by the user; original PR #48 was closed and no replacement PR is desired
-- [ ] Verify exact direct-to-`master` CI before marking the workstream complete
+- [x] Finalization explicitly authorized by the user; original PR #48 was closed and no replacement PR was created
+- [x] Verify the exact direct-to-`master` publication CI before marking the workstream complete
 
 ## Phase 0 — Audit attribution
 
@@ -242,21 +242,22 @@ This TODO tracks the remediation pass created from the Post-MVP Operations code 
 - [x] Confirm Docker-volume inventory scaling limitation is tested/documented
 - [x] Re-scan source/docs for broad prune fallback: `docker system prune`, `containers.prune`, `volumes.prune`, `images.prune`, label-wide, prefix-wide, path-wide, system-wide
 - [x] Run complete Docker-backed CI with all gates green
-- [x] Confirm the exact closure candidate CI passes
-- [x] Publish closure directly to `master` under explicit user authorization; no replacement PR
-- [ ] Verify exact direct-to-`master` CI is green
+- [x] Confirm the exact closure-candidate CI passes
+- [x] Publish R8 closure directly to `master` under explicit user authorization; no replacement PR
+- [x] Verify exact direct-to-`master` CI is green
 
 **R8 completion evidence:**
 
 - Audit-head CI: `34148423770` / `6cb9378b7d7b2ff774e3a54192bdfb4cc46bf8b4` / `101825340040`; Docker build, Ruff format (`233 files already formatted`), Ruff lint, mypy (`72 source files`), MCP contract/schema export, contract-version, docs drift, and pytest all passed; pytest `1195 passed in 615.59s (0:10:15)`, coverage `92%` with TOTAL `6508` statements / `519` misses.
 - Closure-candidate CI: `34149346543` / `055b005fe67626b49d0a29de4f3c8eda5c2e874c` / `101828118161`; all gates passed; pytest `1195 passed in 616.11s (0:10:16)`, coverage `92%` with TOTAL `6508` statements / `519` misses.
-- Broad-prune scan result: zero executable matches for `.prune(`, `containers.prune(`, `volumes.prune(`, `images.prune(`, `prune_containers`, `prune_volumes`, `prune_images`, `prune_networks`, or `prune_builds`. Textual `docker system prune` / label-wide / prefix-wide / path-wide / system-wide hits are explicit prohibitions/negative guarantees or historical out-of-band lifecycle examples; none is an executable reclamation fallback. See `docs/POST_MVP_OPERATIONS_REVIEW_REMEDIATION_R8_AUDIT.md` for the classification and evidence.
-- Direct publication: PR #48 was closed by explicit user direction. R8 closure is being published directly to `master` under the enabled exact-head compare-and-swap source-write policy. The R8 audit document landed first as `f171561fdebaac8f6b1fe473f14c3de714920092`; this TODO update is the final direct-publication commit and its exact SHA is authoritative in Git history.
-- Direct-to-`master` CI run/head/job/test count/coverage: pending exact-head CI for the final direct-publication commit.
+- Broad-prune scan result: zero executable matches for `.prune(`, `containers.prune(`, `volumes.prune(`, `images.prune(`, `prune_containers`, `prune_volumes`, `prune_images`, `prune_networks`, or `prune_builds`. Textual `docker system prune` / label-wide / prefix-wide / path-wide / system-wide hits are explicit prohibitions/negative guarantees or historical out-of-band lifecycle examples; none is an executable reclamation fallback. See `docs/POST_MVP_OPERATIONS_REVIEW_REMEDIATION_R8_AUDIT.md` for classification and evidence.
+- Direct publication: PR #48 was closed by explicit user direction and no replacement PR was created. The R8 audit was published directly to `master` as `f171561fdebaac8f6b1fe473f14c3de714920092`; the authoritative direct-publication TODO head was `d3da02489bc07e1f03f4f8eb6e3003eb2b041d8c`.
+- Direct-to-`master` CI: run `34499239945`, head `d3da02489bc07e1f03f4f8eb6e3003eb2b041d8c`, job `102945521257`; Docker build, Ruff format, Ruff lint, mypy, MCP contract/schema export, contract-version, docs drift, and pytest all passed; pytest `1195 passed in 621.71s (0:10:21)`, coverage `92%` with TOTAL `6508` statements / `519` misses.
+- This final TODO reconciliation is documentation-only and does not change runtime behavior; its CI result is verified externally after this immutable status commit rather than recursively editing the file to record its own run.
 
 ## Definition of done
 
-- [ ] R1-R8 complete
+- [x] R1-R8 complete
 - [x] PMORR-001..PMORR-007 implemented or explicitly dispositioned
 - [x] PMORRAT-001..PMORRAT-007 automated and passing
 - [x] Reclamation audit records include bounded request/caller attribution
@@ -270,4 +271,4 @@ This TODO tracks the remediation pass created from the Post-MVP Operations code 
 - [x] No broad prune fallback exists in source, comments, or docs
 - [x] Closure-candidate exact-head CI is green
 - [x] Finalization is published directly to `master` under explicit user authorization with no replacement PR
-- [ ] Exact direct-to-`master` CI is green
+- [x] Exact direct-to-`master` publication CI is green
