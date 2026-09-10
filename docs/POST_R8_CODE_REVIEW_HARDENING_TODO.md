@@ -1,6 +1,6 @@
 # Post-R8 Code Review Hardening TODO
 
-**Status:** CRH-001 complete; CRH-002 next  
+**Status:** CRH-001 and CRH-002 complete; CRH-003 next  
 **Spec:** `docs/POST_R8_CODE_REVIEW_HARDENING_SPEC.md`  
 **Base:** `5d64af1a92bbe83154ab3eebdfd20c1b56495cd9` (`docs: close R8 remediation workstream`)  
 **Task series:** `CRH-001`..`CRH-005`  
@@ -67,8 +67,9 @@ This TODO tracks the follow-up hardening issues found during the post-R8 code re
 - Initial acceptance-test commit: `aa2d449a470c88c7c22b15142cb52b9e45d47e5f`; CI run `34513839435` failed before pytest at Ruff format, so it is not counted as behavioral RED evidence.
 - Clean RED commit: `f720e4d1a41617f2eeb4d31f31153ca97f3f20d6`.
 - Clean RED CI: run `34514129941`, job `102995224290`; Docker image build, Ruff format, Ruff lint, mypy, MCP contract check, contract-version check, and `docs/TOOLS.md` drift check all passed; pytest then failed only `tests/operations/test_post_r8_code_review_hardening_inventory.py::test_crhv_001_boolean_docker_volume_sizes_are_unavailable[True]` and `[False]` because `True` and `False` were treated as measured byte values; final count `2 failed, 1205 passed`; coverage `92%` with TOTAL `6508` statements / `518` misses.
-- Implementation commit: `6627aae167b74e8d35e5a4674fae402aa1e4f663`.
-- GREEN CI: run `34514836913`, job `102997541781`; Docker image build, Ruff format, Ruff lint, mypy, MCP contract check, contract-version check, `docs/TOOLS.md` drift check, and pytest all passed.
+- Initial GREEN implementation commit: `6627aae167b74e8d35e5a4674fae402aa1e4f663`; CI run `34514836913`, job `102997541781`; Docker image build, Ruff format, Ruff lint, mypy, MCP contract check, contract-version check, `docs/TOOLS.md` drift check, and pytest all passed.
+- Implementation-shape cleanup commit: `ad0bf2b480937f2fa3e6e109bf8bc4d2851bb9f8`; this moved the bool guard directly into `src/dev_workspace_mcp/operations/inventory.py` and restored `src/dev_workspace_mcp/operations/__init__.py` to a plain package marker, eliminating the temporary import-time wrapper used by the initial fix.
+- Final retained GREEN evidence: CRH-002 GREEN run `34520888264` on `a10dc83b66c5819ec2fbd98a9fcaafd0bb2cff7c` passed with the direct `inventory.py` CRH-001 implementation still present.
 - Contract/schema decision: no public MCP schema, registered tool description, or response shape changed; no schema regeneration or `contract_version` bump was required.
 - Revert verification: the clean RED run `34514129941` is the revert proof: with CRHV-001 present and the boolean rejection absent, the suite failed exactly on the two bool-as-byte observations while all other gates and tests passed.
 
@@ -79,26 +80,35 @@ This TODO tracks the follow-up hardening issues found during the post-R8 code re
 **Satisfies:** CRH-002  
 **Validated by:** CRHV-002
 
-- [ ] Inspect `audit.write_audit_event()` top-level fields
-- [ ] Identify existing safe request/session identifier sanitizer behavior
-- [ ] Decide whether to reuse the request/session sanitizer or introduce a separate top-level audit identifier sanitizer
-- [ ] Define allowed safe identifier shape and maximum length
-- [ ] Define fail-closed behavior for unsafe `workspace_id`
-- [ ] Define fail-closed behavior for unsafe `repository_id`
-- [ ] Add focused tests for safe `workspace_id` and `repository_id` preservation
-- [ ] Add focused tests for host-path-shaped top-level IDs
-- [ ] Add focused tests for token/authorization-shaped top-level IDs
-- [ ] Add focused tests for SSH-material-shaped top-level IDs
-- [ ] Add focused tests for raw environment key/value-shaped top-level IDs
-- [ ] Add focused tests for multiline or shell-fragment-shaped top-level IDs
-- [ ] Apply sanitizer before durable audit persistence
-- [ ] Confirm metadata redaction still behaves as before
-- [ ] Confirm audit write failure behavior remains non-fatal
-- [ ] Run focused audit tests
-- [ ] Run full CI and record exact GREEN evidence
-- [ ] Revert-verify CRHV-002 if feasible
+- [x] Inspect `audit.write_audit_event()` top-level fields
+- [x] Identify existing safe request/session identifier sanitizer behavior
+- [x] Decide whether to reuse the request/session sanitizer or introduce a separate top-level audit identifier sanitizer
+- [x] Define allowed safe identifier shape and maximum length
+- [x] Define fail-closed behavior for unsafe `workspace_id`
+- [x] Define fail-closed behavior for unsafe `repository_id`
+- [x] Add focused tests for safe `workspace_id` and `repository_id` preservation
+- [x] Add focused tests for host-path-shaped top-level IDs
+- [x] Add focused tests for token/authorization-shaped top-level IDs
+- [x] Add focused tests for SSH-material-shaped top-level IDs
+- [x] Add focused tests for raw environment key/value-shaped top-level IDs
+- [x] Add focused tests for multiline or shell-fragment-shaped top-level IDs
+- [x] Apply sanitizer before durable audit persistence
+- [x] Confirm metadata redaction still behaves as before
+- [x] Confirm audit write failure behavior remains non-fatal
+- [x] Run focused audit tests
+- [x] Run full CI and record exact GREEN evidence
+- [x] Revert-verify CRHV-002 if feasible
 
-**CRH-002 completion evidence:** TODO
+**CRH-002 completion evidence:**
+
+- Acceptance-test commit: `02a0799cb9eed903472b3b684f93591636294e7f`.
+- Clean RED CI: run `34520675695`, job `103017127084`; Docker image build, Ruff format, Ruff lint, mypy, MCP contract check, contract-version check, and `docs/TOOLS.md` drift check all passed; pytest then failed the new `test_crhv_002_write_audit_event_drops_unsafe_top_level_ids` cases because raw top-level `workspace_id` / `repository_id` values were persisted instead of failing closed.
+- Source cleanup commit: `ad0bf2b480937f2fa3e6e109bf8bc4d2851bb9f8`; unrelated to CRH-002 behavior, but retained while moving CRH-001 from temporary package wrapper to direct `operations/inventory.py` implementation.
+- Implementation commit: `a10dc83b66c5819ec2fbd98a9fcaafd0bb2cff7c`.
+- GREEN CI: run `34520888264`, job `103017823458`; Docker image build, Ruff format, Ruff lint, mypy, MCP contract check, contract-version check, `docs/TOOLS.md` drift check, and pytest all passed.
+- Implementation detail: `write_audit_event()` now sanitizes `request_id`, `session_id`, `workspace_id`, and `repository_id` through the same bounded safe audit identifier boundary before JSONL persistence. Safe opaque IDs are preserved; host-path-shaped, authorization/token-shaped, environment-assignment-shaped, SSH-material-shaped, multiline, and shell-fragment-shaped top-level IDs fail closed to `None`.
+- Contract/schema decision: no public MCP schema, registered tool description, or response shape changed; no schema regeneration or `contract_version` bump was required.
+- Revert verification: the clean RED run `34520675695` is the revert proof: with CRHV-002 present and the top-level audit identifier sanitizer absent, the suite failed exactly on the unsafe top-level ID persistence assertions after all non-pytest gates passed.
 
 ## Phase 3 — Generic redaction coverage
 
@@ -192,8 +202,9 @@ This TODO tracks the follow-up hardening issues found during the post-R8 code re
 
 - [ ] CRH-001..CRH-005 implemented or explicitly dispositioned
 - [x] CRHV-001 evidence recorded
+- [x] CRHV-002 evidence recorded
 - [x] Boolean Docker volume sizes are unavailable, not byte counts
-- [ ] Top-level audit `workspace_id` and `repository_id` values are sanitized at the audit boundary
+- [x] Top-level audit `workspace_id` and `repository_id` values are sanitized at the audit boundary
 - [ ] Generic redaction covers representative modern token/key shapes with false-positive guards
 - [ ] SSH-agent cleanup legacy durable errors are normalized at the read/model boundary
 - [ ] Ralph Bridge default-branch write protection is restored or an explicit exception is documented
