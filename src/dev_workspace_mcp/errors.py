@@ -6,7 +6,7 @@ recoverable flag, and structured details. `to_tool_error()` and the
 `@translate_workspace_errors` decorator are the "map internal errors to
 MCP errors at the interface layer" from §6.1: they convert a
 `WorkspaceError` into the SDK's `ToolError` (§31), with a §31-shaped JSON
-payload for the client to read, and redaction applied to `details` as
+payload for the client to read, and a redaction applied to `details` as
 defense in depth.
 
 Anything that is *not* a `WorkspaceError` is left to propagate. The MCP SDK
@@ -291,13 +291,53 @@ _SECRET_KEY_HINTS = (
 _SECRET_VALUE_PATTERNS = (
     re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"),  # GitHub PAT / OAuth / user-to-server tokens
     re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),  # GitHub fine-grained PAT
-    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),  # PEM private key
+    re.compile(r"sk-[A-Za-z0-9][A-Za-z0-9_-]{19,}"),  # OpenAI-style API keys
+    re.compile(r"(?:AKIA|ASIA)[A-Z0-9]{16}"),  # AWS access key IDs
+    re.compile(
+        r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{16,}"
+    ),  # Authorization bearer values
+    re.compile(
+        r"(?i)\b(?:api[_-]?key|access[_-]?token|secret|password)\s*[:=]\s*"
+        r"['\"]?[A-Za-z0-9._~+/=-]{8,}['\"]?"
+    ),  # inline key/value assignments
+    re.compile(r"-----BEGIN [A-Z ]*" r"PRIVATE KEY-----"),  # PEM private key
     re.compile(r"ssh-(?:ed25519|rsa|ecdsa)[A-Za-z0-9+/= ]{20,}"),  # SSH public/private key material
 )
 
+_HIGH_ENTROPY_TOKEN_RE = re.compile(r"\b[A-Za-z0-9_-]{32,128}\b")
+_PUBLIC_COMMIT_SHA_RE = re.compile(r"[0-9a-fA-F]{40}")
+_PUBLIC_UUID_RE = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+
+
+def _looks_like_high_entropy_token(value: str) -> bool:
+    for match in _HIGH_ENTROPY_TOKEN_RE.finditer(value):
+        token = match.group(0)
+        if _PUBLIC_COMMIT_SHA_RE.fullmatch(token):
+            continue
+        if _PUBLIC_UUID_RE.fullmatch(token):
+            continue
+        if token.startswith("rq_"):
+            continue
+        character_classes = sum(
+            (
+                any(char.islower() for char in token),
+                any(char.isupper() for char in token),
+                any(char.isdigit() for char in token),
+                any(char in "_-" for char in token),
+            )
+        )
+        if character_classes >= 3:
+            return True
+    return False
+
 
 def _looks_like_secret(value: str) -> bool:
-    return any(pattern.search(value) for pattern in _SECRET_VALUE_PATTERNS)
+    return any(pattern.search(value) for pattern in _SECRET_VALUE_PATTERNS) or (
+        _looks_like_high_entropy_token(value)
+    )
 
 
 #: HR-013 (`docs/HARDENING_SPEC.md` §8): `scheme://user:pass@host` embedded
