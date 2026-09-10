@@ -50,7 +50,7 @@ def test_write_audit_event_accepts_only_safe_correlation_ids(tmp_path: Path) -> 
         operation="unsafe",
         result="success",
         request_id="/home/phil/.ssh/id_rsa",
-        session_id="Bearer ghp_" + "A" * 36,
+        session_id="Authorization: " + "Bearer synthetic-crhv-002-token",
     )
 
     safe, unsafe = _read_lines(config.path)
@@ -58,6 +58,62 @@ def test_write_audit_event_accepts_only_safe_correlation_ids(tmp_path: Path) -> 
     assert safe["session_id"] == "session:alpha-1"
     assert unsafe["request_id"] is None
     assert unsafe["session_id"] is None
+
+
+def test_crhv_002_write_audit_event_preserves_safe_top_level_ids(
+    tmp_path: Path,
+) -> None:
+    """CRHV-002: safe top-level audit IDs remain useful."""
+    config = AuditConfig(enabled=True, path=tmp_path / "audit.jsonl")
+
+    write_audit_event(
+        config,
+        operation="safe_top_level_ids",
+        result="success",
+        workspace_id="ws_safe-1",
+        repository_id="repo.example:1",
+    )
+
+    event = _read_lines(config.path)[0]
+    assert event["workspace_id"] == "ws_safe-1"
+    assert event["repository_id"] == "repo.example:1"
+
+
+@pytest.mark.parametrize(
+    ("field", "unsafe_value"),
+    [
+        ("workspace_id", "/home/example/.ssh/id_rsa"),
+        ("repository_id", "/srv/private/repository"),
+        ("workspace_id", "Authorization: " + "Bearer synthetic-crhv-002-token"),
+        ("repository_id", "AWS" + "_SECRET_ACCESS_KEY=synthetic-crhv-002"),
+        ("workspace_id", "-----BEGIN " + "OPENSSH PRIVATE KEY-----"),
+        ("repository_id", "safe-id\nrm -rf /"),
+    ],
+)
+def test_crhv_002_write_audit_event_drops_unsafe_top_level_ids(
+    tmp_path: Path,
+    field: str,
+    unsafe_value: str,
+) -> None:
+    """CRHV-002: raw top-level audit IDs fail closed before persistence."""
+    config = AuditConfig(enabled=True, path=tmp_path / "audit.jsonl")
+    kwargs = {
+        "workspace_id": "ws_safe-1",
+        "repository_id": "repo_safe-1",
+        field: unsafe_value,
+    }
+
+    write_audit_event(
+        config,
+        operation="unsafe_top_level_ids",
+        result="success",
+        **kwargs,
+    )
+
+    content = config.path.read_text()
+    event = _read_lines(config.path)[0]
+    assert event[field] is None
+    assert unsafe_value not in content
 
 
 def test_write_audit_event_appends_rather_than_overwrites(tmp_path: Path) -> None:
