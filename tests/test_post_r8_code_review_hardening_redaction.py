@@ -61,9 +61,7 @@ def test_crhv_003_redacts_modern_value_shapes_under_unrelated_keys(
     scanning does not see literal real-looking credentials, while the
     redaction boundary still receives complete sensitive-looking values.
     """
-    assert redact_secrets({"unrelated_field_name": value}) == {
-        "unrelated_field_name": MASK
-    }
+    assert redact_secrets({"unrelated_field_name": value}) == {"unrelated_field_name": MASK}
 
 
 def test_crhv_003_false_positive_guards_for_public_identifiers() -> None:
