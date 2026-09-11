@@ -199,7 +199,9 @@ This TODO tracks the follow-up hardening issues found during the post-R8 code re
 - [ ] Run any docs or CI checks affected by documentation updates
 - [ ] Record exact evidence for CRHV-005
 
-**CRH-005 completion evidence:** TODO
+**CRH-005 completion evidence:**
+
+- Verification note: if this line is committed by a direct write to `master`, the Ralph Bridge default-branch write protection is still not restored.
 
 ## Final closure
 
