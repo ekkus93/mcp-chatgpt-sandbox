@@ -1,7 +1,5 @@
 """Post-R8 hardening coverage for generic redaction."""
 
-from __future__ import annotations
-
 import pytest
 
 from dev_workspace_mcp.errors import redact_secrets
