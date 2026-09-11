@@ -1,6 +1,6 @@
 # Post-R8 Code Review Hardening TODO
 
-**Status:** CRH-001 through CRH-003 complete; CRH-004 next  
+**Status:** CRH-001 through CRH-004 complete; CRH-005 next  
 **Spec:** `docs/POST_R8_CODE_REVIEW_HARDENING_SPEC.md`  
 **Base:** `5d64af1a92bbe83154ab3eebdfd20c1b56495cd9` (`docs: close R8 remediation workstream`)  
 **Task series:** `CRH-001`..`CRH-005`  
@@ -140,8 +140,10 @@ This TODO tracks the follow-up hardening issues found during the post-R8 code re
 - Implementation commit: `c73d2b9b34e3f131ab93b567b09ee3ce7e62cbdc`; expanded generic redaction patterns in `src/dev_workspace_mcp/errors.py`.
 - Formatting/lint repair commits: `ae110d75ef3d8f4745b304fed822196c1e9b8231`, `ca363d6dbeb1750a79bb9c4e269b621ce166d68d`, `a699f5e89f07df9b8baf553f704b56288803fc37`, `11bd53c9dfa32c9aa2bdec1d180bcecb42980f60`, `1396fca9fda011c89dc9b7a1ac9aee23efbc8ec0`, and `e9384065064d0f1eaf6723f1beaa4858db018f05`; these fixed Ruff formatting/import-order issues in the new test file and source formatting.
 - Correctness repair commit: `780442f07d6a7adc57418527d4ed3742e893b20a`; preserved known safe opaque internal IDs from the high-entropy fallback while broadening OpenAI-style token matching for project-token-like values.
+- Additional false-positive repair commit: `37dd173df34ba7b55626ac3961e3ab50fb4b4af4`; preserved public SSH `SHA256:` fingerprints after CRH-004's full suite exposed that the high-entropy fallback was redacting audit fingerprint metadata.
 - GREEN CI: run `34546959288`, job `103101561803`; Docker image build, Ruff format, Ruff lint, mypy, MCP contract check, contract-version check, `docs/TOOLS.md` drift check, and pytest all passed.
-- Implementation detail: generic redaction now covers representative OpenAI-style, GitHub-token-style, AWS-access-key-ID-style, bearer-token-style, common assignment-style, and high-entropy token-like values using synthetic fixtures that avoid committing real-looking secrets. False-positive guards preserve commit SHAs, UUIDs, bounded request IDs, safe internal prune-plan/candidate IDs, and public failure classifications.
+- Final retained GREEN evidence after the SSH-fingerprint false-positive repair: run `34558844465`, job `103137187818`, head `37dd173df34ba7b55626ac3961e3ab50fb4b4af4`; Docker image build, Ruff format, Ruff lint, mypy, MCP contract check, contract-version check, `docs/TOOLS.md` drift check, and pytest all passed.
+- Implementation detail: generic redaction now covers representative OpenAI-style, GitHub-token-style, AWS-access-key-ID-style, bearer-token-style, common assignment-style, and high-entropy token-like values using synthetic fixtures that avoid committing real-looking secrets. False-positive guards preserve commit SHAs, UUIDs, bounded request IDs, safe internal prune-plan/candidate IDs, public SSH fingerprints, and public failure classifications.
 - Contract/schema decision: no public MCP schema, registered tool description, or response shape changed; no schema regeneration or `contract_version` bump was required.
 - Revert verification: clean behavioral RED evidence was not retained for CRH-003 because the test-only attempt failed before pytest at Ruff format, and subsequent commits combined source/test formatting and implementation repairs. The retained evidence is the final exact-head GREEN run plus the earlier failed CRH-003 run documenting that the initial test-only attempt was structurally blocked before behavioral assertion execution.
 
@@ -152,24 +154,34 @@ This TODO tracks the follow-up hardening issues found during the post-R8 code re
 **Satisfies:** CRH-004  
 **Validated by:** CRHV-004
 
-- [ ] Locate SSH-agent cleanup durable row-to-model construction
-- [ ] Compare job-log cleanup legacy error normalization behavior
-- [ ] Define SSH-agent legacy `last_error` safe classification behavior
-- [ ] Add focused tests that seed legacy SSH cleanup debt with host-path-shaped raw errors
-- [ ] Add focused tests that seed legacy SSH cleanup debt with Docker/SSH/environment/token-shaped raw errors
-- [ ] Confirm resulting internal debt model does not carry raw legacy exception text
-- [ ] Confirm health output does not expose raw legacy SSH cleanup error text
-- [ ] Confirm inventory output does not expose raw legacy SSH cleanup error text
-- [ ] Confirm prune planning output does not expose raw legacy SSH cleanup error text
-- [ ] Confirm prune execution/audit output does not expose raw legacy SSH cleanup error text
-- [ ] Preserve retry metadata, timestamps, socket identity, ownership metadata, and safe failure distinctions
-- [ ] Avoid SQLite schema changes unless strictly necessary
-- [ ] Preserve active SSH cleanup APIs verified by R6
-- [ ] Run focused SSH cleanup, maintenance, inventory, and prune tests
-- [ ] Run full CI and record exact GREEN evidence
-- [ ] Revert-verify CRHV-004 if feasible
+- [x] Locate SSH-agent cleanup durable row-to-model construction
+- [x] Compare job-log cleanup legacy error normalization behavior
+- [x] Define SSH-agent legacy `last_error` safe classification behavior
+- [x] Add focused tests that seed legacy SSH cleanup debt with host-path-shaped raw errors
+- [x] Add focused tests that seed legacy SSH cleanup debt with Docker/SSH/environment/token-shaped raw errors
+- [x] Confirm resulting internal debt model does not carry raw legacy exception text
+- [x] Confirm health output does not expose raw legacy SSH cleanup error text
+- [x] Confirm inventory output does not expose raw legacy SSH cleanup error text
+- [x] Confirm prune planning output does not expose raw legacy SSH cleanup error text
+- [x] Confirm prune execution/audit output does not expose raw legacy SSH cleanup error text
+- [x] Preserve retry metadata, timestamps, socket identity, ownership metadata, and safe failure distinctions
+- [x] Avoid SQLite schema changes unless strictly necessary
+- [x] Preserve active SSH cleanup APIs verified by R6
+- [x] Run focused SSH cleanup, maintenance, inventory, and prune tests
+- [x] Run full CI and record exact GREEN evidence
+- [x] Revert-verify CRHV-004 if feasible
 
-**CRH-004 completion evidence:** TODO
+**CRH-004 completion evidence:**
+
+- Acceptance-test commit: `d3254dde1e60d55fba124cb4e81a8ccdadf3cf0c`.
+- Clean RED CI: run `34548721892`, job `103106877586`; Docker image build, Ruff format, Ruff lint, mypy, MCP contract check, contract-version check, and `docs/TOOLS.md` drift check all passed; pytest then failed only `tests/operations/test_post_r8_code_review_hardening_ssh_cleanup.py::test_crhv_004_ssh_cleanup_debt_sanitizes_legacy_raw_last_error` because legacy SSH-agent cleanup `last_error` text was copied raw into `SSHAgentCleanupDebt`; final count `1 failed, 1225 passed`; coverage `92%` with TOTAL `6525` statements / `518` misses.
+- Initial implementation commit: `62b8cb9d480c3236a56f8b6bf9ce38b665094ef7`; added `_safe_persisted_cleanup_error()` and applied it in `src/dev_workspace_mcp/operations/ssh_agent_cleanup.py::_debt_from_row()` before constructing `SSHAgentCleanupDebt`.
+- Initial GREEN candidate CI: run `34548804523`, job `103107131007`; failed in pytest on an unrelated CRH-003 false-positive regression where public SSH `SHA256:` fingerprint metadata was redacted. This run still demonstrated that the CRH-004 source change compiled and reached the full test suite.
+- Correctness repair commit: `37dd173df34ba7b55626ac3961e3ab50fb4b4af4`; preserved public SSH `SHA256:` fingerprints in generic redaction while retaining the CRH-004 SSH cleanup legacy-error sanitizer.
+- GREEN CI: run `34558844465`, job `103137187818`; head `37dd173df34ba7b55626ac3961e3ab50fb4b4af4`; Docker image build, Ruff format, Ruff lint, mypy, MCP contract check, contract-version check, `docs/TOOLS.md` drift check, and pytest all passed.
+- Implementation detail: `get_ssh_agent_cleanup_debt()` and `list_ssh_agent_cleanup_debt()` now construct debt records through `_debt_from_row()`, which preserves `None` and bounded known-safe cleanup classifications while mapping unsafe or legacy free-form durable `last_error` values to `cleanup_failure_recorded`. Retry metadata, timestamps, byte hints, socket device, socket inode, and workspace identity are preserved. No SQLite schema change was required.
+- Contract/schema decision: no public MCP schema, registered tool description, or response shape changed; no schema regeneration or `contract_version` bump was required.
+- Revert verification: the clean RED run `34548721892` is the revert proof: with CRHV-004 present and the SSH-agent cleanup legacy-error sanitizer absent, the suite failed exactly on the raw legacy `last_error` read/model-boundary assertion after all non-pytest gates passed.
 
 ## Phase 5 — Ralph Bridge operator policy hygiene
 
@@ -213,10 +225,11 @@ This TODO tracks the follow-up hardening issues found during the post-R8 code re
 - [x] CRHV-001 evidence recorded
 - [x] CRHV-002 evidence recorded
 - [x] CRHV-003 evidence recorded
+- [x] CRHV-004 evidence recorded
 - [x] Boolean Docker volume sizes are unavailable, not byte counts
 - [x] Top-level audit `workspace_id` and `repository_id` values are sanitized at the audit boundary
 - [x] Generic redaction covers representative modern token/key shapes with false-positive guards
-- [ ] SSH-agent cleanup legacy durable errors are normalized at the read/model boundary
+- [x] SSH-agent cleanup legacy durable errors are normalized at the read/model boundary
 - [ ] Ralph Bridge default-branch write protection is restored or an explicit exception is documented
 - [x] O1-O12 destructive-safety invariants remain intact
 - [x] PMORR R1-R8 guarantees remain intact
