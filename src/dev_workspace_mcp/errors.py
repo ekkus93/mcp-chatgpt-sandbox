@@ -293,9 +293,7 @@ _SECRET_VALUE_PATTERNS = (
     re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),  # GitHub fine-grained PAT
     re.compile(r"sk-[A-Za-z0-9][A-Za-z0-9_-]{19,}"),  # OpenAI-style API keys
     re.compile(r"(?:AKIA|ASIA)[A-Z0-9]{16}"),  # AWS access key IDs
-    re.compile(
-        r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{16,}"
-    ),  # Authorization bearer values
+    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{16,}"),  # Authorization bearer values
     re.compile(
         r"(?i)\b(?:api[_-]?key|access[_-]?token|secret|password)\s*[:=]\s*"
         r"['\"]?[A-Za-z0-9._~+/=-]{8,}['\"]?"
