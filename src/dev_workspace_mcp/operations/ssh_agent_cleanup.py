@@ -11,6 +11,7 @@ the identity captured before primary metadata deletion.
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -19,6 +20,12 @@ from pathlib import Path
 from dev_workspace_mcp.workspace.ssh_agent import SSHAgentRecord, agent_socket_path
 
 _logger = logging.getLogger(__name__)
+
+_SAFE_DURABLE_CLEANUP_ERROR_RE = re.compile(
+    r"^(?:identity_unprovable|identity_changed|identity_probe_failed|"
+    r"secondary_cleanup_failed|deletion_probe_failed|deletion_unproven)"
+    r"(?:: [A-Za-z_][A-Za-z0-9_]*(?:: errno=[0-9]+)?)?$"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,12 +50,25 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _safe_persisted_cleanup_error(value: object) -> str | None:
+    """Fail closed when reading legacy free-form durable cleanup diagnostics."""
+    if value is None:
+        return None
+    if (
+        isinstance(value, str)
+        and len(value) <= 128
+        and _SAFE_DURABLE_CLEANUP_ERROR_RE.fullmatch(value)
+    ):
+        return value
+    return "cleanup_failure_recorded"
+
+
 def _debt_from_row(row: sqlite3.Row) -> SSHAgentCleanupDebt:
     return SSHAgentCleanupDebt(
         workspace_id=str(row["workspace_id"]),
         created_at=str(row["created_at"]),
         last_attempt_at=row["last_attempt_at"],
-        last_error=row["last_error"],
+        last_error=_safe_persisted_cleanup_error(row["last_error"]),
         bytes_hint=row["bytes_hint"],
         socket_device=row["socket_device"],
         socket_inode=row["socket_inode"],
