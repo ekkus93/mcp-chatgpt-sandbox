@@ -1,6 +1,6 @@
 # Post-R8 Code Review Hardening TODO
 
-**Status:** CRH-001 and CRH-002 complete; CRH-003 next  
+**Status:** CRH-001 through CRH-003 complete; CRH-004 next  
 **Spec:** `docs/POST_R8_CODE_REVIEW_HARDENING_SPEC.md`  
 **Base:** `5d64af1a92bbe83154ab3eebdfd20c1b56495cd9` (`docs: close R8 remediation workstream`)  
 **Task series:** `CRH-001`..`CRH-005`  
@@ -117,24 +117,33 @@ This TODO tracks the follow-up hardening issues found during the post-R8 code re
 **Satisfies:** CRH-003  
 **Validated by:** CRHV-003
 
-- [ ] Inventory current generic redaction helpers and call sites
-- [ ] Add tests for OpenAI-style API key prefixes without committing real-looking secrets
-- [ ] Add tests for GitHub token prefix shapes without committing real-looking secrets
-- [ ] Add tests for AWS access key ID prefix shapes without committing real-looking secrets
-- [ ] Add tests for bearer-token header/value shapes
-- [ ] Add tests for common `api_key`, `access_token`, `secret`, and `password` assignment shapes
-- [ ] Add tests for high-entropy token-like strings using synthetic non-secret fixtures
-- [ ] Add false-positive guard tests for commit SHAs
-- [ ] Add false-positive guard tests for UUIDs
-- [ ] Add false-positive guard tests for bounded request IDs and public failure classifications
-- [ ] Expand redaction patterns while keeping output deterministic and bounded
-- [ ] Confirm public prune execution failure handling still uses fail-closed reason classification rather than regex-only redaction
-- [ ] Confirm audit metadata redaction still removes unsafe values
-- [ ] Run focused redaction, audit, and prune tests
-- [ ] Run full CI and record exact GREEN evidence
-- [ ] Revert-verify CRHV-003 if feasible
+- [x] Inventory current generic redaction helpers and call sites
+- [x] Add tests for OpenAI-style API key prefixes without committing real-looking secrets
+- [x] Add tests for GitHub token prefix shapes without committing real-looking secrets
+- [x] Add tests for AWS access key ID prefix shapes without committing real-looking secrets
+- [x] Add tests for bearer-token header/value shapes
+- [x] Add tests for common `api_key`, `access_token`, `secret`, and `password` assignment shapes
+- [x] Add tests for high-entropy token-like strings using synthetic non-secret fixtures
+- [x] Add false-positive guard tests for commit SHAs
+- [x] Add false-positive guard tests for UUIDs
+- [x] Add false-positive guard tests for bounded request IDs and public failure classifications
+- [x] Expand redaction patterns while keeping output deterministic and bounded
+- [x] Confirm public prune execution failure handling still uses fail-closed reason classification rather than regex-only redaction
+- [x] Confirm audit metadata redaction still removes unsafe values
+- [x] Run focused redaction, audit, and prune tests
+- [x] Run full CI and record exact GREEN evidence
+- [x] Revert-verify CRHV-003 if feasible
 
-**CRH-003 completion evidence:** TODO
+**CRH-003 completion evidence:**
+
+- Initial CRHV-003 test-only commit: `1c83221f87f69530fb92e18dbfc38481fa5085cc`; CI run `34544180189` failed at Ruff format before pytest, so it is not counted as clean behavioral RED evidence.
+- Implementation commit: `c73d2b9b34e3f131ab93b567b09ee3ce7e62cbdc`; expanded generic redaction patterns in `src/dev_workspace_mcp/errors.py`.
+- Formatting/lint repair commits: `ae110d75ef3d8f4745b304fed822196c1e9b8231`, `ca363d6dbeb1750a79bb9c4e269b621ce166d68d`, `a699f5e89f07df9b8baf553f704b56288803fc37`, `11bd53c9dfa32c9aa2bdec1d180bcecb42980f60`, `1396fca9fda011c89dc9b7a1ac9aee23efbc8ec0`, and `e9384065064d0f1eaf6723f1beaa4858db018f05`; these fixed Ruff formatting/import-order issues in the new test file and source formatting.
+- Correctness repair commit: `780442f07d6a7adc57418527d4ed3742e893b20a`; preserved known safe opaque internal IDs from the high-entropy fallback while broadening OpenAI-style token matching for project-token-like values.
+- GREEN CI: run `34546959288`, job `103101561803`; Docker image build, Ruff format, Ruff lint, mypy, MCP contract check, contract-version check, `docs/TOOLS.md` drift check, and pytest all passed.
+- Implementation detail: generic redaction now covers representative OpenAI-style, GitHub-token-style, AWS-access-key-ID-style, bearer-token-style, common assignment-style, and high-entropy token-like values using synthetic fixtures that avoid committing real-looking secrets. False-positive guards preserve commit SHAs, UUIDs, bounded request IDs, safe internal prune-plan/candidate IDs, and public failure classifications.
+- Contract/schema decision: no public MCP schema, registered tool description, or response shape changed; no schema regeneration or `contract_version` bump was required.
+- Revert verification: clean behavioral RED evidence was not retained for CRH-003 because the test-only attempt failed before pytest at Ruff format, and subsequent commits combined source/test formatting and implementation repairs. The retained evidence is the final exact-head GREEN run plus the earlier failed CRH-003 run documenting that the initial test-only attempt was structurally blocked before behavioral assertion execution.
 
 ## Phase 4 — SSH-agent cleanup durable error normalization
 
@@ -203,9 +212,10 @@ This TODO tracks the follow-up hardening issues found during the post-R8 code re
 - [ ] CRH-001..CRH-005 implemented or explicitly dispositioned
 - [x] CRHV-001 evidence recorded
 - [x] CRHV-002 evidence recorded
+- [x] CRHV-003 evidence recorded
 - [x] Boolean Docker volume sizes are unavailable, not byte counts
 - [x] Top-level audit `workspace_id` and `repository_id` values are sanitized at the audit boundary
-- [ ] Generic redaction covers representative modern token/key shapes with false-positive guards
+- [x] Generic redaction covers representative modern token/key shapes with false-positive guards
 - [ ] SSH-agent cleanup legacy durable errors are normalized at the read/model boundary
 - [ ] Ralph Bridge default-branch write protection is restored or an explicit exception is documented
 - [x] O1-O12 destructive-safety invariants remain intact
