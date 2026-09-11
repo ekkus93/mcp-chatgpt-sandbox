@@ -66,6 +66,7 @@ def test_crhv_003_false_positive_guards_for_public_identifiers() -> None:
     commit_sha = "0123456789abcdef0123456789abcdef01234567"
     uuid = "550e8400-e29b-41d4-a716-446655440000"
     request_id = "rq_" + "a" * 32
+    ssh_fingerprint = "SHA256:" + _mixed()
     classifications = [
         "failure_detail_redacted",
         "identity_changed",
@@ -77,6 +78,7 @@ def test_crhv_003_false_positive_guards_for_public_identifiers() -> None:
         "commit_sha": commit_sha,
         "uuid": uuid,
         "request_id": request_id,
+        "ssh_fingerprint": ssh_fingerprint,
         "classifications": classifications,
     }
 

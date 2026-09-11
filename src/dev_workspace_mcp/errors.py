@@ -236,11 +236,14 @@ _PUBLIC_UUID_RE = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
+_PUBLIC_SSH_FINGERPRINT_RE = re.compile(r"SHA256:[A-Za-z0-9+/=]{32,128}")
 _SAFE_OPAQUE_ID_PREFIXES = ("rq_", "pp_", "pc_")
 _URL_USERINFO_RE = re.compile(r"([a-zA-Z][a-zA-Z0-9+.\-]*://)[^/@\s]+@")
 
 
 def _looks_like_high_entropy_token(value: str) -> bool:
+    if _PUBLIC_SSH_FINGERPRINT_RE.fullmatch(value):
+        return False
     for match in _HIGH_ENTROPY_TOKEN_RE.finditer(value):
         token = match.group(0)
         if _PUBLIC_COMMIT_SHA_RE.fullmatch(token):
