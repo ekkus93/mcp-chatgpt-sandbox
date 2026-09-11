@@ -1,8 +1,8 @@
 """Post-R8 hardening coverage for generic redaction."""
 
 import pytest
-from dev_workspace_mcp.errors import redact_secrets
 
+from dev_workspace_mcp.errors import redact_secrets
 MASK = "[REDACTED]"
 
 
