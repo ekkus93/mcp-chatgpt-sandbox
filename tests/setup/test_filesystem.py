@@ -82,7 +82,10 @@ def test_wizv_003_failed_replace_leaves_original_usable(
     target.write_text("old\n")
     original_replace = os.replace
 
-    def fail_replace(src: str | bytes | os.PathLike[str] | os.PathLike[bytes], dst: str | bytes | os.PathLike[str] | os.PathLike[bytes]) -> None:
+    def fail_replace(
+        src: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        dst: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+    ) -> None:
         del src, dst
         raise OSError("simulated replacement failure")
 
