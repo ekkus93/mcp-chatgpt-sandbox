@@ -33,6 +33,14 @@ def _aws_access_key_id_shape() -> str:
     return "AK" + "IA" + "A1B2C3D4E5F6G7H8"
 
 
+def _bearer_token_shape() -> str:
+    return "Bear" + "er " + _token_tail()
+
+
+def _assignment_token_shape() -> str:
+    return "api_" + "key=" + _token_tail()
+
+
 def test_write_audit_event_appends_a_json_line(tmp_path: Path) -> None:
     config = AuditConfig(enabled=True, path=tmp_path / "audit.jsonl")
     write_audit_event(
@@ -145,6 +153,10 @@ def test_crhv_002_write_audit_event_drops_unsafe_top_level_ids(
         ("repository_id", _openai_key_shape()),
         ("workspace_id", _aws_access_key_id_shape()),
         ("repository_id", _aws_access_key_id_shape()),
+        ("workspace_id", _bearer_token_shape()),
+        ("repository_id", _bearer_token_shape()),
+        ("workspace_id", _assignment_token_shape()),
+        ("repository_id", _assignment_token_shape()),
         ("workspace_id", _mixed_high_entropy()),
         ("repository_id", _mixed_high_entropy()),
         ("request_id", _github_token_shape()),
