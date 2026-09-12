@@ -3,6 +3,7 @@ from dev_workspace_mcp.config.loader import (
     docker_available,
     ensure_known_hosts_file_exists,
     load_config,
+    parse_config_mapping,
 )
 from dev_workspace_mcp.config.models import (
     AuditConfig,
@@ -36,4 +37,5 @@ __all__ = [
     "docker_available",
     "ensure_known_hosts_file_exists",
     "load_config",
+    "parse_config_mapping",
 ]

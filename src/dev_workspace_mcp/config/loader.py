@@ -6,6 +6,7 @@ Docker connectivity) so a missing daemon degrades rather than crashes.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +33,7 @@ def load_config(path: Path, *, home: Path | None = None) -> ServerConfig:
     """
     raw = _read_yaml(path)
     try:
-        config = _parse(raw)
+        config = parse_config_mapping(raw)
         _check_ssh_key_not_under_host_ssh(config, home=home or Path.home())
         _check_secrets_outside_repository_roots(config)
         _check_repository_roots_exist(config)
@@ -46,9 +47,8 @@ def load_config(path: Path, *, home: Path | None = None) -> ServerConfig:
         # straight out of `load_config`, past §73 step 1's "refuse to
         # serve on invalid config" and into the CLI as an unhandled
         # crash instead of the clean `error: ...` message every other
-        # malformed-config shape produces. `_parse` now converts that
-        # one specific shape itself (a better, "workspace: ..."-prefixed
-        # message); this catches anything else, from any step above.
+        # malformed-config shape produces. `parse_config_mapping` now
+        # converts that shape itself; this catches anything else.
         raise ConfigError(f"invalid configuration: {exc}") from exc
     return config
 
@@ -69,7 +69,15 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     return data
 
 
-def _parse(raw: dict[str, Any]) -> ServerConfig:
+def parse_config_mapping(raw: Mapping[str, Any]) -> ServerConfig:
+    """Apply the production YAML-to-model conversion to an in-memory mapping.
+
+    Interactive setup uses this to validate a reviewed candidate without
+    duplicating configuration semantics. Filesystem/runtime invariants that
+    require the final path remain the responsibility of :func:`load_config`
+    after the candidate is atomically written.
+    """
+
     data = dict(raw)
     # `workspace.idle_stop_after` is authored as a duration string but the
     # model stores it parsed (§8.1) — convert before handing the rest to
@@ -80,14 +88,6 @@ def _parse(raw: dict[str, Any]) -> ServerConfig:
         except ValueError as exc:
             raise ConfigError(f"workspace: {exc}") from exc
         except Exception as exc:
-            # H30 (`docs/HARDENING_TODO.md`, HR-010): a malformed value
-            # shaped like `workspace: 5` (not a mapping at all) reaches
-            # `dict(raw)` inside `from_yaml_value` and raises a raw
-            # `TypeError`, not the `ValueError` the clause above already
-            # handled — every config-load failure SHALL surface as
-            # `ConfigError`, not an unhandled exception escaping
-            # `load_config` (§73 step 1's own "refuse to serve on invalid
-            # config," not "crash on invalid config").
             raise ConfigError(f"workspace: {exc}") from exc
 
     try:
@@ -113,17 +113,6 @@ def _check_ssh_key_not_under_host_ssh(config: ServerConfig, *, home: Path) -> No
             )
 
     _reject_if_under_host_ssh(config.ssh.keys_dir, what="ssh.keys_dir")
-    # HR-007 (`docs/HARDENING_SPEC.md` §6): every configuration path that
-    # can name a key file, not only the per-repository one. A real
-    # regression: `ssh.shared_key` (used under `scope: shared` — §19.1's
-    # own "one key installed on every configured repository" mode) was
-    # never checked here, and a value like `"../fakehome/.ssh/id_ed25519"`
-    # resolved straight to the host user's personal key.
-    # `tests/config/test_loader.py`'s
-    # `test_every_ssh_config_key_bearing_field_is_checked` is this
-    # function's other half: it fails, on its own, the moment a new
-    # key-bearing field is added to either `SSHConfig` or
-    # `RepositoryConfig` without a matching line added here.
     if config.ssh.shared_key is not None:
         key_path = config.ssh.keys_dir / config.ssh.shared_key
         _reject_if_under_host_ssh(key_path, what="ssh.shared_key")
@@ -134,11 +123,7 @@ def _check_ssh_key_not_under_host_ssh(config: ServerConfig, *, home: Path) -> No
 
 
 def _check_secrets_outside_repository_roots(config: ServerConfig) -> None:
-    """§53: secrets SHALL NOT live in project configuration committed to
-    Git — checked here as "no secret-holding path is under any repository
-    root or any individual repository's path," since either would place the
-    secret inside a Git working tree the client can read and potentially
-    write through the tools in §12."""
+    """§53: secrets SHALL NOT live in project configuration committed to Git."""
     protected_roots = list(config.repository_roots) + [r.path for r in config.repositories]
     resolved_roots = [r.resolve() for r in protected_roots]
 
@@ -155,26 +140,12 @@ def _check_secrets_outside_repository_roots(config: ServerConfig) -> None:
     _reject_if_under_a_repository(config.ssh.keys_dir, what="ssh.keys_dir")
     if config.github.api_token_path is not None:
         _reject_if_under_a_repository(config.github.api_token_path, what="github.api_token_path")
-    # H30 (`docs/HARDENING_TODO.md`, HR-010): `audit.path`/`state_db_path`
-    # are not credential files themselves, but they hold the same class
-    # of information §53 exists to keep off a client-readable path — an
-    # audit log records command argv (best-effort redacted, not a
-    # guarantee — HR-013), and the state DB is the daemon's own internal
-    # state. Neither belongs inside a repository the filesystem tools or
-    # a container can read any more than an SSH key or API token does.
     _reject_if_under_a_repository(config.audit.path, what="audit.path")
     _reject_if_under_a_repository(config.state_db_path, what="state_db_path")
 
 
 def _check_repository_roots_exist(config: ServerConfig) -> None:
-    """§73 step 7: validate repository roots. `RepositoryRegistry`'s own
-    discovery (`repositories.py`'s `_discover_under_root`) silently
-    yields nothing for a `repository_roots` entry that doesn't exist —
-    correct there (an unrelated request has no business failing over an
-    unrelated discovery root), but that leaves an operator with a typo'd
-    or since-removed root never told anything is wrong: repositories
-    they expected to be auto-discovered just aren't, with no error and
-    no warning. Checked once, loudly, at startup instead."""
+    """§73 step 7: validate repository roots."""
     for root in config.repository_roots:
         if not root.is_dir():
             raise ConfigError(
@@ -182,23 +153,6 @@ def _check_repository_roots_exist(config: ServerConfig) -> None:
             )
 
 
-#: §19.3: "`known_hosts_mcp` SHALL contain GitHub's published SSH host
-#: keys, pinned. The daemon SHALL NOT rely on trust-on-first-use." — H32
-#: (`docs/HARDENING_SPEC.md` §9's §26/known_hosts row): before this, the
-#: file was created *empty*, satisfying neither sentence — trust-on-
-#: first-use was avoided only by trusting *nothing*, which a fresh
-#: install could never get past (every SSH connection to GitHub failed
-#: host verification, not just lacked a credential).
-#:
-#: These three lines are GitHub's own currently-published host keys,
-#: verified two independent ways before being pinned here: a live
-#: `ssh-keyscan -t rsa,ecdsa,ed25519 github.com` against the real
-#: internet, and GitHub's own published fingerprint documentation
-#: (https://docs.github.com/en/authentication/keeping-your-account-and-
-#: data-secure/githubs-ssh-key-fingerprints) — both matching exactly.
-#: Should GitHub ever rotate these, an operator's own `known_hosts`
-#: content (below, never overwritten once the file has any content)
-#: always takes precedence over this seed.
 GITHUB_SSH_HOST_KEYS = (
     "github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1"
     "aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYf"
@@ -213,24 +167,7 @@ GITHUB_SSH_HOST_KEYS = (
 
 
 def ensure_known_hosts_file_exists(config: ServerConfig) -> None:
-    """§19.3: `ssh.known_hosts` gets bind-mounted read-only into every
-    workspace container. Docker turns a bind mount of a *missing* host
-    file into an empty *directory* at the target path instead — silently
-    breaking `UserKnownHostsFile` — so a real file needs to exist before
-    the first mount, not be created lazily per workspace.
-
-    Seeded with `GITHUB_SSH_HOST_KEYS` whenever the file is genuinely
-    empty — whether it does not exist yet (a fresh install) or exists
-    with zero bytes (an install from before this task, when this
-    function only ever `touch`ed an empty file and never wrote to it
-    again). Both cases can only be this daemon's own doing: nothing
-    upstream of this call ever writes to `ssh.known_hosts` with content
-    and then leaves it at zero bytes on purpose. A file with *any*
-    existing content, by contrast, is never touched — it is either an
-    operator's own deliberately customized `known_hosts` (additional
-    keys, a GitHub Enterprise Server host, intentionally different
-    content) or this same seed from an earlier run, and either way
-    overwriting it silently would be the wrong call."""
+    """§19.3: ensure the configured known_hosts is a real pinned file."""
     known_hosts = config.ssh.known_hosts
     if known_hosts.exists() and known_hosts.stat().st_size > 0:
         return
@@ -240,10 +177,7 @@ def ensure_known_hosts_file_exists(config: ServerConfig) -> None:
 
 
 def docker_available() -> bool:
-    """§73 step 2: verify Docker connectivity. Returns False rather than
-    raising on any failure (daemon down, permission denied, socket
-    missing) — the caller reports a degraded health state instead of
-    crashing the daemon (§73)."""
+    """§73 step 2: verify Docker connectivity without raising."""
     try:
         client = docker.from_env()
         try:
