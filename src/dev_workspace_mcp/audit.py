@@ -43,7 +43,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from dev_workspace_mcp.config.models import AuditConfig
-from dev_workspace_mcp.errors import redact_secrets
+from dev_workspace_mcp.errors import looks_like_secret_value, redact_secrets
 
 
 # G3R-012: process-lifetime health for the configured audit sink. Audit
@@ -69,12 +69,15 @@ def _safe_audit_identifier(value: str | None) -> str | None:
     Audit attribution is useful only when it is also safe to persist. The
     audit writer therefore accepts only short opaque identifiers made from
     this project's non-path ID alphabet. Raw headers, prompts,
-    environment values, paths, shell fragments, and free-form client
-    metadata fail closed to `None` instead of being copied into JSONL.
+    environment values, paths, shell fragments, free-form client metadata,
+    and pure credential/token-shaped strings fail closed to `None` instead
+    of being copied into JSONL.
     """
     if value is None:
         return None
     if _AUDIT_SAFE_ID_RE.fullmatch(value) is None:
+        return None
+    if looks_like_secret_value(value):
         return None
     return value
 
@@ -153,7 +156,7 @@ def write_audit_event(
     written, the same second layer `to_tool_error` applies to a client
     response. `request_id`, `session_id`, `workspace_id`, and
     `repository_id` are optional attribution fields and are accepted only
-    when they are bounded, opaque, non-path audit identifiers.
+    when they are bounded, opaque, non-path, non-secret audit identifiers.
 
     HR-015: an `OSError` from the filesystem operations below (an
     unwritable `audit.path`, a full disk, a permissions problem) is

@@ -1,4 +1,10 @@
-"""Typed workspace errors and secret-safe MCP error/audit redaction."""
+"""Typed workspace errors and secret-safe MCP error/audit redaction.
+
+Only expected domain failures are converted into structured MCP tool errors.
+Unexpected exceptions deliberately propagate to the MCP SDK's crash handling so
+bugs stay loud in logs and CI instead of being disguised as ordinary user or
+policy failures.
+"""
 
 from __future__ import annotations
 
@@ -45,7 +51,12 @@ class ErrorCode(StrEnum):
 
 
 class WorkspaceError(Exception):
-    """Base class for every structured workspace-domain error."""
+    """Base class for every structured workspace-domain error.
+
+    `recoverable` says whether the same request might plausibly succeed later
+    without changing its meaning. Each subclass owns its default so callers do
+    not have to infer retry semantics from a free-form message.
+    """
 
     code: ClassVar[ErrorCode]
     default_recoverable: ClassVar[bool] = False
@@ -63,6 +74,7 @@ class WorkspaceError(Exception):
         self.details: dict[str, Any] = details or {}
 
     def to_dict(self) -> dict[str, Any]:
+        """Return the stable client-facing error payload before redaction."""
         return {
             "code": self.code.value,
             "message": self.message,
@@ -206,6 +218,10 @@ class InternalError(WorkspaceError):
     default_recoverable = False
 
 
+# Redaction is defense-in-depth for `WorkspaceError.details`, error messages,
+# and audit metadata. More sensitive paths, such as prune execution failures,
+# still use explicit allowlisted classifications rather than depending only on
+# regex replacement.
 _SECRET_KEY_HINTS = (
     "token",
     "password",
@@ -242,6 +258,13 @@ _URL_USERINFO_RE = re.compile(r"([a-zA-Z][a-zA-Z0-9+.\-]*://)[^/@\s]+@")
 
 
 def _looks_like_high_entropy_token(value: str) -> bool:
+    """Detect likely bearer/API tokens while preserving common public IDs.
+
+    Long mixed-class opaque strings are suspicious in diagnostics, but several
+    public identifiers have the same length profile. Commit SHAs, UUIDs,
+    internal request/prune IDs, and public SSH fingerprints are explicitly
+    preserved so redaction does not destroy useful non-secret evidence.
+    """
     if _PUBLIC_SSH_FINGERPRINT_RE.fullmatch(value):
         return False
     for match in _HIGH_ENTROPY_TOKEN_RE.finditer(value):
@@ -265,13 +288,33 @@ def _looks_like_high_entropy_token(value: str) -> bool:
     return False
 
 
-def _looks_like_secret(value: str) -> bool:
+def looks_like_secret_value(value: str) -> bool:
+    """Return whether a string has a credential/token-like shape.
+
+    This predicate intentionally looks only at value shape, not the containing
+    key. It is shared by generic redaction and stricter audit identifier
+    validation so a token-shaped top-level ID cannot bypass audit sanitization
+    merely because it uses the allowed opaque-ID alphabet.
+    """
     return any(pattern.search(value) for pattern in _SECRET_VALUE_PATTERNS) or (
         _looks_like_high_entropy_token(value)
     )
 
 
+def _looks_like_secret(value: str) -> bool:
+    """Backward-compatible private alias for the generic secret-shape check."""
+    return looks_like_secret_value(value)
+
+
 def _redact(value: Any, *, key: str | None = None, inherited_secret: bool = False) -> Any:
+    """Recursively redact a JSON-like diagnostic structure.
+
+    Secret-key hints propagate into nested dictionaries and list/tuple/set items
+    because `{"secret": {"value": ...}}` is just as sensitive as a direct
+    `{"secret": ...}` leaf. Unknown or non-JSON-native values fail closed to a
+    bounded placeholder so `json.dumps` call sites do not crash or leak a raw
+    representation.
+    """
     key_flags_secret = inherited_secret or (
         isinstance(key, str) and any(hint in key.lower() for hint in _SECRET_KEY_HINTS)
     )
@@ -284,12 +327,12 @@ def _redact(value: Any, *, key: str | None = None, inherited_secret: bool = Fals
     if isinstance(value, set):
         return [_redact(v, key=key, inherited_secret=key_flags_secret) for v in value]
     if isinstance(value, str):
-        if key_flags_secret or _looks_like_secret(value):
+        if key_flags_secret or looks_like_secret_value(value):
             return "[REDACTED]"
         return _URL_USERINFO_RE.sub(r"\1[REDACTED]@", value)
     if isinstance(value, (bytes, bytearray)):
         text = bytes(value).decode("utf-8", errors="replace")
-        if key_flags_secret or _looks_like_secret(text):
+        if key_flags_secret or looks_like_secret_value(text):
             return "[REDACTED]"
         return text
     if isinstance(value, (bool, int, float)) or value is None:
@@ -298,10 +341,16 @@ def _redact(value: Any, *, key: str | None = None, inherited_secret: bool = Fals
 
 
 def redact_secrets(details: dict[str, Any]) -> dict[str, Any]:
+    """Return a JSON-safe, secret-redacted copy of structured diagnostics."""
     return dict(_redact(details))
 
 
 def to_tool_error(exc: WorkspaceError) -> MCPToolError:
+    """Translate a domain error into the MCP SDK tool-error boundary.
+
+    Docker storage-pressure enrichment is applied before the final payload is
+    redacted. Non-`WorkspaceError` exceptions are intentionally not caught here.
+    """
     from dev_workspace_mcp.operations.pressure import (
         classify_docker_storage_failure,
         enrich_workspace_error,
@@ -321,6 +370,7 @@ def to_tool_error(exc: WorkspaceError) -> MCPToolError:
 
 
 def translate_workspace_errors(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Decorate MCP tool functions with structured domain-error translation."""
     if inspect.iscoroutinefunction(fn):
 
         @wraps(fn)
