@@ -14,11 +14,11 @@ from dev_workspace_mcp.setup.ownership import (
 
 def test_wizv_001_every_server_config_field_has_explicit_setup_ownership() -> None:
     assert unclassified_server_config_fields() == frozenset()
-    assert WIZARD_CLASSIFIED_TOP_LEVEL_FIELDS == frozenset(ServerConfig.model_fields)
+    assert frozenset(ServerConfig.model_fields) == WIZARD_CLASSIFIED_TOP_LEVEL_FIELDS
 
 
 def test_wizv_001_advanced_runtime_sections_are_not_guided_by_default() -> None:
-    assert WIZARD_ADVANCED_TOP_LEVEL_FIELDS == {"filesystem", "execution"}
+    assert {"filesystem", "execution"} == WIZARD_ADVANCED_TOP_LEVEL_FIELDS
     assert not (WIZARD_ADVANCED_TOP_LEVEL_FIELDS & WIZARD_GUIDED_TOP_LEVEL_FIELDS)
 
 
