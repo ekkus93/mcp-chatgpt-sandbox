@@ -81,8 +81,10 @@ class SetupRepositoryState:
         raw_path = value.get("path")
         raw_github = value.get("github")
         raw_ssh_key = value.get("ssh_key")
-        if not isinstance(raw_id, str) or not isinstance(raw_path, str) or not isinstance(
-            raw_github, str
+        if (
+            not isinstance(raw_id, str)
+            or not isinstance(raw_path, str)
+            or not isinstance(raw_github, str)
         ):
             raise ValueError("setup repository id/path/github must be strings")
         if raw_ssh_key is not None and not isinstance(raw_ssh_key, str):
