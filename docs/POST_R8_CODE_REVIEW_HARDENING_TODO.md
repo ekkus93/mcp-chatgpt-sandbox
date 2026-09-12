@@ -1,6 +1,6 @@
 # Post-R8 Code Review Hardening TODO
 
-**Status:** CRH-001 through CRH-004 complete; CRH-005 next  
+**Status:** CRH-001 through CRH-004 complete; CRH-005 externally blocked; CRH-006 audit in progress  
 **Spec:** `docs/POST_R8_CODE_REVIEW_HARDENING_SPEC.md`  
 **Base:** `5d64af1a92bbe83154ab3eebdfd20c1b56495cd9` (`docs: close R8 remediation workstream`)  
 **Task series:** `CRH-001`..`CRH-005`  
@@ -21,7 +21,7 @@ This TODO tracks the follow-up hardening issues found during the post-R8 code re
 - [x] Avoid public MCP schema/output changes unless explicitly justified
 - [x] Regenerate schemas and bump `contract_version` only if public schema, registered descriptions, or response semantics change
 - [x] Run focused tests before full CI
-- [ ] Run full Docker-backed CI before marking this workstream complete
+- [x] Run full Docker-backed CI before marking this workstream complete
 - [x] Record exact RED/GREEN/revert evidence for each task where feasible
 - [ ] Restore Ralph Bridge default-branch write protection unless there is a new explicit operator-approved exception
 
@@ -191,37 +191,52 @@ This TODO tracks the follow-up hardening issues found during the post-R8 code re
 - [ ] Identify the active Ralph Bridge operator setting that controls default-branch writes
 - [ ] Restore direct default-branch write protection for `ekkus93/mcp-chatgpt-sandbox` unless a new explicit exception is active
 - [ ] Restart or refresh Ralph Bridge if required by the operator configuration change
-- [ ] Verify normal source-branch writes remain available if needed for future work
-- [ ] Verify exact-head guarded PR merges remain available if needed for future work
+- [x] Verify normal source-branch writes remain available if needed for future work
+- [x] Verify exact-head guarded PR merges remain available if needed for future work
 - [ ] Verify direct writes to `master` are rejected by policy after restoration
-- [ ] Record the verification method without committing private operator config or secrets
-- [ ] Update repository operator documentation if this repo contains the relevant Ralph Bridge setup guidance
-- [ ] Run any docs or CI checks affected by documentation updates
-- [ ] Record exact evidence for CRHV-005
+- [x] Record the verification method without committing private operator config or secrets
+- [x] Update repository operator documentation if this repo contains the relevant Ralph Bridge setup guidance (N/A: no repo-local operator setup guidance)
+- [x] Run any docs or CI checks affected by documentation updates
+- [x] Record exact evidence for CRHV-005
 
 **CRH-005 completion evidence:**
 
-- Verification note: if this line is committed by a direct write to `master`, the Ralph Bridge default-branch write protection is still not restored.
+- First direct-write probe commit `b30a284eca83d03a4b74afd6c0523e508981e3dd` landed on `master`; this proved default-branch source writes were still allowed.
+- Second direct-write probe commit `74c14331622e88c815a6fb3eeef2aa1ca5b20a0c` also landed on `master` through Ralph Bridge `commit_files`; CRHV-005 therefore remains a recorded negative result, not a PASS.
+- Repository inspection found no Ralph Bridge operator configuration or setup file that can restore this policy. `docs/SPEC.md` §21 documents only the responsibility boundary with Ralph Bridge. The active default-branch-write setting is external to this repository and remains unidentified/unmodified here.
+- Verification/workaround details are recorded in `docs/CRH_005_DIRECT_WRITE_PROBE.md` without private operator configuration or secrets.
+- Safe source-branch workflow was proven on `ralph/crh-005-workaround`; commit `edec2c5278d2a07a5a939c5a034cf794568629a6` was accepted on the source branch.
+- PR #49 targeted `master`; exact-head PR CI run `34661170688` passed on `edec2c5278d2a07a5a939c5a034cf794568629a6`.
+- PR #49 merged through the exact-head guarded Ralph Bridge merge path, producing `master` commit `170ed80221f0a3dded834f6536bd29b9d03b7370`.
+- Post-merge Docker-backed CI run `34661818039`, job `103465718067`, passed on `170ed80221f0a3dded834f6536bd29b9d03b7370`: Docker image build, Ruff format, Ruff lint, mypy, MCP contract check, contract-version check, `docs/TOOLS.md` drift check, and pytest all passed; `1226 passed`, `4 warnings`, coverage `92%` with TOTAL `6536` statements / `518` misses.
+- CRH-005 remains open. Completion still requires an external Ralph Bridge operator-policy change followed by a direct `master` write probe that Ralph Bridge itself rejects.
 
 ## Final closure
 
 ### CRH-006 — Final hardening audit and closure
 
-- [ ] Audit that CRH-001..CRH-005 are implemented or explicitly dispositioned
-- [ ] Audit that CRHV-001..CRHV-005 evidence is recorded
-- [ ] Confirm no broad-prune or unsafe fallback behavior was introduced
-- [ ] Confirm public schemas and `contract_version` are correct for the actual changes
-- [ ] Confirm `docs/TOOLS.md` and exported schemas are drift-free
-- [ ] Confirm all focused tests pass
-- [ ] Run complete Docker-backed CI with all gates green
+- [x] Audit that CRH-001..CRH-005 are implemented or explicitly dispositioned
+- [x] Audit that CRHV-001..CRHV-005 evidence is recorded
+- [x] Confirm no broad-prune or unsafe fallback behavior was introduced
+- [x] Confirm public schemas and `contract_version` are correct for the actual changes
+- [x] Confirm `docs/TOOLS.md` and exported schemas are drift-free
+- [x] Confirm all focused tests pass
+- [x] Run complete Docker-backed CI with all gates green
 - [ ] Verify final exact-head CI is green before marking this workstream complete
 - [ ] Record final exact run/head/job/test count/coverage
 
-**CRH-006 completion evidence:** TODO
+**CRH-006 completion evidence:**
+
+- Audit range: frozen hardening base `5d64af1a92bbe83154ab3eebdfd20c1b56495cd9` through audited `master` `170ed80221f0a3dded834f6536bd29b9d03b7370`.
+- The retained runtime changes are limited to `audit.py`, `errors.py`, `operations/inventory.py`, and `operations/ssh_agent_cleanup.py`, with focused tests and hardening documentation. No prune-plan, prune-candidate, prune-execution, Docker cleanup, or broad-deletion source file changed in the audited range.
+- CRH-001 through CRH-004 are implemented with recorded RED/GREEN evidence. CRH-005 is explicitly dispositioned as an external operator-policy blocker with a proven branch/PR/guarded-merge workaround; CRHV-005 evidence is recorded but remains negative.
+- Exact-head `master` CI run `34661818039`, job `103465718067`, passed all Docker build, Ruff format/lint, mypy, MCP contract, contract-version, `docs/TOOLS.md` drift, and pytest gates. Test result: `1226 passed`, `4 warnings` in `612.92s`; coverage `92%`, TOTAL `6536` statements / `518` misses.
+- Passing contract-version and docs-drift gates confirm no unresolved public schema/contract drift on the audited head.
+- CRH-006 cannot be marked fully closed while CRH-005 remains unresolved. After the external policy is restored and CRHV-005 passes, rerun final exact-head Docker-backed CI and record that final head/run before closure.
 
 ## Definition of done
 
-- [ ] CRH-001..CRH-005 implemented or explicitly dispositioned
+- [x] CRH-001..CRH-005 implemented or explicitly dispositioned
 - [x] CRHV-001 evidence recorded
 - [x] CRHV-002 evidence recorded
 - [x] CRHV-003 evidence recorded
@@ -233,5 +248,5 @@ This TODO tracks the follow-up hardening issues found during the post-R8 code re
 - [ ] Ralph Bridge default-branch write protection is restored or an explicit exception is documented
 - [x] O1-O12 destructive-safety invariants remain intact
 - [x] PMORR R1-R8 guarantees remain intact
-- [ ] No public schema or contract-version drift remains unresolved
-- [ ] Full exact-head Docker-backed CI is green
+- [x] No public schema or contract-version drift remains unresolved
+- [x] Full exact-head Docker-backed CI is green
