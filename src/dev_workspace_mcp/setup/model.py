@@ -34,23 +34,21 @@ class SetupStateError(RuntimeError):
 
 
 class SetupStep(StrEnum):
-    """Stable identifiers for the primary setup workflow."""
+    """Stable identifiers frozen by docs/SETUP_WIZARD_SPEC.md §8.1."""
 
-    PREREQUISITES = "prerequisites"
-    STORAGE = "storage"
-    DOCKER = "docker"
-    REPOSITORIES = "repositories"
-    CREDENTIALS = "credentials"
-    GIT_POLICY = "git_policy"
-    RUNTIME_LIMITS = "runtime_limits"
-    CHATGPT = "chatgpt"
-    REVIEW = "review"
+    PREREQUISITES = "local_prerequisites"
+    STORAGE = "server_storage"
+    DOCKER = "docker_workspace"
+    REPOSITORIES = "repository_access"
+    CREDENTIALS = "ssh_and_github"
+    GIT_POLICY = "git_safety_policy"
+    RUNTIME_LIMITS = "runtime_and_resources"
+    CHATGPT = "chatgpt_connection"
+    REVIEW = "configuration_review"
     FINAL_VALIDATION = "final_validation"
 
 
 class SetupStepStatus(StrEnum):
-    """Persistable lifecycle state for one setup step."""
-
     NOT_STARTED = "not_started"
     ACTION_REQUIRED = "action_required"
     WAITING_FOR_USER = "waiting_for_user"
@@ -62,8 +60,6 @@ class SetupStepStatus(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class SetupRepositoryState:
-    """Non-secret repository registration choices safe to resume."""
-
     id: str
     path: str
     github: str
@@ -74,8 +70,7 @@ class SetupRepositoryState:
         if not isinstance(value, Mapping):
             raise ValueError("setup repository must be a mapping")
         allowed = {"id", "path", "github", "ssh_key"}
-        unknown = set(value) - allowed
-        if unknown:
+        if set(value) - allowed:
             raise ValueError("setup repository contains unknown fields")
         raw_id = value.get("id")
         raw_path = value.get("path")
@@ -91,12 +86,7 @@ class SetupRepositoryState:
             raise ValueError("setup repository ssh_key must be a string or null")
         try:
             validated = RepositoryConfig.model_validate(
-                {
-                    "id": raw_id,
-                    "path": raw_path,
-                    "github": raw_github,
-                    "ssh_key": raw_ssh_key,
-                }
+                {"id": raw_id, "path": raw_path, "github": raw_github, "ssh_key": raw_ssh_key}
             )
         except ValidationError as exc:
             raise ValueError("setup repository is rejected by production validation") from exc
@@ -112,7 +102,15 @@ class SetupRepositoryState:
 
 
 _STATE_KEYS = frozenset(
-    {"version", "current_step", "statuses", "repositories", "advanced", "chatgpt_requested"}
+    {
+        "version",
+        "current_step",
+        "statuses",
+        "repositories",
+        "advanced",
+        "chatgpt_requested",
+        "config_path",
+    }
 )
 
 
@@ -121,8 +119,7 @@ def _reject_secret_state_keys(value: object, *, path: str = "state") -> None:
         for key, child in value.items():
             if not isinstance(key, str):
                 raise ValueError(f"{path} contains a non-string key")
-            folded = key.casefold()
-            if any(fragment in folded for fragment in _FORBIDDEN_STATE_KEY_FRAGMENTS):
+            if any(fragment in key.casefold() for fragment in _FORBIDDEN_STATE_KEY_FRAGMENTS):
                 raise ValueError(f"{path} contains a forbidden secret-bearing field name")
             _reject_secret_state_keys(child, path=f"{path}.{key}")
     elif isinstance(value, list | tuple):
@@ -148,14 +145,13 @@ def _validate_repositories(values: object) -> tuple[SetupRepositoryState, ...]:
 
 @dataclass(slots=True)
 class SetupState:
-    """All resumable setup data; deliberately contains no secret values."""
-
     version: int = SETUP_STATE_VERSION
     current_step: SetupStep = SetupStep.PREREQUISITES
     statuses: dict[SetupStep, SetupStepStatus] = field(default_factory=dict)
     repositories: tuple[SetupRepositoryState, ...] = ()
     advanced: bool = False
     chatgpt_requested: bool = False
+    config_path: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         result: dict[str, object] = {
@@ -165,9 +161,8 @@ class SetupState:
             "repositories": [repository.to_dict() for repository in self.repositories],
             "advanced": self.advanced,
             "chatgpt_requested": self.chatgpt_requested,
+            "config_path": self.config_path,
         }
-        # Status mapping keys are controlled SetupStep enum values.  Run the
-        # generic secret-key guard over every other persisted structure.
         guard = dict(result)
         guard.pop("statuses")
         _reject_secret_state_keys(guard)
@@ -177,8 +172,7 @@ class SetupState:
     def from_dict(cls, value: object) -> Self:
         if not isinstance(value, Mapping):
             raise ValueError("setup state must be a mapping")
-        unknown = set(value) - _STATE_KEYS
-        if unknown:
+        if set(value) - _STATE_KEYS:
             raise ValueError("setup state contains unknown fields")
         version = value.get("version")
         if version != SETUP_STATE_VERSION:
@@ -201,16 +195,17 @@ class SetupState:
             if not isinstance(raw_step, str) or not isinstance(raw_status, str):
                 raise ValueError("setup state statuses must map strings to strings")
             try:
-                step = SetupStep(raw_step)
-                status = SetupStepStatus(raw_status)
+                statuses[SetupStep(raw_step)] = SetupStepStatus(raw_status)
             except ValueError as exc:
                 raise ValueError("setup state contains an unknown step/status value") from exc
-            statuses[step] = status
 
         advanced = value.get("advanced", False)
         chatgpt_requested = value.get("chatgpt_requested", False)
+        config_path = value.get("config_path")
         if not isinstance(advanced, bool) or not isinstance(chatgpt_requested, bool):
             raise ValueError("setup state boolean choices must be booleans")
+        if config_path is not None and not isinstance(config_path, str):
+            raise ValueError("setup state config_path must be a string or null")
 
         guard = dict(value)
         guard.pop("statuses", None)
@@ -222,12 +217,11 @@ class SetupState:
             repositories=_validate_repositories(value.get("repositories", [])),
             advanced=advanced,
             chatgpt_requested=chatgpt_requested,
+            config_path=config_path,
         )
 
 
 def clone_setup_state(state: SetupState) -> SetupState:
-    """Clone through serialization so every invariant is revalidated."""
-
     return SetupState.from_dict(state.to_dict())
 
 
@@ -237,20 +231,16 @@ def rewind_for_missing_process_local_material(
     required_steps: set[SetupStep],
     available_steps: set[SetupStep],
 ) -> SetupState:
-    """Rewind resume state before the earliest completed secret-bearing step.
-
-    Callers decide which steps actually required process-local material for
-    the chosen setup path; the state file itself never stores that material.
-    """
-
     candidate = clone_setup_state(state)
     order = list(SetupStep)
     current_index = order.index(candidate.current_step)
     for step in order:
         if step not in required_steps or step in available_steps:
             continue
-        step_index = order.index(step)
-        if step_index <= current_index and candidate.statuses.get(step) is SetupStepStatus.COMPLETE:
+        if (
+            order.index(step) <= current_index
+            and candidate.statuses.get(step) is SetupStepStatus.COMPLETE
+        ):
             candidate.current_step = step
             candidate.statuses[step] = SetupStepStatus.ACTION_REQUIRED
             break
@@ -258,8 +248,6 @@ def rewind_for_missing_process_local_material(
 
 
 def save_setup_state(state: SetupState, path: Path = DEFAULT_SETUP_STATE_PATH) -> None:
-    """Persist non-secret state atomically with owner-only permissions."""
-
     import json
 
     try:
@@ -270,16 +258,17 @@ def save_setup_state(state: SetupState, path: Path = DEFAULT_SETUP_STATE_PATH) -
 
 
 def load_setup_state(path: Path = DEFAULT_SETUP_STATE_PATH) -> SetupState | None:
-    """Load and validate persisted state; absent state returns ``None``."""
-
     import json
 
     expanded = path.expanduser()
-    if not expanded.exists():
+    try:
+        expanded.lstat()
+    except FileNotFoundError:
         return None
+    except OSError as exc:
+        raise SetupStateError(f"Could not inspect setup state at {expanded}") from exc
     try:
         raw = read_bounded_utf8(expanded)
-        parsed = json.loads(raw)
-        return SetupState.from_dict(parsed)
+        return SetupState.from_dict(json.loads(raw))
     except (json.JSONDecodeError, OSError, ValueError, SetupFilesystemError) as exc:
         raise SetupStateError(f"Could not load valid setup state at {expanded}") from exc
