@@ -109,6 +109,7 @@ This TODO tracks the follow-up hardening issues found during the post-R8 code re
 - Implementation detail: `write_audit_event()` now sanitizes `request_id`, `session_id`, `workspace_id`, and `repository_id` through the same bounded safe audit identifier boundary before JSONL persistence. Safe opaque IDs are preserved; host-path-shaped, authorization/token-shaped, environment-assignment-shaped, SSH-material-shaped, multiline, and shell-fragment-shaped top-level IDs fail closed to `None`.
 - Contract/schema decision: no public MCP schema, registered tool description, or response shape changed; no schema regeneration or `contract_version` bump was required.
 - Revert verification: the clean RED run `34520675695` is the revert proof: with CRHV-002 present and the top-level audit identifier sanitizer absent, the suite failed exactly on the unsafe top-level ID persistence assertions after all non-pytest gates passed.
+- Follow-up note: PCRF-001 later tightened this same audit boundary so pure credential/token-shaped values also fail closed even when they otherwise match the audit identifier alphabet.
 
 ## Phase 3 — Generic redaction coverage
 
@@ -228,13 +229,14 @@ This TODO tracks the follow-up hardening issues found during the post-R8 code re
 
 **CRH-006 completion evidence:**
 
-- Audit range: frozen hardening base `5d64af1a92bbe83154ab3eebdfd20c1b56495cd9` through policy-restored audited `master` `32551a1214f114b29f824d43887f03220f333df3`.
+- Audit range: frozen hardening base `5d64af1a92bbe83154ab3eebdfd20c1b56495cd9` through final policy-restored `master` `86440755c84a817a534de60293cacb5c35795a65`.
 - The retained runtime changes are limited to `audit.py`, `errors.py`, `operations/inventory.py`, and `operations/ssh_agent_cleanup.py`, with focused tests and hardening documentation. No prune-plan, prune-candidate, prune-execution, Docker cleanup, or broad-deletion source file changed in the audited hardening range.
 - CRH-001 through CRH-004 are implemented with recorded RED/GREEN evidence. CRH-005 is complete: the same Ralph Bridge mutation path that previously wrote directly to `master` is now rejected by Phase 4 default-branch policy, while source-branch writes and guarded PR merges remain available.
-- Final exact-head policy-restored `master` CI run `34687791982`, job `103537728294`, passed all Docker build, Ruff format/lint, mypy, MCP contract, contract-version, `docs/TOOLS.md` drift, and pytest gates on `32551a1214f114b29f824d43887f03220f333df3`.
-- Final test result: `1226 passed`, `4 warnings` in `615.78s`; coverage `92%`, TOTAL `6536` statements / `518` misses.
+- Final bookkeeping PR #52 merged through the exact-head guarded Ralph Bridge merge path and produced `master` commit `86440755c84a817a534de60293cacb5c35795a65`.
+- Final exact-head policy-restored `master` CI run `34691630548`, job `103547787452`, passed all Docker build, Ruff format/lint, mypy, MCP contract, contract-version, `docs/TOOLS.md` drift, and pytest gates on `86440755c84a817a534de60293cacb5c35795a65`.
+- Final test result: `1226 passed`, `4 warnings` in `613.65s`; coverage `92%`, TOTAL `6536` statements / `518` misses.
 - Passing contract-version and docs-drift gates confirm no unresolved public schema/contract drift.
-- The Post-R8 Code Review Hardening workstream is complete. This final bookkeeping update is documentation-only and is itself required to pass the normal source-branch CI / guarded-merge workflow.
+- The Post-R8 Code Review Hardening workstream is complete.
 
 ## Definition of done
 
