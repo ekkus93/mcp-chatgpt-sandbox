@@ -13,6 +13,26 @@ def _read_lines(path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text().splitlines()]
 
 
+def _token_tail() -> str:
+    return ("AbC" + "123" + "._-") * 5
+
+
+def _mixed_high_entropy() -> str:
+    return "Ab3C" + "d4Ef" + "5Gh6" + "Ij7K" + "l8Mn" + "9Op0" + "Qr1S" + "t2Uv"
+
+
+def _github_token_shape() -> str:
+    return "gh" + "p_" + "A" * 36
+
+
+def _openai_key_shape() -> str:
+    return "sk" + "-proj-" + _token_tail()
+
+
+def _aws_access_key_id_shape() -> str:
+    return "AK" + "IA" + "A1B2C3D4E5F6G7H8"
+
+
 def test_write_audit_event_appends_a_json_line(tmp_path: Path) -> None:
     config = AuditConfig(enabled=True, path=tmp_path / "audit.jsonl")
     write_audit_event(
@@ -114,6 +134,85 @@ def test_crhv_002_write_audit_event_drops_unsafe_top_level_ids(
     event = _read_lines(config.path)[0]
     assert event[field] is None
     assert unsafe_value not in content
+
+
+@pytest.mark.parametrize(
+    ("field", "unsafe_value"),
+    [
+        ("workspace_id", _github_token_shape()),
+        ("repository_id", _github_token_shape()),
+        ("workspace_id", _openai_key_shape()),
+        ("repository_id", _openai_key_shape()),
+        ("workspace_id", _aws_access_key_id_shape()),
+        ("repository_id", _aws_access_key_id_shape()),
+        ("workspace_id", _mixed_high_entropy()),
+        ("repository_id", _mixed_high_entropy()),
+        ("request_id", _github_token_shape()),
+        ("session_id", _openai_key_shape()),
+    ],
+)
+def test_pcrfv_001_write_audit_event_drops_pure_token_shaped_ids(
+    tmp_path: Path,
+    field: str,
+    unsafe_value: str,
+) -> None:
+    """PCRFV-001: token-shaped IDs fail closed even when syntax-valid.
+
+    Values are assembled at runtime so committed source does not contain
+    literal real-looking credentials, while the audit boundary still receives
+    complete credential-shaped strings.
+    """
+    config = AuditConfig(enabled=True, path=tmp_path / "audit.jsonl")
+    kwargs = {
+        "request_id": "rq_" + "a" * 32,
+        "session_id": "session:alpha-1",
+        "workspace_id": "ws_safe-1",
+        "repository_id": "repo_safe-1",
+        field: unsafe_value,
+    }
+
+    write_audit_event(
+        config,
+        operation="unsafe_pure_token_ids",
+        result="success",
+        **kwargs,
+    )
+
+    content = config.path.read_text()
+    event = _read_lines(config.path)[0]
+    assert event[field] is None
+    assert unsafe_value not in content
+
+
+def test_pcrfv_001_write_audit_event_preserves_safe_internal_ids(
+    tmp_path: Path,
+) -> None:
+    """PCRFV-001: stricter token-shape rejection keeps safe opaque IDs."""
+    config = AuditConfig(enabled=True, path=tmp_path / "audit.jsonl")
+
+    write_audit_event(
+        config,
+        operation="safe_internal_ids",
+        result="success",
+        request_id="rq_" + "a" * 32,
+        session_id="session:alpha-1",
+        workspace_id="ws_safe-1",
+        repository_id="repo.example:1",
+        metadata={
+            "prune_plan_id": "pp_" + "b" * 32,
+            "prune_candidate_id": "pc_" + "c" * 32,
+        },
+    )
+
+    event = _read_lines(config.path)[0]
+    assert event["request_id"] == "rq_" + "a" * 32
+    assert event["session_id"] == "session:alpha-1"
+    assert event["workspace_id"] == "ws_safe-1"
+    assert event["repository_id"] == "repo.example:1"
+    assert event["metadata"] == {
+        "prune_plan_id": "pp_" + "b" * 32,
+        "prune_candidate_id": "pc_" + "c" * 32,
+    }
 
 
 def test_write_audit_event_appends_rather_than_overwrites(tmp_path: Path) -> None:
