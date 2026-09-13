@@ -144,7 +144,9 @@ def _require_new_config_inputs(state: SetupState) -> None:
         if value is None
     ]
     if missing:
-        raise ConfigPlanError("New configuration is missing required setup values: " + ", ".join(missing))
+        raise ConfigPlanError(
+            "New configuration is missing required setup values: " + ", ".join(missing)
+        )
 
 
 def _apply_state(candidate: dict[str, Any], state: SetupState, *, source_exists: bool) -> None:
@@ -163,7 +165,10 @@ def _apply_state(candidate: dict[str, Any], state: SetupState, *, source_exists:
     if state.audit_path is not None:
         _mapping(candidate, "audit")["path"] = state.audit_path
 
-    if state.statuses.get(SetupStep.REPOSITORY_ACCESS) is SetupStepStatus.COMPLETE or not source_exists:
+    if (
+        state.statuses.get(SetupStep.REPOSITORY_ACCESS) is SetupStepStatus.COMPLETE
+        or not source_exists
+    ):
         candidate["repository_roots"] = list(state.repository_roots)
         candidate["repositories"] = [repository.to_dict() for repository in state.repositories]
 
@@ -207,7 +212,9 @@ def _display(value: Any) -> str:
     return str(value)
 
 
-def _summary(before: dict[str, Any] | None, after: dict[str, Any], *, repaired: bool) -> tuple[str, ...]:
+def _summary(
+    before: dict[str, Any] | None, after: dict[str, Any], *, repaired: bool
+) -> tuple[str, ...]:
     lines = [
         "Existing configuration: invalid; explicit repair approved"
         if repaired
