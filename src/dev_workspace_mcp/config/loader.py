@@ -6,6 +6,7 @@ Docker connectivity) so a missing daemon degrades rather than crashes.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +33,7 @@ def load_config(path: Path, *, home: Path | None = None) -> ServerConfig:
     """
     raw = _read_yaml(path)
     try:
-        config = _parse(raw)
+        config = parse_config_mapping(raw)
         _check_ssh_key_not_under_host_ssh(config, home=home or Path.home())
         _check_secrets_outside_repository_roots(config)
         _check_repository_roots_exist(config)
@@ -42,13 +43,14 @@ def load_config(path: Path, *, home: Path | None = None) -> ServerConfig:
     except Exception as exc:
         # H30 (`docs/HARDENING_TODO.md`, HR-010): the final safety net —
         # a real regression had `workspace: 5` (a scalar, not a mapping)
-        # reach `_parse`'s own `dict(raw)` and raise a bare `TypeError`
-        # straight out of `load_config`, past §73 step 1's "refuse to
-        # serve on invalid config" and into the CLI as an unhandled
-        # crash instead of the clean `error: ...` message every other
-        # malformed-config shape produces. `_parse` now converts that
-        # one specific shape itself (a better, "workspace: ..."-prefixed
-        # message); this catches anything else, from any step above.
+        # reach `parse_config_mapping`'s own `dict(raw)` and raise a bare
+        # `TypeError` straight out of `load_config`, past §73 step 1's
+        # "refuse to serve on invalid config" and into the CLI as an
+        # unhandled crash instead of the clean `error: ...` message every
+        # other malformed-config shape produces. `parse_config_mapping`
+        # now converts that one specific shape itself (a better,
+        # "workspace: ..."-prefixed message); this catches anything else,
+        # from any step above.
         raise ConfigError(f"invalid configuration: {exc}") from exc
     return config
 
@@ -69,7 +71,14 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     return data
 
 
-def _parse(raw: dict[str, Any]) -> ServerConfig:
+def parse_config_mapping(raw: Mapping[str, Any]) -> ServerConfig:
+    """Apply the production YAML-to-model conversion to an in-memory mapping.
+
+    Interactive setup uses this to validate a reviewed candidate without
+    duplicating configuration semantics. Filesystem/runtime invariants that
+    require the final path remain the responsibility of :func:`load_config`
+    after the candidate is atomically written.
+    """
     data = dict(raw)
     # `workspace.idle_stop_after` is authored as a duration string but the
     # model stores it parsed (§8.1) — convert before handing the rest to
