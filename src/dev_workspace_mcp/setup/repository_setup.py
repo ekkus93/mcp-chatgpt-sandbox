@@ -35,7 +35,9 @@ def validate_repository_choice(repository: SetupRepositoryState) -> RepositoryCo
     try:
         return RepositoryConfig.model_validate(repository.to_dict())
     except ValidationError as exc:
-        raise SetupRepositoryError("Repository choices are rejected by production validation") from exc
+        raise SetupRepositoryError(
+            "Repository choices are rejected by production validation"
+        ) from exc
 
 
 def _git(path: Path, *args: str) -> subprocess.CompletedProcess[str]:

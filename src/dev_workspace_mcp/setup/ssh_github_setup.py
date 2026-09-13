@@ -12,14 +12,14 @@ from pydantic import ValidationError
 from dev_workspace_mcp.config import GithubConfig, SSHConfig
 from dev_workspace_mcp.setup.model import SetupRepositoryState
 
-REPOSITORY_SCOPE_HELP = (
-    "Recommended: a dedicated key per repository limits credential reach if one workspace is compromised."
-)
+REPOSITORY_SCOPE_HELP = "Recommended: a dedicated key per repository limits credential reach if one workspace is compromised."
 SHARED_SCOPE_WARNING = (
     "Shared SSH scope gives every configured repository the same credential and weakens isolation."
 )
 AGENT_MODE_HELP = "Recommended: agent mode keeps private key material outside workspace containers."
-FILE_MODE_WARNING = "File mode makes the selected private key readable by processes in the container."
+FILE_MODE_WARNING = (
+    "File mode makes the selected private key readable by processes in the container."
+)
 
 
 class SetupCredentialError(RuntimeError):
@@ -52,7 +52,9 @@ class CredentialChoices:
                 api_base_url=self.github_api_base_url,
             )
         except ValidationError as exc:
-            raise SetupCredentialError("SSH/GitHub choices are rejected by production models") from exc
+            raise SetupCredentialError(
+                "SSH/GitHub choices are rejected by production models"
+            ) from exc
         return {
             "ssh": {
                 "mode": ssh.mode,
@@ -113,7 +115,9 @@ def verify_credential_files(
 
     if choices.scope == "shared":
         if choices.shared_key is None:
-            checks.append(CredentialCheck(True, "pass", "shared SSH key intentionally not configured"))
+            checks.append(
+                CredentialCheck(True, "pass", "shared SSH key intentionally not configured")
+            )
         else:
             path = choices.keys_dir / choices.shared_key
             present = _regular_non_symlink(path)
@@ -121,7 +125,9 @@ def verify_credential_files(
                 CredentialCheck(
                     present,
                     "pass" if present else "action_required",
-                    "shared SSH key file is present" if present else "shared SSH key file is missing",
+                    "shared SSH key file is present"
+                    if present
+                    else "shared SSH key file is missing",
                 )
             )
     else:

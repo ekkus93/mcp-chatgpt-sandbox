@@ -10,7 +10,13 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from dev_workspace_mcp.config import AuditConfig, DockerConfig, SSHConfig, ServerConfig, docker_available
+from dev_workspace_mcp.config import (
+    AuditConfig,
+    DockerConfig,
+    SSHConfig,
+    ServerConfig,
+    docker_available,
+)
 
 
 class SetupHostError(RuntimeError):
@@ -46,7 +52,9 @@ class StorageChoices:
                 audit=AuditConfig(path=self.audit_path),
             )
         except ValidationError as exc:
-            raise SetupHostError("Storage choices are rejected by production configuration") from exc
+            raise SetupHostError(
+                "Storage choices are rejected by production configuration"
+            ) from exc
 
     def config_fragment(self) -> dict[str, object]:
         self.validate()

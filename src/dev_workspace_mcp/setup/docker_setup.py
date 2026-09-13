@@ -34,7 +34,9 @@ class DockerSetupChoices:
             )
             workspace = WorkspaceConfig.from_yaml_value({"idle_stop_after": self.idle_stop_after})
         except (ValidationError, ValueError) as exc:
-            raise SetupDockerError("Docker workspace choices are rejected by production models") from exc
+            raise SetupDockerError(
+                "Docker workspace choices are rejected by production models"
+            ) from exc
         idle_value = "never" if workspace.idle_stop_after_seconds is None else self.idle_stop_after
         return {
             "docker": {

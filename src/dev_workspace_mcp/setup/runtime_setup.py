@@ -38,9 +38,13 @@ class RuntimeChoices:
                     mode="json"
                 )
             if self.logging is not None:
-                result["logging"] = LoggingConfig.model_validate(self.logging).model_dump(mode="json")
+                result["logging"] = LoggingConfig.model_validate(self.logging).model_dump(
+                    mode="json"
+                )
         except ValidationError as exc:
-            raise SetupRuntimeError("Advanced runtime choices are rejected by production models") from exc
+            raise SetupRuntimeError(
+                "Advanced runtime choices are rejected by production models"
+            ) from exc
         return result
 
 
