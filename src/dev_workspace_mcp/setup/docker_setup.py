@@ -90,7 +90,16 @@ def build_default_image(
     image: str,
     approved: bool,
     build_context: Path | None = None,
+    project_root: Path | None = None,
 ) -> None:
+    """Build the bundled default image after explicit approval.
+
+    ``project_root`` is accepted only for compatibility with older setup TUI
+    callers. It is deliberately ignored so the default context is resolved from
+    this installed module, not from the caller's current working directory.
+    """
+
+    del project_root
     if not approved:
         raise SetupDockerError("Docker image build requires explicit approval")
     build_path = bundled_default_image_build_context() if build_context is None else build_context
