@@ -35,8 +35,8 @@ def test_setup_check_success_returns_zero(monkeypatch: object, tmp_path: Path) -
         )
     )
     monkeypatch.setattr(
-        "dev_workspace_mcp.setup.command._headless_diagnostics",
-        lambda _path: report,
+        "dev_workspace_mcp.setup.command.run_setup_diagnostics",
+        lambda _path, **_kwargs: report,
     )
 
     result = CliRunner().invoke(main, ["setup", "--check", "--config", str(tmp_path / "x.yml")])
@@ -59,8 +59,8 @@ def test_setup_check_unresolved_returns_one(monkeypatch: object, tmp_path: Path)
         )
     )
     monkeypatch.setattr(
-        "dev_workspace_mcp.setup.command._headless_diagnostics",
-        lambda _path: report,
+        "dev_workspace_mcp.setup.command.run_setup_diagnostics",
+        lambda _path, **_kwargs: report,
     )
 
     result = CliRunner().invoke(main, ["setup", "--check", "--config", str(tmp_path / "x.yml")])
@@ -68,6 +68,22 @@ def test_setup_check_unresolved_returns_one(monkeypatch: object, tmp_path: Path)
     assert result.exit_code == 1
     assert "ACTION_REQUIRED" in result.output
     assert "remediation: Start Docker." in result.output
+
+
+def test_setup_check_unexpected_failure_returns_fatal_two(
+    monkeypatch: object,
+    tmp_path: Path,
+) -> None:
+    def fail(_path: Path, **_kwargs: object) -> SetupDiagnosticsReport:
+        raise RuntimeError("sensitive external response")
+
+    monkeypatch.setattr("dev_workspace_mcp.setup.command.run_setup_diagnostics", fail)
+
+    result = CliRunner().invoke(main, ["setup", "--check", "--config", str(tmp_path / "x.yml")])
+
+    assert result.exit_code == 2
+    assert "setup diagnostics failed unexpectedly" in result.output
+    assert "sensitive external response" not in result.output
 
 
 def test_setup_resume_without_state_returns_fatal_two(monkeypatch: object, tmp_path: Path) -> None:

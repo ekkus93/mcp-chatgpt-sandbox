@@ -92,7 +92,14 @@ def setup_command(
 
     target = _resolved_config_path(config_path)
     if check_only:
-        report = _headless_diagnostics(target)
+        try:
+            report = _headless_diagnostics(target)
+        except Exception as exc:
+            # This is the outer diagnostic command boundary. Unexpected failures
+            # are fatal and arbitrary exception text is intentionally suppressed
+            # because it may contain environment paths or external response data.
+            click.echo("error: setup diagnostics failed unexpectedly", err=True)
+            raise click.exceptions.Exit(2) from exc
         _render_diagnostics(report)
         if not report.valid:
             raise click.exceptions.Exit(1)
