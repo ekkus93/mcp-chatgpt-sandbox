@@ -701,8 +701,8 @@ class SetupWizardApp(App[int]):
         return DockerSetupChoices(
             default_image=self.query_one("#docker-image", Input).value.strip(),
             workspace_path=self.query_one("#docker-workspace-path", Input).value.strip(),
-            container_user=self._selected("#docker-user", label="container user"),  # type: ignore[arg-type]
-            git_dir_mode=self._selected("#docker-git-dir-mode", label="Git directory mode"),  # type: ignore[arg-type]
+            container_user=self._selected("#docker-user", label="container user"),
+            git_dir_mode=self._selected("#docker-git-dir-mode", label="Git directory mode"),
             idle_stop_after=self.query_one("#docker-idle-stop", Input).value.strip(),
         )
 
