@@ -16,9 +16,15 @@ from docker.errors import DockerException, ImageNotFound
 from dev_workspace_mcp.config import ConfigError, ServerConfig, load_config
 from dev_workspace_mcp.github_api import verify_remote_protection
 from dev_workspace_mcp.repositories import RepositoryRegistry
-from dev_workspace_mcp.setup.filesystem import SetupFilesystemError, reject_unsafe_sensitive_target
+from dev_workspace_mcp.setup.filesystem import (
+    SetupFilesystemError,
+    reject_unsafe_sensitive_target,
+)
 from dev_workspace_mcp.setup.model import SetupRepository, SetupState
-from dev_workspace_mcp.setup.repository_verification import detect_default_branch, verify_repository
+from dev_workspace_mcp.setup.repository_verification import (
+    detect_default_branch,
+    verify_repository,
+)
 from dev_workspace_mcp.setup.tunnel import DEFAULT_TUNNEL_PROFILE, doctor_tunnel_profile
 from dev_workspace_mcp.workspace.ssh_agent import resolve_ssh_key_path
 
@@ -145,7 +151,10 @@ def _docker_checks(config: ServerConfig) -> list[DiagnosticResult]:
             client.ping()
             results.append(
                 _result(
-                    "docker.daemon", "Docker daemon", DiagnosticStatus.PASS, "Docker is reachable"
+                    "docker.daemon",
+                    "Docker daemon",
+                    DiagnosticStatus.PASS,
+                    "Docker is reachable",
                 )
             )
             try:
@@ -313,13 +322,12 @@ def _github_checks(config: ServerConfig) -> list[DiagnosticResult]:
                 )
             )
         else:
+            message = (
+                f"Remote protection is {protection.status}: {reason}; "
+                f"policy={policy} is nonblocking"
+            )
             results.append(
-                _result(
-                    code,
-                    label,
-                    DiagnosticStatus.SKIPPED,
-                    f"Remote protection is {protection.status}: {reason}; policy={policy} is nonblocking",
-                )
+                _result(code, label, DiagnosticStatus.SKIPPED, message)
             )
     return results
 
@@ -381,7 +389,7 @@ def _tunnel_check(state: SetupState | None, runtime_key: str | None) -> Diagnost
         "Secure MCP Tunnel",
         DiagnosticStatus.ACTION_REQUIRED,
         f"tunnel-client doctor did not pass for profile {DEFAULT_TUNNEL_PROFILE!r}",
-        "Reacquire any process-local runtime credential and repair/rerun tunnel-client doctor.",
+        "Reacquire any process-local runtime credential and repair the tunnel profile.",
     )
 
 
@@ -401,13 +409,17 @@ def run_setup_diagnostics(
 
     results: list[DiagnosticResult] = []
     if setup_state_error is not None:
+        remediation = (
+            "Use interactive setup Repair or Start fresh; "
+            "production configuration is untouched."
+        )
         results.append(
             _result(
                 "setup.state",
                 "Setup wizard state",
                 DiagnosticStatus.ACTION_REQUIRED,
                 "Persisted setup state is invalid and cannot be trusted",
-                "Use interactive setup Repair or Start fresh; production configuration is untouched.",
+                remediation,
             )
         )
     elif setup_state is None:
@@ -452,7 +464,9 @@ def run_setup_diagnostics(
         )
     )
     results.append(_config_path_check(config_file))
-    results.append(_path_parent_check("state_db.parent", "State database", config.state_db_path))
+    results.append(
+        _path_parent_check("state_db.parent", "State database", config.state_db_path)
+    )
     results.append(_path_parent_check("audit.parent", "Audit log", config.audit.path))
     results.append(_known_hosts_check(config))
     results.extend(_docker_checks(config))
