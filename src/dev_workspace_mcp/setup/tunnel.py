@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 import shutil
 import subprocess
 import webbrowser
@@ -58,9 +59,17 @@ def build_tunnel_profile_plan(
         raise SetupTunnelError("Tunnel id must be a non-empty token")
     resolved_config = config_path.expanduser().resolve(strict=False)
     resolved_project = project_root.expanduser().resolve(strict=False)
-    server_command = (
-        f"uv run --project {resolved_project} dev-workspace-mcp serve --config {resolved_config}"
+    command_argv = (
+        "uv",
+        "run",
+        "--project",
+        str(resolved_project),
+        "dev-workspace-mcp",
+        "serve",
+        "--config",
+        str(resolved_config),
     )
+    server_command = shlex.join(command_argv)
     argv = (
         "tunnel-client",
         "init",

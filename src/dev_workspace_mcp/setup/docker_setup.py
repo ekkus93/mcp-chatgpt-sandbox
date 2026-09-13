@@ -61,20 +61,48 @@ def image_exists(client: docker.DockerClient, image: str) -> bool:
     return True
 
 
-def default_image_build_command(image: str) -> tuple[str, ...]:
-    return ("docker", "build", "-t", image, "docker/default/")
+def bundled_default_image_build_context() -> Path:
+    """Resolve the repository-bundled default Docker build context.
+
+    The setup wizard may be launched from any current working directory. The
+    bundled Docker context is therefore resolved from this module's installed
+    source tree, not from ``Path.cwd()``.
+    """
+
+    context = Path(__file__).resolve().parents[3] / "docker" / "default"
+    if not context.is_dir():
+        raise SetupDockerError(
+            "Default Docker build context is unavailable; build or pull the image manually."
+        )
+    return context
+
+
+def default_image_build_command(
+    image: str, *, build_context: Path | None = None
+) -> tuple[str, ...]:
+    context = bundled_default_image_build_context() if build_context is None else build_context
+    return ("docker", "build", "-t", image, str(context))
 
 
 def build_default_image(
     client: docker.DockerClient,
     *,
     image: str,
-    project_root: Path,
     approved: bool,
+    build_context: Path | None = None,
+    project_root: Path | None = None,
 ) -> None:
+    """Build the bundled default image after explicit approval.
+
+    ``project_root`` is accepted only for compatibility with older setup TUI
+    callers. It is deliberately ignored so the default context is resolved from
+    this installed module, not from the caller's current working directory.
+    """
+
+    del project_root
     if not approved:
         raise SetupDockerError("Docker image build requires explicit approval")
-    build_path = project_root / "docker" / "default"
+    build_path = bundled_default_image_build_context() if build_context is None else build_context
     try:
         client.images.build(path=str(build_path), tag=image, rm=True)
     except (DockerException, OSError) as exc:

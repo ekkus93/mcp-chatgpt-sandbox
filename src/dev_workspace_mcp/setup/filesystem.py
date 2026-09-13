@@ -55,7 +55,13 @@ def reject_unsafe_sensitive_target(path: Path) -> None:
 
 
 def ensure_private_directory(path: Path) -> Path:
-    """Create or validate a setup-owned directory and force mode 0700."""
+    """Create or validate a setup-owned directory.
+
+    Missing directories are created owner-only. Existing directories are
+    inspected but not chmodded: callers may point setup/config writes at an
+    operator-owned parent, and a write inside that parent must not silently
+    change the parent's sharing policy.
+    """
 
     expanded = path.expanduser()
     existing = _lstat(expanded)
@@ -64,9 +70,14 @@ def ensure_private_directory(path: Path) -> Path:
             raise SetupFilesystemError(f"Refusing symlink setup directory: {expanded}")
         if not stat.S_ISDIR(existing.st_mode):
             raise SetupFilesystemError(f"Expected setup directory at {expanded}")
+        return expanded
     try:
-        expanded.mkdir(parents=True, mode=0o700, exist_ok=True)
+        expanded.mkdir(parents=True, mode=0o700, exist_ok=False)
         expanded.chmod(0o700)
+    except FileExistsError as exc:
+        raise SetupFilesystemError(
+            f"Could not prepare setup directory {expanded}: path changed during setup"
+        ) from exc
     except OSError as exc:
         raise SetupFilesystemError(
             f"Could not prepare setup directory {expanded}: {_describe_os_error(exc)}"
