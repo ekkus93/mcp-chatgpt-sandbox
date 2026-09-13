@@ -120,8 +120,7 @@ def test_wizv_016_fresh_install_generates_and_validates_without_yaml_editing(
     report = run_diagnostics(result.path)
     assert report.ready_to_finish
     assert all(
-        item.status in {DiagnosticStatus.PASS, DiagnosticStatus.SKIPPED}
-        for item in report.results
+        item.status in {DiagnosticStatus.PASS, DiagnosticStatus.SKIPPED} for item in report.results
     )
 
 
