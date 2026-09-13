@@ -35,7 +35,7 @@ def test_setup_check_success_returns_zero(monkeypatch: object, tmp_path: Path) -
         )
     )
     monkeypatch.setattr(
-        "dev_workspace_mcp.setup.command.run_setup_diagnostics",
+        "dev_workspace_mcp.setup.command._headless_diagnostics",
         lambda _path: report,
     )
 
@@ -59,7 +59,7 @@ def test_setup_check_unresolved_returns_one(monkeypatch: object, tmp_path: Path)
         )
     )
     monkeypatch.setattr(
-        "dev_workspace_mcp.setup.command.run_setup_diagnostics",
+        "dev_workspace_mcp.setup.command._headless_diagnostics",
         lambda _path: report,
     )
 
