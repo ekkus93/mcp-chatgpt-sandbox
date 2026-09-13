@@ -1,156 +1,176 @@
 # Configuration
 
-`docs/SPEC.md` is the only configuration reference this project
-maintains: §52 gives the full example file, and each block is documented
-alongside the feature it configures — §7 (repositories), §9 (images),
-§11 (caches), §19 (SSH keys), §18.9 (Git policy), §26 (resources), §53
-(secrets). The Pydantic models in
-`src/dev_workspace_mcp/config/models.py` are the actual enforced schema;
-`docs/SPEC.md` §52's example is kept consistent with them by hand
-(`load_config`, `src/dev_workspace_mcp/config/loader.py`, fails closed on
-anything the models reject). Every model sets `extra: forbid` — an
-unrecognized key anywhere in the file is a validation error, not a
-silently ignored typo.
+The production configuration is YAML and is enforced by the Pydantic models in
+`src/dev_workspace_mcp/config/models.py`. `docs/SPEC.md` remains the complete
+server configuration reference: §52 contains the worked example and the feature
+sections explain the semantics behind each block.
+
+For normal first-time setup and interactive edits, use the wizard:
+
+```bash
+uv run dev-workspace-mcp setup
+# or choose an explicit target
+uv run dev-workspace-mcp setup --config /absolute/path/config.yml
+```
+
+Manual YAML authoring is still fully supported for automation, recovery, and
+operators who deliberately prefer config-as-code.
+
+## Wizard ownership and preservation
+
+The setup wizard does **not** maintain a second configuration schema.
+`ServerConfig`, its nested production models, and the final production
+`load_config()` reload remain authoritative.
+
+The wizard classifies every current top-level `ServerConfig` field so adding a
+new production field forces an explicit setup-support decision. It may guide or
+edit:
+
+- `version` when creating a new config;
+- `state_db_path`;
+- `repository_roots` and `repositories`;
+- `docker`, `workspace`, and `container`;
+- `ssh` and `github`;
+- `git_policy`;
+- `resources`, `audit`, and `logging`.
+
+`filesystem` and `execution` are advanced controls and stay untouched in the
+normal path unless the operator explicitly opens/reviews advanced runtime
+settings. More generally, a field being wizard-supported does not mean opening
+the wizard overwrites it: only fields actually reviewed in the current session
+are included in the candidate update.
+
+For existing production-valid configs, untouched top-level fields are preserved.
+When the wizard updates a mapping such as `github:` or `audit:`, reviewed
+subfields are deep-merged so valid unedited keys are preserved as well.
+
+Before a config write, the wizard:
+
+1. safely reads and parses the current source, rejecting duplicate YAML keys;
+2. validates it with production semantics;
+3. materializes only reviewed values;
+4. validates and serializes the exact candidate;
+5. shows a structured review summary;
+6. binds that review to the digest/existence of the source file;
+7. refuses if the source changes before commit;
+8. creates a timestamped backup when replacing a file;
+9. writes atomically with restrictive permissions;
+10. byte-verifies the persisted candidate;
+11. reloads it through production `load_config()` before reporting success.
+
+Raw private keys, GitHub tokens, passwords, and tunnel runtime credentials are
+not fields in resumable setup state. Credential **paths** and non-secret tunnel
+identity may be persisted; secret contents are not.
 
 ## What's actually required
 
-Config is YAML. Everything has a sensible default except five fields,
-which is why there's no bundled example to copy — a real one would need
-values only you can supply (a state directory, an image tag, key
-locations):
+Everything has a sensible default except five operator-supplied fields:
 
 | Field | Why it has no default |
 | --- | --- |
-| `state_db_path` | Where operational state (workspace/job/audit-index records, §68) is written is an operator decision, not a convention to assume. |
-| `docker.default_image` | The image workspaces build from — there's no safe generic default to fall back to. |
-| `ssh.keys_dir` | Where per-repository deploy keys live on the host (§19.1). |
+| `state_db_path` | Where operational state (workspace/job/audit-index records, §68) is written is an operator decision. |
+| `docker.default_image` | The image workspaces build from. |
+| `ssh.keys_dir` | Where repository deploy keys live on the host (§19.1). |
 | `ssh.known_hosts` | The pinned host-key file SSH connections from containers verify against (§19.3). |
-| `audit.path` | Where the audit log is written (§24). |
+| `audit.path` | Where the structured audit log is written (§24). |
 
-`repositories`/`repository_roots` also default to empty, which is worth
-calling out even though it's not a hard requirement: a config with
-neither registers no repositories at all, so `workspace_open` has
-nothing to open.
+`repositories`/`repository_roots` default to empty. A config with neither is
+valid but exposes no repository to `workspace_open`.
+
+The wizard supplies documented operator defaults for host paths but does not
+turn those defaults into new `ServerConfig` defaults. Its explicit storage
+creation action can create reviewed parent directories and, when the selected
+`known_hosts` file is absent or empty, populate it with the same production-
+pinned GitHub host-key set used by the loader. It does not use trust-on-first-use.
 
 ## Block-by-block summary
 
-Each block below governs one area; see the cited `docs/SPEC.md` section
-for the reasoning, not just the field list.
-
-- **`repositories`** (§7) — explicitly registers a repository: a stable
-  `id` the client uses instead of a raw path, the local `path` (must be
-  absolute), a `github: owner/repo` identity used to validate remotes,
-  and an optional `ssh_key` filename (relative to `ssh.keys_dir`; not
-  used under `ssh.scope: shared`). For the end-to-end steps — generating
-  that key, installing it on GitHub, adding the entry — see
-  [`docs/CONNECTING_A_REPOSITORY.md`](CONNECTING_A_REPOSITORY.md).
-- **`repository_roots`** (§7.1) — directories the daemon may
-  auto-discover repositories under, as an alternative to registering
-  each one individually. Entries must be absolute; discovered paths must
-  resolve (after symlinks) to stay under an authorized root.
-- **`docker`** (§9) — `default_image` names the image workspace
-  containers build from (subject to a precedence order: an explicit
-  per-call image beats a repo's own `.devcontainer.json` or Dockerfile
-  beats this default); `workspace_path` (default `/workspace`) is where
-  the repository is mounted inside the container.
-- **`workspace`** (§8.1) — `idle_stop_after` (a duration string like
-  `4h`, or `never`) controls when an idle *persistent* container is
-  stopped (not deleted) to free resources; default 4 hours.
-- **`container`** (§5.3, §18.2) — `user` (`host`, default, or `root`)
-  controls the in-container process identity; `root` without Docker
-  user-namespace remapping is refused rather than silently allowed.
-  `git_dir_mode` (`read-write` default, `read-only`, or `none`) controls
-  how much of `.git` the container can see, trading workflow
-  completeness for isolation from host-executed Git hooks.
-- **`ssh`** (§19) — the credential model's core: `mode` (`agent`,
-  default — key material never enters the container; or `file` — the
-  key is bind-mounted, simpler but extractable by container code) and
-  `scope` (`repository`, default — one key per repo; or `shared` — one
-  key for every configured repo, which trades away per-repository key
-  scoping for simplicity). `keys_dir` and `known_hosts` are required, as
-  noted above.
-- **`github`** (§19.5, §19.6) — an optional, strictly **read-only** API
-  credential (`api_auth: none` default) used to check branch-protection
-  status and populate repository metadata; it is never mounted into a
-  container and cannot push.
-- **`filesystem`** (§12.2) — byte/count ceilings for the filesystem
-  tools: read/write/patch size limits, and listing/search result caps,
-  each independently configurable with generous defaults (10 MiB
-  reads/writes, 1 MiB patches, 1000 listing entries, 500 search
-  results).
-- **`execution`** (§14.4, §15.5, §15.6) — timeouts (`sync_timeout_seconds`,
-  `default_job_timeout_seconds`) and output handling for `exec`/jobs:
-  how much output is captured to disk (`max_output_bytes`,
-  `tail_keep_bytes`) versus how much is returned directly in an MCP
-  response (`default_output_response_bytes`, deliberately much smaller,
-  so a noisy command doesn't consume the client's context) — plus job
-  log retention (`job_retention_days`, `job_log_max_total_bytes`).
-- **`git_policy`** (§18.9) — governs only the *structured* Git tools
-  (`git_commit`/`git_push`/`git_pull`); `exec` is a real shell and isn't
-  bound by it. Covers force-push, force-with-lease, remote branch/tag
-  deletion, amending published commits, default-branch push/commit, pull
-  strategy, and remote-protection enforcement through
-  `require_remote_protection`. Its semantics are intentionally explicit
-  (G3R-003): `off` performs no enforcement; `warn` allows both confirmed
-  `missing` protection and `unverified` status while returning the exact
-  reason; `deny` blocks both `missing` and `unverified` before repository
-  SSH-key provisioning or Docker workspace creation. An API outage,
-  absent/unauthorized credential, timeout, or malformed response is
-  therefore **not** silently treated as success under `deny`. Every key
-  here maps to a parameter a structured tool actually accepts —
-  operations with no structured tool (hard reset, `clean -fdx`, rebase,
-  changing a remote URL) deliberately have no policy key; they're
-  reachable only through `exec`, bounded instead by the container and
-  the remote.
-- **`resources`** (§26) — optional Docker `cpus`/`memory`/`pids_limit`
-  ceilings on workspace containers; unset (the default for each) means
-  no limit, matching Docker's own default rather than an opinionated
-  daemon ceiling.
-- **`audit`** (§24) — `enabled` (default `true`) and the required `path`
-  for the structured, append-only audit log.
-- **`logging`** — the standard-library `logging` level (`INFO` default);
-  separate from the structured audit log above, and not itself in
-  `docs/SPEC.md` §52's worked example (it predates that example; see
-  `docs/HARDENING_TODO.md` HR-031).
+- **`repositories`** (§7) — explicit repository registrations: stable `id`,
+  absolute local `path`, canonical `github: owner/repo`, and optional `ssh_key`
+  filename relative to `ssh.keys_dir`. The wizard provides add/edit/remove and
+  read-only local Git/remote verification.
+- **`repository_roots`** (§7.1) — absolute directories under which repositories
+  may be auto-discovered. Discovery does not replace remote-identity or SSH
+  policy.
+- **`docker`** (§9) — `default_image` and `workspace_path` (`/workspace` by
+  default). The wizard can inspect the selected image and explicitly run the
+  project's reviewed default-image build action.
+- **`workspace`** (§8.1) — `idle_stop_after`, e.g. `4h` or `never`, controlling
+  idle stop for persistent workspaces.
+- **`container`** (§5.3, §18.2) — `user` (`host` default or `root`), `sudo`, and
+  `git_dir_mode` (`read-write`, `read-only`, or `none`). Root operation remains
+  subject to the production user-namespace safety checks.
+- **`ssh`** (§19) — `mode` (`agent` recommended/default or `file`) and `scope`
+  (`repository` recommended/default or `shared`), plus required `keys_dir` and
+  `known_hosts`. The wizard explains the isolation/exposure consequences before
+  validation.
+- **`github`** (§19.5, §19.6) — optional read-only API integration for branch-
+  protection metadata. `api_auth: token` stores only an absolute token-file
+  path in config. Current runtime verification does not implement GitHub App
+  auth, and the wizard reports that state as unverified rather than success.
+- **`filesystem`** (§12.2) — byte/count ceilings for read/write/patch and
+  listing/search tools. It is an advanced wizard section.
+- **`execution`** (§14.4, §15.5, §15.6) — command/job timeouts, captured output,
+  MCP response limits, and job retention. It is an advanced wizard section.
+- **`git_policy`** (§18.9) — structured Git-tool policy. The wizard offers a
+  Recommended preset equal to current production defaults, a stricter
+  Conservative preset, and Custom mode that covers every current production
+  `GitPolicyConfig` field. Presets materialize to the production model; they are
+  not a parallel runtime policy layer.
+- **`resources`** (§26) — optional Docker CPU/memory/PID limits. Unset means no
+  daemon-imposed limit.
+- **`audit`** (§24) — `enabled` (default `true`) and required output `path`.
+- **`logging`** — standard-library logging level (`INFO` default), separate from
+  the structured audit log.
 
 ## Per-repository `.mcp-workspace.yml`
 
 A repository may commit `.mcp-workspace.yml` (or `.mcp-workspace.yaml`) for the
-project-level settings defined by `docs/SPEC.md` §10. G3R-009 makes the current
-implementation status explicit: an operational-looking field is either consumed
-by runtime code or rejected. The daemon does not accept a field merely because it
-appears in the future-facing §10 example.
+project-level settings defined by `docs/SPEC.md` §10. The setup wizard does not
+modify this file.
 
 | Field | Current status | Runtime consumer / required action |
 | --- | --- | --- |
-| `version` | **Supported** | Validated by `load_project_config`; recorded as `config_version` in workspace reproducibility metadata. |
-| `image` | **Supported** | `resolve_effective_image` and CLI reset/rebuild choose the project image ahead of `docker.default_image`. |
-| `setup` | **Supported** | `run_setup_steps` runs the commands after genuine container creation and after reset/rebuild. |
-| `environment` | **Supported** | Added to container environment only after the project-environment security validators accept it. |
-| `caches` | **Supported** | `resolve_caches` / `build_cache_mounts` create repository-scoped dependency-cache mounts. |
-| `workspace` | **Rejected** | No project-level workspace-path override is implemented. Remove the field until an end-to-end override exists. |
-| `github` | **Rejected** | Project-level `github.repository` does not populate the daemon repository registry or remote-protection identity. Configure `repositories[].github` in daemon config instead. |
-| `validation` | **Rejected** | No MCP validation tool or workspace lifecycle hook runs `format`, `lint`, or `test`; each is therefore rejected rather than silently ignored. |
+| `version` | **Supported** | Validated by `load_project_config`; recorded in reproducibility metadata. |
+| `image` | **Supported** | `resolve_effective_image` and CLI reset/rebuild choose it ahead of `docker.default_image`. |
+| `setup` | **Supported** | `run_setup_steps` runs commands after genuine container creation/reset/rebuild. |
+| `environment` | **Supported** | Added only after project-environment security validation. |
+| `caches` | **Supported** | `resolve_caches` / `build_cache_mounts` create repository-scoped cache mounts. |
+| `workspace` | **Rejected** | No project-level workspace-path override is implemented. |
+| `github` | **Rejected** | Configure daemon `repositories[].github` instead. |
+| `validation` | **Rejected** | No lifecycle hook consumes these fields; they are rejected rather than ignored. |
 
-Rejected fields fail project-config loading with `CONTAINER_CREATE_FAILED` and a
-message naming the unsupported field. This includes an explicitly written `null`;
-omit an unsupported field entirely. `SUPPORTED_PROJECT_CONFIG_FIELDS` and
-`UNSUPPORTED_PROJECT_CONFIG_FIELDS` in `project_config.py`, plus G3AT-009, make
-the inventory exhaustive so adding a future top-level field requires an explicit
-support decision.
+Rejected fields fail project-config loading explicitly, including an explicitly
+written `null`. `SUPPORTED_PROJECT_CONFIG_FIELDS` and
+`UNSUPPORTED_PROJECT_CONFIG_FIELDS` keep the inventory exhaustive.
 
 ## Secrets
 
-Per §53: secrets belong in protected files outside repository roots,
-environment variables, OS secret stores, or restricted-permission
-GitHub App credential files — never committed to Git as project
-configuration. Consistent with that, no field in the schema holds a raw
-secret value directly; `ssh.keys_dir`/`ssh_key`/`shared_key` and
-`github.api_token_path` are all path references to files that live
-outside repository roots and are never mounted into a container.
+Per §53, secrets belong in protected files outside repository roots,
+environment variables, OS secret stores, or other restricted external stores —
+never committed to project configuration. Config fields such as `ssh_key`,
+`shared_key`, and `github.api_token_path` are references, not raw secret values.
 
-This file exists so a reader who lands on it directly is pointed
-somewhere real, not left with a 404 — it is not a second copy of the
-reference kept in parallel with `docs/SPEC.md`. For the full field list,
-types, and validation rules, read the models directly:
-`src/dev_workspace_mcp/config/models.py`.
+The setup state follows the same rule. Resume data may contain selected paths,
+repository identities, policy choices, and tunnel IDs/profile names, but it
+rejects secret-shaped state fields and deliberately has no raw token/private-key
+field.
+
+## Manual validation and diagnostics
+
+After either wizard or manual edits:
+
+```bash
+uv run dev-workspace-mcp doctor --config /path/to/config.yml
+```
+
+or:
+
+```bash
+uv run dev-workspace-mcp setup --check --config /path/to/config.yml
+```
+
+Both call the same diagnostic engine used by the wizard's final screen.
+
+For the full field list, types, and validation rules, read
+`src/dev_workspace_mcp/config/models.py` and `docs/SPEC.md`.

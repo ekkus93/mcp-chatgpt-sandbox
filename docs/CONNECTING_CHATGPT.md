@@ -1,31 +1,37 @@
 # Connecting ChatGPT
 
-This server speaks MCP over `stdio` by default (`--transport stdio`,
-`docs/SPEC.md` §56). A local MCP client can spawn
-`dev-workspace-mcp serve` as a subprocess and exchange JSON-RPC over
-stdin/stdout.
+This server speaks MCP over `stdio` by default. ChatGPT is a hosted client and
+cannot directly spawn a local process on your machine, so this project's
+supported private ChatGPT path uses OpenAI Secure MCP Tunnel: `tunnel-client`
+runs locally and connects outbound to OpenAI without exposing the development
+server to the public internet.
 
-ChatGPT is a hosted web client. It cannot directly spawn a local `stdio`
-process on your machine, and this project does not implement a supported
-public HTTP deployment profile with host/port config and transport-level
-authentication. For this project, the supported ChatGPT path is therefore
-OpenAI Secure MCP Tunnel: `tunnel-client` runs on your machine, starts or
-reaches the local MCP server, and connects outbound to OpenAI without opening an
-inbound firewall port or exposing this development server to the public
-internet.
+The setup wizard contains an **optional** ChatGPT connection step:
+
+```bash
+uv run dev-workspace-mcp setup
+```
+
+You may skip it entirely for local MCP clients. The wizard detects
+`tunnel-client`, keeps raw runtime credentials out of resumable setup state,
+shows/reviews the exact profile command before mutation, runs tunnel health
+checks, and records ChatGPT UI completion separately as **USER-ATTESTED** because
+the local program cannot independently inspect that hosted UI.
+
+The manual flow below remains the recovery/reference path.
 
 ## Capability and plan check
 
-Before setup, confirm that your current ChatGPT account/workspace can use
+Before connecting, confirm that your current ChatGPT account/workspace can use
 write-capable custom MCP apps in developer mode.
 
-This server is not read-only. Its MCP tool surface includes file writes,
-patches, deletes, shell execution, `git_commit`, `git_pull`, `git_push`, and
-resource-prune execution after confirmation. A ChatGPT surface that only allows
-search/read/fetch MCP tools is not enough for the full development workflow.
+This server is not read-only. Its MCP surface includes file writes, patches,
+deletes, shell execution, Git mutation, and explicitly confirmed resource-prune
+execution. A ChatGPT surface limited to search/read/fetch MCP tools is not enough
+for the complete development workflow.
 
-OpenAI's plan eligibility and UI placement can change. Treat these current
-OpenAI docs as the source of truth rather than this repository:
+OpenAI plan eligibility and UI placement can change. Treat OpenAI's current docs
+as the source of truth rather than hardcoded claims in this repository:
 
 - Developer mode and MCP apps in ChatGPT:
   https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt
@@ -36,69 +42,66 @@ OpenAI docs as the source of truth rather than this repository:
 - Connect and test an MCP server in ChatGPT:
   https://developers.openai.com/plugins/deploy/connect-chatgpt
 
-As of this documentation update, OpenAI's Help Center distinguishes full MCP
-support from read/fetch-only MCP support on some plans. If your account can
-only connect read/fetch MCP tools, do not use that as validation for this
-server's write-capable workflow.
+The wizard uses these documentation URLs as updateable constants and does not
+persist subscription/plan assumptions in configuration.
 
 ## Prerequisites
 
-- A working local `mcp-chatgpt-sandbox` server configuration. Confirm
-  `uv run dev-workspace-mcp serve --config <path>` starts cleanly before adding
-  a tunnel.
-- Docker reachable from the host running `tunnel-client`. The tunnel only
-  relays MCP traffic; the server still needs Docker for every workspace.
-- A workspace image built locally, usually:
+- A production-valid local server config.
+- Docker installed and, for final diagnostics/workspaces, reachable.
+- The configured workspace image built locally.
+- `tunnel-client` installed if you select the ChatGPT wizard step.
+- An OpenAI Platform organization/tunnel/runtime credential appropriate for your
+  current OpenAI setup.
 
-  ```bash
-  docker build -t mcp-dev-ubuntu:24.04 docker/default/
-  ```
+## Wizard path
 
-- A ChatGPT account/workspace with developer-mode access for write-capable
-  custom MCP apps.
-- An OpenAI Platform organization with permission to create/use a tunnel, plus
-  a runtime credential for `tunnel-client`.
+In the optional **ChatGPT connection** step:
 
-## 1. Install `tunnel-client`
+1. Select **Configure optional ChatGPT Secure MCP Tunnel**.
+2. Enter the non-secret tunnel ID and local profile name.
+3. Review the server command shown by the wizard. It launches:
+
+   ```text
+   uv run --project <project-root> dev-workspace-mcp serve --config <config-path>
+   ```
+
+4. Explicitly run **Create / repair reviewed tunnel profile**.
+5. Run the profile validation action.
+6. Complete or refresh the custom MCP app in ChatGPT using OpenAI's current UI.
+7. Mark the ChatGPT UI checkbox only after doing that hosted action. The final
+   summary labels this **USER-ATTESTED**, not machine PASS.
+
+`--no-browser` guarantees the wizard does not launch documentation URLs:
 
 ```bash
-brew install openai/tools/tunnel-client   # macOS/Linux with Homebrew
+uv run dev-workspace-mcp setup --no-browser
+```
+
+It prints/shows the current URL for manual opening instead.
+
+If ChatGPT setup is skipped, it is shown as `SKIPPED` and does not block an
+otherwise valid local server.
+
+## Manual tunnel flow
+
+### 1. Install `tunnel-client`
+
+```bash
+brew install openai/tools/tunnel-client
 tunnel-client --version
 ```
 
-If Homebrew is not available, use the installation path from OpenAI's current
-Secure MCP Tunnel documentation or the `openai/tunnel-client` repository.
+If Homebrew is unavailable, follow OpenAI's current Secure MCP Tunnel docs.
 
-## 2. Create a tunnel and runtime credential
+### 2. Create/select a tunnel and runtime credential
 
-Create or select a tunnel in OpenAI Platform tunnel settings:
+Open the current OpenAI Platform tunnel/API-key settings described by OpenAI's
+documentation. Keep runtime credentials in the external secure environment
+expected by your installed `tunnel-client`; do not put raw values into this
+repository, config YAML, setup state, logs, or ChatGPT messages.
 
-```text
-https://platform.openai.com/settings/organization/tunnels
-```
-
-Create the runtime credential used by the tunnel client in OpenAI Platform API
-key settings:
-
-```text
-https://platform.openai.com/settings/organization/api-keys
-```
-
-The platform permissions for managing tunnel definitions and running/selecting
-a tunnel are separate from ChatGPT developer-mode access. Make sure the
-Platform organization, tunnel, credential, and ChatGPT workspace you intend to
-use belong to the expected account/workspace context.
-
-## 3. Configure the tunnel profile
-
-`tunnel-client` can spawn this `stdio` MCP server itself. Use `uv run --project`
-so the command works regardless of the tunnel client's current working
-directory.
-
-Before running the command below, set the tunnel runtime credential in the
-environment variable required by your installed `tunnel-client` version. Do not
-commit the assignment or paste its value into documentation, shell transcripts,
-or ChatGPT conversations.
+### 3. Configure a profile
 
 ```bash
 tunnel-client init \
@@ -108,133 +111,89 @@ tunnel-client init \
   --mcp-command "uv run --project /path/to/mcp-chatgpt-sandbox dev-workspace-mcp serve --config /path/to/config.yml"
 ```
 
-## 4. Verify the tunnel profile
+### 4. Verify it
 
 ```bash
 tunnel-client doctor --profile chatgpt-sandbox --explain
 ```
 
-`doctor` should confirm that the tunnel profile is healthy and that the
-configured MCP command starts cleanly. Fix local server problems here before
-opening ChatGPT. A bad config path, unbuilt Docker image, invalid YAML file, or
-missing Docker socket is easier to diagnose from `doctor` than from a failed
-ChatGPT tool call.
+Fix local server/config problems here before diagnosing ChatGPT UI behavior.
 
-## 5. Run the tunnel
+### 5. Run it
 
 ```bash
 tunnel-client run --profile chatgpt-sandbox
 ```
 
-Leave this process running while ChatGPT uses the server. For long-lived use,
-run it under the service manager you already trust on this host, such as
-`systemd`, `tmux`, `screen`, or a supervised container.
+Leave the tunnel client running while ChatGPT uses the server. Long-lived
+operation may be placed under a service manager you already trust.
 
-Config changes require restarting the tunnel profile because the tunnel command
-spawns the MCP server process. Tool-schema changes also require refreshing or
-rescanning the app in ChatGPT; see the refresh section below.
+## Create or refresh the ChatGPT app
 
-## 6. Create or refresh the ChatGPT app
+Use OpenAI's current developer-mode/app documentation as the exact UI source.
+The UI has moved before, so this repository intentionally describes the general
+flow rather than freezing a brittle settings path:
 
-Use OpenAI's current ChatGPT developer-mode/app documentation as the exact UI
-source. The UI has moved before. Depending on plan and workspace policy, the
-relevant controls may be under workspace settings or user settings.
+1. Enable developer mode according to current OpenAI instructions.
+2. Create a custom app/MCP connection.
+3. Choose **Tunnel** as the connection method when offered.
+4. Select the tunnel or enter its ID.
+5. Scan/review discovered tools.
+6. Compare them with [`docs/TOOLS.md`](TOOLS.md), including write-capable tools.
+7. Enable/publish according to workspace policy.
+8. Start a new conversation with the app/tool enabled.
 
-General flow:
+If only read/fetch capabilities are available, do not treat that as successful
+validation for this write-capable development server.
 
-1. Enable developer mode for the account/workspace according to OpenAI's current
-   instructions.
-2. Create a custom app/MCP connection from the current ChatGPT app settings UI.
-3. When asked for the MCP connection method, choose **Tunnel**.
-4. Select the tunnel from step 2, or paste the tunnel ID directly.
-5. Scan/review the discovered tools.
-6. Confirm that ChatGPT shows this server's expected tools from
-   [`docs/TOOLS.md`](TOOLS.md), including the write-capable development tools.
-7. Enable or publish the app according to your workspace policy.
-8. Start a new conversation and select the app/developer-mode tool from the
-   composer/tools menu.
+## Validate end to end
 
-If ChatGPT offers only a read/fetch-only MCP connection mode, do not treat that
-as a successful setup for this project. This project needs write-capable custom
-MCP app support to perform its core file/Git/development workflow.
+Start read-only:
 
-## 7. Validate end to end
+1. `repository_list` shows configured IDs.
+2. `workspace_open` returns a running test workspace.
+3. `read_file` can read a small known file.
+4. `git_status` reports the expected state.
 
-Start with read-only calls:
+Then, only on a disposable branch/test repository:
 
-1. `repository_list` should show the configured repository IDs.
-2. `workspace_open` for a test repository should return a running container.
-3. `read_file` should read a small known file.
-4. `git_status` should report the expected branch/head state.
+1. make a harmless `write_file`/`patch_file` change;
+2. inspect it with `git_diff`;
+3. create a commit with `git_commit`;
+4. push with structured `git_push` under the configured Git policy.
 
-Then validate write-capable behavior only in a disposable branch or test
-repository:
-
-1. `write_file` or `patch_file` should make a small harmless change.
-2. `git_diff` should show that change.
-3. `git_commit` should create a commit when given explicit paths.
-4. `git_push` should authenticate using the repository-scoped deploy key and
-   push only to the expected remote/branch allowed by policy.
-
-That final push is the real end-to-end proof: it exercises ChatGPT app access,
-Secure MCP Tunnel, the local MCP daemon, Docker, the repository mount, Git,
-remote validation, and the deploy key.
+That final push proves the ChatGPT app, tunnel, local daemon, Docker workspace,
+repository mount, remote identity, and deploy key are all connected.
 
 ## Refreshing tool metadata
 
-Refresh the ChatGPT app after changing any MCP-visible surface:
-
-- tool names;
-- tool descriptions;
-- input or output schemas;
-- annotations;
-- server instructions;
-- authentication metadata.
-
-General refresh flow:
-
-1. Restart the local server/tunnel so the live MCP server exposes the new
-   metadata.
-2. Open the app/connection details in ChatGPT settings.
-3. Use the current **Refresh**, **Scan**, or **Update** action shown by ChatGPT.
-4. Review the changed tool list and permissions before enabling/publishing the
-   update.
-5. Start a new conversation and rerun a small validation set.
-
-OpenAI's Help Center notes that approved app metadata can be frozen until an
-admin reviews and publishes an update, so do not assume a server restart alone
-updates the tools ChatGPT will call.
+Refresh/rescan the ChatGPT app after MCP-visible changes such as tool names,
+descriptions, input/output schemas, annotations, server instructions, or auth
+metadata. Restart the local server/tunnel first, then use ChatGPT's current
+Refresh/Scan/Update UI and review the resulting tool permissions.
 
 ## Troubleshooting
 
-- **`tunnel-client doctor` cannot start the MCP command.** Run the same
-  `uv run --project ... dev-workspace-mcp serve --config ...` command directly.
-  Fix config validation, Python environment, or Docker errors before returning
-  to the tunnel.
-- **ChatGPT cannot see the tunnel.** Confirm the tunnel ID, Platform
-  organization, runtime credential, and ChatGPT workspace are the intended
-  ones. Tunnel permissions and ChatGPT developer-mode access are separate.
-- **Tools are missing or stale.** Restart the tunnel, then refresh/rescan the
-  app in ChatGPT. Compare the discovered tool list with [`docs/TOOLS.md`](TOOLS.md)
-  and [`schemas/tools.json`](../schemas/tools.json).
-- **Read tools work but write tools are unavailable.** Your current ChatGPT
-  surface may be read/fetch-only for MCP. Use a plan/workspace that supports
-  write-capable custom MCP apps before validating this project.
-- **`workspace_open` fails with a Docker image error.** Build the image named by
-  `docker.default_image` in your config.
-- **Git push fails.** Confirm the repository deploy key is installed on the
-  correct GitHub repository with write access, the config `github:` value matches
-  the remote, and branch/push policy allows the requested push.
+- **Wizard says `tunnel-client` is unavailable.** Install it using OpenAI's
+  current Secure MCP Tunnel instructions, or skip the optional step.
+- **`tunnel-client doctor` cannot start the server command.** Run the exact
+  displayed `dev-workspace-mcp serve --config ...` command directly and fix the
+  local error first.
+- **ChatGPT cannot see the tunnel.** Reconfirm tunnel ID, Platform organization,
+  runtime credential context, and ChatGPT workspace using current OpenAI docs.
+- **Tools are stale/missing.** Restart the tunnel and rescan the app; compare
+  with [`docs/TOOLS.md`](TOOLS.md) and [`schemas/tools.json`](../schemas/tools.json).
+- **Read tools work but write tools are unavailable.** The connected ChatGPT
+  surface may be read/fetch-only; that is insufficient for this project's full
+  workflow.
+- **`workspace_open` reports a Docker image problem.** Build the image selected
+  by `docker.default_image` or use the wizard's explicit image-build action.
+- **Git push fails.** Recheck repository deploy-key installation, canonical
+  `owner/repo`, and Git policy.
 
 ## Security notes
 
-This server is intended for repositories you own and for trusted AI coding
-clients. It deliberately exposes powerful development actions once connected.
-Keep the server private, use repository-scoped deploy keys, avoid shared
-credentials, review tool permissions in ChatGPT before enabling the app, and use
-throwaway branches or test repositories for first validation.
-
-OpenAI Secure MCP Tunnel keeps this local MCP server off the public internet,
-but it does not make the tool surface harmless. The connected ChatGPT app can
-still request the tools this server exposes, subject to ChatGPT's UI prompts,
-workspace policy, and this server's own validation and Git/resource policies.
+Keep this server private, prefer repository-scoped deploy keys and SSH-agent
+mode, review every connected tool permission, and use disposable branches/test
+repositories for first validation. Secure MCP Tunnel prevents a public inbound
+server exposure; it does not make the development tool surface harmless.

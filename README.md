@@ -105,48 +105,44 @@ commit/pull/push workflows.
 
 ## Quick start
 
-For the condensed end-to-end path, read [`docs/QUICKSTART.md`](docs/QUICKSTART.md).
-The minimal local sequence is:
+For a new installation, use the interactive setup wizard rather than writing
+YAML by hand:
 
 ```bash
 uv sync --group dev
 git config core.hooksPath .githooks
-
-docker build -t mcp-dev-ubuntu:24.04 docker/default/
+uv run dev-workspace-mcp setup
 ```
 
-Create a config file with the required fields:
+The Textual wizard guides host paths, Docker, repositories, SSH/GitHub
+credential references, Git safety policy, optional advanced limits, and an
+optional ChatGPT Secure MCP Tunnel profile. It shows the exact configuration
+changes before writing, creates timestamped backups when replacing an existing
+config, reloads the result through the production config loader, and finishes
+with machine-verifiable diagnostics.
 
-```yaml
-version: 1
-state_db_path: /var/lib/dev-workspace-mcp/state.db
+The default config path is:
 
-docker:
-  default_image: mcp-dev-ubuntu:24.04
-
-ssh:
-  keys_dir: /etc/dev-workspace-mcp/keys
-  known_hosts: /etc/dev-workspace-mcp/github_known_hosts
-
-audit:
-  path: /var/log/dev-workspace-mcp/audit.jsonl
-
-repositories:
-  - id: my-repo
-    path: /home/you/work/my-repo
-    github: your-org/my-repo
-    ssh_key: my-repo.ed25519
+```text
+~/.config/dev-workspace-mcp/config.yml
 ```
 
-Then run the server:
+After setup, rerun the same diagnostics headlessly whenever needed:
 
 ```bash
-uv run dev-workspace-mcp serve --config config.yml
+uv run dev-workspace-mcp doctor --config ~/.config/dev-workspace-mcp/config.yml
+# equivalent:
+uv run dev-workspace-mcp setup --check --config ~/.config/dev-workspace-mcp/config.yml
 ```
 
-That starts the MCP server on `stdio`, which is suitable for local MCP clients
-or for OpenAI Secure MCP Tunnel when connecting ChatGPT to a private local
-server.
+Then start the MCP server:
+
+```bash
+uv run dev-workspace-mcp serve --config ~/.config/dev-workspace-mcp/config.yml
+```
+
+For the condensed end-to-end walkthrough, including deploy-key setup and the
+manual-config fallback, see [`docs/QUICKSTART.md`](docs/QUICKSTART.md).
 
 ## Development environment
 
@@ -197,6 +193,17 @@ Configuration is YAML and is validated before the server starts. The enforced
 schema lives in `src/dev_workspace_mcp/config/models.py`; the primary
 configuration guide is [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md).
 
+The recommended way to create or edit it is:
+
+```bash
+uv run dev-workspace-mcp setup --config /path/to/config.yml
+```
+
+The wizard preserves valid settings it did not review, persists only non-secret
+resume state, and keeps raw private keys/API/runtime credentials out of both the
+config and setup-state file. Manual YAML authoring remains supported for
+recovery, automation, and operators who deliberately prefer it.
+
 Required top-level/operator fields are:
 
 | Field | Purpose |
@@ -211,7 +218,7 @@ Required top-level/operator fields are:
 A config with neither `repositories` nor `repository_roots` is valid but exposes
 no repositories, so `workspace_open` has nothing to open.
 
-Repository entries look like this:
+A manual repository entry looks like this:
 
 ```yaml
 repositories:
@@ -224,9 +231,31 @@ repositories:
 Use [`docs/CONNECTING_A_REPOSITORY.md`](docs/CONNECTING_A_REPOSITORY.md) for the
 end-to-end deploy-key and repository-registration flow.
 
+## Setup command reference
+
+The main first-run command is:
+
+```bash
+uv run dev-workspace-mcp setup [--config PATH]
+```
+
+Useful modes:
+
+- `--resume` — resume valid incomplete non-secret setup state;
+- `--check` — run the shared final diagnostics without opening the TUI;
+- `--no-browser` — never launch external documentation/browser URLs;
+- `--advanced` — expose advanced runtime/resource controls immediately;
+- `doctor --config PATH` — alias for the same headless diagnostics engine.
+
+Interactive setup exits `0` on successful Finish, `2` on a fatal setup error,
+and `130` when the operator confirms cancellation. Headless diagnostics exit
+`0` when mandatory checks pass, `1` while mandatory remediation/action remains,
+and `2` for a mandatory hard failure.
+
 ## Running the app
 
-Build the workspace image named by your config:
+The wizard can build the project default workspace image explicitly. For manual
+setup, build it yourself:
 
 ```bash
 docker build -t mcp-dev-ubuntu:24.04 docker/default/
@@ -235,7 +264,7 @@ docker build -t mcp-dev-ubuntu:24.04 docker/default/
 Start the daemon:
 
 ```bash
-uv run dev-workspace-mcp serve --config config.yml
+uv run dev-workspace-mcp serve --config ~/.config/dev-workspace-mcp/config.yml
 ```
 
 From an MCP client, open a configured repository:
@@ -253,8 +282,9 @@ correctly.
 
 ChatGPT cannot directly spawn this server as a local `stdio` process. For a
 private local server, use OpenAI Secure MCP Tunnel so the server stays private
-and the tunnel client connects outbound to OpenAI. See
-[`docs/CONNECTING_CHATGPT.md`](docs/CONNECTING_CHATGPT.md).
+and the tunnel client connects outbound to OpenAI. The setup wizard contains an
+optional guided tunnel step; the complete manual/current-OpenAI-doc flow remains
+in [`docs/CONNECTING_CHATGPT.md`](docs/CONNECTING_CHATGPT.md).
 
 This MCP server includes write-capable tools. Make sure the ChatGPT account or
 workspace you use supports write-capable custom MCP apps/developer mode; a
@@ -262,21 +292,21 @@ read/fetch-only MCP connection is insufficient for the full workflow.
 
 ## Documentation map
 
-- [`docs/QUICKSTART.md`](docs/QUICKSTART.md) — copy-pasteable setup path
-- [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — local development, checks, and server run instructions
-- [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) — configuration guide
+- [`docs/QUICKSTART.md`](docs/QUICKSTART.md) — wizard-first setup path and manual fallback
+- [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — local development, checks, TUI tests, and server run instructions
+- [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) — configuration and wizard-ownership guide
 - [`docs/CONNECTING_A_REPOSITORY.md`](docs/CONNECTING_A_REPOSITORY.md) — deploy-key and repository registration walkthrough
 - [`docs/CONNECTING_CHATGPT.md`](docs/CONNECTING_CHATGPT.md) — ChatGPT + Secure MCP Tunnel setup
 - [`docs/TOOLS.md`](docs/TOOLS.md) — human-readable MCP tool index
 - [`schemas/tools.json`](schemas/tools.json) — authoritative exported tool contract
 - [`docs/SECURITY.md`](docs/SECURITY.md) — trust model and security notes
+- [`docs/SETUP_WIZARD_SPEC.md`](docs/SETUP_WIZARD_SPEC.md) — interactive setup design/safety contract
 - [`docs/SPEC.md`](docs/SPEC.md) — full behavioral specification
-- [`docs/TODO.md`](docs/TODO.md) — implementation status/task history
 
 ## Tech stack
 
-Python 3.12, the `mcp` SDK, Docker SDK for Python, Pydantic, PyYAML, Click, and
-`uv`. Workspaces run in Docker containers on Linux.
+Python 3.12, the `mcp` SDK, Docker SDK for Python, Pydantic, PyYAML, Click,
+Textual, and `uv`. Workspaces run in Docker containers on Linux.
 
 ## License
 
