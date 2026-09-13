@@ -111,11 +111,8 @@ def test_wcr_002_coordinator_growth_requires_explicit_architecture_change() -> N
 
 def test_swf_003_setup_app_has_no_broad_e501_per_file_exemption() -> None:
     pyproject = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    per_file_ignores = (
-        pyproject.get("tool", {})
-        .get("ruff", {})
-        .get("lint", {})
-        .get("per-file-ignores", {})
+    per_file_ignores = pyproject.get("tool", {}).get("ruff", {}).get("lint", {}).get(
+        "per-file-ignores", {}
     )
     setup_app_ignores = per_file_ignores.get("src/dev_workspace_mcp/setup/app.py", [])
     assert "E501" not in setup_app_ignores
