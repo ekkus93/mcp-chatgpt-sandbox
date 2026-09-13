@@ -474,8 +474,6 @@ class SetupApp(App[int]):
             self._show_message("Optional ChatGPT connection skipped")
             self._render_status_only()
         elif button_id == "write_configuration":
-            if self.controller.reviewed_plan is None:
-                self.controller.prepare_review()
             commit_result = self.controller.write_reviewed_configuration()
             backup = f"; backup: {commit_result.backup_path}" if commit_result.backup_path else ""
             self._show_message(
