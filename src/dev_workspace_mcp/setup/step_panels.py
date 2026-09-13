@@ -7,7 +7,6 @@ from textual.containers import Vertical
 from textual.widgets import Button, Checkbox, DataTable, Input, Label, Select, Static
 
 from dev_workspace_mcp.setup.git_policy_form import (
-    ALLOW_DENY_VALUES,
     ALLOWED_URL_SCHEME_VALUES,
     DEFAULT_BRANCH_PUSH_VALUES,
     PULL_STRATEGY_VALUES,
