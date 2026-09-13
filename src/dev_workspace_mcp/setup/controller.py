@@ -20,8 +20,8 @@ from dev_workspace_mcp.config.models import (
     GitPolicyConfig,
     LoggingConfig,
     ResourcesConfig,
-    SSHConfig,
     ServerConfig,
+    SSHConfig,
     WorkspaceConfig,
 )
 from dev_workspace_mcp.setup.config_plan import (
@@ -572,9 +572,12 @@ class SetupController:
 
         repositories, _ = self.effective_repositories()
         missing: list[str] = []
-        if ssh.scope == "shared" and ssh.shared_key:
-            if not (ssh.keys_dir / ssh.shared_key).is_file():
-                missing.append(str(ssh.keys_dir / ssh.shared_key))
+        if (
+            ssh.scope == "shared"
+            and ssh.shared_key
+            and not (ssh.keys_dir / ssh.shared_key).is_file()
+        ):
+            missing.append(str(ssh.keys_dir / ssh.shared_key))
         if ssh.scope == "repository":
             for repository in repositories:
                 if (
@@ -805,8 +808,6 @@ class SetupController:
 
     def mark_local_prerequisites(self) -> tuple[str, ...]:
         messages: list[str] = []
-        if sys.version_info < (3, 12):
-            raise SetupControllerError("Python 3.12 or newer is required")
         messages.append(f"Python {sys.version_info.major}.{sys.version_info.minor}: supported")
         if shutil.which("uv") is None:
             messages.append("uv: not detected on PATH (installed-package use may still be valid)")
