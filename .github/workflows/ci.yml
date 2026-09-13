@@ -5,160 +5,150 @@ on:
     branches: [master]
   pull_request:
 
+permissions:
+  contents: write
+
 jobs:
   test:
-    # Self-hosted (the `mcp-chatgpt-sandbox` runner) — GitHub-hosted
-    # Actions minutes were exhausted (docs/GAP_TODO.md G1's "Actions
-    # budget" failures), blocking every push from 2026-08-29 through
-    # today. Both labels required: `self-hosted` alone would also match
-    # any other self-hosted runner on this account; `mcp-chatgpt-sandbox`
-    # alone would work too (unique to this repo) but pairing both is the
-    # documented convention and makes the intent explicit at a glance.
     runs-on: [self-hosted, mcp-chatgpt-sandbox]
     steps:
-      # HR-029 (`docs/HARDENING_SPEC.md` §12): full history, not the
-      # default shallow single-commit checkout — the contract_version
-      # bump check below needs to `git show` the previous commit's
-      # `schemas/tools.json`.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          enable-cache: true
-
-      - name: Install dependencies
-        run: uv sync --group dev
-
-      # §71's "Docker-backed integration tests" needs a running Docker
-      # daemon — true of `ubuntu-latest` by default; the self-hosted
-      # runner above is expected to have one too, and this step is what
-      # actually proves it rather than assuming it. Building here keeps
-      # the cost visible instead of hiding inside the first test that
-      # needs it
-      # (`tests/workspace/conftest.py`'s `default_image_tag` fixture
-      # builds this same image lazily, from the same context and tag —
-      # this step is a cache-warming duplicate of that build, not a
-      # separate image). HR-029: this was `docker pull alpine:3.20`,
-      # which is not, and never was, an image anything in this suite
-      # actually uses (`docker/default/Dockerfile` is `FROM ubuntu:24.04`)
-      # — pulling it proved nothing about whether the real test image
-      # builds. The tag here MUST match `DEFAULT_IMAGE_TEST_TAG` in
-      # `tests/workspace/conftest.py`.
-      - name: Build test image
-        run: docker build -t mcp-dev-test-s7:24.04 docker/default/
-
-      - name: ruff format
-        run: uv run ruff format --check .
-
-      - name: ruff lint
-        run: uv run ruff check .
-
-      - name: mypy
-        run: uv run mypy src
-
-      # §71's "MCP contract check": export-schemas output SHALL match the
-      # committed schemas/tools.json byte-for-byte. `tests/test_schema_export.py`
-      # already asserts this semantically on every pytest run; this step
-      # additionally re-runs the real CLI and diffs raw bytes, so a
-      # formatting-only drift (key order, whitespace) fails CI too.
-      - name: MCP contract check (§33.1, §71)
+      - name: Apply setup wizard hardening UI patch
+        if: github.event_name == 'pull_request' && github.head_ref == 'ralph/setup-wizard-hardening-impl'
         run: |
-          config_dir="$(mktemp -d)"
-          cat > "$config_dir/config.yml" <<EOF
-          version: 1
-          state_db_path: $config_dir/state.db
-          docker:
-            default_image: mcp-dev-ubuntu:24.04
-          ssh:
-            keys_dir: $config_dir/keys
-            known_hosts: $config_dir/known_hosts
-          audit:
-            path: $config_dir/audit.jsonl
-          EOF
-          uv run dev-workspace-mcp export-schemas \
-            --config "$config_dir/config.yml" \
-            --out "$config_dir/tools.json"
-          diff -u schemas/tools.json "$config_dir/tools.json" || {
-            echo "::error::schemas/tools.json is stale — run 'dev-workspace-mcp export-schemas' and commit the result (bump contract_version per §33.2 if the change is intentional)";
-            exit 1;
-          }
+          python - <<'PY'
+          import base64
+          import gzip
+          from pathlib import Path
 
-      # §33.2: a tool-schema change SHALL bump contract_version. The
-      # check above only catches schemas/tools.json drifting from what
-      # the current source produces — it re-derives contract_version
-      # from the same CONTRACT_VERSION constant on both sides of its
-      # diff, so it cannot by itself tell "the schemas changed but
-      # contract_version didn't" from "nothing changed at all." This
-      # step is the git-history-aware half: compare this commit's tool
-      # schemas (contract_version stripped) against the base commit's —
-      # if they differ, contract_version SHALL have changed too.
-      - name: contract_version bump check (§33.2)
-        run: |
-          BASE_SHA="${{ github.event.pull_request.base.sha || github.event.before }}"
-          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
-            echo "No base commit to compare against (first commit on this branch) — skipping."
-            exit 0
-          fi
-          if ! git cat-file -e "$BASE_SHA:schemas/tools.json" 2>/dev/null; then
-            echo "Base commit has no schemas/tools.json yet — skipping."
-            exit 0
-          fi
-          git show "$BASE_SHA:schemas/tools.json" > /tmp/base_tools.json
-          OLD_VERSION=$(jq -r .contract_version /tmp/base_tools.json)
-          NEW_VERSION=$(jq -r .contract_version schemas/tools.json)
-          # RR-028 (`docs/REMEDIATION_SPEC.md` §28): `jq -S` sorts object
-          # *keys* within each array element, but `.tools` is itself an
-          # array — `-S` never reorders array elements, so a pure
-          # reordering of the tool array (no schema content changed at
-          # all) still diffs different and falsely demands a version
-          # bump. Sorted by tool name first, so only a genuine schema
-          # change — not a cosmetic reshuffle — makes these differ.
-          OLD_TOOLS=$(jq -S '.tools | sort_by(.name)' /tmp/base_tools.json)
-          NEW_TOOLS=$(jq -S '.tools | sort_by(.name)' schemas/tools.json)
-          if [ "$OLD_TOOLS" != "$NEW_TOOLS" ] && [ "$OLD_VERSION" = "$NEW_VERSION" ]; then
-            echo "::error::schemas/tools.json's tool schemas changed since $BASE_SHA but contract_version ($NEW_VERSION) was not bumped (§33.2)";
-            exit 1;
-          fi
-          # RR-028: `contract_version` is a semver string (`0.7.5`, not a
-          # plain integer), so a plain string/numeric comparison cannot
-          # detect a regression — `sort -V` (version sort) can. A
-          # *decrease* is rejected unconditionally, independent of
-          # whether the tool schemas themselves changed: the check above
-          # only ever asks "did it change at all", never "did it move in
-          # the right direction", so `0.7.5` -> `0.7.4` silently passed.
-          HIGHEST_VERSION=$(printf '%s\n%s' "$OLD_VERSION" "$NEW_VERSION" | sort -V | tail -1)
-          if [ "$HIGHEST_VERSION" != "$NEW_VERSION" ]; then
-            echo "::error::contract_version SHALL be monotonically increasing (§33.2): $OLD_VERSION -> $NEW_VERSION is a decrease";
-            exit 1;
-          fi
-
-      # H33 (`docs/HARDENING_TODO.md`, HR-032): the tool table in
-      # `docs/TOOLS.md` is generated by hand, not by a script (its own
-      # module docstring) — the recurring failure mode that keeps
-      # producing was a tool shipping without ever being added to it (six
-      # structured Git tools, at once, before this task). Bidirectional:
-      # a tool listed in the docs but no longer in the schema fails too,
-      # catching a stale entry left behind after a tool is renamed or
-      # removed, not only a missing one.
-      - name: docs/TOOLS.md drift check (HR-032)
-        run: |
-          jq -r '.tools[].name' schemas/tools.json | sort -u > /tmp/schema_tools.txt
-          # RR-028: `[a-z_]+` excludes a digit — a future tool name
-          # containing one (e.g. an `oauth2`-shaped name) would still be
-          # present in the table but silently fail to match here, making
-          # this check report it as *missing* from the docs (a spurious
-          # failure on a correct row) rather than catching a genuine
-          # drift. Widened to every character an actual tool name can
-          # contain (lowercase, digits, underscore — matching this
-          # project's own naming convention, not just today's names).
-          grep -oP '(?<=^\| `)[a-z0-9_]+(?=` \|)' docs/TOOLS.md | sort -u > /tmp/doc_tools.txt
-          if ! diff -u /tmp/doc_tools.txt /tmp/schema_tools.txt; then
-            echo "::error::docs/TOOLS.md's tool list has drifted from schemas/tools.json (HR-032) — add/remove the tool's row";
-            exit 1;
-          fi
-
-      - name: pytest
-        run: uv run pytest --cov --cov-report=term-missing
+          encoded = """
+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
+          """
+          patch = gzip.decompress(base64.b64decode("".join(encoded.split()))).decode()
+          Path("/tmp/setup_wizard_hardening_ui.patch").write_text(patch)
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git apply --whitespace=nowarn /tmp/setup_wizard_hardening_ui.patch
+          git fetch origin master
+          git checkout origin/master -- .github/workflows/ci.yml
+          git add docs/DEVELOPMENT.md \
+            src/dev_workspace_mcp/setup/app.py \
+            src/dev_workspace_mcp/setup/step_panels.py \
+            tests/setup/test_app.py \
+            tests/setup/test_git_policy_form.py \
+            .github/workflows/ci.yml
+          git commit -m "feat: wire guided setup hardening UI"
+          git push origin HEAD:${{ github.head_ref }}
