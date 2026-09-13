@@ -1,10 +1,14 @@
 # Setup Wizard Code-Review Remediation Evidence
 
-**Status:** Pre-merge implementation evidence complete; merge/post-merge evidence pending  
+**Status:** Complete  
 **Original wizard baseline:** `49d48611e392e11bceb7dd4ea81967733e86eb78`  
-**Current remediation implementation candidate:** `37436f7ee009939729543ebd9e3123c612943cf7`  
+**Remediation implementation candidate:** `37436f7ee009939729543ebd9e3123c612943cf7`  
+**Evidence/merge head:** `f957803d4c3ceb3722e93e9eb8c9ffd150553e90`  
 **Pull request:** #59  
-**Qualification run:** `34776868015`
+**Implementation qualification run:** `34776868015`  
+**Merge-head qualification run:** `34778439164`  
+**Merged master:** `3dcb00e8696a6dcd41954fc8f4e9069a230e65d4`  
+**Post-merge qualification run:** `34779008735`
 
 ## Scope
 
@@ -68,7 +72,7 @@ Repository verification is read-only. A permanent behavioral test snapshots loca
 
 ## Unsafe-fallback and silent-failure audit
 
-The setup package is now guarded by executable audit contracts covering the review concerns that motivated this work.
+The setup package is guarded by executable audit contracts covering the review concerns that motivated this work.
 
 The contracts verify:
 
@@ -121,15 +125,30 @@ Qualified gates:
 - `docs/TOOLS.md` drift gate — PASS
 - full Docker-backed pytest + coverage — PASS
 
-The preceding source generation `088479a40879e8df9aea791bd9c6ac0d5d47040f` completed with 1344 passed and one failing remediation-audit test. The sole failure was an off-by-window issue in the audit helper that searched for the documented fail-closed rationale. Candidate `37436f7e...` changes only that helper and is the authoritative green implementation generation.
+The immediately preceding source generation `088479a40879e8df9aea791bd9c6ac0d5d47040f` completed with 1344 passed and one failing remediation-audit test. The sole failure was an off-by-window issue in the audit helper that searched for the documented fail-closed rationale. Candidate `37436f7e...` changes only that helper and is the authoritative green implementation generation.
 
 ## Merge and post-merge evidence
 
-Pending guarded merge of PR #59. This section must be updated with:
+Evidence/merge head:
 
-- exact PR source head used for merge;
-- exact resulting `master` SHA;
-- exact post-merge CI run ID;
-- post-merge gate conclusions.
+`f957803d4c3ceb3722e93e9eb8c9ffd150553e90`
 
-The remediation is not declared complete until this section is populated and the exact merged `master` generation is green.
+Pre-merge GitHub Actions CI:
+
+`34778439164` — **PASS**
+
+PR #59 was squash-merged through the policy-approved guarded Phase 4 merge path from exact source head `f957803d4c3ceb3722e93e9eb8c9ffd150553e90`.
+
+Resulting `master` SHA:
+
+`3dcb00e8696a6dcd41954fc8f4e9069a230e65d4`
+
+Fresh post-merge push CI:
+
+`34779008735` — **PASS**
+
+The post-merge run passed the same permanent workflow on the exact merged generation, including Ruff format/lint, strict mypy, MCP contract checks, contract-version history gate, docs drift gate, and the full Docker-backed pytest/coverage phase.
+
+## Final conclusion
+
+WCR-001 through WCR-014 are evidence-complete. The reviewed wizard architecture, transaction semantics, secret lifecycle, repository isolation, shared diagnostics, and unsafe-fallback conclusions are all protected by permanent tests/contracts. The exact implementation candidate, the exact merge head, and the exact merged `master` generation each passed the repository's authoritative CI path.
