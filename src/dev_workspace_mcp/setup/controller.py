@@ -801,7 +801,11 @@ class SetupController:
 
     def run_final_diagnostics(self) -> SetupDiagnosticsReport:
         try:
-            report = run_setup_diagnostics(self.config_path)
+            report = run_setup_diagnostics(
+                self.config_path,
+                setup_state=self.state,
+                tunnel_runtime_key=self.runtime_tunnel_key,
+            )
         except Exception as exc:
             self.state.statuses[SetupStep.FINAL_VALIDATION] = SetupStepStatus.FAILED
             self.persist()
