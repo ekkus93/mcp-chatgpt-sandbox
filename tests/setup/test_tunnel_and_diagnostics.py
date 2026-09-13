@@ -87,6 +87,32 @@ def test_wizv_015_report_finish_gate_and_rendering() -> None:
     assert "PASS" in rendered
     assert "SKIPPED" in rendered
 
+    blocked = DiagnosticsReport(
+        (
+            DiagnosticResult(
+                DiagnosticCode.CONFIG_RELOAD,
+                "config",
+                DiagnosticStatus.PASS,
+                "ok",
+            ),
+            DiagnosticResult(
+                DiagnosticCode.DOCKER_DAEMON,
+                "docker",
+                DiagnosticStatus.ACTION_REQUIRED,
+                "operator action needed",
+            ),
+            DiagnosticResult(
+                DiagnosticCode.TUNNEL_PROFILE,
+                "tunnel",
+                DiagnosticStatus.SKIPPED,
+                "optional",
+                mandatory=False,
+            ),
+        )
+    )
+    assert not blocked.ready_to_finish
+    assert blocked.exit_code == 1
+
 
 def test_wizv_015_doctor_alias_and_setup_check_share_cli_contract(tmp_path: Path) -> None:
     config = tmp_path / "missing.yml"

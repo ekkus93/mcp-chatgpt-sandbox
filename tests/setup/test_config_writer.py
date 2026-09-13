@@ -164,6 +164,21 @@ def test_wizv_005_source_change_after_review_blocks_commit(tmp_path: Path) -> No
         commit_config_update(target, plan)
 
 
+def test_wizv_005_post_write_byte_mismatch_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "config.yml"
+    values = _minimal(tmp_path)
+    plan = prepare_config_update(target, wizard_values=values, managed_fields=set(values))
+    monkeypatch.setattr(
+        "dev_workspace_mcp.setup.config_writer.read_bounded_utf8",
+        lambda _: "simulated post-write mismatch\n",
+    )
+    with pytest.raises(SetupConfigError, match="did not match the reviewed candidate"):
+        commit_config_update(target, plan)
+
+
 def test_wizv_005_production_reload_failure_preserves_backup(tmp_path: Path) -> None:
     target = tmp_path / "config.yml"
     existing = _minimal(tmp_path)
