@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import click
 
@@ -23,7 +23,7 @@ def _config_option[F: Callable[..., Any]](function: F) -> F:
         show_default=True,
         help="Configuration file to create, repair, edit, or diagnose.",
     )
-    return cast(F, decorator(function))
+    return decorator(function)
 
 
 @click.command(name="setup")
