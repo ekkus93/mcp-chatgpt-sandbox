@@ -17,10 +17,10 @@ from docker.errors import DockerException, ImageNotFound
 from dev_workspace_mcp.config import ConfigError, ServerConfig, load_config
 from dev_workspace_mcp.github_api import verify_remote_protection
 from dev_workspace_mcp.server import create_server
+from dev_workspace_mcp.setup.model import SetupRepositoryState
 from dev_workspace_mcp.setup.repository_setup import verify_repository
 from dev_workspace_mcp.setup.ssh_github_setup import CredentialChoices, verify_credential_files
 from dev_workspace_mcp.setup.tunnel import check_tunnel_profile
-from dev_workspace_mcp.setup.model import SetupRepositoryState
 
 
 class DiagnosticStatus(StrEnum):
