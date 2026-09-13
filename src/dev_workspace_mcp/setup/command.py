@@ -13,6 +13,11 @@ from dev_workspace_mcp.setup.controller import (
     SetupControllerError,
 )
 from dev_workspace_mcp.setup.diagnostics import SetupDiagnosticsReport, run_setup_diagnostics
+from dev_workspace_mcp.setup.state import (
+    DEFAULT_SETUP_STATE_PATH,
+    SetupStateError,
+    load_setup_state,
+)
 
 
 def _resolved_config_path(config_path: Path | None) -> Path:
@@ -27,6 +32,25 @@ def _render_diagnostics(report: SetupDiagnosticsReport) -> None:
         )
         if item.remediation is not None:
             click.echo(f"  remediation: {item.remediation}", err=not report.valid)
+
+
+def _headless_diagnostics(target: Path) -> SetupDiagnosticsReport:
+    setup_state = None
+    setup_state_error = None
+    try:
+        candidate = load_setup_state(DEFAULT_SETUP_STATE_PATH)
+    except SetupStateError as exc:
+        setup_state_error = str(exc)
+    else:
+        if candidate is not None and candidate.config_path is not None:
+            state_target = Path(candidate.config_path).expanduser().absolute()
+            if state_target == target:
+                setup_state = candidate
+    return run_setup_diagnostics(
+        target,
+        setup_state=setup_state,
+        setup_state_error=setup_state_error,
+    )
 
 
 @click.command(name="setup")
@@ -68,7 +92,7 @@ def setup_command(
 
     target = _resolved_config_path(config_path)
     if check_only:
-        report = run_setup_diagnostics(target)
+        report = _headless_diagnostics(target)
         _render_diagnostics(report)
         if not report.valid:
             raise click.exceptions.Exit(1)
@@ -93,6 +117,8 @@ def setup_command(
         click.echo(f"error: {exc}", err=True)
         raise click.exceptions.Exit(2) from exc
     except Exception as exc:
+        # Presentation failures are fatal and deliberately do not expose
+        # arbitrary exception text, which may include environment details.
         click.echo("error: interactive setup failed unexpectedly", err=True)
         raise click.exceptions.Exit(2) from exc
 
