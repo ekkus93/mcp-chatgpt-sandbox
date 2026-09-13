@@ -280,9 +280,12 @@ class SetupState:
         version = value.get("version")
         if version != _STATE_VERSION:
             raise ValueError(f"unsupported setup state version: {version!r}")
+        raw_current_step = value.get("current_step")
+        if not isinstance(raw_current_step, str):
+            raise ValueError("setup state current_step is invalid")
         try:
-            current_step = SetupStep(value.get("current_step"))
-        except (TypeError, ValueError) as exc:
+            current_step = SetupStep(raw_current_step)
+        except ValueError as exc:
             raise ValueError("setup state current_step is invalid") from exc
 
         raw_statuses = value.get("statuses", {})
