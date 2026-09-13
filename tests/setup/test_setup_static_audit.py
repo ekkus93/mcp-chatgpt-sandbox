@@ -18,8 +18,8 @@ def _python_sources() -> list[Path]:
 
 def _line_has_boundary_rationale(path: Path, lineno: int) -> bool:
     lines = path.read_text(encoding="utf-8").splitlines()
-    start = max(0, lineno - 2)
-    end = min(len(lines), lineno + 1)
+    start = max(0, lineno - 6)
+    end = min(len(lines), lineno)
     window = "\n".join(lines[start:end])
     return "WCR-013:" in window and "fail closed" in window.casefold()
 
