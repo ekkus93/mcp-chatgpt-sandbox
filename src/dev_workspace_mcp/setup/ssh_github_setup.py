@@ -12,7 +12,10 @@ from pydantic import ValidationError
 from dev_workspace_mcp.config import GithubConfig, SSHConfig
 from dev_workspace_mcp.setup.model import SetupRepositoryState
 
-REPOSITORY_SCOPE_HELP = "Recommended: a dedicated key per repository limits credential reach if one workspace is compromised."
+REPOSITORY_SCOPE_HELP = (
+    "Recommended: a dedicated key per repository limits credential reach "
+    "if one workspace is compromised."
+)
 SHARED_SCOPE_WARNING = (
     "Shared SSH scope gives every configured repository the same credential and weakens isolation."
 )
@@ -137,7 +140,10 @@ def verify_credential_files(
                     CredentialCheck(
                         True,
                         "pass",
-                        f"{repository.id}: no SSH key configured; repository remains non-push-capable",
+                        (
+                            f"{repository.id}: no SSH key configured; repository remains "
+                            "non-push-capable"
+                        ),
                     )
                 )
                 continue
@@ -157,7 +163,10 @@ def verify_credential_files(
             CredentialCheck(
                 False,
                 "unverified",
-                "GitHub App API auth is accepted by config but not implemented by runtime verification",
+                (
+                    "GitHub App API auth is accepted by config but not implemented by "
+                    "runtime verification"
+                ),
             )
         )
     elif choices.github_api_auth == "token":

@@ -124,7 +124,7 @@ def test_wizv_012_git_policy_presets_and_field_exhaustiveness() -> None:
     assert conservative.default_branch_push == "deny"
     assert conservative.delete_remote_branch == "deny"
     assert conservative.require_remote_protection == "deny"
-    assert GIT_POLICY_UI_FIELDS == frozenset(GitPolicyConfig.model_fields)
+    assert frozenset(GitPolicyConfig.model_fields) == GIT_POLICY_UI_FIELDS
     custom = materialize_policy(
         GitPolicyPreset.CUSTOM,
         custom={**GitPolicyConfig().model_dump(), "pull_strategy": "rebase"},
