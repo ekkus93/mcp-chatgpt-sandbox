@@ -8,7 +8,18 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Self
 
-from dev_workspace_mcp.config.models import RepositoryConfig
+from pydantic import BaseModel, ValidationError
+
+from dev_workspace_mcp.config.models import (
+    ContainerConfig,
+    Duration,
+    ExecutionConfig,
+    FilesystemConfig,
+    GitPolicyConfig,
+    LoggingConfig,
+    RepositoryConfig,
+    ResourcesConfig,
+)
 
 
 class SetupStep(StrEnum):
@@ -89,6 +100,9 @@ _ALLOWED_STATE_KEYS = {
     "ssh_keys_dir",
     "known_hosts_path",
     "docker_image",
+    "docker_workspace_path",
+    "workspace_idle_stop_after",
+    "container_overrides",
     "repository_roots",
     "repositories",
     "ssh_mode",
@@ -97,8 +111,15 @@ _ALLOWED_STATE_KEYS = {
     "github_api_auth",
     "github_api_token_path",
     "git_policy_preset",
+    "custom_git_policy",
+    "filesystem_overrides",
+    "execution_overrides",
+    "resources_overrides",
+    "logging_overrides",
     "tunnel_id",
+    "tunnel_profile_path",
     "chatgpt_enabled",
+    "chatgpt_ui_attested",
     "advanced",
 }
 
@@ -146,6 +167,28 @@ def _string_tuple(value: object, *, field_name: str) -> tuple[str, ...]:
     return tuple(result)
 
 
+def _model_mapping(
+    value: object,
+    *,
+    model: type[BaseModel],
+    context: str,
+) -> dict[str, object] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"setup state {context} must be a mapping or null")
+    if any(not isinstance(key, str) for key in value):
+        raise ValueError(f"setup state {context} keys must be strings")
+    for key in value:
+        if isinstance(key, str) and _contains_secret_fragment(key):
+            raise ValueError(f"setup state {context} contains forbidden secret-bearing field {key!r}")
+    try:
+        validated = model.model_validate(value)
+    except ValidationError as exc:
+        raise ValueError(f"setup state {context} is invalid: {exc}") from exc
+    return {str(key): child for key, child in validated.model_dump(mode="json").items()}
+
+
 _STEP_DEPENDENTS: dict[SetupStep, frozenset[SetupStep]] = {
     SetupStep.LOCAL_PREREQUISITES: frozenset({SetupStep.FINAL_VALIDATION}),
     SetupStep.SERVER_STORAGE: frozenset(
@@ -189,6 +232,9 @@ class SetupState:
     ssh_keys_dir: str | None = None
     known_hosts_path: str | None = None
     docker_image: str | None = None
+    docker_workspace_path: str | None = None
+    workspace_idle_stop_after: str | None = None
+    container_overrides: dict[str, object] | None = None
     repository_roots: tuple[str, ...] = ()
     repositories: tuple[SetupRepository, ...] = ()
     ssh_mode: str | None = None
@@ -197,8 +243,15 @@ class SetupState:
     github_api_auth: str | None = None
     github_api_token_path: str | None = None
     git_policy_preset: GitPolicyPreset = GitPolicyPreset.RECOMMENDED
+    custom_git_policy: dict[str, object] | None = None
+    filesystem_overrides: dict[str, object] | None = None
+    execution_overrides: dict[str, object] | None = None
+    resources_overrides: dict[str, object] | None = None
+    logging_overrides: dict[str, object] | None = None
     tunnel_id: str | None = None
+    tunnel_profile_path: str | None = None
     chatgpt_enabled: bool = False
+    chatgpt_ui_attested: bool = False
     advanced: bool = False
 
     def clone(self) -> SetupState:
@@ -259,6 +312,9 @@ class SetupState:
             "ssh_keys_dir": self.ssh_keys_dir,
             "known_hosts_path": self.known_hosts_path,
             "docker_image": self.docker_image,
+            "docker_workspace_path": self.docker_workspace_path,
+            "workspace_idle_stop_after": self.workspace_idle_stop_after,
+            "container_overrides": self.container_overrides,
             "repository_roots": list(self.repository_roots),
             "repositories": [repository.to_dict() for repository in self.repositories],
             "ssh_mode": self.ssh_mode,
@@ -267,8 +323,15 @@ class SetupState:
             "github_api_auth": self.github_api_auth,
             "github_api_token_path": self.github_api_token_path,
             "git_policy_preset": self.git_policy_preset.value,
+            "custom_git_policy": self.custom_git_policy,
+            "filesystem_overrides": self.filesystem_overrides,
+            "execution_overrides": self.execution_overrides,
+            "resources_overrides": self.resources_overrides,
+            "logging_overrides": self.logging_overrides,
             "tunnel_id": self.tunnel_id,
+            "tunnel_profile_path": self.tunnel_profile_path,
             "chatgpt_enabled": self.chatgpt_enabled,
+            "chatgpt_ui_attested": self.chatgpt_ui_attested,
             "advanced": self.advanced,
         }
 
@@ -314,9 +377,22 @@ class SetupState:
         def optional(name: str) -> str | None:
             return _optional_str(value, name, context="setup state")
 
+        docker_workspace_path = optional("docker_workspace_path")
+        if docker_workspace_path is not None and not Path(docker_workspace_path).is_absolute():
+            raise ValueError("setup state docker_workspace_path must be absolute")
+        idle_stop_after = optional("workspace_idle_stop_after")
+        if idle_stop_after is not None:
+            try:
+                Duration.parse(idle_stop_after)
+            except ValueError as exc:
+                raise ValueError("setup state workspace_idle_stop_after is invalid") from exc
+
         chatgpt_enabled = value.get("chatgpt_enabled", False)
+        chatgpt_ui_attested = value.get("chatgpt_ui_attested", False)
         advanced = value.get("advanced", False)
-        if not isinstance(chatgpt_enabled, bool) or not isinstance(advanced, bool):
+        if not all(
+            isinstance(item, bool) for item in (chatgpt_enabled, chatgpt_ui_attested, advanced)
+        ):
             raise ValueError("setup state boolean fields must be booleans")
         try:
             preset = GitPolicyPreset(value.get("git_policy_preset", GitPolicyPreset.RECOMMENDED))
@@ -333,6 +409,11 @@ class SetupState:
             ssh_keys_dir=optional("ssh_keys_dir"),
             known_hosts_path=optional("known_hosts_path"),
             docker_image=optional("docker_image"),
+            docker_workspace_path=docker_workspace_path,
+            workspace_idle_stop_after=idle_stop_after,
+            container_overrides=_model_mapping(
+                value.get("container_overrides"), model=ContainerConfig, context="container_overrides"
+            ),
             repository_roots=_string_tuple(
                 value.get("repository_roots", []), field_name="repository_roots"
             ),
@@ -343,8 +424,31 @@ class SetupState:
             github_api_auth=optional("github_api_auth"),
             github_api_token_path=optional("github_api_token_path"),
             git_policy_preset=preset,
+            custom_git_policy=_model_mapping(
+                value.get("custom_git_policy"), model=GitPolicyConfig, context="custom_git_policy"
+            ),
+            filesystem_overrides=_model_mapping(
+                value.get("filesystem_overrides"),
+                model=FilesystemConfig,
+                context="filesystem_overrides",
+            ),
+            execution_overrides=_model_mapping(
+                value.get("execution_overrides"),
+                model=ExecutionConfig,
+                context="execution_overrides",
+            ),
+            resources_overrides=_model_mapping(
+                value.get("resources_overrides"),
+                model=ResourcesConfig,
+                context="resources_overrides",
+            ),
+            logging_overrides=_model_mapping(
+                value.get("logging_overrides"), model=LoggingConfig, context="logging_overrides"
+            ),
             tunnel_id=optional("tunnel_id"),
+            tunnel_profile_path=optional("tunnel_profile_path"),
             chatgpt_enabled=chatgpt_enabled,
+            chatgpt_ui_attested=chatgpt_ui_attested,
             advanced=advanced,
         )
 
