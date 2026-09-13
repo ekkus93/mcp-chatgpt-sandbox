@@ -38,6 +38,21 @@ def _run_git(path: Path, *args: str) -> tuple[int, str]:
     return result.returncode, stdout.strip()
 
 
+def detect_default_branch(path: Path) -> str | None:
+    """Return the locally recorded origin HEAD branch without network I/O.
+
+    No current-branch fallback is used: the checked-out branch is not proof of
+    the remote default branch, and setup diagnostics must not manufacture a
+    stronger remote-protection claim from weaker evidence.
+    """
+
+    code, ref = _run_git(path, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+    if code != 0 or not ref.startswith("origin/"):
+        return None
+    branch = ref.removeprefix("origin/").strip()
+    return branch or None
+
+
 def verify_repository(repository: SetupRepository) -> RepositoryVerification:
     """Verify local Git shape and configured GitHub identity without mutation/network I/O."""
 
@@ -76,4 +91,4 @@ def verify_repository(repository: SetupRepository) -> RepositoryVerification:
     )
 
 
-__all__ = ["RepositoryVerification", "verify_repository"]
+__all__ = ["RepositoryVerification", "detect_default_branch", "verify_repository"]
