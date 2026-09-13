@@ -66,6 +66,22 @@ def test_setup_state_rejects_duplicate_repository_paths() -> None:
         SetupState.from_dict(raw)
 
 
+def test_duplicate_github_identity_is_allowed_for_distinct_local_clones() -> None:
+    """Setup follows production semantics: one GitHub repo may have multiple local clones."""
+
+    raw = SetupState().to_dict()
+    raw["repositories"] = [
+        {"id": "one", "path": "/srv/one", "github": "owner/demo", "ssh_key": None},
+        {"id": "two", "path": "/srv/two", "github": "owner/demo", "ssh_key": None},
+    ]
+
+    state = SetupState.from_dict(raw)
+    assert [repository.github for repository in state.repositories] == [
+        "owner/demo",
+        "owner/demo",
+    ]
+
+
 def test_repository_change_invalidates_all_dependent_completion() -> None:
     state = SetupState(
         statuses={
@@ -84,6 +100,59 @@ def test_repository_change_invalidates_all_dependent_completion() -> None:
     assert state.statuses[SetupStep.DOCKER_WORKSPACE] is SetupStepStatus.COMPLETE
 
 
+@pytest.mark.parametrize(
+    ("changed", "invalidated"),
+    [
+        (SetupStep.LOCAL_PREREQUISITES, {SetupStep.FINAL_VALIDATION}),
+        (
+            SetupStep.SERVER_STORAGE,
+            {SetupStep.CONFIGURATION_REVIEW, SetupStep.FINAL_VALIDATION},
+        ),
+        (
+            SetupStep.DOCKER_WORKSPACE,
+            {SetupStep.CONFIGURATION_REVIEW, SetupStep.FINAL_VALIDATION},
+        ),
+        (
+            SetupStep.REPOSITORY_ACCESS,
+            {
+                SetupStep.SSH_AND_GITHUB,
+                SetupStep.CONFIGURATION_REVIEW,
+                SetupStep.FINAL_VALIDATION,
+            },
+        ),
+        (
+            SetupStep.SSH_AND_GITHUB,
+            {SetupStep.CONFIGURATION_REVIEW, SetupStep.FINAL_VALIDATION},
+        ),
+        (
+            SetupStep.GIT_SAFETY_POLICY,
+            {SetupStep.CONFIGURATION_REVIEW, SetupStep.FINAL_VALIDATION},
+        ),
+        (
+            SetupStep.RUNTIME_AND_RESOURCES,
+            {SetupStep.CONFIGURATION_REVIEW, SetupStep.FINAL_VALIDATION},
+        ),
+        (SetupStep.CHATGPT_CONNECTION, {SetupStep.FINAL_VALIDATION}),
+        (SetupStep.CONFIGURATION_REVIEW, {SetupStep.FINAL_VALIDATION}),
+        (SetupStep.FINAL_VALIDATION, set()),
+    ],
+)
+def test_dependency_invalidation_is_explicit_and_narrow(
+    changed: SetupStep,
+    invalidated: set[SetupStep],
+) -> None:
+    state = SetupState(statuses={step: SetupStepStatus.COMPLETE for step in SetupStep})
+
+    state.mark_changed(changed)
+
+    assert state.statuses[changed] is SetupStepStatus.ACTION_REQUIRED
+    for step in SetupStep:
+        if step is changed or step in invalidated:
+            assert state.statuses[step] is SetupStepStatus.ACTION_REQUIRED
+        else:
+            assert state.statuses[step] is SetupStepStatus.COMPLETE
+
+
 def test_resume_rewinds_process_local_chatgpt_secret() -> None:
     state = SetupState(
         current_step=SetupStep.FINAL_VALIDATION,
@@ -97,6 +166,21 @@ def test_resume_rewinds_process_local_chatgpt_secret() -> None:
     assert state.current_step is SetupStep.CHATGPT_CONNECTION
     assert state.statuses[SetupStep.CHATGPT_CONNECTION] is SetupStepStatus.ACTION_REQUIRED
     assert state.statuses[SetupStep.FINAL_VALIDATION] is SetupStepStatus.ACTION_REQUIRED
+
+
+def test_resume_rewind_preserves_unrelated_completed_steps() -> None:
+    state = SetupState(
+        current_step=SetupStep.FINAL_VALIDATION,
+        chatgpt_enabled=True,
+        statuses={
+            SetupStep.DOCKER_WORKSPACE: SetupStepStatus.COMPLETE,
+            SetupStep.CHATGPT_CONNECTION: SetupStepStatus.COMPLETE,
+            SetupStep.FINAL_VALIDATION: SetupStepStatus.COMPLETE,
+        },
+    )
+
+    assert state.rewind_for_missing_process_local_secret()
+    assert state.statuses[SetupStep.DOCKER_WORKSPACE] is SetupStepStatus.COMPLETE
 
 
 def test_repository_choice_requires_absolute_path() -> None:
