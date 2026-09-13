@@ -1,4 +1,4 @@
-"""Click integration for interactive setup."""
+"""Click integration for interactive setup and shared diagnostics."""
 
 from __future__ import annotations
 
@@ -7,19 +7,24 @@ from pathlib import Path
 import click
 
 from dev_workspace_mcp.setup.app import run_setup_app
+from dev_workspace_mcp.setup.diagnostics import run_check_cli
 
 DEFAULT_CONFIG_PATH = Path("~/.config/dev-workspace-mcp/config.yml")
 
 
+def _config_option(function: object) -> object:
+    return click.option(
+        "--config",
+        "config_path",
+        type=click.Path(path_type=Path),
+        default=DEFAULT_CONFIG_PATH,
+        show_default=True,
+        help="Configuration file to create, repair, edit, or diagnose.",
+    )(function)
+
+
 @click.command(name="setup")
-@click.option(
-    "--config",
-    "config_path",
-    type=click.Path(path_type=Path),
-    default=DEFAULT_CONFIG_PATH,
-    show_default=True,
-    help="Configuration file to create, repair, or edit.",
-)
+@_config_option
 @click.option("--resume", is_flag=True, help="Resume valid incomplete non-secret setup state.")
 @click.option(
     "--check",
@@ -39,11 +44,6 @@ def setup_command(
     """Guide configuration of a development-workspace MCP server."""
 
     if check_only:
-        # WIZ-015 replaces this plumbing with the complete shared diagnostics
-        # matrix.  Keeping it routed through one setup entrypoint now avoids a
-        # second CLI contract later.
-        from dev_workspace_mcp.setup.diagnostics import run_check_cli
-
         raise click.exceptions.Exit(run_check_cli(config_path.expanduser()))
 
     code = run_setup_app(
@@ -54,3 +54,11 @@ def setup_command(
     )
     if code:
         raise click.exceptions.Exit(code)
+
+
+@click.command(name="doctor")
+@_config_option
+def doctor_command(config_path: Path) -> None:
+    """Run the same machine-verifiable diagnostics used by setup --check."""
+
+    raise click.exceptions.Exit(run_check_cli(config_path.expanduser()))

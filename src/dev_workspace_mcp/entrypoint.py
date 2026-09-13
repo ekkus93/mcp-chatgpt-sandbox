@@ -1,13 +1,14 @@
 """Installed CLI composition.
 
-The historical operator commands remain implemented by ``cli.py``.  Setup is
-registered here so the installed console-script name remains stable while the
-interactive setup package stays isolated from daemon/runtime code.
+The historical operator commands remain implemented by ``cli.py``. Setup and
+its diagnostics alias are registered here so the installed console-script name
+remains stable while the setup package stays isolated from daemon/runtime code.
 """
 
 from dev_workspace_mcp.cli import main
-from dev_workspace_mcp.setup.cli import setup_command
+from dev_workspace_mcp.setup.cli import doctor_command, setup_command
 
 main.add_command(setup_command)
+main.add_command(doctor_command)
 
 __all__ = ["main"]
