@@ -11,11 +11,13 @@ from typing import Self
 from pydantic import ValidationError
 
 from dev_workspace_mcp.config import RepositoryConfig
+from dev_workspace_mcp.setup.choices import SetupChoices
 from dev_workspace_mcp.setup.filesystem import (
     SetupFilesystemError,
     atomic_write_text,
     read_bounded_utf8,
 )
+from dev_workspace_mcp.setup.ownership import WIZARD_CLASSIFIED_TOP_LEVEL_FIELDS
 
 SETUP_STATE_VERSION = 1
 DEFAULT_SETUP_STATE_PATH = Path("~/.config/dev-workspace-mcp/setup-state.json")
@@ -110,6 +112,8 @@ _STATE_KEYS = frozenset(
         "advanced",
         "chatgpt_requested",
         "config_path",
+        "choices",
+        "reviewed_fields",
     }
 )
 
@@ -143,6 +147,17 @@ def _validate_repositories(values: object) -> tuple[SetupRepositoryState, ...]:
     return repositories
 
 
+def _validate_reviewed_fields(value: object) -> frozenset[str]:
+    if not isinstance(value, list | tuple):
+        raise ValueError("setup state reviewed_fields must be a list")
+    if any(not isinstance(item, str) for item in value):
+        raise ValueError("setup state reviewed_fields must contain strings")
+    fields = frozenset(value)
+    if fields - WIZARD_CLASSIFIED_TOP_LEVEL_FIELDS:
+        raise ValueError("setup state reviewed_fields contain unsupported config fields")
+    return fields
+
+
 @dataclass(slots=True)
 class SetupState:
     version: int = SETUP_STATE_VERSION
@@ -152,6 +167,8 @@ class SetupState:
     advanced: bool = False
     chatgpt_requested: bool = False
     config_path: str | None = None
+    choices: SetupChoices = field(default_factory=SetupChoices)
+    reviewed_fields: frozenset[str] = frozenset()
 
     def to_dict(self) -> dict[str, object]:
         result: dict[str, object] = {
@@ -162,6 +179,8 @@ class SetupState:
             "advanced": self.advanced,
             "chatgpt_requested": self.chatgpt_requested,
             "config_path": self.config_path,
+            "choices": self.choices.to_dict(),
+            "reviewed_fields": sorted(self.reviewed_fields),
         }
         guard = dict(result)
         guard.pop("statuses")
@@ -218,11 +237,29 @@ class SetupState:
             advanced=advanced,
             chatgpt_requested=chatgpt_requested,
             config_path=config_path,
+            choices=SetupChoices.from_dict(value.get("choices", {})),
+            reviewed_fields=_validate_reviewed_fields(value.get("reviewed_fields", [])),
         )
 
 
 def clone_setup_state(state: SetupState) -> SetupState:
     return SetupState.from_dict(state.to_dict())
+
+
+def invalidate_from_step(state: SetupState, changed_step: SetupStep) -> SetupState:
+    """Invalidate downstream validation after an upstream reviewed value changes."""
+
+    candidate = clone_setup_state(state)
+    order = list(SetupStep)
+    changed_index = order.index(changed_step)
+    for step in order[changed_index:]:
+        if step is changed_step:
+            candidate.statuses[step] = SetupStepStatus.ACTION_REQUIRED
+        else:
+            candidate.statuses.pop(step, None)
+    if order.index(candidate.current_step) > changed_index:
+        candidate.current_step = changed_step
+    return candidate
 
 
 def rewind_for_missing_process_local_material(
