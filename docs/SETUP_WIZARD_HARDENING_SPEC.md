@@ -2,6 +2,7 @@
 
 **Status:** Implementation in progress  
 **Baseline reviewed:** `340bf1bdef4cc9d4f7aa37ec97bcb13734fcdf8d`  
+**Implementation baseline:** `53f9518ba206efa2aae537983601f196da3374c4`  
 **Primary prior workstream:** `docs/SETUP_WIZARD_SPEC.md` and `docs/SETUP_WIZARD_TODO.md`  
 **Follow-up series:** `SWH-*`
 
@@ -9,232 +10,110 @@ This specification defines a focused hardening pass for the interactive setup wi
 
 ## 1. Purpose
 
-The setup wizard is now implemented and merged. The review found that the core architecture is sound, but there are several follow-up defects and robustness gaps that should be fixed before treating the wizard as production-polished:
+The setup wizard is implemented and merged. A follow-up review found that the core architecture is sound, but several robustness gaps should be fixed before treating the wizard as production-polished:
 
 1. arbitrary existing parent directories can be chmodded by the setup atomic writer;
 2. diagnostics can incorrectly pass broken symlink audit targets;
 3. generated tunnel profile commands are not shell-quoted;
 4. Docker default-image build context resolution depends on the process current working directory;
-5. the setup TUI orchestration file is too large and should be split before more behavior is added;
-6. the Git policy custom editor technically works but remains JSON-heavy and should become a guided editor.
-
-The first four items are correctness fixes. The final two are maintainability and operator-UX refinements that should be implemented in the same hardening pass because they reduce future regression risk around the same setup wizard surface.
+5. the setup TUI orchestration surface should remain split as behavior grows;
+6. the Git policy custom editor technically works but should be guided rather than JSON-first.
 
 ## 2. Non-goals
 
-This hardening pass must not expand the setup wizard into a broader product redesign. Specifically, it must not:
+This hardening pass must not change the public MCP tool/schema contract unless a gate proves that a public contract change is unavoidable. No contract change is expected.
 
-- change public MCP tool names, inputs, outputs, or `schemas/tools.json` unless a contract gate proves an unavoidable change;
-- weaken any destructive-operation safety gate;
-- weaken repository isolation;
-- persist or display raw secrets;
-- remove manual YAML configuration support;
-- replace production configuration models with setup-specific validation;
-- change GitHub branch-protection or ruleset behavior;
-- silently create, delete, or modify repositories, Docker volumes, workspace containers, SSH private keys, or databases.
+This pass must not add a second setup-only configuration schema. `ServerConfig`, `GitPolicyConfig`, and `load_config()` remain authoritative.
 
-## 3. Preserved invariants
+This pass must not weaken the existing setup guarantees:
 
-The following invariants from `docs/SETUP_WIZARD_SPEC.md` remain binding:
+- no raw secrets in resumable setup state;
+- no raw secrets in logs, diagnostics, docs examples, UI snapshots, or tests;
+- every real config write remains reviewed, CAS-bound, atomic, backed up when replacing an existing file, byte-verified, and production-reloaded;
+- manual YAML configuration and existing CLI workflows remain supported;
+- destructive-safety and repository-isolation invariants remain intact.
 
-- `ServerConfig`, `GitPolicyConfig`, and `load_config()` remain authoritative.
-- Setup code may collect, review, and safely persist choices, but must not invent a second weaker configuration schema.
-- Config writes remain reviewed, CAS-bound, atomic, backed up when replacing an existing config, byte-verified, and production-reloaded before success is reported.
-- Setup state remains non-secret and versioned.
-- Diagnostics remain fail-closed for unexpected exceptions.
-- Optional ChatGPT/Secure MCP Tunnel status remains separate from mandatory local machine validation.
-- Manual CLI/config workflows remain supported.
-- MCP contract drift remains gated by CI.
+## 3. Required fixes
 
-## 4. Workstream structure
+### SWH-001 — Setup filesystem parent permissions
 
-The hardening pass is divided into seven implementation tasks:
+Setup writes must distinguish setup-owned directory creation from generic writable-parent validation. Creating a missing setup-owned directory may enforce owner-only permissions. Writing a config file under an already existing operator-owned parent directory must not silently chmod that parent directory.
 
-- `SWH-001` — stop chmodding existing arbitrary parent directories;
-- `SWH-002` — make setup diagnostics symlink-safe with `lstat()`;
-- `SWH-003` — quote tunnel profile server commands safely;
-- `SWH-004` — resolve Docker default build context independently of `Path.cwd()`;
-- `SWH-005` — split oversized setup TUI orchestration surface;
-- `SWH-006` — improve Git-policy custom editor ergonomics;
-- `SWH-007` — final regression, documentation, and closure audit.
+Required behavior:
 
-## 5. SWH-001: filesystem parent-directory hardening
+- missing setup-owned parents are created with restrictive permissions;
+- existing arbitrary parents are not chmodded just because a file is written inside them;
+- target file symlink refusal remains intact;
+- config/state target file modes remain restrictive where appropriate;
+- backup and failure-recovery behavior remains intact.
 
-### Problem
+### SWH-002 — Symlink-safe diagnostics
 
-`atomic_write_text()` currently prepares the target parent by calling `ensure_private_directory(expanded.parent)`. The helper applies owner-only permissions even if the directory already existed. That behavior is safe for wizard-owned state directories, but it is too aggressive for an operator-selected config path such as `/some/shared/admin/path/config.yml`.
+Setup diagnostics must inspect sensitive local targets with `lstat()`-style semantics. Broken symlinks, valid symlinks, directories, devices, FIFOs, sockets, and other non-regular target shapes must not pass as safe audit/state targets.
 
-The setup wizard must not silently change permissions on existing directories it did not create.
+Required behavior:
 
-### Required behavior
+- audit target symlinks fail even when the symlink points to a regular file;
+- broken audit symlinks fail;
+- directory/special-file audit targets fail;
+- unsafe state DB targets fail where production semantics allow;
+- absent audit/state targets with writable parents retain the intended pass/action-required semantics;
+- remediation text remains non-secret and does not echo file contents.
 
-- Existing arbitrary parent directories must be inspected for safety but not chmodded merely because a file is written inside them.
-- Missing setup-owned directories must still be created with restrictive permissions.
-- File targets must still reject symlinks and non-regular existing targets.
-- Config/state file modes must remain restrictive.
-- Existing backup behavior must remain intact.
-- Failure recovery must remain intact.
+### SWH-003 — Shell-safe tunnel profile commands
 
-### Design direction
+Generated tunnel profile server commands must be robust when the project path or config path contains whitespace or shell-sensitive characters.
 
-Split the current directory helper behavior conceptually into:
+Required behavior:
 
-1. setup-owned private directory creation for paths the wizard owns, and
-2. generic parent validation for writing a file inside an already-existing operator-owned directory.
+- command construction uses a shell-safe mechanism such as `shlex.join()`;
+- the intended argv remains `uv run --project <project> dev-workspace-mcp serve --config <config>`;
+- profile plans never include raw runtime secrets;
+- `--no-browser` behavior remains unchanged.
 
-The implementation can use one helper if it has explicit semantics, but the behavior must be clear and tested.
+### SWH-004 — cwd-independent Docker build context
 
-### Acceptance
+The default Docker image build action must not rely on `Path.cwd()`. The wizard can be run from an installed console script or from any working directory.
 
-A regression test must prove that writing a setup/config file under an existing `0755` parent leaves that parent mode unchanged. Separate tests must prove that newly created setup-owned parents are still restrictive and that symlink refusal remains intact.
+Required behavior:
 
-## 6. SWH-002: symlink-safe diagnostics
+- the bundled default Docker build context resolves from installed source/package location, not cwd;
+- if the context is absent, the build action reports a clear action-required error before invoking Docker;
+- Docker build still requires explicit operator approval;
+- the reviewed build command/action preview remains visible;
+- merely rendering the Docker screen performs no Docker mutation.
 
-### Problem
+## 4. Maintainability and UX requirements
 
-Some diagnostics inspect paths with `Path.exists()` before checking whether a target is a symlink or a regular file. Broken symlinks return false for `exists()`, so an unsafe configured target can be incorrectly treated as absent and pass parent-writable checks.
+### SWH-005 — TUI orchestration split
 
-### Required behavior
+The setup TUI must remain split into reviewable modules. The application shell should own lifecycle, navigation, validation gating, and state activation. Step-specific event handlers should call domain modules without owning production config semantics. Step panels should remain presentation controls. Guided form models should hold form snapshots and production validation boundaries.
 
-- Diagnostics for audit files, state databases, config paths, and shared helpers must use symlink-safe inspection based on `lstat()` or an equivalent non-following operation.
-- Broken symlinks must not pass diagnostics.
-- Symlinks to regular files must not pass diagnostics for sensitive setup targets.
-- Directories, devices, FIFOs, sockets, and other non-regular existing targets must not pass diagnostics.
-- Absent targets with writable parents must preserve current intended behavior.
-- Remediation text must remain non-secret and must not include file contents.
+The current implementation baseline already introduced `step_actions.py` and reduced `app.py` substantially. This hardening pass may add incremental support modules, but it must avoid broad rewrites that obscure safety-critical behavior.
 
-### Acceptance
+### SWH-006 — Guided Custom Git-policy editor
 
-Tests must cover broken symlinks, valid symlinks, directories, unsafe state DB targets, absent valid targets, and unexpected diagnostic exceptions.
+Custom Git-policy editing must be guided rather than JSON-first while still validating through `GitPolicyConfig`.
 
-## 7. SWH-003: tunnel command quoting
+Required behavior:
 
-### Problem
+- every current `GitPolicyConfig` field has a guided control or explicit support disposition;
+- Recommended and Conservative presets retain their tested semantics;
+- opening Custom does not persist mutations until the operator validates/applies the step;
+- direct default-branch writes, force push, force-with-lease, deletion, published amend, pull strategy, remote-protection modes, and required-check behavior are explained;
+- sequence/list fields are edited through guided controls;
+- any raw JSON escape hatch, if retained, is advanced/debug-only and not the primary Custom path.
 
-The tunnel profile generator constructs `server_command` with direct f-string interpolation. Project/config paths containing spaces or shell-sensitive characters can produce a command string that does not parse back to the intended argv.
+## 5. Validation requirements
 
-### Required behavior
-
-- The generated command must preserve this intended argv shape:
-
-```text
-uv run --project <project> dev-workspace-mcp serve --config <config>
-```
-
-- Project paths with spaces must round-trip safely.
-- Config paths with spaces must round-trip safely.
-- Runtime secrets must not appear in the generated profile plan.
-- `--no-browser` behavior must remain unchanged.
-
-### Design direction
-
-Use `shlex.join()` or an equivalent shell-safe argv-to-command mechanism. Keep the stored/reviewed profile command human-readable while making it unambiguous.
-
-### Acceptance
-
-A regression test must use paths containing spaces and verify `shlex.split(plan.server_command)` equals the intended argv exactly.
-
-## 8. SWH-004: Docker build-context resolution
-
-### Problem
-
-The setup wizard build action currently relies on the process current working directory to find `docker/default`. Installed or non-repo-root usage can therefore attempt to build from the wrong path or fail opaquely.
-
-### Required behavior
-
-- Resolve the bundled default Docker build context deterministically from installed/source-tree location, not from `Path.cwd()`.
-- If the bundled context is unavailable, report an actionable setup error and do not invoke Docker build.
-- Preserve explicit operator approval before any build.
-- Preserve command/action preview before execution.
-- Preserve Docker-unavailable degraded/action-required behavior.
-- Rendering the Docker screen must not mutate Docker state.
-
-### Acceptance
-
-Tests must prove the resolver works from a non-repo current working directory and that absent context reports an actionable error without invoking Docker.
-
-## 9. SWH-005: setup TUI orchestration split
-
-### Problem
-
-`src/dev_workspace_mcp/setup/app.py` is too large and contains too many responsibilities: lifecycle, CSS, dialogs, widget population, domain translation, action handling, and validation gating. That concentration makes future setup changes harder to review safely.
-
-### Required behavior
-
-- Split low-risk presentation/support pieces into separate modules.
-- Keep public CLI behavior unchanged.
-- Preserve keyboard navigation, status rendering, exit codes, state semantics, review/write flow, and diagnostics behavior.
-- Keep pure domain logic outside Textual-specific modules where practical.
-- Avoid broad rewrites that obscure safety-critical behavior.
-- Update `docs/DEVELOPMENT.md` with the module layout.
-
-### Design direction
-
-The first split should move constants, step definitions, lifecycle dialogs, CSS, and pure form-value models. Deeper controller extraction can follow after CI is green if still needed.
-
-### Acceptance
-
-Existing Textual pilot/lifecycle/review/diagnostic tests must continue to pass. The app module must become materially smaller and mostly compose behavior delegated to smaller support modules.
-
-## 10. SWH-006: guided Git-policy custom editor
-
-### Problem
-
-The wizard technically supports Custom Git policy values, but the UI is JSON-heavy. That is error-prone for operators and inconsistent with the guided runtime editor delivered in the original setup wizard workstream.
-
-### Required behavior
-
-- Audit every current `GitPolicyConfig` field.
-- Provide guided controls for every current field or record an explicit support disposition.
-- Validate guided values through `GitPolicyConfig`.
-- Preserve Recommended preset semantics unless deliberately changed with rationale.
-- Preserve Conservative preset semantics as no less restrictive on mutating operations.
-- Opening the Custom editor must not mutate state until the operator applies validation.
-- Consequence text must cover ordinary/default-branch pushes, force push, force-with-lease, branch deletion, tag deletion, published amend, pull strategy, remote protection, required checks, and allowed URL schemes.
-- Any raw JSON escape hatch, if retained, must be advanced/debug-only.
-
-### Acceptance
-
-Textual pilot tests must edit at least one boolean-like, one enum-like, and one sequence/list field through guided controls. Unit tests must prove guided values round-trip through `GitPolicyConfig` and that an exhaustiveness test fails when new production fields lack UI/support coverage.
-
-## 11. SWH-007: closure audit
-
-### Required checks
-
-Before merge, perform a final audit covering:
-
-- filesystem mutation boundaries;
-- diagnostics fail-closed behavior;
-- tunnel command generation;
-- Docker build-context resolution;
-- setup-state secret exposure;
-- config write review/CAS/atomic/reload semantics;
-- Git-policy field exhaustiveness;
-- documentation accuracy;
-- MCP contract drift;
-- `contract_version` decision.
-
-### CI requirements
-
-The implementation head and post-merge `master` must pass:
+Every correctness fix must have focused regression coverage. The final implementation head must pass:
 
 - Ruff format;
 - Ruff lint;
 - strict mypy;
-- MCP contract check;
+- MCP contract export check;
 - `contract_version` history gate;
 - `docs/TOOLS.md` drift gate;
-- full Docker-backed pytest + coverage.
+- full Docker-backed pytest with coverage.
 
-## 12. Evidence requirements
-
-The TODO must not be marked complete until it records:
-
-- exact implementation head SHA;
-- exact PR number;
-- exact CI run and job IDs;
-- pytest result and coverage totals;
-- MCP contract result;
-- `contract_version` decision;
-- exact merge commit SHA;
-- exact post-merge master CI run and job IDs.
+The final TODO closure must record exact SHA, run ID, job ID, test totals, coverage totals, and contract-version decision. Merge must be exact-head guarded, and post-merge `master` CI must also be green.
