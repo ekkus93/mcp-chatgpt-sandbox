@@ -1,8 +1,5 @@
 """Filesystem and setup-state persistence safety tests."""
 
-from __future__ import annotations
-
-import os
 from pathlib import Path
 
 import pytest
@@ -92,5 +89,4 @@ def test_atomic_writer_rejects_group_permissions(tmp_path: Path) -> None:
 def test_state_file_is_not_executable(tmp_path: Path) -> None:
     target = tmp_path / "state.json"
     save_setup_state(SetupState(), target)
-    assert not (target.stat().st_mode & (stat_exec := (os.X_OK and 0o111)))
-    assert stat_exec == 0o111
+    assert target.stat().st_mode & 0o111 == 0

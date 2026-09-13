@@ -3,6 +3,7 @@ from dev_workspace_mcp.config.loader import (
     docker_available,
     ensure_known_hosts_file_exists,
     load_config,
+    validate_config_mapping,
 )
 from dev_workspace_mcp.config.models import (
     AuditConfig,
@@ -14,6 +15,7 @@ from dev_workspace_mcp.config.models import (
     GitPolicyConfig,
     LoggingConfig,
     RepositoryConfig,
+    ResourcesConfig,
     ServerConfig,
     SSHConfig,
     WorkspaceConfig,
@@ -30,10 +32,12 @@ __all__ = [
     "GithubConfig",
     "LoggingConfig",
     "RepositoryConfig",
+    "ResourcesConfig",
     "SSHConfig",
     "ServerConfig",
     "WorkspaceConfig",
     "docker_available",
     "ensure_known_hosts_file_exists",
     "load_config",
+    "validate_config_mapping",
 ]

@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Self
+from typing import Self
 
 from dev_workspace_mcp.config.models import RepositoryConfig
 
@@ -230,7 +230,7 @@ class SetupState:
     def rewind_for_missing_process_local_secret(self) -> bool:
         """Reacquire optional tunnel runtime material after process restart.
 
-        Raw runtime credentials are intentionally not persisted.  If ChatGPT
+        Raw runtime credentials are intentionally not persisted. If ChatGPT
         connection setup had progressed past its step, resuming cannot truthfully
         claim that process-local material still exists.
         """
@@ -346,9 +346,7 @@ class SetupState:
         )
 
 
-def with_step_status(
-    state: SetupState, step: SetupStep, status: SetupStepStatus
-) -> SetupState:
+def with_step_status(state: SetupState, step: SetupStep, status: SetupStepStatus) -> SetupState:
     """Return a revalidated clone carrying one status update."""
 
     candidate = state.clone()

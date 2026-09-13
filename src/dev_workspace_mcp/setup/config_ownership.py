@@ -54,11 +54,9 @@ CONFIG_FIELD_OWNERSHIP: Final[dict[str, ConfigDisposition]] = {
     "logging": ConfigDisposition.MANAGED,
 }
 
-# Safety-sensitive nested models are also exhaustive.  A future production
+# Safety-sensitive nested models are also exhaustive. A future production
 # field must receive an explicit wizard disposition before this contract passes.
-NESTED_CONFIG_FIELD_OWNERSHIP: Final[
-    dict[type[object], dict[str, ConfigDisposition]]
-] = {
+NESTED_CONFIG_FIELD_OWNERSHIP: Final[dict[type[object], dict[str, ConfigDisposition]]] = {
     DockerConfig: {
         "default_image": ConfigDisposition.MANAGED,
         "workspace_path": ConfigDisposition.MANAGED,
