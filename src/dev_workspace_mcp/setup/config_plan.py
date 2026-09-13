@@ -13,14 +13,12 @@ import yaml
 from yaml.nodes import MappingNode, Node, SequenceNode
 
 from dev_workspace_mcp.config import ConfigError, ServerConfig, validate_config_mapping
-from dev_workspace_mcp.config.models import GitPolicyConfig
 from dev_workspace_mcp.setup.filesystem import (
     SetupFilesystemError,
     read_text_bounded,
     reject_unsafe_sensitive_target,
 )
-from dev_workspace_mcp.setup.git_policy import policy_for_preset
-from dev_workspace_mcp.setup.model import GitPolicyPreset, SetupState, SetupStep, SetupStepStatus
+from dev_workspace_mcp.setup.model import SetupState, SetupStep, SetupStepStatus
 
 _MAX_CONFIG_BYTES = 1024 * 1024
 
@@ -190,7 +188,9 @@ def _apply_state(candidate: dict[str, Any], state: SetupState, *, source_exists:
         or not source_exists
     ):
         candidate["repository_roots"] = list(state.repository_roots)
-        candidate["repositories"] = [repository.to_dict() for repository in state.repositories]
+        candidate["repositories"] = [
+            repository.to_config_dict() for repository in state.repositories
+        ]
 
     ssh = _mapping(candidate, "ssh")
     if state.ssh_mode is not None:
@@ -206,14 +206,10 @@ def _apply_state(candidate: dict[str, Any], state: SetupState, *, source_exists:
     if state.github_api_token_path is not None:
         github["api_token_path"] = state.github_api_token_path
 
-    if state.statuses.get(SetupStep.GIT_SAFETY_POLICY) is SetupStepStatus.COMPLETE:
-        if state.git_policy_preset is GitPolicyPreset.CUSTOM:
-            if state.custom_git_policy is None:
-                raise ConfigPlanError("Custom Git policy has not been fully configured")
-            policy = GitPolicyConfig.model_validate(state.custom_git_policy)
-        else:
-            policy = policy_for_preset(state.git_policy_preset)
-        candidate["git_policy"] = policy.model_dump(mode="json")
+    # Only an explicit policy override is materialized. Merely visiting or
+    # validating the policy step must not rewrite an existing policy/default.
+    if state.custom_git_policy is not None:
+        candidate["git_policy"] = deepcopy(state.custom_git_policy)
 
     if state.filesystem_overrides is not None:
         candidate["filesystem"] = deepcopy(state.filesystem_overrides)
@@ -246,8 +242,35 @@ def _display(value: Any) -> str:
     return str(value)
 
 
+def _repository_map(value: object) -> dict[str, object]:
+    if not isinstance(value, list):
+        return {}
+    result: dict[str, object] = {}
+    for item in value:
+        if isinstance(item, dict) and isinstance(item.get("id"), str):
+            result[item["id"]] = item
+    return result
+
+
+def _repository_summary(before: dict[str, Any] | None, after: dict[str, Any]) -> list[str]:
+    old = _repository_map((before or {}).get("repositories"))
+    new = _repository_map(after.get("repositories"))
+    lines: list[str] = []
+    for repository_id in sorted(set(old) | set(new)):
+        if repository_id not in old:
+            lines.append(f"repositories[{repository_id}]: added")
+        elif repository_id not in new:
+            lines.append(f"repositories[{repository_id}]: removed")
+        elif old[repository_id] != new[repository_id]:
+            lines.append(f"repositories[{repository_id}]: changed")
+    return lines
+
+
 def _summary(
-    before: dict[str, Any] | None, after: dict[str, Any], *, repaired: bool
+    before: dict[str, Any] | None,
+    after: dict[str, Any],
+    *,
+    repaired: bool,
 ) -> tuple[str, ...]:
     lines = [
         "Existing configuration: invalid; explicit repair approved"
@@ -256,8 +279,13 @@ def _summary(
         if before is None
         else "Existing configuration: valid; unmodified settings preserved"
     ]
-    old = _flatten(before or {})
-    new = _flatten(after)
+    lines.extend(_repository_summary(before, after))
+    before_without_repositories = deepcopy(before or {})
+    after_without_repositories = deepcopy(after)
+    before_without_repositories.pop("repositories", None)
+    after_without_repositories.pop("repositories", None)
+    old = _flatten(before_without_repositories)
+    new = _flatten(after_without_repositories)
     for path in sorted(set(old) | set(new)):
         if old.get(path) != new.get(path):
             lines.append(f"{path}: {_display(old.get(path))} -> {_display(new.get(path))}")
