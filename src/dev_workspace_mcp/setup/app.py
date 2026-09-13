@@ -22,7 +22,7 @@ from dev_workspace_mcp.setup.controller import (
     SetupControllerError,
     SetupEntryChoice,
 )
-from dev_workspace_mcp.setup.docker_setup import DockerBuildPlan, DockerSetupStatus
+from dev_workspace_mcp.setup.docker_setup import DockerBuildPlan
 from dev_workspace_mcp.setup.model import (
     GitPolicyPreset,
     SetupRepository,
@@ -175,7 +175,13 @@ class SetupApp(App[int]):
     CSS = """
     Screen { min-width: 40; }
     #setup-shell { height: 1fr; }
-    #progress { width: 30; min-width: 22; border-right: solid $accent; padding: 1; overflow-y: auto; }
+    #progress {
+        width: 30;
+        min-width: 22;
+        border-right: solid $accent;
+        padding: 1;
+        overflow-y: auto;
+    }
     #main { width: 1fr; padding: 0 1; }
     #title { height: auto; text-style: bold; padding: 1 0; }
     #content { height: 1fr; padding: 0 1; }
