@@ -6,10 +6,14 @@ import json
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.widgets import Button, Checkbox, DataTable, Input, Label, Static
+from textual.widgets import Button, Checkbox, DataTable, Input, Label, Select, Static
 
 from dev_workspace_mcp.setup.git_policy_setup import recommended_policy
 from dev_workspace_mcp.setup.runtime_setup import production_runtime_defaults
+
+
+def _display(value: object) -> str:
+    return "" if value is None else str(value)
 
 
 class WizardStepPanels(Vertical):
@@ -53,10 +57,29 @@ class WizardStepPanels(Vertical):
             yield Input(id="docker-image")
             yield Label("Workspace path inside container")
             yield Input(id="docker-workspace-path")
-            yield Label("Container user: host or root")
-            yield Input(id="docker-user")
-            yield Label("Git directory mode: read-write, read-only, or none")
-            yield Input(id="docker-git-dir-mode")
+            yield Label("Container user")
+            yield Select(
+                (("Host user (recommended)", "host"), ("Root (advanced)", "root")),
+                id="docker-user",
+                value="host",
+                allow_blank=False,
+            )
+            yield Static(
+                "Root mode is nonstandard and weakens host-user parity; select it only when a "
+                "project genuinely requires root inside the workspace.",
+                markup=False,
+            )
+            yield Label("Git directory visibility")
+            yield Select(
+                (
+                    ("Read/write .git", "read-write"),
+                    ("Read-only .git", "read-only"),
+                    ("Hide .git", "none"),
+                ),
+                id="docker-git-dir-mode",
+                value="read-write",
+                allow_blank=False,
+            )
             yield Label("Idle stop duration, e.g. 4h or never")
             yield Input(id="docker-idle-stop")
             yield Checkbox(
@@ -103,14 +126,39 @@ class WizardStepPanels(Vertical):
                 "file mode exposes the mounted private key to container processes.",
                 markup=False,
             )
-            yield Label("SSH mode: agent or file")
-            yield Input(id="ssh-mode")
-            yield Label("SSH scope: repository or shared")
-            yield Input(id="ssh-scope")
+            yield Label("Container credential exposure")
+            yield Select(
+                (
+                    ("SSH agent (recommended; key material stays host-side)", "agent"),
+                    ("Mounted key file (container can read private key)", "file"),
+                ),
+                id="ssh-mode",
+                value="agent",
+                allow_blank=False,
+            )
+            yield Label("Credential isolation scope")
+            yield Select(
+                (
+                    ("Dedicated key per repository (recommended)", "repository"),
+                    ("Shared key across repositories (weaker isolation)", "shared"),
+                ),
+                id="ssh-scope",
+                value="repository",
+                allow_blank=False,
+            )
             yield Label("Shared key filename (only for shared scope; blank means none)")
             yield Input(id="ssh-shared-key")
-            yield Label("GitHub API auth: none, token, or app")
-            yield Input(id="github-api-auth")
+            yield Label("GitHub API authentication")
+            yield Select(
+                (
+                    ("None", "none"),
+                    ("Token from credential file", "token"),
+                    ("GitHub App (production config accepts; verification unimplemented)", "app"),
+                ),
+                id="github-api-auth",
+                value="none",
+                allow_blank=False,
+            )
             yield Label("GitHub API credential file path (token mode only; never token contents)")
             yield Input(id="github-auth-file")
             yield Label("GitHub API base URL")
@@ -132,8 +180,25 @@ class WizardStepPanels(Vertical):
                 "protection. Custom must specify every current GitPolicyConfig field as JSON.",
                 markup=False,
             )
-            yield Label("Preset: recommended, conservative, or custom")
-            yield Input(id="git-policy-preset", value="recommended")
+            yield Static(
+                "Consequences: force push rewrites remote history; force-with-lease is safer but "
+                "still rewrites published history; branch/tag deletion removes remote refs; amend "
+                "rewrites a published commit; default-branch controls protect the main line; "
+                "ff_only pull refuses implicit merge/rebase; remote protection off/warn/deny "
+                "controls how uncertainty affects mutating Git operations.",
+                markup=False,
+            )
+            yield Label("Safety preset")
+            yield Select(
+                (
+                    ("Recommended", "recommended"),
+                    ("Conservative", "conservative"),
+                    ("Custom", "custom"),
+                ),
+                id="git-policy-preset",
+                value="recommended",
+                allow_blank=False,
+            )
             yield Label("Custom policy JSON (used only when preset=custom)")
             yield Input(
                 id="git-policy-custom",
@@ -142,6 +207,11 @@ class WizardStepPanels(Vertical):
             yield Button("Validate Git safety policy", id="validate-git-policy", variant="primary")
             yield Static(id="git-policy-message", markup=False)
 
+        runtime_defaults = production_runtime_defaults()
+        filesystem = runtime_defaults["filesystem"]
+        execution = runtime_defaults["execution"]
+        resources = runtime_defaults["resources"]
+        logging = runtime_defaults["logging"]
         with Vertical(id="panel-runtime_and_resources", classes="step-panel"):
             yield Static(
                 "Advanced runtime fields are untouched unless this editor is explicitly enabled. "
@@ -154,13 +224,95 @@ class WizardStepPanels(Vertical):
                 id="runtime-edit",
                 value=self.advanced,
             )
-            yield Label(
-                "Advanced overrides JSON with filesystem/execution/resources/logging objects"
-            )
-            yield Input(
-                id="runtime-json",
-                value=json.dumps(production_runtime_defaults()),
-            )
+            with Vertical(id="runtime-advanced-fields"):
+                yield Static("Filesystem limits", markup=False)
+                yield Label("Maximum read bytes")
+                yield Input(
+                    id="runtime-fs-max-read-bytes",
+                    value=_display(filesystem["max_read_bytes"]),
+                )
+                yield Label("Maximum write bytes")
+                yield Input(
+                    id="runtime-fs-max-write-bytes",
+                    value=_display(filesystem["max_write_bytes"]),
+                )
+                yield Label("Maximum patch bytes")
+                yield Input(
+                    id="runtime-fs-max-patch-bytes",
+                    value=_display(filesystem["max_patch_bytes"]),
+                )
+                yield Label("Maximum listing entries")
+                yield Input(
+                    id="runtime-fs-max-listing-entries",
+                    value=_display(filesystem["max_listing_entries"]),
+                )
+                yield Label("Maximum search results")
+                yield Input(
+                    id="runtime-fs-max-search-results",
+                    value=_display(filesystem["max_search_results"]),
+                )
+
+                yield Static("Execution and retention", markup=False)
+                yield Label("Synchronous timeout seconds")
+                yield Input(
+                    id="runtime-exec-sync-timeout-seconds",
+                    value=_display(execution["sync_timeout_seconds"]),
+                )
+                yield Label("Default background job timeout seconds")
+                yield Input(
+                    id="runtime-exec-default-job-timeout-seconds",
+                    value=_display(execution["default_job_timeout_seconds"]),
+                )
+                yield Label("Maximum captured output bytes")
+                yield Input(
+                    id="runtime-exec-max-output-bytes",
+                    value=_display(execution["max_output_bytes"]),
+                )
+                yield Label("Tail bytes retained after truncation")
+                yield Input(
+                    id="runtime-exec-tail-keep-bytes",
+                    value=_display(execution["tail_keep_bytes"]),
+                )
+                yield Label("Response tail lines")
+                yield Input(
+                    id="runtime-exec-response-tail-lines",
+                    value=_display(execution["response_tail_lines"]),
+                )
+                yield Label("Job retention days")
+                yield Input(
+                    id="runtime-exec-job-retention-days",
+                    value=_display(execution["job_retention_days"]),
+                )
+                yield Label("Maximum total job-log bytes")
+                yield Input(
+                    id="runtime-exec-job-log-max-total-bytes",
+                    value=_display(execution["job_log_max_total_bytes"]),
+                )
+                yield Label("Default exec_output response bytes")
+                yield Input(
+                    id="runtime-exec-default-output-response-bytes",
+                    value=_display(execution["default_output_response_bytes"]),
+                )
+
+                yield Static("Container resource limits", markup=False)
+                yield Label("CPUs (blank = unbounded)")
+                yield Input(id="runtime-resources-cpus", value=_display(resources["cpus"]))
+                yield Label("Memory Docker size string, e.g. 4g (blank = unbounded)")
+                yield Input(id="runtime-resources-memory", value=_display(resources["memory"]))
+                yield Label("PID limit (blank = unbounded)")
+                yield Input(
+                    id="runtime-resources-pids-limit",
+                    value=_display(resources["pids_limit"]),
+                )
+
+                yield Static("Operational logging", markup=False)
+                yield Label("Logging level")
+                yield Select(
+                    tuple((level, level) for level in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")),
+                    id="runtime-logging-level",
+                    value=_display(logging["level"]),
+                    allow_blank=False,
+                )
             yield Button("Validate runtime settings", id="validate-runtime", variant="primary")
             yield Static(id="runtime-message", markup=False)
 
@@ -217,3 +369,4 @@ class WizardStepPanels(Vertical):
             )
             yield Static(id="diagnostic-matrix", markup=False)
             yield Static(id="attestation-summary", markup=False)
+            yield Static(id="smoke-guidance", markup=False)
