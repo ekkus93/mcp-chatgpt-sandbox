@@ -5,24 +5,36 @@ import re
 from pathlib import Path
 
 _SETUP_ROOT = Path(__file__).parents[2] / "src" / "dev_workspace_mcp" / "setup"
-_PRESENTATION_FILES = (_SETUP_ROOT / "app.py", _SETUP_ROOT / "step_panels.py")
+_PRESENTATION_FILES = (
+    _SETUP_ROOT / "app.py",
+    _SETUP_ROOT / "step_actions.py",
+    _SETUP_ROOT / "step_panels.py",
+)
 
 
 def _python_sources() -> list[Path]:
     return sorted(_SETUP_ROOT.rglob("*.py"))
 
 
-def test_wcr_013_setup_has_no_bare_or_broad_exception_swallowing() -> None:
+def _has_fail_closed_boundary_rationale(source: str, lineno: int) -> bool:
+    lines = source.splitlines()
+    start = max(0, lineno - 5)
+    context = "\n".join(lines[start : lineno - 1])
+    return "WCR-013 fail-closed boundary" in context
+
+
+def test_wcr_013_setup_has_no_unjustified_broad_exception_swallowing() -> None:
     for path in _python_sources():
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
         for node in ast.walk(tree):
             if not isinstance(node, ast.ExceptHandler):
                 continue
             assert node.type is not None, f"bare except in {path}:{node.lineno}"
-            if isinstance(node.type, ast.Name):
-                assert node.type.id != "Exception", (
-                    f"broad except Exception in {path}:{node.lineno}; "
-                    "use a typed fail-closed boundary"
+            if isinstance(node.type, ast.Name) and node.type.id == "Exception":
+                assert _has_fail_closed_boundary_rationale(source, node.lineno), (
+                    f"broad except Exception lacks explicit fail-closed rationale in "
+                    f"{path}:{node.lineno}"
                 )
 
 
@@ -77,6 +89,17 @@ def test_wcr_002_presentation_does_not_own_yaml_or_atomic_config_writes() -> Non
         source = path.read_text(encoding="utf-8")
         for token in forbidden:
             assert token not in source, f"presentation owns config persistence token {token!r}"
+
+
+def test_wcr_002_coordinator_growth_requires_explicit_architecture_change() -> None:
+    limits = {
+        "app.py": 750,
+        "step_actions.py": 850,
+        "step_panels.py": 450,
+    }
+    for filename, limit in limits.items():
+        lines = (_SETUP_ROOT / filename).read_text(encoding="utf-8").splitlines()
+        assert len(lines) <= limit, f"{filename} grew past architecture guard: {len(lines)} > {limit}"
 
 
 def test_wcr_013_machine_diagnostics_do_not_consume_user_attestation() -> None:

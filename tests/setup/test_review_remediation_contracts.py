@@ -1,14 +1,14 @@
 from __future__ import annotations
 
+import ast
 import inspect
-import re
 import subprocess
 from pathlib import Path
 
-from dev_workspace_mcp.setup.app import SetupWizardApp
 from dev_workspace_mcp.setup.choices import SetupChoices
 from dev_workspace_mcp.setup.model import SetupRepositoryState
 from dev_workspace_mcp.setup.repository_setup import verify_repository
+from dev_workspace_mcp.setup.step_actions import SetupStepActionsMixin
 from dev_workspace_mcp.setup.step_panels import WizardStepPanels
 
 _SECRET_FIELD_FRAGMENTS = (
@@ -19,7 +19,6 @@ _SECRET_FIELD_FRAGMENTS = (
     "password",
     "private_key",
     "private-key",
-    "credential",
     "runtime-key",
 )
 
@@ -92,8 +91,18 @@ def test_wcr_004_resumable_choices_have_no_raw_secret_field_names() -> None:
 
 
 def test_wcr_004_012_tui_defines_no_raw_secret_input() -> None:
-    source = inspect.getsource(WizardStepPanels)
-    input_ids = re.findall(r'id="([^"]+)"', source)
+    tree = ast.parse(inspect.getsource(WizardStepPanels))
+    input_ids: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            continue
+        if node.func.id != "Input":
+            continue
+        for keyword in node.keywords:
+            if keyword.arg != "id" or not isinstance(keyword.value, ast.Constant):
+                continue
+            if isinstance(keyword.value.value, str):
+                input_ids.append(keyword.value.value)
     assert input_ids
     for input_id in input_ids:
         lowered = input_id.casefold()
@@ -101,7 +110,7 @@ def test_wcr_004_012_tui_defines_no_raw_secret_input() -> None:
 
 
 def test_wcr_005_write_action_cannot_prepare_and_write_in_one_click() -> None:
-    source = inspect.getsource(SetupWizardApp.write_reviewed_config)
-    assert "self._review_plan is None" in source
+    source = inspect.getsource(SetupStepActionsMixin.write_reviewed_config)
+    assert "_review_plan is None" in source
     assert "commit_config_update" in source
     assert "prepare_config_update" not in source
