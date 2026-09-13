@@ -5,9 +5,9 @@ from __future__ import annotations
 import shutil
 import subprocess
 import webbrowser
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
 
 OPENAI_TUNNEL_DOC_URL = "https://developers.openai.com/api/docs/guides/secure-mcp-tunnels"
 OPENAI_CHATGPT_CONNECT_DOC_URL = "https://developers.openai.com/plugins/deploy/connect-chatgpt"

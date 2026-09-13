@@ -5,7 +5,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-import yaml
 
 from dev_workspace_mcp.config import load_config
 from dev_workspace_mcp.server import create_server
@@ -23,7 +22,12 @@ from dev_workspace_mcp.setup.host import (
     prepare_storage_directories,
 )
 from dev_workspace_mcp.setup.materialize import materialize_setup, state_from_existing_config
-from dev_workspace_mcp.setup.model import SetupRepositoryState, SetupState, load_setup_state
+from dev_workspace_mcp.setup.model import (
+    SetupRepositoryState,
+    SetupState,
+    SetupStateError,
+    load_setup_state,
+)
 
 
 def _init_repository(path: Path) -> SetupRepositoryState:
@@ -208,7 +212,7 @@ def test_wizv_018_repair_and_failure_paths_preserve_recovery_material(
 
     state_path = tmp_path / "setup-state.json"
     atomic_write_text(state_path, "{not-json}\n", create_backup=False)
-    with pytest.raises(Exception):
+    with pytest.raises(SetupStateError):
         load_setup_state(state_path)
     assert load_config(target).docker.default_image == "mcp-dev-test-s7:24.04"
 

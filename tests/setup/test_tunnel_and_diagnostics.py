@@ -9,8 +9,8 @@ from click.testing import CliRunner
 
 from dev_workspace_mcp.entrypoint import main
 from dev_workspace_mcp.setup.diagnostics import (
-    DiagnosticStatus,
     DiagnosticsReport,
+    DiagnosticStatus,
     format_diagnostics,
 )
 from dev_workspace_mcp.setup.tunnel import (

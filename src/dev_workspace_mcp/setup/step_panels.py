@@ -22,8 +22,9 @@ class WizardStepPanels(Vertical):
     def compose(self) -> ComposeResult:
         with Vertical(id="panel-local_prerequisites", classes="step-panel"):
             yield Static(
-                "Checks Python and Docker. Docker may be unavailable while configuration continues; "
-                "final diagnostics will keep Finish disabled until Docker-dependent checks pass.",
+                "Checks Python and Docker. Docker may be unavailable while "
+                "configuration continues; final diagnostics will keep Finish disabled until "
+                "Docker-dependent checks pass.",
                 markup=False,
             )
             yield Static(id="prerequisite-report", markup=False)
@@ -144,8 +145,8 @@ class WizardStepPanels(Vertical):
         with Vertical(id="panel-runtime_and_resources", classes="step-panel"):
             yield Static(
                 "Advanced runtime fields are untouched unless this editor is explicitly enabled. "
-                "Units are production units: byte counts are integers, timeouts are seconds, memory "
-                "uses Docker size strings such as 4g.",
+                "Units are production units: byte counts are integers, timeouts are seconds, "
+                "memory uses Docker size strings such as 4g.",
                 markup=False,
             )
             yield Checkbox(
@@ -166,9 +167,9 @@ class WizardStepPanels(Vertical):
         with Vertical(id="panel-chatgpt_connection", classes="step-panel"):
             yield Checkbox("Configure optional ChatGPT Secure MCP Tunnel", id="chatgpt-enabled")
             yield Static(
-                "OpenAI documentation is the source of truth for tunnel and ChatGPT UI availability. "
-                "The wizard stores only the non-secret tunnel id/profile; runtime credentials must "
-                "already be supplied by your external secure environment.",
+                "OpenAI documentation is the source of truth for tunnel and ChatGPT UI "
+                "availability. The wizard stores only the non-secret tunnel id/profile; runtime "
+                "credentials must already be supplied by your external secure environment.",
                 markup=False,
             )
             yield Label("Tunnel id")
