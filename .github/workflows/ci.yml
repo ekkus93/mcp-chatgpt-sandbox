@@ -15,6 +15,10 @@ jobs:
     # alone would work too (unique to this repo) but pairing both is the
     # documented convention and makes the intent explicit at a glance.
     runs-on: [self-hosted, mcp-chatgpt-sandbox]
+    # WIZ-001 temporary branch-only lock refresh: removed immediately after
+    # the runner commits uv's generated lockfile back to this Ralph branch.
+    permissions:
+      contents: write
     steps:
       # HR-029 (`docs/HARDENING_SPEC.md` §12): full history, not the
       # default shallow single-commit checkout — the contract_version
@@ -31,6 +35,25 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --group dev
+
+      - name: Refresh setup-wizard dependency lock (temporary branch-only)
+        if: github.event_name == 'pull_request' && github.head_ref == 'ralph/setup-wizard-foundation'
+        env:
+          HEAD_BRANCH: ${{ github.head_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if git diff --quiet -- uv.lock; then
+            echo "uv.lock is already current."
+            exit 0
+          fi
+          cp uv.lock /tmp/setup-wizard-generated-uv.lock
+          git checkout --detach "$HEAD_SHA"
+          cp /tmp/setup-wizard-generated-uv.lock uv.lock
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add uv.lock
+          git commit -m "chore: refresh uv lock for setup wizard"
+          git push origin "HEAD:$HEAD_BRANCH"
 
       # §71's "Docker-backed integration tests" needs a running Docker
       # daemon — true of `ubuntu-latest` by default; the self-hosted
