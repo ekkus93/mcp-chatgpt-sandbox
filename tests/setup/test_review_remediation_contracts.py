@@ -5,8 +5,6 @@ import inspect
 import subprocess
 from pathlib import Path
 
-import pytest
-
 from dev_workspace_mcp.setup.choices import SetupChoices
 from dev_workspace_mcp.setup.model import SetupRepositoryState
 from dev_workspace_mcp.setup.repository_setup import (
