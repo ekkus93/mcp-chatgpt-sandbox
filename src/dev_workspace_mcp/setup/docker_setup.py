@@ -73,8 +73,8 @@ def default_image_build_plan(image: str, *, source_root: Path | None = None) -> 
     dockerfile = context / "Dockerfile"
     if not dockerfile.is_file():
         raise DockerSetupError(
-            "The project default-image build context is unavailable; run setup from a source checkout "
-            "or build/pull the selected image separately"
+            "The project default-image build context is unavailable; run setup from a source "
+            "checkout or build/pull the selected image separately"
         )
     argv = ("docker", "build", "-t", image, str(context))
     return DockerBuildPlan(image=image, context=context, argv=argv)
