@@ -416,13 +416,13 @@ class SetupController:
         existing = self.existing_config
         self.state.docker_image = (
             None
-            if existing is not None
-            and docker_config.default_image == existing.docker.default_image
+            if existing is not None and docker_config.default_image == existing.docker.default_image
             else image
         )
         self.state.docker_workspace_path = (
             None
-            if existing is not None and docker_config.workspace_path == existing.docker.workspace_path
+            if existing is not None
+            and docker_config.workspace_path == existing.docker.workspace_path
             else str(docker_config.workspace_path)
         )
         self.state.container_overrides = _dict_or_none(
@@ -499,9 +499,7 @@ class SetupController:
             if not root_path.is_absolute():
                 raise SetupControllerError("Repository discovery roots must be absolute")
             if not root_path.is_dir():
-                raise SetupControllerError(
-                    f"Repository discovery root does not exist: {root_path}"
-                )
+                raise SetupControllerError(f"Repository discovery root does not exist: {root_path}")
         verification = [verify_repository(repository) for repository in repositories]
         invalid = [result.message for result in verification if not result.valid]
         if invalid:
@@ -541,9 +539,7 @@ class SetupController:
                 else None
             ),
             api_base_url=(
-                existing.github.api_base_url
-                if existing is not None
-                else "https://api.github.com"
+                existing.github.api_base_url if existing is not None else "https://api.github.com"
             ),
             repositories=(list(existing.github.repositories) if existing is not None else []),
         )
