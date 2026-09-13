@@ -504,9 +504,7 @@ class SetupApp(App[int]):
                 yield Static(f"Cannot prepare review: {exc}")
                 return
             status = (
-                "yes; timestamped backup will be created"
-                if plan.source_exists
-                else "no; new file"
+                "yes; timestamped backup will be created" if plan.source_exists else "no; new file"
             )
             yield Static(f"Existing file: {status}")
             yield Static("\n".join(plan.summary), classes="boxed")
@@ -660,7 +658,9 @@ class SetupApp(App[int]):
                 if not repository_id:
                     raise SetupControllerError("Enter the repository ID to remove")
                 if not any(repo.id == repository_id for repo in self._repositories):
-                    raise SetupControllerError(f"Repository is not in the setup list: {repository_id}")
+                    raise SetupControllerError(
+                        f"Repository is not in the setup list: {repository_id}"
+                    )
                 self._pending_remove_id = repository_id
                 self.push_screen(
                     ConfirmScreen(
@@ -790,7 +790,9 @@ class SetupApp(App[int]):
 
     def _open_url(self, url: str, label: str) -> None:
         opened = open_setup_url(url, no_browser=self.controller.no_browser)
-        self._show_message(f"Opened {label}" if opened else f"Browser disabled; open manually: {url}")
+        self._show_message(
+            f"Opened {label}" if opened else f"Browser disabled; open manually: {url}"
+        )
 
     def _docker_build_choice(self, confirmed: bool) -> None:
         plan = self._pending_build
