@@ -91,7 +91,9 @@ def _docker_checks(config: ServerConfig) -> list[DiagnosticResult]:
         try:
             client.ping()
             results.append(
-                _result("docker.daemon", "Docker daemon", DiagnosticStatus.PASS, "Docker is reachable")
+                _result(
+                    "docker.daemon", "Docker daemon", DiagnosticStatus.PASS, "Docker is reachable"
+                )
             )
             try:
                 client.images.get(config.docker.default_image)

@@ -41,8 +41,6 @@ def test_repository_verification_rejects_remote_mismatch(tmp_path: Path) -> None
 
 
 def test_repository_verification_rejects_non_git_directory(tmp_path: Path) -> None:
-    result = verify_repository(
-        SetupRepository(id="demo", path=str(tmp_path), github="owner/demo")
-    )
+    result = verify_repository(SetupRepository(id="demo", path=str(tmp_path), github="owner/demo"))
     assert not result.valid
     assert "not a Git working tree" in result.message
