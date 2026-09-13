@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any, TypeVar, cast
 
 import click
 
@@ -11,16 +13,19 @@ from dev_workspace_mcp.setup.diagnostics import run_check_cli
 
 DEFAULT_CONFIG_PATH = Path("~/.config/dev-workspace-mcp/config.yml")
 
+F = TypeVar("F", bound=Callable[..., Any])
 
-def _config_option(function: object) -> object:
-    return click.option(
+
+def _config_option(function: F) -> F:
+    decorator = click.option(
         "--config",
         "config_path",
         type=click.Path(path_type=Path),
         default=DEFAULT_CONFIG_PATH,
         show_default=True,
         help="Configuration file to create, repair, edit, or diagnose.",
-    )(function)
+    )
+    return cast(F, decorator(function))
 
 
 @click.command(name="setup")

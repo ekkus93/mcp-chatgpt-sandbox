@@ -13,6 +13,7 @@ from docker.errors import DockerException
 from textual import on
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.dom import DOMNode
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, DataTable, Footer, Input, Label, Static
 
@@ -81,6 +82,7 @@ from dev_workspace_mcp.setup.step_panels import WizardStepPanels
 from dev_workspace_mcp.setup.tunnel import (
     OPENAI_TUNNEL_DOC_URL,
     SetupTunnelError,
+    TunnelProfilePlan,
     apply_tunnel_profile,
     build_tunnel_profile_plan,
     check_tunnel_profile,
@@ -463,8 +465,7 @@ class SetupWizardApp(App[int]):
         self._review_plan = None
         self._validation.pop(SetupStep.REVIEW, None)
         self._validation.pop(SetupStep.FINAL_VALIDATION, None)
-        if self.is_mounted:
-            self.query_one("#write-reviewed-config", Button).disabled = True
+        self.query_one("#write-reviewed-config", Button).disabled = True
 
     def _mark_changed(self, step: SetupStep) -> None:
         candidate = invalidate_from_step(self.state, step)
@@ -501,16 +502,25 @@ class SetupWizardApp(App[int]):
         if step is self.current_step:
             self._refresh()
 
+    @staticmethod
+    def _is_step_control(widget: Input | Checkbox) -> bool:
+        node: DOMNode | None = widget
+        while node is not None:
+            if node.id == "step-content":
+                return True
+            node = node.parent
+        return False
+
     @on(Input.Changed)
     def input_changed(self, event: Input.Changed) -> None:
-        if self._populating or not event.input.is_descendant_of(self.query_one("#step-content")):
+        if self._populating or not self._is_step_control(event.input):
             return
         if self.current_step not in {SetupStep.REVIEW, SetupStep.FINAL_VALIDATION}:
             self._mark_changed(self.current_step)
 
     @on(Checkbox.Changed)
     def checkbox_changed(self, event: Checkbox.Changed) -> None:
-        if self._populating or not event.checkbox.is_descendant_of(self.query_one("#step-content")):
+        if self._populating or not self._is_step_control(event.checkbox):
             return
         if self.current_step not in {SetupStep.REVIEW, SetupStep.FINAL_VALIDATION}:
             self._mark_changed(self.current_step)
@@ -882,7 +892,7 @@ class SetupWizardApp(App[int]):
             message="Advanced runtime values are production-valid.",
         )
 
-    def _tunnel_plan_from_widgets(self):
+    def _tunnel_plan_from_widgets(self) -> TunnelProfilePlan:
         tunnel_id = self.query_one("#tunnel-id", Input).value
         profile = self.query_one("#tunnel-profile", Input).value
         return build_tunnel_profile_plan(

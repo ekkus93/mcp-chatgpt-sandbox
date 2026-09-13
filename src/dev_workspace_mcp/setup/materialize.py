@@ -40,6 +40,15 @@ def _duration_string(seconds: int | None) -> str:
     return f"{seconds}s"
 
 
+def _mapping_value(values: dict[str, object], key: str) -> dict[str, object] | None:
+    value = values.get(key)
+    if not isinstance(value, dict):
+        return None
+    if any(not isinstance(item_key, str) for item_key in value):
+        return None
+    return {item_key: item_value for item_key, item_value in value.items() if isinstance(item_key, str)}
+
+
 def choices_from_config(config: ServerConfig) -> SetupChoices:
     """Prepopulate Edit/Repair from authoritative production values."""
 
@@ -185,20 +194,10 @@ def materialize_setup(state: SetupState, *, new_config: bool) -> MaterializedSet
     if runtime_fields:
         overrides = choices.runtime_overrides or {}
         fragments = RuntimeChoices(
-            filesystem=(
-                overrides.get("filesystem")
-                if isinstance(overrides.get("filesystem"), dict)
-                else None
-            ),
-            execution=(
-                overrides.get("execution") if isinstance(overrides.get("execution"), dict) else None
-            ),
-            resources=(
-                overrides.get("resources") if isinstance(overrides.get("resources"), dict) else None
-            ),
-            logging=(
-                overrides.get("logging") if isinstance(overrides.get("logging"), dict) else None
-            ),
+            filesystem=_mapping_value(overrides, "filesystem"),
+            execution=_mapping_value(overrides, "execution"),
+            resources=_mapping_value(overrides, "resources"),
+            logging=_mapping_value(overrides, "logging"),
         ).reviewed_fragments()
         for field_name in runtime_fields:
             if field_name not in fragments:
