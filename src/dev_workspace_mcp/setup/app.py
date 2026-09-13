@@ -465,7 +465,8 @@ class SetupWizardApp(App[int]):
         self._review_plan = None
         self._validation.pop(SetupStep.REVIEW, None)
         self._validation.pop(SetupStep.FINAL_VALIDATION, None)
-        self.query_one("#write-reviewed-config", Button).disabled = True
+        if self.is_running:
+            self.query_one("#write-reviewed-config", Button).disabled = True
 
     def _mark_changed(self, step: SetupStep) -> None:
         candidate = invalidate_from_step(self.state, step)
@@ -502,25 +503,34 @@ class SetupWizardApp(App[int]):
         if step is self.current_step:
             self._refresh()
 
-    @staticmethod
-    def _is_step_control(widget: Input | Checkbox) -> bool:
+    def _is_current_step_control(self, widget: Input | Checkbox) -> bool:
+        """Return True only for controls owned by the currently visible step panel.
+
+        Textual may deliver queued Changed events after navigation.  Hidden panels remain mounted,
+        so accepting any descendant of ``#step-content`` lets a stale event invalidate the newly
+        active step.  Bind invalidation to the control's owning panel instead.
+        """
+
+        expected_panel_id = f"panel-{self.current_step.value}"
         node: DOMNode | None = widget
         while node is not None:
-            if node.id == "step-content":
+            if node.id == expected_panel_id:
                 return True
+            if node.id == "step-content":
+                return False
             node = node.parent
         return False
 
     @on(Input.Changed)
     def input_changed(self, event: Input.Changed) -> None:
-        if self._populating or not self._is_step_control(event.input):
+        if self._populating or not self._is_current_step_control(event.input):
             return
         if self.current_step not in {SetupStep.REVIEW, SetupStep.FINAL_VALIDATION}:
             self._mark_changed(self.current_step)
 
     @on(Checkbox.Changed)
     def checkbox_changed(self, event: Checkbox.Changed) -> None:
-        if self._populating or not self._is_step_control(event.checkbox):
+        if self._populating or not self._is_current_step_control(event.checkbox):
             return
         if self.current_step not in {SetupStep.REVIEW, SetupStep.FINAL_VALIDATION}:
             self._mark_changed(self.current_step)
