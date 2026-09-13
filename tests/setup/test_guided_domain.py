@@ -9,8 +9,8 @@ from dev_workspace_mcp.config import GitPolicyConfig
 from dev_workspace_mcp.setup.docker_setup import (
     DockerSetupChoices,
     SetupDockerError,
-    bundled_default_image_build_context,
     build_default_image,
+    bundled_default_image_build_context,
     default_image_build_command,
 )
 from dev_workspace_mcp.setup.git_policy_setup import (
