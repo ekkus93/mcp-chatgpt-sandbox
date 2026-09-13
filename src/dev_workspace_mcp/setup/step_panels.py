@@ -88,7 +88,8 @@ class WizardStepPanels(Vertical):
             )
             yield Static(id="docker-build-command", markup=False)
             yield Button("Validate Docker workspace", id="validate-docker", variant="primary")
-            yield Button("Build reviewed default image", id="build-docker-image")
+            yield Button("Prepare reviewed default-image build", id="prepare-docker-build")
+            yield Button("Build reviewed default image", id="build-docker-image", disabled=True)
 
         with Vertical(id="panel-repository_access", classes="step-panel"):
             yield Static(
@@ -333,7 +334,8 @@ class WizardStepPanels(Vertical):
             yield Input(id="tunnel-profile", value="chatgpt-sandbox")
             yield Static(id="tunnel-command", markup=False)
             yield Button("Open current Secure MCP Tunnel documentation", id="tunnel-open-docs")
-            yield Button("Create / repair reviewed tunnel profile", id="tunnel-apply")
+            yield Button("Prepare reviewed tunnel profile", id="tunnel-prepare")
+            yield Button("Apply reviewed tunnel profile", id="tunnel-apply", disabled=True)
             yield Checkbox(
                 "I completed the ChatGPT custom MCP app/refresh step (USER-ATTESTED)",
                 id="chatgpt-attested",

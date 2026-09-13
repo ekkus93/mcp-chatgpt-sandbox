@@ -17,6 +17,7 @@ from textual.widgets import Button, Checkbox, DataTable, Footer, Input, Label, S
 
 from dev_workspace_mcp.config import ConfigError
 from dev_workspace_mcp.setup.config_writer import ConfigUpdatePlan
+from dev_workspace_mcp.setup.docker_setup import DockerBuildPlan
 from dev_workspace_mcp.setup.filesystem import (
     SetupFilesystemError,
     backup_regular_file,
@@ -41,6 +42,7 @@ from dev_workspace_mcp.setup.model import (
 from dev_workspace_mcp.setup.runtime_setup import runtime_editor_values
 from dev_workspace_mcp.setup.step_actions import SetupStepActionsMixin
 from dev_workspace_mcp.setup.step_panels import WizardStepPanels
+from dev_workspace_mcp.setup.tunnel import TunnelProfilePlan
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +79,20 @@ STEPS = (
     WizardStepDefinition(
         SetupStep.FINAL_VALIDATION, "Final validation", "Run machine-verifiable diagnostics."
     ),
+)
+
+_DOCKER_BUILD_PLAN_CONTROL_IDS = frozenset(
+    {
+        "docker-image",
+        "docker-workspace-path",
+        "docker-user",
+        "docker-git-dir-mode",
+        "docker-idle-stop",
+        "docker-defer-image",
+    }
+)
+_TUNNEL_PROFILE_PLAN_CONTROL_IDS = frozenset(
+    {"chatgpt-enabled", "tunnel-id", "tunnel-profile"}
 )
 
 
@@ -235,6 +251,8 @@ class SetupWizardApp(SetupStepActionsMixin, App[int]):
         self._loaded_state: SetupState | None = None
         self._state_load_error: str | None = None
         self._review_plan: ConfigUpdatePlan | None = None
+        self._pending_docker_build_plan: DockerBuildPlan | None = None
+        self._pending_tunnel_plan: TunnelProfilePlan | None = None
         self._populating = False
 
     @property
@@ -488,6 +506,18 @@ class SetupWizardApp(SetupStepActionsMixin, App[int]):
                 repository.ssh_key or "",
             )
 
+    def _clear_pending_reviewed_host_mutation(self, widget_id: str | None) -> None:
+        clear_docker = widget_id is None or widget_id in _DOCKER_BUILD_PLAN_CONTROL_IDS
+        clear_tunnel = widget_id is None or widget_id in _TUNNEL_PROFILE_PLAN_CONTROL_IDS
+        if clear_docker:
+            self._pending_docker_build_plan = None
+            if self.is_running:
+                self.query_one("#build-docker-image", Button).disabled = True
+        if clear_tunnel:
+            self._pending_tunnel_plan = None
+            if self.is_running:
+                self.query_one("#tunnel-apply", Button).disabled = True
+
     def _invalidate_review(self) -> None:
         self._review_plan = None
         self._validation.pop(SetupStep.REVIEW, None)
@@ -503,6 +533,10 @@ class SetupWizardApp(SetupStepActionsMixin, App[int]):
         self._save(candidate)
         if step is self.current_step:
             self._refresh()
+
+    def _mark_widget_changed(self, step: SetupStep, widget_id: str | None) -> None:
+        self._clear_pending_reviewed_host_mutation(widget_id)
+        self._mark_changed(step)
 
     def _save_validated_state(
         self,
@@ -554,7 +588,7 @@ class SetupWizardApp(SetupStepActionsMixin, App[int]):
         if self._populating or not self._is_current_step_control(event.input):
             return
         if self.current_step not in {SetupStep.REVIEW, SetupStep.FINAL_VALIDATION}:
-            self._mark_changed(self.current_step)
+            self._mark_widget_changed(self.current_step, event.input.id)
 
     @on(Checkbox.Changed)
     def checkbox_changed(self, event: Checkbox.Changed) -> None:
@@ -563,14 +597,14 @@ class SetupWizardApp(SetupStepActionsMixin, App[int]):
         if event.checkbox.id == "runtime-edit":
             self.query_one("#runtime-advanced-fields", Vertical).display = event.checkbox.value
         if self.current_step not in {SetupStep.REVIEW, SetupStep.FINAL_VALIDATION}:
-            self._mark_changed(self.current_step)
+            self._mark_widget_changed(self.current_step, event.checkbox.id)
 
     @on(Select.Changed)
     def select_changed(self, event: Select.Changed) -> None:
         if self._populating or not self._is_current_step_control(event.select):
             return
         if self.current_step not in {SetupStep.REVIEW, SetupStep.FINAL_VALIDATION}:
-            self._mark_changed(self.current_step)
+            self._mark_widget_changed(self.current_step, event.select.id)
 
     @on(Button.Pressed, "#back")
     def go_back(self) -> None:

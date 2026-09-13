@@ -1,4 +1,4 @@
-"""Docker workspace setup choices and read-only image inspection."""
+"""Docker workspace setup choices and reviewed image build planning."""
 
 from __future__ import annotations
 
@@ -14,6 +14,15 @@ from dev_workspace_mcp.config import ContainerConfig, DockerConfig, WorkspaceCon
 
 class SetupDockerError(RuntimeError):
     """Safe Docker-setup validation failure."""
+
+
+@dataclass(frozen=True, slots=True)
+class DockerBuildPlan:
+    """Exact non-secret Docker build action reviewed before mutation."""
+
+    image: str
+    project_root: Path
+    argv: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,8 +70,35 @@ def image_exists(client: docker.DockerClient, image: str) -> bool:
     return True
 
 
-def default_image_build_command(image: str) -> tuple[str, ...]:
-    return ("docker", "build", "-t", image, "docker/default/")
+def default_image_build_command(
+    image: str,
+    *,
+    project_root: Path | None = None,
+) -> tuple[str, ...]:
+    build_path = (
+        "docker/default/"
+        if project_root is None
+        else str((project_root.expanduser().resolve(strict=False) / "docker" / "default"))
+    )
+    return ("docker", "build", "-t", image, build_path)
+
+
+def prepare_default_image_build_plan(*, image: str, project_root: Path) -> DockerBuildPlan:
+    """Build the exact Docker build command without mutating Docker state."""
+
+    try:
+        docker_config = DockerConfig.model_validate({"default_image": image.strip()})
+    except ValidationError as exc:
+        raise SetupDockerError("Docker image name is rejected by production models") from exc
+    resolved_root = project_root.expanduser().resolve(strict=False)
+    return DockerBuildPlan(
+        image=docker_config.default_image,
+        project_root=resolved_root,
+        argv=default_image_build_command(
+            docker_config.default_image,
+            project_root=resolved_root,
+        ),
+    )
 
 
 def build_default_image(
