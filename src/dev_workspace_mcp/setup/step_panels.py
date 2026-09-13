@@ -191,7 +191,9 @@ class WizardStepPanels(Vertical):
                 "I explicitly approve repair/replacement if the existing config is invalid",
                 id="repair-invalid",
             )
-            yield Button("Prepare exact configuration review", id="prepare-review", variant="primary")
+            yield Button(
+                "Prepare exact configuration review", id="prepare-review", variant="primary"
+            )
             yield Static(id="review-summary", markup=False)
             yield Button(
                 "Write reviewed configuration",

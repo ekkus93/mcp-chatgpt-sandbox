@@ -16,7 +16,12 @@ from dev_workspace_mcp.setup.git_policy_setup import (
     recommended_policy,
 )
 from dev_workspace_mcp.setup.host import StorageChoices
-from dev_workspace_mcp.setup.model import SetupRepositoryState, SetupState, SetupStep, SetupStepStatus
+from dev_workspace_mcp.setup.model import (
+    SetupRepositoryState,
+    SetupState,
+    SetupStep,
+    SetupStepStatus,
+)
 from dev_workspace_mcp.setup.runtime_setup import RuntimeChoices
 from dev_workspace_mcp.setup.ssh_github_setup import CredentialChoices
 
@@ -182,16 +187,24 @@ def materialize_setup(state: SetupState, *, new_config: bool) -> MaterializedSet
         overrides = choices.runtime_overrides or {}
         fragments = RuntimeChoices(
             filesystem=(
-                overrides.get("filesystem") if isinstance(overrides.get("filesystem"), dict) else None
+                overrides.get("filesystem")
+                if isinstance(overrides.get("filesystem"), dict)
+                else None
             ),
             execution=(
-                overrides.get("execution") if isinstance(overrides.get("execution"), dict) else None
+                overrides.get("execution")
+                if isinstance(overrides.get("execution"), dict)
+                else None
             ),
             resources=(
-                overrides.get("resources") if isinstance(overrides.get("resources"), dict) else None
+                overrides.get("resources")
+                if isinstance(overrides.get("resources"), dict)
+                else None
             ),
             logging=(
-                overrides.get("logging") if isinstance(overrides.get("logging"), dict) else None
+                overrides.get("logging")
+                if isinstance(overrides.get("logging"), dict)
+                else None
             ),
         ).reviewed_fragments()
         for field_name in runtime_fields:

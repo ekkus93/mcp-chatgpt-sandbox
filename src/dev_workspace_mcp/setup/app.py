@@ -318,7 +318,9 @@ class SetupWizardApp(App[int]):
                 return
             resumed = rewind_for_missing_process_local_material(
                 self._loaded_state,
-                required_steps={SetupStep.CHATGPT} if self._loaded_state.chatgpt_requested else set(),
+                required_steps={SetupStep.CHATGPT}
+                if self._loaded_state.chatgpt_requested
+                else set(),
                 available_steps=set(),
             )
             self._activate(resumed)
@@ -394,7 +396,8 @@ class SetupWizardApp(App[int]):
             panel.display = panel.id == f"panel-{definition.step.value}"
         valid = self._validation.get(
             definition.step,
-            self.state.statuses.get(definition.step) in {
+            self.state.statuses.get(definition.step)
+            in {
                 SetupStepStatus.COMPLETE,
                 SetupStepStatus.SKIPPED_OPTIONAL,
             },
@@ -852,9 +855,15 @@ class SetupWizardApp(App[int]):
             if unknown:
                 raise ValueError("Advanced runtime JSON contains unsupported sections")
             fragments = RuntimeChoices(
-                filesystem=raw.get("filesystem") if isinstance(raw.get("filesystem"), dict) else None,
-                execution=raw.get("execution") if isinstance(raw.get("execution"), dict) else None,
-                resources=raw.get("resources") if isinstance(raw.get("resources"), dict) else None,
+                filesystem=raw.get("filesystem")
+                if isinstance(raw.get("filesystem"), dict)
+                else None,
+                execution=(
+                    raw.get("execution") if isinstance(raw.get("execution"), dict) else None
+                ),
+                resources=(
+                    raw.get("resources") if isinstance(raw.get("resources"), dict) else None
+                ),
                 logging=raw.get("logging") if isinstance(raw.get("logging"), dict) else None,
             ).reviewed_fragments()
         except (json.JSONDecodeError, ValueError, SetupRuntimeError) as exc:
@@ -933,9 +942,7 @@ class SetupWizardApp(App[int]):
         except SetupTunnelError as exc:
             self.set_step_validation(SetupStep.CHATGPT, valid=False, message=str(exc))
             return
-        self.query_one("#tunnel-command", Static).update(
-            "Server command: " + plan.server_command
-        )
+        self.query_one("#tunnel-command", Static).update("Server command: " + plan.server_command)
         health = check_tunnel_profile(plan.profile)
         attested = self.query_one("#chatgpt-attested", Checkbox).value
         self.query_one("#tunnel-message", Static).update(
@@ -1032,7 +1039,9 @@ class SetupWizardApp(App[int]):
     def run_final_diagnostics(self) -> None:
         report = run_diagnostics(
             self.config_path,
-            tunnel_profile=(self.state.choices.tunnel_profile if self.state.chatgpt_requested else None),
+            tunnel_profile=(
+                self.state.choices.tunnel_profile if self.state.chatgpt_requested else None
+            ),
             tunnel_requested=self.state.chatgpt_requested,
         )
         self.query_one("#diagnostic-matrix", Static).update(format_diagnostics(report))
@@ -1070,7 +1079,8 @@ class SetupWizardApp(App[int]):
         step = self.current_step
         valid = self._validation.get(
             step,
-            self.state.statuses.get(step) in {
+            self.state.statuses.get(step)
+            in {
                 SetupStepStatus.COMPLETE,
                 SetupStepStatus.SKIPPED_OPTIONAL,
             },

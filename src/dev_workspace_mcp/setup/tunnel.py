@@ -59,8 +59,7 @@ def build_tunnel_profile_plan(
     resolved_config = config_path.expanduser().resolve(strict=False)
     resolved_project = project_root.expanduser().resolve(strict=False)
     server_command = (
-        f"uv run --project {resolved_project} dev-workspace-mcp serve "
-        f"--config {resolved_config}"
+        f"uv run --project {resolved_project} dev-workspace-mcp serve --config {resolved_config}"
     )
     argv = (
         "tunnel-client",
