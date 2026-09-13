@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Self
 
 
@@ -100,7 +100,8 @@ class SetupChoices:
     def from_dict(cls, value: object) -> Self:
         if not isinstance(value, dict):
             raise SetupChoicesError("setup choices must be an object")
-        allowed = set(cls().to_dict())
+        defaults = cls()
+        allowed = set(defaults.to_dict())
         unknown = set(value) - allowed
         if unknown:
             raise SetupChoicesError("setup choices contain unknown fields")
@@ -115,35 +116,38 @@ class SetupChoices:
             audit_path=_optional_string(value.get("audit_path"), name="audit_path"),
             keys_dir=_optional_string(value.get("keys_dir"), name="keys_dir"),
             known_hosts=_optional_string(value.get("known_hosts"), name="known_hosts"),
-            docker_image=_string(value.get("docker_image", cls.docker_image), name="docker_image"),
+            docker_image=_string(
+                value.get("docker_image", defaults.docker_image), name="docker_image"
+            ),
             workspace_path=_string(
-                value.get("workspace_path", cls.workspace_path), name="workspace_path"
+                value.get("workspace_path", defaults.workspace_path), name="workspace_path"
             ),
             container_user=_string(
-                value.get("container_user", cls.container_user), name="container_user"
+                value.get("container_user", defaults.container_user), name="container_user"
             ),
             git_dir_mode=_string(
-                value.get("git_dir_mode", cls.git_dir_mode), name="git_dir_mode"
+                value.get("git_dir_mode", defaults.git_dir_mode), name="git_dir_mode"
             ),
             idle_stop_after=_string(
-                value.get("idle_stop_after", cls.idle_stop_after), name="idle_stop_after"
+                value.get("idle_stop_after", defaults.idle_stop_after), name="idle_stop_after"
             ),
             repository_roots=tuple(roots),
-            ssh_mode=_string(value.get("ssh_mode", cls.ssh_mode), name="ssh_mode"),
-            ssh_scope=_string(value.get("ssh_scope", cls.ssh_scope), name="ssh_scope"),
+            ssh_mode=_string(value.get("ssh_mode", defaults.ssh_mode), name="ssh_mode"),
+            ssh_scope=_string(value.get("ssh_scope", defaults.ssh_scope), name="ssh_scope"),
             shared_key=_optional_string(value.get("shared_key"), name="shared_key"),
             github_api_auth=_string(
-                value.get("github_api_auth", cls.github_api_auth), name="github_api_auth"
+                value.get("github_api_auth", defaults.github_api_auth), name="github_api_auth"
             ),
             github_auth_file=_optional_string(
                 value.get("github_auth_file"), name="github_auth_file"
             ),
             github_api_base_url=_string(
-                value.get("github_api_base_url", cls.github_api_base_url),
+                value.get("github_api_base_url", defaults.github_api_base_url),
                 name="github_api_base_url",
             ),
             git_policy_preset=_string(
-                value.get("git_policy_preset", cls.git_policy_preset), name="git_policy_preset"
+                value.get("git_policy_preset", defaults.git_policy_preset),
+                name="git_policy_preset",
             ),
             git_policy_custom=_safe_mapping(
                 value.get("git_policy_custom"), name="git_policy_custom"
@@ -153,7 +157,7 @@ class SetupChoices:
             ),
             tunnel_id=_optional_string(value.get("tunnel_id"), name="tunnel_id"),
             tunnel_profile=_string(
-                value.get("tunnel_profile", cls.tunnel_profile), name="tunnel_profile"
+                value.get("tunnel_profile", defaults.tunnel_profile), name="tunnel_profile"
             ),
             chatgpt_user_attested=attested,
         )

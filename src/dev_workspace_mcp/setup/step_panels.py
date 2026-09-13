@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Button, Checkbox, DataTable, Input, Label, Static
@@ -85,7 +87,11 @@ class WizardStepPanels(Vertical):
             yield Button("Remove repository", id="repo-remove", variant="warning")
             yield Label("Repository discovery roots (comma-separated absolute paths)")
             yield Input(id="repository-roots")
-            yield Button("Validate repository configuration", id="validate-repositories", variant="primary")
+            yield Button(
+                "Validate repository configuration",
+                id="validate-repositories",
+                variant="primary",
+            )
             yield Static(id="repository-message", markup=False)
 
         with Vertical(id="panel-ssh_and_github", classes="step-panel"):
@@ -111,14 +117,16 @@ class WizardStepPanels(Vertical):
                 "currently unimplemented; the wizard will report it as unverified, never PASS.",
                 markup=False,
             )
-            yield Button("Validate SSH / GitHub choices", id="validate-credentials", variant="primary")
+            yield Button(
+                "Validate SSH / GitHub choices", id="validate-credentials", variant="primary"
+            )
             yield Static(id="credential-message", markup=False)
 
         with Vertical(id="panel-git_safety_policy", classes="step-panel"):
             yield Static(
                 "Recommended uses the production safe defaults. Conservative denies ordinary push, "
-                "default-branch commit/push, branch deletion, and requires verified remote protection. "
-                "Custom must specify every current GitPolicyConfig field as JSON.",
+                "default-branch commit/push, branch deletion, and requires verified remote "
+                "protection. Custom must specify every current GitPolicyConfig field as JSON.",
                 markup=False,
             )
             yield Label("Preset: recommended, conservative, or custom")
@@ -126,7 +134,7 @@ class WizardStepPanels(Vertical):
             yield Label("Custom policy JSON (used only when preset=custom)")
             yield Input(
                 id="git-policy-custom",
-                value=__import__("json").dumps(recommended_policy().model_dump(mode="json")),
+                value=json.dumps(recommended_policy().model_dump(mode="json")),
             )
             yield Button("Validate Git safety policy", id="validate-git-policy", variant="primary")
             yield Static(id="git-policy-message", markup=False)
@@ -143,10 +151,12 @@ class WizardStepPanels(Vertical):
                 id="runtime-edit",
                 value=self.advanced,
             )
-            yield Label("Advanced overrides JSON with filesystem/execution/resources/logging objects")
+            yield Label(
+                "Advanced overrides JSON with filesystem/execution/resources/logging objects"
+            )
             yield Input(
                 id="runtime-json",
-                value=__import__("json").dumps(production_runtime_defaults()),
+                value=json.dumps(production_runtime_defaults()),
             )
             yield Button("Validate runtime settings", id="validate-runtime", variant="primary")
             yield Static(id="runtime-message", markup=False)
@@ -170,7 +180,9 @@ class WizardStepPanels(Vertical):
                 "I completed the ChatGPT custom MCP app/refresh step (USER-ATTESTED)",
                 id="chatgpt-attested",
             )
-            yield Button("Validate optional ChatGPT connection", id="validate-chatgpt", variant="primary")
+            yield Button(
+                "Validate optional ChatGPT connection", id="validate-chatgpt", variant="primary"
+            )
             yield Static(id="tunnel-message", markup=False)
 
         with Vertical(id="panel-configuration_review", classes="step-panel"):
@@ -195,6 +207,8 @@ class WizardStepPanels(Vertical):
                 "Optional/user-attested ChatGPT status is shown separately from machine PASS.",
                 markup=False,
             )
-            yield Button("Run / rerun final diagnostics", id="run-final-diagnostics", variant="primary")
+            yield Button(
+                "Run / rerun final diagnostics", id="run-final-diagnostics", variant="primary"
+            )
             yield Static(id="diagnostic-matrix", markup=False)
             yield Static(id="attestation-summary", markup=False)
