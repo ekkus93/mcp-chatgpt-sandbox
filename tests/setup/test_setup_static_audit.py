@@ -69,7 +69,7 @@ def test_wcr_002_presentation_does_not_own_yaml_or_atomic_config_writes() -> Non
         "import yaml",
         "from yaml",
         "atomic_write_text",
-        "open(\"config",
+        'open("config',
         "write_text(",
         "write_bytes(",
     )

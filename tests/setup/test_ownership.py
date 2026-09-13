@@ -39,10 +39,7 @@ def test_wcr_001_every_nested_manifest_is_exhaustive() -> None:
 
 def test_wcr_001_preserved_nested_fields_are_truthful() -> None:
     assert NESTED_FIELD_DISPOSITIONS[ContainerConfig]["sudo"] is SetupFieldDisposition.PRESERVED
-    assert (
-        NESTED_FIELD_DISPOSITIONS[GithubConfig]["repositories"]
-        is SetupFieldDisposition.PRESERVED
-    )
+    assert NESTED_FIELD_DISPOSITIONS[GithubConfig]["repositories"] is SetupFieldDisposition.PRESERVED
     assert NESTED_FIELD_DISPOSITIONS[AuditConfig]["enabled"] is SetupFieldDisposition.PRESERVED
 
 
