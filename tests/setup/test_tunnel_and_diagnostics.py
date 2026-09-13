@@ -72,9 +72,7 @@ def test_wizv_014_doctor_classifies_external_profile_without_exposing_output(
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(
-            args[0], 1, "runtime-secret", "oops"
-        ),
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 1, "runtime-secret", "oops"),
     )
     health = check_tunnel_profile("chatgpt-sandbox")
     assert not health.healthy

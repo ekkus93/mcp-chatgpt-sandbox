@@ -27,7 +27,6 @@ def test_wizv_003_atomic_new_file_is_owner_only(tmp_path: Path) -> None:
     assert is_owner_only_directory(target.parent)
 
 
-
 def test_swhv_001_existing_parent_mode_is_not_changed_by_write(tmp_path: Path) -> None:
     parent = tmp_path / "operator-owned"
     parent.mkdir()
