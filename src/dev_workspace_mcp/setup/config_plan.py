@@ -13,13 +13,14 @@ import yaml
 from yaml.nodes import MappingNode, Node, SequenceNode
 
 from dev_workspace_mcp.config import ConfigError, ServerConfig, validate_config_mapping
+from dev_workspace_mcp.config.models import GitPolicyConfig
 from dev_workspace_mcp.setup.filesystem import (
     SetupFilesystemError,
     read_text_bounded,
     reject_unsafe_sensitive_target,
 )
 from dev_workspace_mcp.setup.git_policy import policy_for_preset
-from dev_workspace_mcp.setup.model import SetupState, SetupStep, SetupStepStatus
+from dev_workspace_mcp.setup.model import GitPolicyPreset, SetupState, SetupStep, SetupStepStatus
 
 _MAX_CONFIG_BYTES = 1024 * 1024
 
@@ -120,6 +121,18 @@ def inspect_config(path: Path) -> ConfigInspection:
     return ConfigInspection(exists=True, valid=True)
 
 
+def read_valid_config(path: Path) -> ServerConfig | None:
+    """Return an existing production-valid config without host mutations."""
+
+    exists, raw = _read_existing(path)
+    if not exists:
+        return None
+    try:
+        return _validate_mapping(_parse_mapping(raw))
+    except ValueError as exc:
+        raise ConfigPlanError(f"Existing configuration at {path.expanduser()} is invalid") from exc
+
+
 def _mapping(parent: dict[str, Any], key: str) -> dict[str, Any]:
     value = parent.get(key)
     if value is None:
@@ -156,8 +169,15 @@ def _apply_state(candidate: dict[str, Any], state: SetupState, *, source_exists:
 
     if state.state_db_path is not None:
         candidate["state_db_path"] = state.state_db_path
+    docker = _mapping(candidate, "docker")
     if state.docker_image is not None:
-        _mapping(candidate, "docker")["default_image"] = state.docker_image
+        docker["default_image"] = state.docker_image
+    if state.docker_workspace_path is not None:
+        docker["workspace_path"] = state.docker_workspace_path
+    if state.workspace_idle_stop_after is not None:
+        _mapping(candidate, "workspace")["idle_stop_after"] = state.workspace_idle_stop_after
+    if state.container_overrides is not None:
+        candidate["container"] = deepcopy(state.container_overrides)
     if state.ssh_keys_dir is not None:
         _mapping(candidate, "ssh")["keys_dir"] = state.ssh_keys_dir
     if state.known_hosts_path is not None:
@@ -187,8 +207,22 @@ def _apply_state(candidate: dict[str, Any], state: SetupState, *, source_exists:
         github["api_token_path"] = state.github_api_token_path
 
     if state.statuses.get(SetupStep.GIT_SAFETY_POLICY) is SetupStepStatus.COMPLETE:
-        policy = policy_for_preset(state.git_policy_preset)
+        if state.git_policy_preset is GitPolicyPreset.CUSTOM:
+            if state.custom_git_policy is None:
+                raise ConfigPlanError("Custom Git policy has not been fully configured")
+            policy = GitPolicyConfig.model_validate(state.custom_git_policy)
+        else:
+            policy = policy_for_preset(state.git_policy_preset)
         candidate["git_policy"] = policy.model_dump(mode="json")
+
+    if state.filesystem_overrides is not None:
+        candidate["filesystem"] = deepcopy(state.filesystem_overrides)
+    if state.execution_overrides is not None:
+        candidate["execution"] = deepcopy(state.execution_overrides)
+    if state.resources_overrides is not None:
+        candidate["resources"] = deepcopy(state.resources_overrides)
+    if state.logging_overrides is not None:
+        candidate["logging"] = deepcopy(state.logging_overrides)
 
 
 def _flatten(value: Any, *, prefix: str = "") -> dict[str, Any]:
@@ -285,5 +319,6 @@ __all__ = [
     "ConfigUpdatePlan",
     "inspect_config",
     "prepare_config_update",
+    "read_valid_config",
     "state_digest",
 ]
