@@ -16,24 +16,24 @@ def _python_sources() -> list[Path]:
     return sorted(_SETUP_ROOT.rglob("*.py"))
 
 
-def _has_fail_closed_boundary_rationale(source: str, lineno: int) -> bool:
-    lines = source.splitlines()
-    start = max(0, lineno - 5)
-    context = "\n".join(lines[start : lineno - 1])
-    return "WCR-013 fail-closed boundary" in context
+def _line_has_boundary_rationale(path: Path, lineno: int) -> bool:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    start = max(0, lineno - 2)
+    end = min(len(lines), lineno + 1)
+    window = "\n".join(lines[start:end])
+    return "WCR-013:" in window and "fail closed" in window.casefold()
 
 
-def test_wcr_013_setup_has_no_unjustified_broad_exception_swallowing() -> None:
+def test_wcr_013_setup_has_no_unjustified_bare_or_broad_exception_swallowing() -> None:
     for path in _python_sources():
-        source = path.read_text(encoding="utf-8")
-        tree = ast.parse(source, filename=str(path))
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             if not isinstance(node, ast.ExceptHandler):
                 continue
             assert node.type is not None, f"bare except in {path}:{node.lineno}"
             if isinstance(node.type, ast.Name) and node.type.id == "Exception":
-                assert _has_fail_closed_boundary_rationale(source, node.lineno), (
-                    f"broad except Exception lacks explicit fail-closed rationale in "
+                assert _line_has_boundary_rationale(path, node.lineno), (
+                    f"broad except Exception lacks WCR-013 fail-closed rationale in "
                     f"{path}:{node.lineno}"
                 )
 
@@ -99,7 +99,9 @@ def test_wcr_002_coordinator_growth_requires_explicit_architecture_change() -> N
     }
     for filename, limit in limits.items():
         lines = (_SETUP_ROOT / filename).read_text(encoding="utf-8").splitlines()
-        assert len(lines) <= limit, f"{filename} grew past architecture guard: {len(lines)} > {limit}"
+        assert len(lines) <= limit, (
+            f"{filename} grew past architecture guard: {len(lines)} > {limit}"
+        )
 
 
 def test_wcr_013_machine_diagnostics_do_not_consume_user_attestation() -> None:
