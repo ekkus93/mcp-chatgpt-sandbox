@@ -1,10 +1,11 @@
-"""Shared deterministic setup diagnostics for TUI, setup --check, and doctor."""
+"""Shared machine-verifiable setup diagnostics for TUI, --check, and doctor."""
 
 from __future__ import annotations
 
 import os
+import sqlite3
+import stat
 import subprocess
-import tempfile
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -15,22 +16,17 @@ from docker.errors import DockerException, ImageNotFound
 
 from dev_workspace_mcp.config import ConfigError, ServerConfig, load_config
 from dev_workspace_mcp.github_api import verify_remote_protection
-from dev_workspace_mcp.repositories import RepositoryRegistry
 from dev_workspace_mcp.server import create_server
-from dev_workspace_mcp.setup.filesystem import (
-    SetupFilesystemError,
-    inspect_regular_text_file,
-    reject_unsafe_sensitive_target,
-)
+from dev_workspace_mcp.setup.model import SetupRepositoryState
 from dev_workspace_mcp.setup.repository_setup import verify_repository
+from dev_workspace_mcp.setup.ssh_github_setup import CredentialChoices, verify_credential_files
 from dev_workspace_mcp.setup.tunnel import check_tunnel_profile
-from dev_workspace_mcp.workspace.ssh_agent import resolve_ssh_key_path
 
 
 class DiagnosticStatus(StrEnum):
     PASS = "PASS"
     FAIL = "FAIL"
-    ACTION_REQUIRED = "ACTION_REQUIRED"
+    ACTION_REQUIRED = "ACTION REQUIRED"
     SKIPPED = "SKIPPED"
 
 
@@ -39,13 +35,14 @@ class DiagnosticCode(StrEnum):
     CONFIG_SAFETY = "config.safety"
     STATE_DB = "state_db.open"
     AUDIT_PATH = "audit.path"
-    DOCKER = "docker.daemon"
+    DOCKER_DAEMON = "docker.daemon"
     DOCKER_IMAGE = "docker.image"
-    REPOSITORY = "repository.verify"
-    SSH_KEY = "ssh.key"
+    REPOSITORY_PATH = "repository.path"
+    REPOSITORY_REMOTE = "repository.remote"
+    SSH_KEYS = "ssh.keys"
     KNOWN_HOSTS = "ssh.known_hosts"
     GITHUB_PROTECTION = "github.protection"
-    SERVER_CONSTRUCTION = "server.construction"
+    SERVER_CONSTRUCTION = "server.construct"
     TUNNEL_PROFILE = "tunnel.profile"
 
 
@@ -55,16 +52,9 @@ class DiagnosticResult:
     label: str
     status: DiagnosticStatus
     message: str
-    mandatory: bool = True
     remediation: str | None = None
+    mandatory: bool = True
     subject: str | None = None
-
-    @property
-    def unresolved(self) -> bool:
-        return self.mandatory and self.status in {
-            DiagnosticStatus.FAIL,
-            DiagnosticStatus.ACTION_REQUIRED,
-        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,11 +63,20 @@ class DiagnosticsReport:
 
     @property
     def ready_to_finish(self) -> bool:
-        return not any(result.unresolved for result in self.results)
+        return all(
+            not result.mandatory or result.status is DiagnosticStatus.PASS
+            for result in self.results
+        )
 
     @property
     def exit_code(self) -> int:
-        return 0 if self.ready_to_finish else 1
+        if self.ready_to_finish:
+            return 0
+        if any(
+            result.mandatory and result.status is DiagnosticStatus.FAIL for result in self.results
+        ):
+            return 2
+        return 1
 
 
 def _result(
@@ -86,45 +85,43 @@ def _result(
     status: DiagnosticStatus,
     message: str,
     *,
-    mandatory: bool = True,
     remediation: str | None = None,
+    mandatory: bool = True,
     subject: str | None = None,
 ) -> DiagnosticResult:
-    return DiagnosticResult(
-        code,
-        label,
-        status,
-        message,
-        mandatory=mandatory,
-        remediation=remediation,
-        subject=subject,
-    )
+    return DiagnosticResult(code, label, status, message, remediation, mandatory, subject)
 
 
 def _config_safety(path: Path) -> DiagnosticResult:
     try:
-        reject_unsafe_sensitive_target(path)
-        inspected = inspect_regular_text_file(path, required=True)
-    except SetupFilesystemError:
+        metadata = path.lstat()
+    except OSError:
         return _result(
             DiagnosticCode.CONFIG_SAFETY,
-            "Configuration target safety",
+            "Config file safety",
             DiagnosticStatus.FAIL,
-            "Configuration target is missing, unsafe, unreadable, oversized, or not UTF-8.",
+            "Configuration file could not be inspected safely.",
         )
-    if inspected.mode is not None and inspected.mode & 0o022:
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
         return _result(
             DiagnosticCode.CONFIG_SAFETY,
-            "Configuration target safety",
+            "Config file safety",
             DiagnosticStatus.FAIL,
-            "Configuration file is group/world-writable.",
-            remediation="Use owner-only or otherwise non-group/world-writable permissions.",
+            "Configuration target is not a regular non-symlink file.",
+        )
+    if stat.S_IMODE(metadata.st_mode) & 0o077:
+        return _result(
+            DiagnosticCode.CONFIG_SAFETY,
+            "Config file safety",
+            DiagnosticStatus.ACTION_REQUIRED,
+            "Configuration file is readable or writable by group/other users.",
+            remediation=f"Restrict {path} to owner-only permissions (for example chmod 600).",
         )
     return _result(
         DiagnosticCode.CONFIG_SAFETY,
-        "Configuration target safety",
+        "Config file safety",
         DiagnosticStatus.PASS,
-        "Configuration file is a safe regular UTF-8 text file.",
+        "Configuration is a regular owner-only file.",
     )
 
 
@@ -133,26 +130,27 @@ def _state_db_check(path: Path) -> DiagnosticResult:
     if not parent.is_dir() or not os.access(parent, os.W_OK | os.X_OK):
         return _result(
             DiagnosticCode.STATE_DB,
-            "State database parent",
+            "State database",
             DiagnosticStatus.ACTION_REQUIRED,
-            "State database parent is missing or not writable.",
+            "State database parent directory is not writable.",
         )
-    try:
-        fd, temp_name = tempfile.mkstemp(prefix=".setup-state-check-", dir=parent)
-        os.close(fd)
-        Path(temp_name).unlink()
-    except OSError:
-        return _result(
-            DiagnosticCode.STATE_DB,
-            "State database parent",
-            DiagnosticStatus.FAIL,
-            "Could not create and remove a temporary state-db sibling.",
-        )
+    if path.exists():
+        try:
+            connection = sqlite3.connect(f"file:{path}?mode=rw", uri=True)
+            connection.execute("PRAGMA schema_version").fetchone()
+            connection.close()
+        except sqlite3.Error:
+            return _result(
+                DiagnosticCode.STATE_DB,
+                "State database",
+                DiagnosticStatus.FAIL,
+                "Existing state database could not be opened read/write.",
+            )
     return _result(
         DiagnosticCode.STATE_DB,
-        "State database parent",
+        "State database",
         DiagnosticStatus.PASS,
-        "State database parent is writable.",
+        "State database location is usable.",
     )
 
 
@@ -161,91 +159,108 @@ def _audit_check(path: Path) -> DiagnosticResult:
     if not parent.is_dir() or not os.access(parent, os.W_OK | os.X_OK):
         return _result(
             DiagnosticCode.AUDIT_PATH,
-            "Audit path parent",
+            "Audit log",
             DiagnosticStatus.ACTION_REQUIRED,
-            "Audit path parent is missing or not writable.",
+            "Audit log parent directory is not writable.",
+        )
+    if path.exists() and (path.is_symlink() or not path.is_file()):
+        return _result(
+            DiagnosticCode.AUDIT_PATH,
+            "Audit log",
+            DiagnosticStatus.FAIL,
+            "Existing audit target is not a regular file.",
         )
     return _result(
         DiagnosticCode.AUDIT_PATH,
-        "Audit path parent",
+        "Audit log",
         DiagnosticStatus.PASS,
-        "Audit path parent is writable.",
+        "Audit log location is usable.",
     )
 
 
-def _docker_checks(config: ServerConfig) -> tuple[DiagnosticResult, ...]:
+def _docker_checks(config: ServerConfig) -> tuple[DiagnosticResult, DiagnosticResult]:
     try:
         client = docker.from_env()
-    except DockerException:
-        return (
-            _result(
-                DiagnosticCode.DOCKER,
-                "Docker daemon",
-                DiagnosticStatus.ACTION_REQUIRED,
-                "Docker daemon is unavailable.",
-            ),
-        )
-    try:
-        client.ping()
-        daemon = _result(
-            DiagnosticCode.DOCKER,
-            "Docker daemon",
-            DiagnosticStatus.PASS,
-            "Docker daemon is reachable.",
-        )
         try:
-            client.images.get(config.docker.default_image)
-        except ImageNotFound:
-            image = _result(
-                DiagnosticCode.DOCKER_IMAGE,
-                "Workspace image",
-                DiagnosticStatus.ACTION_REQUIRED,
-                f"Workspace image {config.docker.default_image!r} is not present.",
-                remediation="Build the reviewed default workspace image and rerun diagnostics.",
-            )
-        except DockerException:
-            image = _result(
-                DiagnosticCode.DOCKER_IMAGE,
-                "Workspace image",
-                DiagnosticStatus.FAIL,
-                "Could not inspect configured workspace image.",
-            )
-        else:
-            image = _result(
-                DiagnosticCode.DOCKER_IMAGE,
-                "Workspace image",
-                DiagnosticStatus.PASS,
-                f"Workspace image {config.docker.default_image!r} is present.",
-            )
-        return daemon, image
-    except DockerException:
-        return (
-            _result(
-                DiagnosticCode.DOCKER,
+            reachable = bool(client.ping())
+            if not reachable:
+                raise DockerException("daemon ping failed")
+            daemon = _result(
+                DiagnosticCode.DOCKER_DAEMON,
                 "Docker daemon",
-                DiagnosticStatus.ACTION_REQUIRED,
-                "Docker daemon is unavailable.",
-            ),
+                DiagnosticStatus.PASS,
+                "Docker daemon is reachable.",
+            )
+            try:
+                client.images.get(config.docker.default_image)
+            except ImageNotFound:
+                image = _result(
+                    DiagnosticCode.DOCKER_IMAGE,
+                    "Default Docker image",
+                    DiagnosticStatus.ACTION_REQUIRED,
+                    "Configured default workspace image is not present locally.",
+                    remediation=(
+                        f"Build or pull the configured image {config.docker.default_image!r}."
+                    ),
+                )
+            else:
+                image = _result(
+                    DiagnosticCode.DOCKER_IMAGE,
+                    "Default Docker image",
+                    DiagnosticStatus.PASS,
+                    "Configured default workspace image is present locally.",
+                )
+        finally:
+            client.close()
+    except (DockerException, OSError):
+        daemon = _result(
+            DiagnosticCode.DOCKER_DAEMON,
+            "Docker daemon",
+            DiagnosticStatus.ACTION_REQUIRED,
+            "Docker daemon is not reachable from this host.",
         )
-    finally:
-        client.close()
+        image = _result(
+            DiagnosticCode.DOCKER_IMAGE,
+            "Default Docker image",
+            DiagnosticStatus.SKIPPED,
+            "Image inspection is skipped until Docker is reachable.",
+        )
+    return daemon, image
 
 
 def _repository_checks(config: ServerConfig) -> tuple[DiagnosticResult, ...]:
     results: list[DiagnosticResult] = []
     for repository in config.repositories:
-        report = verify_repository(
-            __import__(
-                "dev_workspace_mcp.setup.model",
-                fromlist=["SetupRepositoryState"],
-            ).SetupRepositoryState.from_dict(repository.model_dump(mode="json"))
+        state = SetupRepositoryState.from_dict(
+            {
+                "id": repository.id,
+                "path": str(repository.path),
+                "github": repository.github,
+                "ssh_key": repository.ssh_key,
+            }
+        )
+        verification = verify_repository(state)
+        results.append(
+            _result(
+                DiagnosticCode.REPOSITORY_PATH,
+                "Repository path",
+                DiagnosticStatus.PASS
+                if verification.is_git_repository
+                else DiagnosticStatus.ACTION_REQUIRED,
+                "Local path is a Git working tree."
+                if verification.is_git_repository
+                else "Local path is not a usable Git working tree.",
+                subject=repository.id,
+            )
         )
         results.append(
             _result(
-                DiagnosticCode.REPOSITORY,
-                "Repository verification",
-                DiagnosticStatus.PASS if report.valid else DiagnosticStatus.ACTION_REQUIRED,
-                report.message,
+                DiagnosticCode.REPOSITORY_REMOTE,
+                "Repository remote identity",
+                DiagnosticStatus.PASS
+                if verification.matches_configured_identity
+                else DiagnosticStatus.ACTION_REQUIRED,
+                verification.message,
                 subject=repository.id,
             )
         )
@@ -253,75 +268,59 @@ def _repository_checks(config: ServerConfig) -> tuple[DiagnosticResult, ...]:
 
 
 def _ssh_checks(config: ServerConfig) -> tuple[DiagnosticResult, ...]:
+    choices = CredentialChoices(
+        mode=config.ssh.mode,
+        scope=config.ssh.scope,
+        keys_dir=config.ssh.keys_dir,
+        known_hosts=config.ssh.known_hosts,
+        shared_key=config.ssh.shared_key,
+        github_api_auth=config.github.api_auth,
+        github_api_token_path=config.github.api_token_path,
+        github_api_base_url=config.github.api_base_url,
+    )
+    repositories = tuple(
+        SetupRepositoryState.from_dict(
+            {
+                "id": repository.id,
+                "path": str(repository.path),
+                "github": repository.github,
+                "ssh_key": repository.ssh_key,
+            }
+        )
+        for repository in config.repositories
+    )
+    checks = verify_credential_files(choices, repositories)
     results: list[DiagnosticResult] = []
-    registry = RepositoryRegistry(config)
-    for repository in config.repositories:
-        record = registry.get(repository.id)
-        key = resolve_ssh_key_path(config.ssh, record)
-        if key is None:
-            results.append(
-                _result(
-                    DiagnosticCode.SSH_KEY,
-                    "Repository SSH key",
-                    DiagnosticStatus.SKIPPED,
-                    "No SSH key is configured for this repository.",
-                    mandatory=False,
-                    subject=repository.id,
-                )
-            )
-        elif key.is_file():
-            results.append(
-                _result(
-                    DiagnosticCode.SSH_KEY,
-                    "Repository SSH key",
-                    DiagnosticStatus.PASS,
-                    "Configured repository SSH key exists.",
-                    subject=repository.id,
-                )
-            )
-        else:
-            results.append(
-                _result(
-                    DiagnosticCode.SSH_KEY,
-                    "Repository SSH key",
-                    DiagnosticStatus.ACTION_REQUIRED,
-                    "Configured repository SSH key is missing.",
-                    subject=repository.id,
-                )
-            )
-    known_hosts = config.ssh.known_hosts
-    if known_hosts.is_file() and known_hosts.stat().st_size > 0:
+    if checks:
+        known = checks[0]
         results.append(
             _result(
                 DiagnosticCode.KNOWN_HOSTS,
-                "Pinned known_hosts",
-                DiagnosticStatus.PASS,
-                "Pinned known_hosts exists and is non-empty.",
+                "Known hosts",
+                DiagnosticStatus.PASS if known.valid else DiagnosticStatus.ACTION_REQUIRED,
+                known.message,
             )
         )
-    else:
+    for check in checks[1:]:
+        status = DiagnosticStatus.PASS if check.valid else DiagnosticStatus.ACTION_REQUIRED
+        if check.status == "unverified":
+            status = DiagnosticStatus.SKIPPED
         results.append(
             _result(
-                DiagnosticCode.KNOWN_HOSTS,
-                "Pinned known_hosts",
-                DiagnosticStatus.ACTION_REQUIRED,
-                "Pinned known_hosts is missing or empty.",
+                DiagnosticCode.SSH_KEYS,
+                "SSH/GitHub credential references",
+                status,
+                check.message,
+                mandatory=check.status != "unverified",
             )
         )
     return tuple(results)
 
 
-def _local_default_branch(repository_path: Path) -> str | None:
+def _local_default_branch(path: Path) -> str | None:
     try:
-        symbolic = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repository_path),
-                "symbolic-ref",
-                "--quiet",
-                "refs/remotes/origin/HEAD",
-            ],
+        result = subprocess.run(
+            ["git", "-C", str(path), "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
             capture_output=True,
             text=True,
             check=False,
@@ -329,25 +328,24 @@ def _local_default_branch(repository_path: Path) -> str | None:
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
-    if symbolic.returncode == 0:
-        ref = symbolic.stdout.strip()
-        prefix = "refs/remotes/origin/"
-        if ref.startswith(prefix) and len(ref) > len(prefix):
-            return ref[len(prefix) :]
-    head_file = repository_path / ".git" / "refs" / "remotes" / "origin" / "HEAD"
-    try:
-        if head_file.is_file():
-            text = head_file.read_text(encoding="utf-8").strip()
-            prefix = "ref: refs/remotes/origin/"
-            if text.startswith(prefix) and len(text) > len(prefix):
-                return text[len(prefix) :]
-    except (OSError, UnicodeError):
+    if result.returncode != 0:
         return None
-    return None
+    value = result.stdout.strip()
+    return value.removeprefix("origin/") or None
 
 
 def _github_checks(config: ServerConfig) -> tuple[DiagnosticResult, ...]:
-    if config.github.api_auth != "token" or config.github.api_token_path is None:
+    if config.git_policy.require_remote_protection == "off":
+        return (
+            _result(
+                DiagnosticCode.GITHUB_PROTECTION,
+                "GitHub protection",
+                DiagnosticStatus.SKIPPED,
+                "Remote-protection verification is disabled by Git policy.",
+                mandatory=False,
+            ),
+        )
+    if config.github.api_auth != "token":
         return (
             _result(
                 DiagnosticCode.GITHUB_PROTECTION,
@@ -398,8 +396,8 @@ def _github_checks(config: ServerConfig) -> tuple[DiagnosticResult, ...]:
 def _server_construction(config: ServerConfig) -> DiagnosticResult:
     try:
         create_server(config)
-    # WCR-013 fail-closed boundary: server construction may raise arbitrary
-    # runtime/library exceptions; diagnostics must suppress their text and fail.
+    # WCR-013: fail closed at the server-construction diagnostic boundary;
+    # suppress arbitrary exception text because it may contain environment details.
     except Exception:
         return _result(
             DiagnosticCode.SERVER_CONSTRUCTION,
@@ -486,9 +484,8 @@ def run_diagnostics(
                     mandatory=False,
                 )
             )
-    # WCR-013 fail-closed boundary: the diagnostic matrix combines Docker,
-    # Git, GitHub, MCP construction, and tunnel libraries. Any unexpected
-    # exception must become a secret-safe FAIL result rather than escape or PASS.
+    # WCR-013: fail closed at the outer diagnostic boundary; suppress arbitrary
+    # exception text so an unexpected library failure cannot leak sensitive data or PASS.
     except Exception:
         results.append(
             _result(
