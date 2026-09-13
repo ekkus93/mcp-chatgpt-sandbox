@@ -41,6 +41,7 @@ from dev_workspace_mcp.project_config import ProjectWorkspaceConfig, load_projec
 from dev_workspace_mcp.repositories import RepositoryRecord, RepositoryRegistry
 from dev_workspace_mcp.schema_export import export_schemas
 from dev_workspace_mcp.server import Transport, create_server, run_server
+from dev_workspace_mcp.setup.command import setup_command
 from dev_workspace_mcp.tools.workspace import run_setup_steps
 from dev_workspace_mcp.workspace.caches import build_cache_mounts, cache_volume_name, resolve_caches
 from dev_workspace_mcp.workspace.container_config import build_workspace_run_kwargs
@@ -54,6 +55,9 @@ from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager, running_works
 @click.version_option(version=__version__, prog_name="dev-workspace-mcp")
 def main() -> None:
     """Development Workspace MCP Server."""
+
+
+main.add_command(setup_command)
 
 
 @main.command()
@@ -73,44 +77,24 @@ def main() -> None:
 )
 def serve(config_path: Path, transport: Transport) -> None:
     """Start the MCP server."""
-    # §73 step 1: validate configuration. Refuse to serve on invalid config.
     try:
         config = load_config(config_path)
     except ConfigError as exc:
         click.echo(f"error: {exc}", err=True)
         sys.exit(1)
 
-    # H31 (`docs/HARDENING_TODO.md`, HR-031): as early as possible after
-    # config validation succeeds — every log call below this point,
-    # anywhere in the daemon, depends on this having already run.
     configure_logging(config.logging.level)
 
-    # §73 step 2: verify Docker connectivity. A missing daemon is reported,
-    # not fatal — the daemon starts degraded rather than refusing to serve
-    # tools that do not need Docker (e.g. reading a stopped workspace's
-    # files, once the filesystem service is host-side per §6.3).
     if not docker_available():
         click.echo(
             "warning: Docker is not reachable; starting in a degraded state (§73)",
             err=True,
         )
 
-    # §73 steps 3-5: open the state database, reconcile job records left
-    # non-terminal by an unclean shutdown (§15.4), then reconcile every
-    # workspace against real Docker state (§44.1 steps 1-3). One
-    # short-lived connection for all of it, separate from the one
-    # `create_server` opens below for its own lifetime — reconciliation
-    # is a one-shot startup action, not something later tool calls need
-    # this connection for.
     reconcile_db = open_db(config.state_db_path)
     try:
         lost = reconcile_jobs(JobStore(reconcile_db))
         for job_id, pid_status in lost:
-            # RR-022 (`docs/REMEDIATION_SPEC.md` §15): `pid_status is None`
-            # ("this job's pid was never recorded, so liveness cannot be
-            # checked at all") warrants the same "go look by hand" warning
-            # as a confirmed-alive pid — it is `False` alone, a pid that
-            # was recorded and is now confirmed dead, that needs none.
             detail = (
                 " (host process may still be running; check and clean up by hand)"
                 if pid_status is None or pid_status
@@ -121,12 +105,6 @@ def serve(config_path: Path, transport: Transport) -> None:
                 err=True,
             )
 
-        # §44.1's daemon-restart sequence, steps 1-3: eagerly reconcile
-        # every persisted workspace, in addition to S6's lazy
-        # per-operation reconcile (which remains, as a safety net for
-        # whatever changes between this sweep and actual use). Skipped
-        # when Docker is unreachable, same degraded-start rule as the
-        # rest of §73.
         try:
             reconcile_docker_client = docker.from_env()
         except docker.errors.DockerException:
@@ -137,15 +115,6 @@ def serve(config_path: Path, transport: Transport) -> None:
             finally:
                 reconcile_docker_client.close()
 
-        # §73 step 6, §44.1 steps 4-5: under `ssh.mode: agent`, the
-        # previous agent died with the daemon (S23's own module docstring)
-        # — start a fresh one for every workspace step 5 above just
-        # confirmed is `running`, and tear down anything still tracked for
-        # a workspace that is not. Runs after container reconciliation,
-        # not before: it needs "is this workspace actually running"
-        # answered by the up-to-date DB state that step just produced —
-        # and is skipped under the same condition that step already is,
-        # for the same reason: without Docker, "running" isn't trustworthy.
         if config.ssh.mode == "agent" and reconcile_docker_client is not None:
             SSHAgentManager(
                 reconcile_db, runtime_dir=config.state_db_path.parent / "ssh-agents"
@@ -155,10 +124,6 @@ def serve(config_path: Path, transport: Transport) -> None:
     finally:
         reconcile_db.close()
 
-    # Step 7 (validate repository roots) is enforced at config-load time
-    # (step 1) rather than as a separate pass.
-
-    # §73 step 8: start the MCP transport.
     server = create_server(config)
     run_server(server, transport=transport)
 
@@ -424,14 +389,6 @@ def rebuild(config_path: Path, repository_id: str) -> None:
         try:
             docker_client.images.pull(image)
         except docker.errors.DockerException as exc:
-            # Best-effort, not fail-closed: `image` is frequently a
-            # locally-built tag (`docker/default/Dockerfile`'s own
-            # image, or a project's own `.mcp-workspace.yml` `image`
-            # built by hand) that was never pushed to any registry —
-            # "not found on any registry" is the *expected* outcome
-            # there, not a reason to refuse a rebuild the operator
-            # explicitly asked for. Proceeds with whatever image is
-            # already cached locally, same as `reset` would.
             click.echo(
                 f"warning: could not pull image {image!r} ({exc}); "
                 "using the locally cached image instead",
@@ -479,25 +436,12 @@ def delete_workspace(config_path: Path, repository_id: str) -> None:
         if config.ssh.mode == "agent"
         else None
     )
-    # HR-009 (`docs/HARDENING_SPEC.md` §4.2): reclaim this repository's
-    # own cache volumes on delete — otherwise a repository id later
-    # reused for a different project would silently inherit them.
-    # Recomputed from the current `.mcp-workspace.yml`, the same way
-    # `workspace_open` itself resolves them — best-effort: a cache
-    # declaration removed or renamed since the workspace was last opened
-    # means that specific volume is missed here, not an error.
     project_config = load_project_config(repository.canonical_path)
     cache_volume_names = [
         cache_volume_name(repository_id=repository.id, cache_name=entry.name)
         for entry in (project_config.caches if project_config is not None else [])
     ]
     try:
-        # G2R-015 (`docs/GAP2_SPEC.md`): `state_dir` is where
-        # `tools/execution.py`'s `job_dir = state_dir / "jobs" / job_id`
-        # writes every job's logs — the same root `server.py` derives
-        # for the running daemon (`config.state_db_path.parent`), so a
-        # workspace deleted here reclaims the on-disk logs the daemon
-        # itself would have left orphaned otherwise.
         DockerWorkspaceManager(docker_client, db, ssh_agent_manager=ssh_agent_manager).delete(
             workspace_id,
             cache_volume_names=cache_volume_names,
