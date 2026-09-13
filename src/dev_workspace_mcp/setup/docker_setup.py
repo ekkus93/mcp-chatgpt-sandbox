@@ -45,7 +45,6 @@ class DockerSetupChoices:
             },
             "container": {
                 "user": container.user,
-                "sudo": container.sudo,
                 "git_dir_mode": container.git_dir_mode,
             },
             "workspace": {"idle_stop_after": idle_value},

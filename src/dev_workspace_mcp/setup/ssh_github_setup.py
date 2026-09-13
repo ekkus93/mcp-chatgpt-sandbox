@@ -64,17 +64,14 @@ class CredentialChoices:
                 "scope": ssh.scope,
                 "keys_dir": str(ssh.keys_dir),
                 "known_hosts": str(ssh.known_hosts),
-                **({"shared_key": ssh.shared_key} if ssh.shared_key is not None else {}),
+                "shared_key": ssh.shared_key,
             },
             "github": {
                 "api_auth": github.api_auth,
-                **(
-                    {"api_token_path": str(github.api_token_path)}
-                    if github.api_token_path is not None
-                    else {}
+                "api_token_path": (
+                    str(github.api_token_path) if github.api_token_path is not None else None
                 ),
                 "api_base_url": github.api_base_url,
-                "repositories": github.repositories,
             },
         }
 
