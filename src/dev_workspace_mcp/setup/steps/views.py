@@ -100,7 +100,8 @@ class StepViewBuilder:
             str(Path(known_hosts).parent),
         }
         yield Static(
-            "Reviewed directory targets:\n" + "\n".join(f"  {path}" for path in sorted(directories)),
+            "Reviewed directory targets:\n"
+            + "\n".join(f"  {path}" for path in sorted(directories)),
             classes="boxed",
         )
         yield Button("Create reviewed parent directories", id="create_storage_dirs")
@@ -307,9 +308,7 @@ class StepViewBuilder:
             yield Static("\n".join(lines), classes="boxed")
         if self.controller.state.chatgpt_enabled:
             attestation = (
-                "USER-ATTESTED"
-                if self.controller.state.chatgpt_ui_attested
-                else "ACTION REQUIRED"
+                "USER-ATTESTED" if self.controller.state.chatgpt_ui_attested else "ACTION REQUIRED"
             )
             yield Static(f"{attestation:15} chatgpt.ui                  External ChatGPT UI")
         yield Button("Run / rerun final diagnostics", id="run_diagnostics", variant="primary")

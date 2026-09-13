@@ -408,8 +408,7 @@ def run_setup_diagnostics(
     results: list[DiagnosticResult] = []
     if setup_state_error is not None:
         remediation = (
-            "Use interactive setup Repair or Start fresh; "
-            "production configuration is untouched."
+            "Use interactive setup Repair or Start fresh; production configuration is untouched."
         )
         results.append(
             _result(
@@ -462,9 +461,7 @@ def run_setup_diagnostics(
         )
     )
     results.append(_config_path_check(config_file))
-    results.append(
-        _path_parent_check("state_db.parent", "State database", config.state_db_path)
-    )
+    results.append(_path_parent_check("state_db.parent", "State database", config.state_db_path))
     results.append(_path_parent_check("audit.parent", "Audit log", config.audit.path))
     results.append(_known_hosts_check(config))
     results.extend(_docker_checks(config))
