@@ -125,6 +125,34 @@ def _config_safety(path: Path) -> DiagnosticResult:
     )
 
 
+def _target_lstat(
+    path: Path, *, code: DiagnosticCode, label: str
+) -> os.stat_result | DiagnosticResult | None:
+    try:
+        return path.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return _result(
+            code,
+            label,
+            DiagnosticStatus.FAIL,
+            f"{label} target could not be inspected safely.",
+        )
+
+
+def _unsafe_existing_target_result(
+    metadata: os.stat_result,
+    *,
+    code: DiagnosticCode,
+    label: str,
+    message: str,
+) -> DiagnosticResult | None:
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        return _result(code, label, DiagnosticStatus.FAIL, message)
+    return None
+
+
 def _state_db_check(path: Path) -> DiagnosticResult:
     parent = path.parent
     if not parent.is_dir() or not os.access(parent, os.W_OK | os.X_OK):
@@ -134,7 +162,18 @@ def _state_db_check(path: Path) -> DiagnosticResult:
             DiagnosticStatus.ACTION_REQUIRED,
             "State database parent directory is not writable.",
         )
-    if path.exists():
+    metadata = _target_lstat(path, code=DiagnosticCode.STATE_DB, label="State database")
+    if isinstance(metadata, DiagnosticResult):
+        return metadata
+    if metadata is not None:
+        unsafe = _unsafe_existing_target_result(
+            metadata,
+            code=DiagnosticCode.STATE_DB,
+            label="State database",
+            message="Existing state database target is not a regular non-symlink file.",
+        )
+        if unsafe is not None:
+            return unsafe
         try:
             connection = sqlite3.connect(f"file:{path}?mode=rw", uri=True)
             connection.execute("PRAGMA schema_version").fetchone()
@@ -163,13 +202,18 @@ def _audit_check(path: Path) -> DiagnosticResult:
             DiagnosticStatus.ACTION_REQUIRED,
             "Audit log parent directory is not writable.",
         )
-    if path.exists() and (path.is_symlink() or not path.is_file()):
-        return _result(
-            DiagnosticCode.AUDIT_PATH,
-            "Audit log",
-            DiagnosticStatus.FAIL,
-            "Existing audit target is not a regular file.",
+    metadata = _target_lstat(path, code=DiagnosticCode.AUDIT_PATH, label="Audit log")
+    if isinstance(metadata, DiagnosticResult):
+        return metadata
+    if metadata is not None:
+        unsafe = _unsafe_existing_target_result(
+            metadata,
+            code=DiagnosticCode.AUDIT_PATH,
+            label="Audit log",
+            message="Existing audit target is not a regular non-symlink file.",
         )
+        if unsafe is not None:
+            return unsafe
     return _result(
         DiagnosticCode.AUDIT_PATH,
         "Audit log",
@@ -396,8 +440,6 @@ def _github_checks(config: ServerConfig) -> tuple[DiagnosticResult, ...]:
 def _server_construction(config: ServerConfig) -> DiagnosticResult:
     try:
         create_server(config)
-    # WCR-013: fail closed at the server-construction diagnostic boundary;
-    # suppress arbitrary exception text because it may contain environment details.
     except Exception:
         return _result(
             DiagnosticCode.SERVER_CONSTRUCTION,
@@ -484,8 +526,6 @@ def run_diagnostics(
                     mandatory=False,
                 )
             )
-    # WCR-013: fail closed at the outer diagnostic boundary; suppress arbitrary
-    # exception text so an unexpected library failure cannot leak sensitive data or PASS.
     except Exception:
         results.append(
             _result(
