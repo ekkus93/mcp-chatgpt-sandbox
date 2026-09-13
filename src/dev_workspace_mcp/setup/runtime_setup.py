@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from pydantic import ValidationError
 
@@ -48,10 +47,37 @@ class RuntimeChoices:
         return result
 
 
-def production_runtime_defaults() -> dict[str, Any]:
+def production_runtime_defaults() -> dict[str, dict[str, object]]:
+    """Return current production defaults for the advanced editor.
+
+    Keeping this derived from the production Pydantic models means the setup UI does not own a
+    second set of default constants. A future model-default change appears here automatically.
+    """
+
     return {
         "filesystem": FilesystemConfig().model_dump(mode="json"),
         "execution": ExecutionConfig().model_dump(mode="json"),
         "resources": ResourcesConfig().model_dump(mode="json"),
         "logging": LoggingConfig().model_dump(mode="json"),
     }
+
+
+def runtime_editor_values(
+    overrides: dict[str, object] | None,
+) -> dict[str, dict[str, object]]:
+    """Overlay persisted/existing reviewed values onto production defaults for presentation."""
+
+    values = production_runtime_defaults()
+    if overrides is None:
+        return values
+    for section_name, section_override in overrides.items():
+        if section_name not in values or not isinstance(section_override, dict):
+            continue
+        values[section_name].update(
+            {
+                key: value
+                for key, value in section_override.items()
+                if isinstance(key, str)
+            }
+        )
+    return values
