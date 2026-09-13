@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 import stat
 import subprocess
 from pathlib import Path
@@ -25,14 +26,28 @@ from dev_workspace_mcp.setup.tunnel import (
 )
 
 
-def test_wizv_014_profile_plan_contains_exact_server_command_without_secret(tmp_path: Path) -> None:
+def test_wizv_014_profile_plan_contains_exact_server_command_without_secret(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config dir" / "config.yml"
+    project_root = tmp_path / "project dir"
     plan = build_tunnel_profile_plan(
         profile="chatgpt-sandbox",
         tunnel_id="tunnel-example",
-        config_path=tmp_path / "config.yml",
-        project_root=tmp_path / "project",
+        config_path=config_path,
+        project_root=project_root,
     )
-    assert "dev-workspace-mcp serve --config" in plan.server_command
+    expected_argv = [
+        "uv",
+        "run",
+        "--project",
+        str(project_root.resolve(strict=False)),
+        "dev-workspace-mcp",
+        "serve",
+        "--config",
+        str(config_path.resolve(strict=False)),
+    ]
+    assert shlex.split(plan.server_command) == expected_argv
     assert "tunnel-example" in plan.argv
     assert all("secret" not in argument.casefold() for argument in plan.argv)
     with pytest.raises(SetupTunnelError, match="approval"):
@@ -138,6 +153,42 @@ def test_wizv_015_config_mode_check_is_owner_only(tmp_path: Path) -> None:
     path.chmod(stat.S_IRUSR | stat.S_IWUSR)
     result = _config_safety(path)
     assert result.status is DiagnosticStatus.PASS
+
+
+def test_swhv_002_audit_path_rejects_symlink_and_directory_targets(
+    tmp_path: Path,
+) -> None:
+    from dev_workspace_mcp.setup.diagnostics import _audit_check
+
+    missing = tmp_path / "missing-audit.jsonl"
+    broken_link = tmp_path / "broken-audit"
+    broken_link.symlink_to(missing)
+    assert _audit_check(broken_link).status is DiagnosticStatus.FAIL
+
+    real = tmp_path / "real-audit.jsonl"
+    real.write_text("{}\n")
+    link = tmp_path / "audit-link"
+    link.symlink_to(real)
+    assert _audit_check(link).status is DiagnosticStatus.FAIL
+
+    directory = tmp_path / "audit-directory"
+    directory.mkdir()
+    assert _audit_check(directory).status is DiagnosticStatus.FAIL
+
+    absent = tmp_path / "new-audit.jsonl"
+    assert _audit_check(absent).status is DiagnosticStatus.PASS
+
+
+def test_swhv_002_state_db_path_rejects_symlink_targets(tmp_path: Path) -> None:
+    from dev_workspace_mcp.setup.diagnostics import _state_db_check
+
+    real = tmp_path / "state.db"
+    real.write_text("not-a-real-db")
+    link = tmp_path / "state-link.db"
+    link.symlink_to(real)
+
+    assert _state_db_check(link).status is DiagnosticStatus.FAIL
+    assert _state_db_check(tmp_path / "absent-state.db").status is DiagnosticStatus.PASS
 
 
 def test_wizv_018_docker_unavailable_is_action_required_not_false_pass(
