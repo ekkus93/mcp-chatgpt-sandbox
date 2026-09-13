@@ -162,7 +162,7 @@ def test_resume_rewinds_process_local_chatgpt_secret() -> None:
             SetupStep.FINAL_VALIDATION: SetupStepStatus.COMPLETE,
         },
     )
-    assert state.rewind_for_missing_process_local_chatgpt_secret()
+    assert state.rewind_for_missing_process_local_secret()
     assert state.current_step is SetupStep.CHATGPT_CONNECTION
     assert state.statuses[SetupStep.CHATGPT_CONNECTION] is SetupStepStatus.ACTION_REQUIRED
     assert state.statuses[SetupStep.FINAL_VALIDATION] is SetupStepStatus.ACTION_REQUIRED
