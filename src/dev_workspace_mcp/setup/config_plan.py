@@ -249,7 +249,8 @@ def prepare_config_update(
         except (ValueError, ConfigPlanError) as exc:
             if not repair_invalid:
                 raise ConfigPlanError(
-                    "Existing configuration is invalid; explicitly approve repair before replacement"
+                    "Existing configuration is invalid; explicitly approve repair "
+                    "before replacement"
                 ) from exc
             candidate: dict[str, Any] = {}
             repaired = True

@@ -21,8 +21,8 @@ from dev_workspace_mcp.config.models import (
     GitPolicyConfig,
     LoggingConfig,
     ResourcesConfig,
-    SSHConfig,
     ServerConfig,
+    SSHConfig,
     WorkspaceConfig,
 )
 

@@ -1,6 +1,6 @@
 """Fail-closed filesystem primitives used by interactive setup.
 
-Managed setup files are small security-sensitive text files.  These helpers
+Managed setup files are small security-sensitive text files. These helpers
 centralize target inspection, bounded reads, restrictive atomic replacement,
 and timestamped backups so Textual widgets never implement file mutation.
 """
@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import secrets
 import stat
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -94,7 +95,6 @@ def _ensure_parent(path: Path) -> None:
         parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     except OSError as exc:
         raise SetupFilesystemError(f"Could not create setup directory {parent}") from exc
-    # Reinspect after mkdir so a concurrently substituted symlink is rejected.
     reject_unsafe_sensitive_target(path)
 
 
@@ -118,10 +118,8 @@ def _write_new_file(path: Path, payload: bytes, *, mode: int) -> None:
             os.fsync(handle.fileno())
         os.chmod(path, mode, follow_symlinks=False)
     except OSError as exc:
-        try:
+        with suppress(OSError):
             path.unlink(missing_ok=True)
-        except OSError:
-            pass
         raise SetupFilesystemError(f"Could not securely write setup file {path}") from exc
 
 
@@ -149,8 +147,6 @@ def atomic_write_text(
     temporary = expanded.with_name(f".{expanded.name}.tmp.{secrets.token_hex(12)}")
     try:
         _write_new_file(temporary, payload, mode=mode)
-        # Re-check the destination immediately before replacement.  Source
-        # digest CAS is enforced by config_writer; this protects path shape.
         reject_unsafe_sensitive_target(expanded)
         os.replace(temporary, expanded)
         os.chmod(expanded, mode, follow_symlinks=False)
