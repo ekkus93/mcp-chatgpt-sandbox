@@ -41,9 +41,7 @@ def _existing_components(path: Path) -> list[Path]:
     return components
 
 
-def reject_unsafe_sensitive_target(path: Path) -> Path:
-    """Reject symlinked parents/targets and non-regular existing targets."""
-
+def _reject_symlink_components(path: Path) -> Path:
     expanded = path.expanduser().absolute()
     for component in _existing_components(expanded):
         try:
@@ -54,6 +52,13 @@ def reject_unsafe_sensitive_target(path: Path) -> Path:
             raise SetupFilesystemError(f"Could not inspect setup path {expanded}") from exc
         if stat.S_ISLNK(info.st_mode):
             raise SetupFilesystemError(f"Refusing setup path that traverses a symlink: {expanded}")
+    return expanded
+
+
+def reject_unsafe_sensitive_target(path: Path) -> Path:
+    """Reject symlinked parents/targets and non-regular existing targets."""
+
+    expanded = _reject_symlink_components(path)
     try:
         target_info = expanded.lstat()
     except FileNotFoundError:
@@ -62,6 +67,26 @@ def reject_unsafe_sensitive_target(path: Path) -> Path:
         raise SetupFilesystemError(f"Could not inspect setup target {expanded}") from exc
     if not stat.S_ISREG(target_info.st_mode):
         raise SetupFilesystemError(f"Refusing non-regular setup target: {expanded}")
+    return expanded
+
+
+def ensure_secure_directory(path: Path, *, mode: int = 0o700) -> Path:
+    """Create one reviewed directory tree without traversing existing symlinks."""
+
+    if mode & 0o077:
+        raise ValueError("setup managed directories must not grant group/other permissions")
+    expanded = _reject_symlink_components(path)
+    try:
+        expanded.mkdir(mode=mode, parents=True, exist_ok=True)
+    except OSError as exc:
+        raise SetupFilesystemError(f"Could not create setup directory {expanded}") from exc
+    _reject_symlink_components(expanded)
+    try:
+        info = expanded.lstat()
+    except OSError as exc:
+        raise SetupFilesystemError(f"Could not inspect setup directory {expanded}") from exc
+    if not stat.S_ISDIR(info.st_mode):
+        raise SetupFilesystemError(f"Setup directory target is not a directory: {expanded}")
     return expanded
 
 
@@ -90,11 +115,7 @@ def read_text_bounded(path: Path, *, max_bytes: int = _DEFAULT_MAX_TEXT_BYTES) -
 
 
 def _ensure_parent(path: Path) -> None:
-    parent = path.parent
-    try:
-        parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    except OSError as exc:
-        raise SetupFilesystemError(f"Could not create setup directory {parent}") from exc
+    ensure_secure_directory(path.parent)
     reject_unsafe_sensitive_target(path)
 
 
@@ -168,6 +189,7 @@ __all__ = [
     "AtomicWriteResult",
     "SetupFilesystemError",
     "atomic_write_text",
+    "ensure_secure_directory",
     "read_bytes_bounded",
     "read_text_bounded",
     "reject_unsafe_sensitive_target",
