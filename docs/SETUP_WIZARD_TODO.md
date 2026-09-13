@@ -1,6 +1,6 @@
 # Interactive Setup Wizard TODO
 
-**Status:** Implementation complete / merge and post-merge verification pending  
+**Status:** Complete  
 **Spec:** `docs/SETUP_WIZARD_SPEC.md`  
 **Task series:** `WIZ-001` through `WIZ-020`  
 **Validation series:** `WIZV-*`
@@ -10,7 +10,7 @@ This TODO implements the interactive configuration/setup wizard defined by `docs
 ## Global rules
 
 - [x] Work from an exact inspected `master` SHA for every implementation branch.
-- [ ] Use `ralph/...` source branches and exact-head guarded merges.
+- [x] Use `ralph/...` source branches and exact-head guarded merges.
 - [x] Keep `ServerConfig` / `load_config()` authoritative.
 - [x] Do not create a second weaker setup-only configuration schema.
 - [x] Never persist raw secrets in resumable wizard state.
@@ -537,8 +537,8 @@ This TODO implements the interactive configuration/setup wizard defined by `docs
 - [x] MCP contract check.
 - [x] `contract_version` decision explicitly recorded: no bump is required because the exported MCP tool/schema contract is byte-for-byte unchanged.
 - [x] docs/TOOLS drift gate.
-- [ ] exact-head guarded merge.
-- [ ] post-merge `master` CI green.
+- [x] exact-head guarded merge.
+- [x] post-merge `master` CI green.
 
 ### Implementation qualification evidence
 
@@ -553,6 +553,14 @@ Implementation head `a446d1dc0d7a1a577b3b8792828f2e51ad28eed7` was qualified by 
 - Docker-backed pytest + coverage: **1310 passed, 4 warnings in 638.08s**.
 - Coverage: **88%**, TOTAL `8778` statements / `1093` misses.
 - `uv.lock` is regenerated from `uv` and pins Textual `8.2.8` under the declared `textual>=8.2,<9` runtime range.
+
+### Merge and post-merge evidence
+
+- PR #56 was exact-head guarded and squash-merged from source head `8272d245ebced9c4e612b66ad30821b3ec086ac7`.
+- Merge commit / first post-feature `master` head: `49d48611e392e11bceb7dd4ea81967733e86eb78`.
+- Post-merge push CI run `34755280167`, job `103718493462`: PASS.
+- Post-merge Docker-backed pytest + coverage: **1310 passed, 4 warnings in 657.35s**.
+- Post-merge coverage: **88%**, TOTAL `8778` statements / `1093` misses.
 
 ---
 
@@ -570,5 +578,5 @@ Implementation head `a446d1dc0d7a1a577b3b8792828f2e51ad28eed7` was qualified by 
 - [x] ChatGPT tunnel setup is optional, safe, and does not hardcode fragile UI/plan assumptions.
 - [x] Final diagnostics objectively gate Finish.
 - [x] Headless `--check`/doctor uses the same diagnostics engine.
-- [x] All existing project CI gates remain green on the implementation head.
+- [x] All existing project CI gates remain green on the merged implementation.
 - [x] README/Quickstart recommend the wizard while retaining manual setup instructions.
