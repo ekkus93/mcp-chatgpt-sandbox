@@ -31,6 +31,7 @@ async def test_wizv_006_navigation_is_validation_gated_and_keyboard_accessible(
         await pilot.pause()
         assert not next_button.disabled
         await pilot.click("#next")
+        await pilot.pause()
         assert app.current_step is SetupStep.STORAGE
         assert not back.disabled
 
@@ -42,10 +43,15 @@ async def test_wizv_006_finish_only_appears_on_final_step(tmp_path: Path) -> Non
         state_path=tmp_path / "state.json",
     )
     async with app.run_test() as pilot:
-        for definition in STEPS[:-1]:
+        for index, definition in enumerate(STEPS[:-1]):
+            assert app.current_step is definition.step
             app.set_step_validation(definition.step, valid=True)
             await pilot.pause()
+            next_button = app.query_one("#next", Button)
+            assert not next_button.disabled
             await pilot.click("#next")
+            await pilot.pause()
+            assert app.current_step is STEPS[index + 1].step
         next_button = app.query_one("#next", Button)
         assert app.current_step is SetupStep.FINAL_VALIDATION
         assert str(next_button.label) == "Finish"

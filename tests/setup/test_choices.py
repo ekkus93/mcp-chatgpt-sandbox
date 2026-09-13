@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from dev_workspace_mcp.setup.choices import SetupChoices
-from dev_workspace_mcp.setup.model import SetupState, SetupStep, invalidate_from_step
+from dev_workspace_mcp.setup.model import (
+    SetupState,
+    SetupStep,
+    SetupStepStatus,
+    invalidate_from_step,
+)
 
 
 def test_wizv_002_non_secret_choices_round_trip() -> None:
@@ -25,7 +30,7 @@ def test_wizv_002_choices_schema_has_no_raw_runtime_secret_field() -> None:
 def test_wizv_008_upstream_change_invalidates_review_and_final_validation() -> None:
     state = SetupState(current_step=SetupStep.FINAL_VALIDATION)
     for step in SetupStep:
-        state.statuses[step] = "complete"  # type: ignore[assignment]
+        state.statuses[step] = SetupStepStatus.COMPLETE
     invalidated = invalidate_from_step(state, SetupStep.DOCKER)
     assert invalidated.current_step is SetupStep.DOCKER
     assert SetupStep.REVIEW not in invalidated.statuses
