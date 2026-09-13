@@ -5,9 +5,15 @@ import inspect
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from dev_workspace_mcp.setup.choices import SetupChoices
 from dev_workspace_mcp.setup.model import SetupRepositoryState
-from dev_workspace_mcp.setup.repository_setup import verify_repository
+from dev_workspace_mcp.setup.repository_setup import (
+    edit_repository,
+    remove_repository,
+    verify_repository,
+)
 from dev_workspace_mcp.setup.step_actions import SetupStepActionsMixin
 from dev_workspace_mcp.setup.step_panels import WizardStepPanels
 
@@ -83,6 +89,22 @@ def test_wcr_007_repository_verification_has_no_git_side_effects(tmp_path: Path)
     assert _repository_snapshot(tmp_path) == before
 
 
+def test_swf_002_repository_crud_operates_by_id_with_duplicate_github() -> None:
+    one = SetupRepositoryState.from_dict(
+        {"id": "one", "path": "/srv/repos/one", "github": "example/example"}
+    )
+    two = SetupRepositoryState.from_dict(
+        {"id": "two", "path": "/srv/repos/two", "github": "example/example"}
+    )
+    replacement = SetupRepositoryState.from_dict(
+        {"id": "two", "path": "/srv/repos/two-new", "github": "example/example"}
+    )
+
+    updated = edit_repository((one, two), repository_id="two", replacement=replacement)
+    assert updated == (one, replacement)
+    assert remove_repository(updated, repository_id="one", confirmed=True) == (replacement,)
+
+
 def test_wcr_004_resumable_choices_have_no_raw_secret_field_names() -> None:
     keys = SetupChoices().to_dict().keys()
     for key in keys:
@@ -114,3 +136,25 @@ def test_wcr_005_write_action_cannot_prepare_and_write_in_one_click() -> None:
     assert "_review_plan is None" in source
     assert "commit_config_update" in source
     assert "prepare_config_update" not in source
+
+
+def test_swf_001_reviewed_mutation_apply_handlers_do_not_prepare_plans() -> None:
+    docker_apply = inspect.getsource(SetupStepActionsMixin.build_docker_image)
+    assert "_pending_docker_build_plan" in docker_apply
+    assert "_docker_from_widgets" not in docker_apply
+    assert "prepare_default_image_build_plan" not in docker_apply
+
+    tunnel_apply = inspect.getsource(SetupStepActionsMixin.apply_tunnel)
+    assert "_pending_tunnel_plan" in tunnel_apply
+    assert "_tunnel_plan_from_widgets" not in tunnel_apply
+    assert "build_tunnel_profile_plan" not in tunnel_apply
+
+
+def test_swf_001_reviewed_mutation_prepare_handlers_do_not_apply() -> None:
+    docker_prepare = inspect.getsource(SetupStepActionsMixin.prepare_docker_build)
+    assert "prepare_default_image_build_plan" in docker_prepare
+    assert "build_default_image(" not in docker_prepare
+
+    tunnel_prepare = inspect.getsource(SetupStepActionsMixin.prepare_tunnel)
+    assert "_tunnel_plan_from_widgets" in tunnel_prepare
+    assert "apply_tunnel_profile(" not in tunnel_prepare
