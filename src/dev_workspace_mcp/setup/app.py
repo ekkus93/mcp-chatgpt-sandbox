@@ -11,10 +11,24 @@ from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import Button, Footer, Header, Input, Label, Static
 
-from dev_workspace_mcp.config.models import GitPolicyConfig
+from dev_workspace_mcp.config.models import (
+    ExecutionConfig,
+    FilesystemConfig,
+    GitPolicyConfig,
+)
 from dev_workspace_mcp.setup.browser import SetupBrowserError, open_setup_url
-from dev_workspace_mcp.setup.controller import SetupController, SetupControllerError, SetupEntryChoice
-from dev_workspace_mcp.setup.model import GitPolicyPreset, SetupRepository, SetupStep, SetupStepStatus
+from dev_workspace_mcp.setup.controller import (
+    SetupController,
+    SetupControllerError,
+    SetupEntryChoice,
+)
+from dev_workspace_mcp.setup.docker_setup import DockerBuildPlan, DockerSetupStatus
+from dev_workspace_mcp.setup.model import (
+    GitPolicyPreset,
+    SetupRepository,
+    SetupStep,
+    SetupStepStatus,
+)
 from dev_workspace_mcp.setup.tunnel import (
     CHATGPT_APP_URL,
     DEFAULT_TUNNEL_PROFILE,
@@ -55,14 +69,16 @@ class ExistingSetupScreen(ModalScreen[SetupEntryChoice | None]):
         self.controller = controller
 
     def compose(self) -> ComposeResult:
-        details: list[str] = ["Existing setup material was detected."]
+        details = ["Existing setup material was detected."]
         if self.controller.state_load_error:
             details.append(f"Setup state is unreadable: {self.controller.state_load_error}")
         if self.controller.inspection.exists:
-            details.append(
-                "Production config: "
-                + ("valid" if self.controller.inspection.valid else "invalid; repair approval required")
+            status = (
+                "valid"
+                if self.controller.inspection.valid
+                else "invalid; explicit repair approval required"
             )
+            details.append(f"Production config: {status}")
         with Vertical(id="existing-dialog"):
             yield Static("\n".join(details))
             with Horizontal(id="existing-actions"):
@@ -89,30 +105,38 @@ class ExistingSetupScreen(ModalScreen[SetupEntryChoice | None]):
         }
         if event.button.id == "entry_cancel":
             self.dismiss(None)
-            return
-        if event.button.id in mapping:
+        elif event.button.id in mapping:
             self.dismiss(mapping[event.button.id])
 
 
-class CancelSetupScreen(ModalScreen[bool]):
+class ConfirmScreen(ModalScreen[bool]):
+    """Reusable explicit confirmation for destructive/external actions."""
+
     DEFAULT_CSS = """
-    CancelSetupScreen { align: center middle; }
-    #cancel-dialog { width: 54; height: auto; border: heavy $warning; padding: 1 2; }
+    ConfirmScreen { align: center middle; }
+    #confirm-dialog { width: 68; height: auto; border: heavy $warning; padding: 1 2; }
     """
 
+    def __init__(self, message: str, *, confirm_label: str) -> None:
+        super().__init__()
+        self.message = message
+        self.confirm_label = confirm_label
+
     def compose(self) -> ComposeResult:
-        with Vertical(id="cancel-dialog"):
-            yield Static(
-                "Cancel setup? Existing production configuration and operational resources will not be deleted."
-            )
+        with Vertical(id="confirm-dialog"):
+            yield Static(self.message)
             with Horizontal():
-                yield Button("Keep working", id="cancel_no")
-                yield Button("Cancel setup", id="cancel_yes", variant="error")
+                yield Button("Back", id="confirm_no")
+                yield Button(
+                    self.confirm_label,
+                    id="confirm_yes",
+                    variant="warning",
+                )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "cancel_yes":
+        if event.button.id == "confirm_yes":
             self.dismiss(True)
-        elif event.button.id == "cancel_no":
+        elif event.button.id == "confirm_no":
             self.dismiss(False)
 
 
@@ -160,7 +184,7 @@ class SetupApp(App[int]):
     Input { margin-bottom: 1; }
     .warning { text-style: bold; }
     .section { margin-top: 1; text-style: bold; }
-    .repository-list { min-height: 3; border: round $panel; padding: 1; margin-bottom: 1; }
+    .boxed { min-height: 3; border: round $panel; padding: 1; margin-bottom: 1; }
     """
 
     BINDINGS = [
@@ -177,6 +201,8 @@ class SetupApp(App[int]):
         self._repositories = list(repositories)
         self._repository_roots = list(roots)
         self._advanced_visible = controller.state.advanced
+        self._pending_remove_id: str | None = None
+        self._pending_build: DockerBuildPlan | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -211,11 +237,25 @@ class SetupApp(App[int]):
         self._repositories = list(repositories)
         self._repository_roots = list(roots)
         self._advanced_visible = self.controller.state.advanced
-        self._show_message(f"Selected existing-installation action: {choice.replace('_', ' ')}")
+        self._show_message(f"Selected action: {choice.replace('_', ' ')}")
         self._render_step()
 
-    def _field(self, label: str, widget_id: str, value: object, *, password: bool = False) -> list[Widget]:
-        return [Label(label), Input(value="" if value is None else str(value), id=widget_id, password=password)]
+    def _field(
+        self,
+        label: str,
+        widget_id: str,
+        value: object,
+        *,
+        password: bool = False,
+    ) -> list[Widget]:
+        return [
+            Label(label),
+            Input(
+                value="" if value is None else str(value),
+                id=widget_id,
+                password=password,
+            ),
+        ]
 
     def _input(self, widget_id: str) -> str:
         return self.query_one(f"#{widget_id}", Input).value
@@ -265,13 +305,17 @@ class SetupApp(App[int]):
     def _widgets_for_step(self, step: SetupStep) -> Iterable[Widget]:
         if step is SetupStep.LOCAL_PREREQUISITES:
             yield Static(
-                "Verify Python and local tooling. Docker may be temporarily unavailable; final diagnostics will keep Docker-dependent work unresolved."
+                "Verify Python and local tooling. Docker unavailability is reported as degraded, "
+                "not hidden or treated as a fatal configuration error."
             )
             yield Button("Run prerequisite checks", id="validate_prerequisites", variant="primary")
             return
+
         if step is SetupStep.SERVER_STORAGE:
             state_db, audit, keys_dir, known_hosts = self.controller.effective_storage()
-            yield Static("Choose absolute host paths. Directory creation is a separate explicit action.")
+            yield Static(
+                "Choose absolute host paths. Creating directories is a separate explicit action."
+            )
             yield from self._field("State database path", "storage_state_db", state_db)
             yield from self._field("Audit log path", "storage_audit", audit)
             yield from self._field("SSH keys directory", "storage_keys", keys_dir)
@@ -279,9 +323,12 @@ class SetupApp(App[int]):
             yield Button("Create reviewed parent directories", id="create_storage_dirs")
             yield Button("Validate storage choices", id="validate_storage", variant="primary")
             return
+
         if step is SetupStep.DOCKER_WORKSPACE:
             image, workspace_path, container, idle = self.controller.effective_docker()
-            yield Static("Recommended: host user, sudo enabled, read-write Git metadata, /workspace mount.")
+            yield Static(
+                "Recommended: host user, sudo enabled, read-write Git metadata, /workspace mount."
+            )
             yield from self._field("Default image", "docker_image", image)
             yield from self._field("Workspace path", "docker_workspace_path", workspace_path)
             yield from self._field("Container user [host|root]", "docker_user", container.user)
@@ -292,14 +339,21 @@ class SetupApp(App[int]):
                 container.git_dir_mode,
             )
             yield from self._field("Idle stop duration [4h|30m|never]", "docker_idle", idle)
-            yield Static("Root mode and reduced Git visibility are advanced choices and may limit normal development.", classes="warning")
+            yield Static(
+                "Root mode and reduced Git visibility are advanced choices and may limit normal "
+                "development.",
+                classes="warning",
+            )
             yield Button("Validate Docker workspace", id="validate_docker", variant="primary")
+            yield Button("Review default-image build action", id="plan_docker_build")
             return
+
         if step is SetupStep.REPOSITORY_ACCESS:
             yield Static(
-                "Register repositories explicitly. Verification reads Git metadata only and never modifies repository contents."
+                "Register repositories explicitly. Verification reads Git metadata only and never "
+                "modifies repository contents."
             )
-            yield Static(self._repository_list_text(), id="repository_list", classes="repository-list")
+            yield Static(self._repository_list_text(), id="repository_list", classes="boxed")
             yield from self._field("Repository ID", "repo_id", "")
             yield from self._field("Absolute local path", "repo_path", "")
             yield from self._field("GitHub owner/repo", "repo_github", "")
@@ -313,28 +367,43 @@ class SetupApp(App[int]):
             )
             yield Button("Validate repository set", id="validate_repositories", variant="primary")
             return
+
         if step is SetupStep.SSH_AND_GITHUB:
             ssh, github = self.controller.effective_ssh_github()
             yield Static(
-                "Recommended: repository-scoped keys through ssh-agent. Shared scope reduces credential isolation; file mode exposes private-key material to container code.",
+                "Recommended: repository-scoped keys through ssh-agent. Shared scope reduces "
+                "credential isolation; file mode exposes private-key material to container code.",
                 classes="warning",
             )
             yield from self._field("SSH mode [agent|file]", "ssh_mode", ssh.mode)
             yield from self._field("SSH scope [repository|shared]", "ssh_scope", ssh.scope)
-            yield from self._field("Shared key filename (shared scope only)", "ssh_shared_key", ssh.shared_key)
-            yield from self._field("GitHub API auth [none|token|app]", "github_auth", github.api_auth)
+            yield from self._field(
+                "Shared key filename (shared scope only)",
+                "ssh_shared_key",
+                ssh.shared_key,
+            )
+            yield from self._field(
+                "GitHub API auth [none|token|app]",
+                "github_auth",
+                github.api_auth,
+            )
             yield from self._field(
                 "GitHub token credential file path (token mode only)",
                 "github_token_path",
                 github.api_token_path,
             )
-            yield Static("GitHub App auth is represented by production config but is not currently implemented by the server.")
+            yield Static(
+                "GitHub App is a production configuration value, but the current runtime does not "
+                "implement App token exchange. The wizard never claims otherwise."
+            )
             yield Button("Validate SSH / GitHub choices", id="validate_ssh", variant="primary")
             return
+
         if step is SetupStep.GIT_SAFETY_POLICY:
             preset, policy = self.controller.effective_git_policy()
             yield Static(
-                "Recommended denies force pushes and published amend; Conservative denies ordinary pushes/default-branch commits too. Custom exposes every production GitPolicyConfig field."
+                "Recommended denies force pushes and published amend; Conservative also denies "
+                "ordinary pushes/default-branch commits. Custom exposes every production field."
             )
             yield from self._field(
                 "Preset [recommended|conservative|custom]",
@@ -348,15 +417,18 @@ class SetupApp(App[int]):
                     value = ", ".join(str(item) for item in value)
                 yield from self._field(field_name, f"git_{field_name}", value)
             yield Static(
-                "Force push/lease, remote deletion, and amending published commits can rewrite or destroy shared history. Remote-protection 'deny' fails closed when protection cannot be verified.",
+                "Force push/lease, deletion, and amending published commits can rewrite shared "
+                "history. Remote-protection 'deny' fails closed when verification is unavailable.",
                 classes="warning",
             )
             yield Button("Validate Git safety policy", id="validate_git", variant="primary")
             return
+
         if step is SetupStep.RUNTIME_AND_RESOURCES:
             if not self._advanced_visible:
                 yield Static(
-                    "Production filesystem, execution, resource, and logging defaults remain authoritative. Open Advanced only when you need custom limits."
+                    "Production filesystem, execution, resource, and logging defaults remain "
+                    "authoritative unless you explicitly open Advanced."
                 )
                 yield Button("Use production defaults", id="runtime_defaults", variant="primary")
                 yield Button("Show advanced controls", id="show_advanced")
@@ -373,11 +445,17 @@ class SetupApp(App[int]):
             yield from self._field("memory (for example 16g)", "resource_memory", resources.memory)
             yield from self._field("pids_limit", "resource_pids", resources.pids_limit)
             yield from self._field("Logging level", "logging_level", logging.level)
-            yield Button("Validate advanced runtime settings", id="validate_runtime", variant="primary")
+            yield Button(
+                "Validate advanced runtime settings",
+                id="validate_runtime",
+                variant="primary",
+            )
             return
+
         if step is SetupStep.CHATGPT_CONNECTION:
             yield Static(
-                "Optional. Secure MCP Tunnel keeps the MCP server private. OpenAI's current docs require a tunnel_id and a tunnel-client runtime API key. The runtime key is masked and process-local only."
+                "Optional. Secure MCP Tunnel keeps the server private. Runtime API-key input is "
+                "masked and process-local only; it is never written to setup state or YAML."
             )
             yield Static(f"Docs: {TUNNEL_DOC_URL}\nChatGPT app page: {CHATGPT_APP_URL}")
             yield from self._field(
@@ -385,24 +463,39 @@ class SetupApp(App[int]):
                 "chatgpt_enabled",
                 _bool_text(self.controller.state.chatgpt_enabled),
             )
-            yield from self._field("Tunnel ID", "chatgpt_tunnel_id", self.controller.state.tunnel_id)
-            yield from self._field("Runtime API key (never persisted)", "chatgpt_runtime_key", "", password=True)
+            yield from self._field(
+                "Tunnel ID",
+                "chatgpt_tunnel_id",
+                self.controller.state.tunnel_id,
+            )
+            yield from self._field(
+                "Runtime API key (never persisted)",
+                "chatgpt_runtime_key",
+                "",
+                password=True,
+            )
             yield from self._field(
                 "ChatGPT UI completed by operator [true|false]",
                 "chatgpt_attested",
                 _bool_text(self.controller.state.chatgpt_ui_attested),
             )
             if self.controller.state.tunnel_id:
-                plan = build_tunnel_profile_plan(self.controller.config_path, self.controller.state.tunnel_id)
+                plan = build_tunnel_profile_plan(
+                    self.controller.config_path,
+                    self.controller.state.tunnel_id,
+                )
                 yield Static(
-                    f"Reviewed profile: {plan.profile}\nServer command: {plan.mcp_command}\nInit command: {plan.display_command}"
+                    f"Reviewed profile: {plan.profile}\nServer command: {plan.mcp_command}\n"
+                    f"Init command: {plan.display_command}"
                 )
             yield Button("Open current tunnel documentation", id="open_tunnel_docs")
+            yield Button("Open ChatGPT app settings", id="open_chatgpt_app")
             yield Button("Create / repair reviewed tunnel profile", id="create_tunnel_profile")
             yield Button("Run tunnel-client doctor", id="doctor_tunnel")
             yield Button("Validate ChatGPT choices", id="validate_chatgpt", variant="primary")
             yield Button("Skip ChatGPT connection", id="skip_chatgpt")
             return
+
         if step is SetupStep.CONFIGURATION_REVIEW:
             yield Static(f"Target configuration: {self.controller.config_path}")
             try:
@@ -410,20 +503,24 @@ class SetupApp(App[int]):
             except SetupControllerError as exc:
                 yield Static(f"Cannot prepare review: {exc}")
                 return
-            yield Static(
-                "Existing file: "
-                + ("yes; timestamped backup will be created" if plan.source_exists else "no; new file")
+            status = (
+                "yes; timestamped backup will be created"
+                if plan.source_exists
+                else "no; new file"
             )
-            yield Static("\n".join(plan.summary), classes="repository-list")
+            yield Static(f"Existing file: {status}")
+            yield Static("\n".join(plan.summary), classes="boxed")
             yield Button(
                 "Write reviewed configuration",
                 id="write_configuration",
                 variant="primary",
             )
             return
+
         if step is SetupStep.FINAL_VALIDATION:
             yield Static(
-                "Finish is enabled only after mandatory machine-verifiable diagnostics pass. ChatGPT UI completion remains USER-ATTESTED, not machine PASS."
+                "Finish is enabled only after mandatory machine-verifiable diagnostics pass. "
+                "ChatGPT UI completion remains USER-ATTESTED, never machine PASS."
             )
             if self.controller.diagnostics is None:
                 yield Static("Diagnostics have not been run in this session.")
@@ -432,10 +529,11 @@ class SetupApp(App[int]):
                     f"{item.status.value.upper():15} {item.code:28} {item.message}"
                     for item in self.controller.diagnostics.diagnostics
                 ]
-                yield Static("\n".join(lines), classes="repository-list")
+                yield Static("\n".join(lines), classes="boxed")
             yield Button("Run / rerun final diagnostics", id="run_diagnostics", variant="primary")
             yield Static(
-                f"Smoke test after completion:\n  dev-workspace-mcp serve --config {self.controller.config_path}"
+                "Smoke test after completion:\n"
+                f"  dev-workspace-mcp serve --config {self.controller.config_path}"
             )
 
     def _repository_list_text(self) -> str:
@@ -453,8 +551,11 @@ class SetupApp(App[int]):
             self.controller.state.mark_changed(step)
             self.controller.reviewed_plan = None
             self.controller.diagnostics = None
-            self._update_controls()
-            self.query_one("#progress", Static).update(self._progress_text())
+            try:
+                self.controller.persist()
+            except SetupControllerError as exc:
+                self._show_error(str(exc))
+            self._render_status_only()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         del event
@@ -471,12 +572,11 @@ class SetupApp(App[int]):
     def _advanced_values(
         self,
     ) -> tuple[dict[str, object], dict[str, object], dict[str, object], dict[str, object]]:
-        filesystem, execution, _, _ = self.controller.effective_advanced()
         filesystem_values = {
-            name: int(self._input(f"fs_{name}")) for name in filesystem.model_fields
+            name: int(self._input(f"fs_{name}")) for name in FilesystemConfig.model_fields
         }
         execution_values = {
-            name: int(self._input(f"exec_{name}")) for name in execution.model_fields
+            name: int(self._input(f"exec_{name}")) for name in ExecutionConfig.model_fields
         }
         resources_values: dict[str, object] = {
             "cpus": _optional_float(self._input("resource_cpus")),
@@ -505,7 +605,9 @@ class SetupApp(App[int]):
                 self._render_status_only()
             elif button_id == "create_storage_dirs":
                 created = self.controller.create_storage_directories()
-                self._show_message("Reviewed directories ready: " + ", ".join(str(p) for p in created))
+                self._show_message(
+                    "Reviewed directories ready: " + ", ".join(str(path) for path in created)
+                )
             elif button_id == "validate_storage":
                 self.controller.apply_storage(
                     state_db_path=self._input("storage_state_db"),
@@ -516,7 +618,7 @@ class SetupApp(App[int]):
                 self._show_message("Storage choices validated")
                 self._render_status_only()
             elif button_id == "validate_docker":
-                self.controller.apply_docker(
+                result = self.controller.apply_docker(
                     image=self._input("docker_image"),
                     workspace_path=self._input("docker_workspace_path"),
                     container_user=self._input("docker_user"),
@@ -524,8 +626,19 @@ class SetupApp(App[int]):
                     git_dir_mode=self._input("docker_git_dir_mode"),
                     idle_stop_after=self._input("docker_idle"),
                 )
-                self._show_message("Docker workspace choices validated")
+                self._show_message(result.message)
                 self._render_status_only()
+            elif button_id == "plan_docker_build":
+                plan = self.controller.docker_build_plan(self._input("docker_image"))
+                self._pending_build = plan
+                message = (
+                    "Run this exact Docker build action?\n\n"
+                    f"{plan.display_command}\n\nNo shell interpolation is used."
+                )
+                self.push_screen(
+                    ConfirmScreen(message, confirm_label="Build image"),
+                    self._docker_build_choice,
+                )
             elif button_id == "repo_add":
                 repository = SetupRepository(
                     id=self._input("repo_id"),
@@ -533,20 +646,36 @@ class SetupApp(App[int]):
                     github=self._input("repo_github"),
                     ssh_key=self._input("repo_ssh_key").strip() or None,
                 )
-                self._repositories = [repo for repo in self._repositories if repo.id != repository.id]
+                self._repositories = [
+                    repo for repo in self._repositories if repo.id != repository.id
+                ]
                 self._repositories.append(repository)
                 self._repositories.sort(key=lambda repo: repo.id)
-                self.controller.state.statuses[SetupStep.REPOSITORY_ACCESS] = SetupStepStatus.ACTION_REQUIRED
+                self.controller.state.statuses[SetupStep.REPOSITORY_ACCESS] = (
+                    SetupStepStatus.ACTION_REQUIRED
+                )
                 self._render_step()
             elif button_id == "repo_remove":
                 repository_id = self._input("repo_id").strip()
-                self._repositories = [repo for repo in self._repositories if repo.id != repository_id]
-                self.controller.state.statuses[SetupStep.REPOSITORY_ACCESS] = SetupStepStatus.ACTION_REQUIRED
-                self._render_step()
+                if not repository_id:
+                    raise SetupControllerError("Enter the repository ID to remove")
+                if not any(repo.id == repository_id for repo in self._repositories):
+                    raise SetupControllerError(f"Repository is not in the setup list: {repository_id}")
+                self._pending_remove_id = repository_id
+                self.push_screen(
+                    ConfirmScreen(
+                        "Remove this repository from the generated configuration only? "
+                        "The local Git repository and its files will not be deleted.\n\n"
+                        f"Repository ID: {repository_id}",
+                        confirm_label="Remove from config",
+                    ),
+                    self._repository_remove_choice,
+                )
             elif button_id == "validate_repositories":
                 self._repository_roots = _comma_list(self._input("repo_roots"))
                 self.controller.apply_repositories(
-                    tuple(self._repositories), tuple(self._repository_roots)
+                    tuple(self._repositories),
+                    tuple(self._repository_roots),
                 )
                 self._show_message("Repository set verified read-only")
                 self._render_status_only()
@@ -558,7 +687,9 @@ class SetupApp(App[int]):
                     github_api_auth=self._input("github_auth"),
                     github_api_token_path=self._input("github_token_path").strip() or None,
                 )
-                self._show_message("SSH/GitHub choices validated without reading secret contents")
+                self._show_message(
+                    "SSH/GitHub choices validated without reading or displaying secret contents"
+                )
                 self._render_status_only()
             elif button_id == "validate_git":
                 preset = GitPolicyPreset(self._input("git_preset").strip())
@@ -584,35 +715,48 @@ class SetupApp(App[int]):
                 self._show_message("Advanced runtime settings validated")
                 self._render_status_only()
             elif button_id == "open_tunnel_docs":
-                opened = open_setup_url(TUNNEL_DOC_URL, no_browser=self.controller.no_browser)
-                self._show_message(
-                    "Opened current OpenAI tunnel documentation"
-                    if opened
-                    else f"Browser disabled; open manually: {TUNNEL_DOC_URL}"
-                )
+                self._open_url(TUNNEL_DOC_URL, "OpenAI tunnel documentation")
+            elif button_id == "open_chatgpt_app":
+                self._open_url(CHATGPT_APP_URL, "ChatGPT app settings")
             elif button_id == "create_tunnel_profile":
                 plan = build_tunnel_profile_plan(
-                    self.controller.config_path, self._input("chatgpt_tunnel_id")
+                    self.controller.config_path,
+                    self._input("chatgpt_tunnel_id"),
                 )
-                runtime_key = self._input("chatgpt_runtime_key") or self.controller.runtime_tunnel_key
+                runtime_key = (
+                    self._input("chatgpt_runtime_key") or self.controller.runtime_tunnel_key
+                )
                 create_or_repair_tunnel_profile(plan, runtime_key=runtime_key)
                 self.controller.runtime_tunnel_key = runtime_key
-                self._show_message(f"Tunnel profile {plan.profile!r} created/repaired after explicit approval")
+                self._show_message(
+                    f"Tunnel profile {plan.profile!r} created/repaired after explicit approval"
+                )
             elif button_id == "doctor_tunnel":
-                runtime_key = self._input("chatgpt_runtime_key") or self.controller.runtime_tunnel_key
-                ok = doctor_tunnel_profile(DEFAULT_TUNNEL_PROFILE, runtime_key=runtime_key)
+                runtime_key = (
+                    self._input("chatgpt_runtime_key") or self.controller.runtime_tunnel_key
+                )
+                ok = doctor_tunnel_profile(
+                    DEFAULT_TUNNEL_PROFILE,
+                    runtime_key=runtime_key,
+                )
                 if not ok:
-                    raise SetupControllerError("tunnel-client doctor did not report a healthy profile")
+                    raise SetupControllerError(
+                        "tunnel-client doctor did not report a healthy profile"
+                    )
                 self.controller.runtime_tunnel_key = runtime_key
                 self._show_message("tunnel-client doctor passed")
             elif button_id == "validate_chatgpt":
-                enabled = _parse_bool(self._input("chatgpt_enabled"), label="ChatGPT enabled")
                 self.controller.apply_chatgpt(
-                    enabled=enabled,
+                    enabled=_parse_bool(
+                        self._input("chatgpt_enabled"),
+                        label="ChatGPT enabled",
+                    ),
                     tunnel_id=self._input("chatgpt_tunnel_id").strip() or None,
-                    runtime_key=self._input("chatgpt_runtime_key") or self.controller.runtime_tunnel_key,
+                    runtime_key=self._input("chatgpt_runtime_key")
+                    or self.controller.runtime_tunnel_key,
                     user_attested=_parse_bool(
-                        self._input("chatgpt_attested"), label="ChatGPT UI attestation"
+                        self._input("chatgpt_attested"),
+                        label="ChatGPT UI attestation",
                     ),
                 )
                 self._show_message(
@@ -628,7 +772,9 @@ class SetupApp(App[int]):
                     self.controller.prepare_review()
                 result = self.controller.write_reviewed_configuration()
                 backup = f"; backup: {result.backup_path}" if result.backup_path else ""
-                self._show_message(f"Configuration written and production-reloaded: {result.path}{backup}")
+                self._show_message(
+                    f"Configuration written and production-reloaded: {result.path}{backup}"
+                )
                 self._render_status_only()
             elif button_id == "run_diagnostics":
                 report = self.controller.run_final_diagnostics()
@@ -642,12 +788,54 @@ class SetupApp(App[int]):
             self._show_error(str(exc))
             self._update_controls()
 
+    def _open_url(self, url: str, label: str) -> None:
+        opened = open_setup_url(url, no_browser=self.controller.no_browser)
+        self._show_message(f"Opened {label}" if opened else f"Browser disabled; open manually: {url}")
+
+    def _docker_build_choice(self, confirmed: bool) -> None:
+        plan = self._pending_build
+        self._pending_build = None
+        if not confirmed or plan is None:
+            self._show_message("Docker build cancelled; no image mutation performed")
+            return
+        try:
+            result = self.controller.execute_docker_build(plan)
+        except SetupControllerError as exc:
+            self._show_error(str(exc))
+            return
+        self._show_message(result.message)
+        self._render_status_only()
+
+    def _repository_remove_choice(self, confirmed: bool) -> None:
+        repository_id = self._pending_remove_id
+        self._pending_remove_id = None
+        if not confirmed or repository_id is None:
+            self._show_message("Repository removal cancelled")
+            return
+        self._repositories = [
+            repository for repository in self._repositories if repository.id != repository_id
+        ]
+        self.controller.state.statuses[SetupStep.REPOSITORY_ACCESS] = (
+            SetupStepStatus.ACTION_REQUIRED
+        )
+        self._show_message(
+            f"Repository {repository_id!r} removed from pending config; local files untouched"
+        )
+        self._render_step()
+
     def _render_status_only(self) -> None:
         self.query_one("#progress", Static).update(self._progress_text())
         self._update_controls()
 
     def action_cancel_setup(self) -> None:
-        self.push_screen(CancelSetupScreen(), self._cancel_choice)
+        self.push_screen(
+            ConfirmScreen(
+                "Cancel setup? Existing production configuration, repositories, Docker resources, "
+                "keys, and operational state will not be deleted.",
+                confirm_label="Cancel setup",
+            ),
+            self._cancel_choice,
+        )
 
     def _cancel_choice(self, confirmed: bool) -> None:
         if confirmed:
@@ -666,7 +854,10 @@ class SetupApp(App[int]):
             self._render_step()
 
     def action_next_step(self) -> None:
-        if self.controller.can_advance() and self.controller.state.current_step is not SetupStep.FINAL_VALIDATION:
+        if (
+            self.controller.can_advance()
+            and self.controller.state.current_step is not SetupStep.FINAL_VALIDATION
+        ):
             self.controller.advance()
             self._render_step()
 
@@ -677,7 +868,7 @@ def run_setup_app(controller: SetupController) -> int:
 
 
 __all__ = [
-    "CancelSetupScreen",
+    "ConfirmScreen",
     "ExistingSetupScreen",
     "GIT_POLICY_UI_FIELDS",
     "SetupApp",
