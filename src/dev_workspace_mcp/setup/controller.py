@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+from pydantic import BaseModel
+
 from dev_workspace_mcp.config.models import (
     ContainerConfig,
     DockerConfig,
-    Duration,
     ExecutionConfig,
     FilesystemConfig,
     GithubConfig,
@@ -36,6 +38,15 @@ from dev_workspace_mcp.setup.config_writer import (
     commit_config_update,
 )
 from dev_workspace_mcp.setup.diagnostics import SetupDiagnosticsReport, run_setup_diagnostics
+from dev_workspace_mcp.setup.docker_setup import (
+    DockerBuildPlan,
+    DockerSetupError,
+    DockerSetupResult,
+    DockerSetupStatus,
+    default_image_build_plan,
+    execute_docker_build,
+    inspect_docker_image,
+)
 from dev_workspace_mcp.setup.filesystem import (
     SetupFilesystemError,
     ensure_secure_directory,
@@ -86,13 +97,26 @@ def _duration_for_seconds(seconds: int | None) -> str:
     return f"{seconds}s"
 
 
-def _dict_or_none(model: object, existing: object | None) -> dict[str, object] | None:
+def _dict_or_none(model: BaseModel, existing: BaseModel | None) -> dict[str, object] | None:
     if model == existing:
         return None
-    if not hasattr(model, "model_dump"):
-        raise TypeError("advanced setup value is not a Pydantic model")
     dumped = model.model_dump(mode="json")
     return {str(key): value for key, value in dumped.items()}
+
+
+def _require_writable_path_parent(path: Path, *, directory_target: bool = False) -> None:
+    """Require a writable existing target/parent without creating anything."""
+
+    if directory_target and path.exists():
+        if not path.is_dir() or not os.access(path, os.W_OK | os.X_OK):
+            raise SetupControllerError(f"Setup directory is not writable: {path}")
+        return
+    parent = path.parent
+    if not parent.is_dir() or not os.access(parent, os.W_OK | os.X_OK):
+        raise SetupControllerError(
+            f"Parent directory is missing or not writable: {parent}. "
+            "Use the explicit directory-creation action or choose another path."
+        )
 
 
 @dataclass(slots=True)
@@ -144,7 +168,10 @@ class SetupController:
                 raise SetupControllerError("No resumable setup state exists")
             if persisted.statuses.get(SetupStep.FINAL_VALIDATION) is SetupStepStatus.COMPLETE:
                 raise SetupControllerError("Setup state is already complete and cannot be resumed")
-            if persisted.config_path is not None and _absolute(Path(persisted.config_path)) != target:
+            if (
+                persisted.config_path is not None
+                and _absolute(Path(persisted.config_path)) != target
+            ):
                 raise SetupControllerError(
                     "Resumable setup state belongs to a different configuration path"
                 )
@@ -202,7 +229,11 @@ class SetupController:
 
     @property
     def has_existing_material(self) -> bool:
-        return self.inspection.exists or self.resumable_state is not None or self.state_load_error is not None
+        return (
+            self.inspection.exists
+            or self.resumable_state is not None
+            or self.state_load_error is not None
+        )
 
     @property
     def resume_available(self) -> bool:
@@ -217,19 +248,27 @@ class SetupController:
             self.repair_invalid_config = False
         elif choice == "repair":
             self.state = self._fresh_state(
-                self.config_path, existing_config=self.existing_config, advanced=self.state.advanced
+                self.config_path,
+                existing_config=self.existing_config,
+                advanced=self.state.advanced,
             )
             self.repair_invalid_config = self.inspection.exists and not self.inspection.valid
         elif choice == "edit":
             if not self.inspection.valid or self.existing_config is None:
-                raise SetupControllerError("Edit requires an existing production-valid configuration")
+                raise SetupControllerError(
+                    "Edit requires an existing production-valid configuration"
+                )
             self.state = self._fresh_state(
-                self.config_path, existing_config=self.existing_config, advanced=self.state.advanced
+                self.config_path,
+                existing_config=self.existing_config,
+                advanced=self.state.advanced,
             )
             self.repair_invalid_config = False
         elif choice == "start_fresh":
             self.state = self._fresh_state(
-                self.config_path, existing_config=self.existing_config, advanced=self.state.advanced
+                self.config_path,
+                existing_config=self.existing_config,
+                advanced=self.state.advanced,
             )
             self.repair_invalid_config = False
         else:
@@ -244,11 +283,6 @@ class SetupController:
         except SetupStateError as exc:
             raise SetupControllerError(str(exc)) from exc
 
-    def _invalidate_review(self) -> None:
-        self.reviewed_plan = None
-        self.diagnostics = None
-        self.state.invalidate_from(self.state.current_step)
-
     def _complete(self, step: SetupStep) -> None:
         self.state.statuses[step] = SetupStepStatus.COMPLETE
         self.persist()
@@ -257,11 +291,23 @@ class SetupController:
         existing = self.existing_config
         return (
             self.state.state_db_path
-            or (str(existing.state_db_path) if existing is not None else str(_absolute(DEFAULT_STATE_DB_PATH))),
+            or (
+                str(existing.state_db_path)
+                if existing is not None
+                else str(_absolute(DEFAULT_STATE_DB_PATH))
+            ),
             self.state.audit_path
-            or (str(existing.audit.path) if existing is not None else str(_absolute(DEFAULT_AUDIT_PATH))),
+            or (
+                str(existing.audit.path)
+                if existing is not None
+                else str(_absolute(DEFAULT_AUDIT_PATH))
+            ),
             self.state.ssh_keys_dir
-            or (str(existing.ssh.keys_dir) if existing is not None else str(_absolute(DEFAULT_SSH_KEYS_DIR))),
+            or (
+                str(existing.ssh.keys_dir)
+                if existing is not None
+                else str(_absolute(DEFAULT_SSH_KEYS_DIR))
+            ),
             self.state.known_hosts_path
             or (
                 str(existing.ssh.known_hosts)
@@ -288,6 +334,11 @@ class SetupController:
             reject_unsafe_sensitive_target(paths[3])
         except SetupFilesystemError as exc:
             raise SetupControllerError(str(exc)) from exc
+        _require_writable_path_parent(paths[0])
+        _require_writable_path_parent(paths[1])
+        _require_writable_path_parent(paths[2], directory_target=True)
+        _require_writable_path_parent(paths[3])
+
         existing = self.existing_config
         self.state.state_db_path = (
             None if existing is not None and paths[0] == existing.state_db_path else str(paths[0])
@@ -350,24 +401,33 @@ class SetupController:
         sudo: bool,
         git_dir_mode: str,
         idle_stop_after: str,
-    ) -> None:
+    ) -> DockerSetupResult:
         try:
-            docker = DockerConfig(default_image=image, workspace_path=Path(workspace_path))
-            container = ContainerConfig(user=container_user, sudo=sudo, git_dir_mode=git_dir_mode)
+            docker_config = DockerConfig(default_image=image, workspace_path=Path(workspace_path))
+            container = ContainerConfig(
+                user=container_user,
+                sudo=sudo,
+                git_dir_mode=git_dir_mode,
+            )
             workspace = WorkspaceConfig.from_yaml_value({"idle_stop_after": idle_stop_after})
         except (ValueError, TypeError) as exc:
             raise SetupControllerError(f"Invalid Docker workspace settings: {exc}") from exc
+
         existing = self.existing_config
         self.state.docker_image = (
-            None if existing is not None and docker.default_image == existing.docker.default_image else image
+            None
+            if existing is not None
+            and docker_config.default_image == existing.docker.default_image
+            else image
         )
         self.state.docker_workspace_path = (
             None
-            if existing is not None and docker.workspace_path == existing.docker.workspace_path
-            else str(docker.workspace_path)
+            if existing is not None and docker_config.workspace_path == existing.docker.workspace_path
+            else str(docker_config.workspace_path)
         )
         self.state.container_overrides = _dict_or_none(
-            container, existing.container if existing is not None else None
+            container,
+            existing.container if existing is not None else None,
         )
         self.state.workspace_idle_stop_after = (
             None
@@ -376,7 +436,34 @@ class SetupController:
             else idle_stop_after
         )
         self.state.mark_changed(SetupStep.DOCKER_WORKSPACE)
-        self._complete(SetupStep.DOCKER_WORKSPACE)
+        result = inspect_docker_image(image)
+        self.state.statuses[SetupStep.DOCKER_WORKSPACE] = (
+            SetupStepStatus.COMPLETE
+            if result.status is DockerSetupStatus.AVAILABLE
+            else SetupStepStatus.ACTION_REQUIRED
+        )
+        self.persist()
+        return result
+
+    def docker_build_plan(self, image: str) -> DockerBuildPlan:
+        try:
+            return default_image_build_plan(image)
+        except DockerSetupError as exc:
+            raise SetupControllerError(str(exc)) from exc
+
+    def execute_docker_build(self, plan: DockerBuildPlan) -> DockerSetupResult:
+        try:
+            execute_docker_build(plan)
+        except DockerSetupError as exc:
+            raise SetupControllerError(str(exc)) from exc
+        result = inspect_docker_image(plan.image)
+        if result.status is not DockerSetupStatus.AVAILABLE:
+            raise SetupControllerError(
+                "Docker build returned but the reviewed image is still not available"
+            )
+        self.state.statuses[SetupStep.DOCKER_WORKSPACE] = SetupStepStatus.COMPLETE
+        self.persist()
+        return result
 
     def effective_repositories(self) -> tuple[tuple[SetupRepository, ...], tuple[str, ...]]:
         if self.state.statuses.get(SetupStep.REPOSITORY_ACCESS) is SetupStepStatus.COMPLETE:
@@ -412,9 +499,11 @@ class SetupController:
             if not root_path.is_absolute():
                 raise SetupControllerError("Repository discovery roots must be absolute")
             if not root_path.is_dir():
-                raise SetupControllerError(f"Repository discovery root does not exist: {root_path}")
-        failures = [verify_repository(repository) for repository in repositories]
-        invalid = [result.message for result in failures if not result.valid]
+                raise SetupControllerError(
+                    f"Repository discovery root does not exist: {root_path}"
+                )
+        verification = [verify_repository(repository) for repository in repositories]
+        invalid = [result.message for result in verification if not result.valid]
         if invalid:
             raise SetupControllerError("; ".join(invalid))
         self.state.repositories = repositories
@@ -424,11 +513,11 @@ class SetupController:
 
     def effective_ssh_github(self) -> tuple[SSHConfig, GithubConfig]:
         existing = self.existing_config
-        state_db, audit, keys_dir, known_hosts = self.effective_storage()
-        del state_db, audit
+        _, _, keys_dir, known_hosts = self.effective_storage()
         ssh = SSHConfig(
             mode=self.state.ssh_mode or (existing.ssh.mode if existing is not None else "agent"),
-            scope=self.state.ssh_scope or (existing.ssh.scope if existing is not None else "repository"),
+            scope=self.state.ssh_scope
+            or (existing.ssh.scope if existing is not None else "repository"),
             keys_dir=Path(keys_dir),
             known_hosts=Path(known_hosts),
             shared_key=(
@@ -451,7 +540,11 @@ class SetupController:
                 if existing is not None
                 else None
             ),
-            api_base_url=(existing.github.api_base_url if existing is not None else "https://api.github.com"),
+            api_base_url=(
+                existing.github.api_base_url
+                if existing is not None
+                else "https://api.github.com"
+            ),
             repositories=(list(existing.github.repositories) if existing is not None else []),
         )
         return ssh, github
@@ -480,6 +573,7 @@ class SetupController:
             )
         except (ValueError, TypeError) as exc:
             raise SetupControllerError(f"Invalid SSH/GitHub settings: {exc}") from exc
+
         repositories, _ = self.effective_repositories()
         missing: list[str] = []
         if ssh.scope == "shared" and ssh.shared_key:
@@ -487,7 +581,10 @@ class SetupController:
                 missing.append(str(ssh.keys_dir / ssh.shared_key))
         if ssh.scope == "repository":
             for repository in repositories:
-                if repository.ssh_key is not None and not (ssh.keys_dir / repository.ssh_key).is_file():
+                if (
+                    repository.ssh_key is not None
+                    and not (ssh.keys_dir / repository.ssh_key).is_file()
+                ):
                     missing.append(str(ssh.keys_dir / repository.ssh_key))
         if missing:
             raise SetupControllerError("Referenced SSH key file is missing: " + ", ".join(missing))
@@ -495,15 +592,21 @@ class SetupController:
             github.api_token_path is None or not github.api_token_path.is_file()
         ):
             raise SetupControllerError(
-                "GitHub token mode requires an existing credential file path; token contents are never stored"
+                "GitHub token mode requires an existing credential file path; "
+                "token contents are never stored"
             )
+
         existing = self.existing_config
-        self.state.ssh_mode = None if existing is not None and ssh.mode == existing.ssh.mode else ssh.mode
+        self.state.ssh_mode = (
+            None if existing is not None and ssh.mode == existing.ssh.mode else ssh.mode
+        )
         self.state.ssh_scope = (
             None if existing is not None and ssh.scope == existing.ssh.scope else ssh.scope
         )
         self.state.shared_key = (
-            None if existing is not None and ssh.shared_key == existing.ssh.shared_key else ssh.shared_key
+            None
+            if existing is not None and ssh.shared_key == existing.ssh.shared_key
+            else ssh.shared_key
         )
         self.state.github_api_auth = (
             None
@@ -521,9 +624,15 @@ class SetupController:
         self._complete(SetupStep.SSH_AND_GITHUB)
 
     def effective_git_policy(self) -> tuple[GitPolicyPreset, GitPolicyConfig]:
-        existing = self.existing_config.git_policy if self.existing_config is not None else GitPolicyConfig()
+        existing = (
+            self.existing_config.git_policy
+            if self.existing_config is not None
+            else GitPolicyConfig()
+        )
         if self.state.custom_git_policy is not None:
-            return self.state.git_policy_preset, GitPolicyConfig.model_validate(self.state.custom_git_policy)
+            return self.state.git_policy_preset, GitPolicyConfig.model_validate(
+                self.state.custom_git_policy
+            )
         if existing == recommended_policy():
             return GitPolicyPreset.RECOMMENDED, existing
         if existing == conservative_policy():
@@ -546,7 +655,12 @@ class SetupController:
                 policy = GitPolicyConfig.model_validate(custom)
         except ValueError as exc:
             raise SetupControllerError(f"Invalid Git safety policy: {exc}") from exc
-        existing = self.existing_config.git_policy if self.existing_config is not None else GitPolicyConfig()
+
+        existing = (
+            self.existing_config.git_policy
+            if self.existing_config is not None
+            else GitPolicyConfig()
+        )
         self.state.git_policy_preset = preset
         self.state.custom_git_policy = _dict_or_none(policy, existing)
         self.state.mark_changed(SetupStep.GIT_SAFETY_POLICY)
@@ -601,18 +715,23 @@ class SetupController:
             logging_model = LoggingConfig.model_validate(logging or {})
         except ValueError as exc:
             raise SetupControllerError(f"Invalid advanced runtime settings: {exc}") from exc
+
         existing = self.existing_config
         self.state.filesystem_overrides = _dict_or_none(
-            filesystem_model, existing.filesystem if existing is not None else FilesystemConfig()
+            filesystem_model,
+            existing.filesystem if existing is not None else FilesystemConfig(),
         )
         self.state.execution_overrides = _dict_or_none(
-            execution_model, existing.execution if existing is not None else ExecutionConfig()
+            execution_model,
+            existing.execution if existing is not None else ExecutionConfig(),
         )
         self.state.resources_overrides = _dict_or_none(
-            resources_model, existing.resources if existing is not None else ResourcesConfig()
+            resources_model,
+            existing.resources if existing is not None else ResourcesConfig(),
         )
         self.state.logging_overrides = _dict_or_none(
-            logging_model, existing.logging if existing is not None else LoggingConfig()
+            logging_model,
+            existing.logging if existing is not None else LoggingConfig(),
         )
         self.state.mark_changed(SetupStep.RUNTIME_AND_RESOURCES)
         self._complete(SetupStep.RUNTIME_AND_RESOURCES)
@@ -697,6 +816,8 @@ class SetupController:
             messages.append("uv: not detected on PATH (installed-package use may still be valid)")
         else:
             messages.append("uv: available")
+        docker_status = inspect_docker_image(self.effective_docker()[0])
+        messages.append(f"Docker: {docker_status.message}")
         self._complete(SetupStep.LOCAL_PREREQUISITES)
         return tuple(messages)
 
