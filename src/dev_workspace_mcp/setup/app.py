@@ -486,13 +486,14 @@ class SetupApp(App[int]):
                 _bool_text(self.controller.state.chatgpt_ui_attested),
             )
             if self.controller.state.tunnel_id:
-                plan = build_tunnel_profile_plan(
+                tunnel_plan = build_tunnel_profile_plan(
                     self.controller.config_path,
                     self.controller.state.tunnel_id,
                 )
                 yield Static(
-                    f"Reviewed profile: {plan.profile}\nServer command: {plan.mcp_command}\n"
-                    f"Init command: {plan.display_command}"
+                    f"Reviewed profile: {tunnel_plan.profile}\n"
+                    f"Server command: {tunnel_plan.mcp_command}\n"
+                    f"Init command: {tunnel_plan.display_command}"
                 )
             yield Button("Open current tunnel documentation", id="open_tunnel_docs")
             yield Button("Open ChatGPT app settings", id="open_chatgpt_app")
@@ -505,15 +506,17 @@ class SetupApp(App[int]):
         if step is SetupStep.CONFIGURATION_REVIEW:
             yield Static(f"Target configuration: {self.controller.config_path}")
             try:
-                plan = self.controller.prepare_review()
+                config_plan = self.controller.prepare_review()
             except SetupControllerError as exc:
                 yield Static(f"Cannot prepare review: {exc}")
                 return
             status = (
-                "yes; timestamped backup will be created" if plan.source_exists else "no; new file"
+                "yes; timestamped backup will be created"
+                if config_plan.source_exists
+                else "no; new file"
             )
             yield Static(f"Existing file: {status}")
-            yield Static("\n".join(plan.summary), classes="boxed")
+            yield Static("\n".join(config_plan.summary), classes="boxed")
             yield Button(
                 "Write reviewed configuration",
                 id="write_configuration",
@@ -576,10 +579,10 @@ class SetupApp(App[int]):
     def _advanced_values(
         self,
     ) -> tuple[dict[str, object], dict[str, object], dict[str, object], dict[str, object]]:
-        filesystem_values = {
+        filesystem_values: dict[str, object] = {
             name: int(self._input(f"fs_{name}")) for name in FilesystemConfig.model_fields
         }
-        execution_values = {
+        execution_values: dict[str, object] = {
             name: int(self._input(f"exec_{name}")) for name in ExecutionConfig.model_fields
         }
         resources_values: dict[str, object] = {
@@ -622,7 +625,7 @@ class SetupApp(App[int]):
                 self._show_message("Storage choices validated")
                 self._render_status_only()
             elif button_id == "validate_docker":
-                result = self.controller.apply_docker(
+                docker_result = self.controller.apply_docker(
                     image=self._input("docker_image"),
                     workspace_path=self._input("docker_workspace_path"),
                     container_user=self._input("docker_user"),
@@ -630,14 +633,14 @@ class SetupApp(App[int]):
                     git_dir_mode=self._input("docker_git_dir_mode"),
                     idle_stop_after=self._input("docker_idle"),
                 )
-                self._show_message(result.message)
+                self._show_message(docker_result.message)
                 self._render_status_only()
             elif button_id == "plan_docker_build":
-                plan = self.controller.docker_build_plan(self._input("docker_image"))
-                self._pending_build = plan
+                docker_plan = self.controller.docker_build_plan(self._input("docker_image"))
+                self._pending_build = docker_plan
                 message = (
                     "Run this exact Docker build action?\n\n"
-                    f"{plan.display_command}\n\nNo shell interpolation is used."
+                    f"{docker_plan.display_command}\n\nNo shell interpolation is used."
                 )
                 self.push_screen(
                     ConfirmScreen(message, confirm_label="Build image"),
@@ -725,17 +728,17 @@ class SetupApp(App[int]):
             elif button_id == "open_chatgpt_app":
                 self._open_url(CHATGPT_APP_URL, "ChatGPT app settings")
             elif button_id == "create_tunnel_profile":
-                plan = build_tunnel_profile_plan(
+                tunnel_plan = build_tunnel_profile_plan(
                     self.controller.config_path,
                     self._input("chatgpt_tunnel_id"),
                 )
                 runtime_key = (
                     self._input("chatgpt_runtime_key") or self.controller.runtime_tunnel_key
                 )
-                create_or_repair_tunnel_profile(plan, runtime_key=runtime_key)
+                create_or_repair_tunnel_profile(tunnel_plan, runtime_key=runtime_key)
                 self.controller.runtime_tunnel_key = runtime_key
                 self._show_message(
-                    f"Tunnel profile {plan.profile!r} created/repaired after explicit approval"
+                    f"Tunnel profile {tunnel_plan.profile!r} created/repaired after explicit approval"
                 )
             elif button_id == "doctor_tunnel":
                 runtime_key = (
@@ -776,10 +779,12 @@ class SetupApp(App[int]):
             elif button_id == "write_configuration":
                 if self.controller.reviewed_plan is None:
                     self.controller.prepare_review()
-                result = self.controller.write_reviewed_configuration()
-                backup = f"; backup: {result.backup_path}" if result.backup_path else ""
+                commit_result = self.controller.write_reviewed_configuration()
+                backup = (
+                    f"; backup: {commit_result.backup_path}" if commit_result.backup_path else ""
+                )
                 self._show_message(
-                    f"Configuration written and production-reloaded: {result.path}{backup}"
+                    f"Configuration written and production-reloaded: {commit_result.path}{backup}"
                 )
                 self._render_status_only()
             elif button_id == "run_diagnostics":
@@ -800,21 +805,21 @@ class SetupApp(App[int]):
             f"Opened {label}" if opened else f"Browser disabled; open manually: {url}"
         )
 
-    def _docker_build_choice(self, confirmed: bool) -> None:
-        plan = self._pending_build
+    def _docker_build_choice(self, confirmed: bool | None) -> None:
+        docker_plan = self._pending_build
         self._pending_build = None
-        if not confirmed or plan is None:
+        if not confirmed or docker_plan is None:
             self._show_message("Docker build cancelled; no image mutation performed")
             return
         try:
-            result = self.controller.execute_docker_build(plan)
+            docker_result = self.controller.execute_docker_build(docker_plan)
         except SetupControllerError as exc:
             self._show_error(str(exc))
             return
-        self._show_message(result.message)
+        self._show_message(docker_result.message)
         self._render_status_only()
 
-    def _repository_remove_choice(self, confirmed: bool) -> None:
+    def _repository_remove_choice(self, confirmed: bool | None) -> None:
         repository_id = self._pending_remove_id
         self._pending_remove_id = None
         if not confirmed or repository_id is None:
@@ -845,7 +850,7 @@ class SetupApp(App[int]):
             self._cancel_choice,
         )
 
-    def _cancel_choice(self, confirmed: bool) -> None:
+    def _cancel_choice(self, confirmed: bool | None) -> None:
         if confirmed:
             try:
                 self.controller.persist()
