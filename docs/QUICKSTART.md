@@ -1,118 +1,158 @@
 # Quickstart
 
-The condensed, copy-pasteable path from a fresh clone to one of your own
-repositories open in a workspace. Each step links to the doc with the
-actual reasoning — read those before you diverge from the commands
-below in a real deployment; this page skips the "why" on purpose.
+This is the shortest path from a fresh clone to a validated server configuration
+and one repository available to an MCP client. The recommended path uses the
+interactive Textual setup wizard; manual YAML remains supported as a fallback.
 
 ## 0. Prerequisites
 
-- Linux, with Docker installed and running.
+- Linux, with Docker installed (running is recommended; the wizard can still
+  configure the server while Docker is temporarily unavailable).
 - Python 3.12 and [`uv`](https://docs.astral.sh/uv/).
-- A GitHub repository you have push access to, cloned locally.
+- A local Git clone you want the server to expose.
+- Push access to its GitHub repository if you want write-capable Git workflows.
 
-## 1. Install and build
+## 1. Install the project
 
 ```bash
 uv sync --group dev
 git config core.hooksPath .githooks
-
-docker build -t mcp-dev-ubuntu:24.04 docker/default/
 ```
 
 Details: [`docs/DEVELOPMENT.md`](DEVELOPMENT.md).
 
-## 2. Write a config file
-
-Every field below is required — there's no default for any of them
-(`docs/CONFIGURATION.md`). Create the directories first; nothing here
-creates them for you:
+## 2. Run the setup wizard
 
 ```bash
-sudo mkdir -p /etc/dev-workspace-mcp/keys /var/lib/dev-workspace-mcp /var/log/dev-workspace-mcp
-sudo chown "$USER" /etc/dev-workspace-mcp/keys /var/lib/dev-workspace-mcp /var/log/dev-workspace-mcp
+uv run dev-workspace-mcp setup
 ```
 
-```yaml
-# config.yml
-version: 1
-state_db_path: /var/lib/dev-workspace-mcp/state.db
+The default target is:
 
-docker:
-  default_image: mcp-dev-ubuntu:24.04   # matches the tag built in step 1
-
-ssh:
-  keys_dir: /etc/dev-workspace-mcp/keys
-  known_hosts: /etc/dev-workspace-mcp/github_known_hosts
-
-audit:
-  path: /var/log/dev-workspace-mcp/audit.jsonl
-
-repositories: []   # step 3 adds an entry here
+```text
+~/.config/dev-workspace-mcp/config.yml
 ```
 
-Details, including every optional block: [`docs/CONFIGURATION.md`](CONFIGURATION.md).
+Use another location with `--config /absolute/path/config.yml`.
 
-## 3. Connect your repository
+The wizard guides these areas in order:
+
+1. Python/Docker prerequisites.
+2. State DB, audit, SSH-key, and pinned `known_hosts` paths.
+3. Docker image/workspace settings, including an explicit image-build action.
+4. Repository registration and read-only Git remote verification.
+5. SSH isolation and optional GitHub API credential-file references.
+6. Git safety policy presets or a complete custom policy.
+7. Optional advanced filesystem/execution/resource/logging limits.
+8. Optional OpenAI Secure MCP Tunnel / ChatGPT guidance.
+9. Exact configuration review and explicit write authorization.
+10. Final machine-verifiable diagnostics.
+
+The wizard never stores raw private-key/API/tunnel credential material in its
+resumable state. Existing valid configs are edited by preserving settings that
+were not reviewed, and replacements receive timestamped backups.
+
+Useful setup modes:
 
 ```bash
-# 3a. Pin GitHub's SSH host key (once per server, not per repo)
-echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' \
-  >> /etc/dev-workspace-mcp/github_known_hosts
+uv run dev-workspace-mcp setup --resume
+uv run dev-workspace-mcp setup --no-browser
+uv run dev-workspace-mcp setup --advanced
+```
 
-# 3b. Generate a dedicated deploy key for this repository
-ssh-keygen -t ed25519 -f /etc/dev-workspace-mcp/keys/my-repo.ed25519 \
+## 3. Install a repository deploy key when push access is needed
+
+The wizard registers/verifies repository metadata, but it does not invent or
+silently install a GitHub deploy key. Generate a dedicated key under the
+`ssh.keys_dir` you selected:
+
+```bash
+ssh-keygen -t ed25519 -f ~/.config/dev-workspace-mcp/keys/my-repo.ed25519 \
   -C "dev-workspace-mcp: my-repo" -N ""
-chmod 600 /etc/dev-workspace-mcp/keys/my-repo.ed25519
+chmod 600 ~/.config/dev-workspace-mcp/keys/my-repo.ed25519
 ```
 
-Then, on GitHub: repository → **Settings** → **Deploy keys** → **Add
-deploy key** → paste `my-repo.ed25519.pub` → check **Allow write
-access** → **Add key**.
+On GitHub, open the repository's **Settings → Deploy keys → Add deploy key**,
+paste the `.pub` file, and enable write access if this MCP server should push.
+Return to the wizard, set the repository's SSH-key filename, and rerun the SSH
+validation step.
 
-Add the repository to `config.yml`:
+The wizard's reviewed storage action creates/populates an absent or empty
+`known_hosts` file with the production-pinned GitHub host-key set; it does not
+use trust-on-first-use.
 
-```yaml
-repositories:
-  - id: my-repo
-    path: /home/you/work/my-repo   # absolute path to your local clone
-    github: your-org/my-repo
-    ssh_key: my-repo.ed25519
-```
-
-Full walkthrough and the reasoning behind each part:
+Full repository credential walkthrough:
 [`docs/CONNECTING_A_REPOSITORY.md`](CONNECTING_A_REPOSITORY.md).
 
-## 4. Run the server
+## 4. Run final diagnostics headlessly
+
+The final wizard screen and these commands use the same diagnostics engine:
 
 ```bash
-uv run dev-workspace-mcp serve --config config.yml
+uv run dev-workspace-mcp doctor \
+  --config ~/.config/dev-workspace-mcp/config.yml
+
+# equivalent
+uv run dev-workspace-mcp setup --check \
+  --config ~/.config/dev-workspace-mcp/config.yml
 ```
 
-Validates the whole config before serving — a bad path or typo fails
-here with `error: ...`, not later. This runs on `stdio`, talking to
-whatever spawns it (a local MCP client, or `tunnel-client` for ChatGPT).
+Exit codes are:
 
-## 5. Confirm it
+- `0` — all mandatory machine checks pass;
+- `1` — mandatory remediation/action remains;
+- `2` — a mandatory hard failure occurred.
 
-From an MCP client, call `workspace_open`:
+Optional ChatGPT setup may be skipped without making an otherwise valid local
+server fail diagnostics.
+
+## 5. Run the server
+
+```bash
+uv run dev-workspace-mcp serve \
+  --config ~/.config/dev-workspace-mcp/config.yml
+```
+
+This starts MCP over `stdio`, suitable for a local MCP client or for OpenAI
+Secure MCP Tunnel.
+
+## 6. Confirm a repository workspace
+
+From an MCP client, call:
 
 ```json
 { "repository_id": "my-repo", "mode": "persistent" }
 ```
 
-Expect `container_state: "running"` and `ssh_key_mode: "agent"` /
-`ssh_key_scope: "repository"` in the response. A real `git_push` from
-inside the workspace is the actual end-to-end proof.
+Expect a running container state. For a repository with a write-capable deploy
+key, a real structured `git_push` on a disposable/test branch is the strongest
+end-to-end proof of the container, mount, remote validation, and credential
+path.
 
-## 6. Optional: connect ChatGPT
+## 7. Optional: connect ChatGPT
 
-ChatGPT can't spawn a local `stdio` process itself, so it needs OpenAI's
-Secure MCP Tunnel in front of the command from step 4. Full setup:
-[`docs/CONNECTING_CHATGPT.md`](CONNECTING_CHATGPT.md).
+The wizard's ChatGPT step is optional and deliberately keeps OpenAI plan/UI
+eligibility out of local configuration. It can guide creation/repair of the
+`tunnel-client` profile and machine-check that profile; ChatGPT UI completion is
+recorded separately as **USER-ATTESTED** because the local wizard cannot inspect
+that hosted UI independently.
+
+See [`docs/CONNECTING_CHATGPT.md`](CONNECTING_CHATGPT.md) for the complete flow
+and current OpenAI documentation links.
+
+## Manual configuration fallback
+
+Manual YAML is still fully supported. It is useful for automated provisioning,
+recovery, or operators who deliberately prefer config-as-code. See
+[`docs/CONFIGURATION.md`](CONFIGURATION.md) for field semantics and
+[`docs/SPEC.md`](SPEC.md) §52 for the worked configuration example.
+
+A minimal manual config still needs `state_db_path`, `docker.default_image`,
+`ssh.keys_dir`, `ssh.known_hosts`, and `audit.path`; repositories may be added
+with either explicit `repositories:` records or `repository_roots:` discovery.
 
 ---
 
-This page exists for the fast path; `docs/SPEC.md` remains the
-authoritative specification, and the docs linked above cover what each
-step is actually for and what else is configurable.
+`docs/SPEC.md` remains the authoritative server specification;
+[`docs/SETUP_WIZARD_SPEC.md`](SETUP_WIZARD_SPEC.md) is the authoritative safety
+and UX contract for the interactive setup feature.
