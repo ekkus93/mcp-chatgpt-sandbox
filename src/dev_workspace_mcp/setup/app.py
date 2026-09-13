@@ -287,7 +287,9 @@ class SetupWizardApp(App[int]):
         candidate = clone_setup_state(state)
         self.state = candidate
         self._current_index = next(
-            index for index, definition in enumerate(STEPS) if definition.step is candidate.current_step
+            index
+            for index, definition in enumerate(STEPS)
+            if definition.step is candidate.current_step
         )
         self.state.statuses.setdefault(self.current_step, SetupStepStatus.ACTION_REQUIRED)
         self._refresh()
