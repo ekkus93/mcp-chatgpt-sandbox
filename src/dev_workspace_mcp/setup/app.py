@@ -91,9 +91,7 @@ _DOCKER_BUILD_PLAN_CONTROL_IDS = frozenset(
         "docker-defer-image",
     }
 )
-_TUNNEL_PROFILE_PLAN_CONTROL_IDS = frozenset(
-    {"chatgpt-enabled", "tunnel-id", "tunnel-profile"}
-)
+_TUNNEL_PROFILE_PLAN_CONTROL_IDS = frozenset({"chatgpt-enabled", "tunnel-id", "tunnel-profile"})
 
 
 class SetupStartChoice(StrEnum):
