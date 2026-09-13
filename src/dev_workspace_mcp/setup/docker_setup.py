@@ -78,7 +78,7 @@ def default_image_build_command(
     build_path = (
         "docker/default/"
         if project_root is None
-        else str((project_root.expanduser().resolve(strict=False) / "docker" / "default"))
+        else str(project_root.expanduser().resolve(strict=False) / "docker" / "default")
     )
     return ("docker", "build", "-t", image, build_path)
 
