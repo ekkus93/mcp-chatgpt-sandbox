@@ -729,10 +729,7 @@ class SetupStepActionsMixin:
         host.set_step_validation(
             SetupStep.REVIEW,
             valid=False,
-            message=(
-                "Review prepared. Explicitly write the reviewed configuration "
-                "before continuing."
-            ),
+            message="Review prepared. Explicitly write the reviewed configuration before continuing.",
         )
 
     @on(Button.Pressed, "#write-reviewed-config")
