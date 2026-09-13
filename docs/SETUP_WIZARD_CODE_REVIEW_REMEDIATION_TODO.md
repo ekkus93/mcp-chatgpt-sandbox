@@ -1,6 +1,6 @@
 # Setup Wizard Code-Review Remediation TODO
 
-**Status:** Active — implementation complete; merge/post-merge closeout pending  
+**Status:** Complete  
 **Baseline:** `master` at `49d48611e392e11bceb7dd4ea81967733e86eb78`  
 **Spec:** `docs/SETUP_WIZARD_CODE_REVIEW_REMEDIATION_SPEC.md`  
 **Evidence:** `docs/SETUP_WIZARD_CODE_REVIEW_REMEDIATION_EVIDENCE.md`  
@@ -140,9 +140,9 @@ A checkbox closes only from source/tests/docs/workflow evidence. Do not weaken p
 - [x] setup unit/Textual/integration tests green on implementation candidate.
 - [x] full Docker-backed pytest green on implementation candidate.
 - [x] MCP/schema/contract/docs drift gates green on implementation candidate.
-- [ ] guarded merge through policy-approved path.
-- [ ] fresh exact merged-`master` CI green.
-- [ ] durable final remediation evidence updated with merge/post-merge SHA and CI.
+- [x] guarded merge through policy-approved path: PR #59, source head `f957803d4c3ceb3722e93e9eb8c9ffd150553e90`.
+- [x] fresh exact merged-`master` CI green: merge SHA `3dcb00e8696a6dcd41954fc8f4e9069a230e65d4`, push CI `34779008735`.
+- [x] durable final remediation evidence updated with merge/post-merge SHA and CI.
 
 ### Implementation qualification evidence
 
@@ -156,15 +156,19 @@ Implementation candidate `37436f7ee009939729543ebd9e3123c612943cf7` passed GitHu
 - `docs/TOOLS.md` drift gate: PASS.
 - Docker-backed pytest + coverage: PASS.
 
+Evidence/merge head `f957803d4c3ceb3722e93e9eb8c9ffd150553e90` passed GitHub Actions CI run `34778439164` before guarded merge.
+
+PR #59 was squash-merged through the guarded Phase 4 path. The resulting `master` SHA `3dcb00e8696a6dcd41954fc8f4e9069a230e65d4` passed push CI run `34779008735`.
+
 The immediately preceding source generation `088479a40879e8df9aea791bd9c6ac0d5d47040f` reached **1344 passed, 1 failed**; the sole failure was the remediation audit helper's source-window calculation. `37436f7e...` changes only that audit helper and is the authoritative green implementation candidate.
 
 ## Definition of done
 
-- [ ] WCR-001 through WCR-014 are evidence-complete.
+- [x] WCR-001 through WCR-014 are evidence-complete.
 - [x] Textual remains presentation/orchestration rather than a second domain/config layer.
 - [x] Production config models remain authoritative.
 - [x] No raw secrets persist or render.
 - [x] Config writes remain reviewed, source-bound, backed up, atomic, verified and production-reloaded.
 - [x] Repository verification remains read-only.
 - [x] No unsafe fallback or silent-success path remains unreviewed.
-- [ ] Exact candidate and exact merged-master validation are green.
+- [x] Exact candidate and exact merged-master validation are green.
