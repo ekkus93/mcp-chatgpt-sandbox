@@ -72,7 +72,17 @@ class SetupRepository:
         object.__setattr__(self, "ssh_key", validated.ssh_key)
 
     def to_dict(self) -> dict[str, object]:
+        """Persist setup state including an explicit null SSH-key choice."""
+
         return {"id": self.id, "path": self.path, "github": self.github, "ssh_key": self.ssh_key}
+
+    def to_config_dict(self) -> dict[str, object]:
+        """Serialize production YAML without materializing an absent optional field."""
+
+        result: dict[str, object] = {"id": self.id, "path": self.path, "github": self.github}
+        if self.ssh_key is not None:
+            result["ssh_key"] = self.ssh_key
+        return result
 
     @classmethod
     def from_dict(cls, value: object) -> Self:
@@ -181,7 +191,9 @@ def _model_mapping(
         raise ValueError(f"setup state {context} keys must be strings")
     for key in value:
         if isinstance(key, str) and _contains_secret_fragment(key):
-            raise ValueError(f"setup state {context} contains forbidden secret-bearing field {key!r}")
+            raise ValueError(
+                f"setup state {context} contains forbidden secret-bearing field {key!r}"
+            )
     try:
         validated = model.model_validate(value)
     except ValidationError as exc:
@@ -412,7 +424,9 @@ class SetupState:
             docker_workspace_path=docker_workspace_path,
             workspace_idle_stop_after=idle_stop_after,
             container_overrides=_model_mapping(
-                value.get("container_overrides"), model=ContainerConfig, context="container_overrides"
+                value.get("container_overrides"),
+                model=ContainerConfig,
+                context="container_overrides",
             ),
             repository_roots=_string_tuple(
                 value.get("repository_roots", []), field_name="repository_roots"
@@ -425,7 +439,9 @@ class SetupState:
             github_api_token_path=optional("github_api_token_path"),
             git_policy_preset=preset,
             custom_git_policy=_model_mapping(
-                value.get("custom_git_policy"), model=GitPolicyConfig, context="custom_git_policy"
+                value.get("custom_git_policy"),
+                model=GitPolicyConfig,
+                context="custom_git_policy",
             ),
             filesystem_overrides=_model_mapping(
                 value.get("filesystem_overrides"),
@@ -443,7 +459,9 @@ class SetupState:
                 context="resources_overrides",
             ),
             logging_overrides=_model_mapping(
-                value.get("logging_overrides"), model=LoggingConfig, context="logging_overrides"
+                value.get("logging_overrides"),
+                model=LoggingConfig,
+                context="logging_overrides",
             ),
             tunnel_id=optional("tunnel_id"),
             tunnel_profile_path=optional("tunnel_profile_path"),
