@@ -738,7 +738,8 @@ class SetupApp(App[int]):
                 create_or_repair_tunnel_profile(tunnel_plan, runtime_key=runtime_key)
                 self.controller.runtime_tunnel_key = runtime_key
                 self._show_message(
-                    f"Tunnel profile {tunnel_plan.profile!r} created/repaired after explicit approval"
+                    f"Tunnel profile {tunnel_plan.profile!r} created/repaired "
+                    "after explicit approval"
                 )
             elif button_id == "doctor_tunnel":
                 runtime_key = (
