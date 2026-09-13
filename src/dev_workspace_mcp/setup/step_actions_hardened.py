@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Protocol, TypeVar
 
 from textual import on
 from textual.widgets import Button, Checkbox, Select, Static
@@ -15,21 +16,25 @@ from dev_workspace_mcp.setup.git_policy_setup import GitPolicyPreset, materializ
 from dev_workspace_mcp.setup.model import SetupStep, clone_setup_state
 from dev_workspace_mcp.setup.step_actions import SetupStepActionsMixin as _BaseSetupStepActionsMixin
 
+_T = TypeVar("_T")
 
-def _selected(host: object, selector: str, *, label: str) -> str:
-    query_one = getattr(host, "query_one")
-    value = query_one(selector, Select).value
+
+class _GuidedActionHost(Protocol):
+    def query_one(self, selector: str, expect_type: type[_T]) -> _T: ...
+
+
+def _selected(host: _GuidedActionHost, selector: str, *, label: str) -> str:
+    value = host.query_one(selector, Select).value
     if not isinstance(value, str):
         raise ValueError(f"{label} must be selected")
     return value
 
 
-def _checked(host: object, selector: str) -> bool:
-    query_one = getattr(host, "query_one")
-    return bool(query_one(selector, Checkbox).value)
+def _checked(host: _GuidedActionHost, selector: str) -> bool:
+    return bool(host.query_one(selector, Checkbox).value)
 
 
-def _remote_protection_checks(host: object) -> tuple[str, ...]:
+def _remote_protection_checks(host: _GuidedActionHost) -> tuple[str, ...]:
     values: list[str] = []
     if _checked(host, "#git-policy-check-force-push"):
         values.append("force_push")
@@ -38,7 +43,7 @@ def _remote_protection_checks(host: object) -> tuple[str, ...]:
     return tuple(values)
 
 
-def _allowed_url_schemes(host: object) -> tuple[str, ...]:
+def _allowed_url_schemes(host: _GuidedActionHost) -> tuple[str, ...]:
     values: list[str] = []
     if _checked(host, "#git-policy-url-ssh"):
         values.append("ssh")
