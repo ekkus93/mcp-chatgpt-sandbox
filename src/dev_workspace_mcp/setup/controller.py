@@ -404,10 +404,8 @@ class SetupController:
     ) -> DockerSetupResult:
         try:
             docker_config = DockerConfig(default_image=image, workspace_path=Path(workspace_path))
-            container = ContainerConfig(
-                user=container_user,
-                sudo=sudo,
-                git_dir_mode=git_dir_mode,
+            container = ContainerConfig.model_validate(
+                {"user": container_user, "sudo": sudo, "git_dir_mode": git_dir_mode}
             )
             workspace = WorkspaceConfig.from_yaml_value({"idle_stop_after": idle_stop_after})
         except (ValueError, TypeError) as exc:
@@ -512,36 +510,41 @@ class SetupController:
     def effective_ssh_github(self) -> tuple[SSHConfig, GithubConfig]:
         existing = self.existing_config
         _, _, keys_dir, known_hosts = self.effective_storage()
-        ssh = SSHConfig(
-            mode=self.state.ssh_mode or (existing.ssh.mode if existing is not None else "agent"),
-            scope=self.state.ssh_scope
-            or (existing.ssh.scope if existing is not None else "repository"),
-            keys_dir=Path(keys_dir),
-            known_hosts=Path(known_hosts),
-            shared_key=(
-                self.state.shared_key
-                if self.state.shared_key is not None
-                else existing.ssh.shared_key
-                if existing is not None
-                else None
-            ),
+        ssh = SSHConfig.model_validate(
+            {
+                "mode": self.state.ssh_mode
+                or (existing.ssh.mode if existing is not None else "agent"),
+                "scope": self.state.ssh_scope
+                or (existing.ssh.scope if existing is not None else "repository"),
+                "keys_dir": keys_dir,
+                "known_hosts": known_hosts,
+                "shared_key": (
+                    self.state.shared_key
+                    if self.state.shared_key is not None
+                    else existing.ssh.shared_key
+                    if existing is not None
+                    else None
+                ),
+            }
         )
-        github = GithubConfig(
-            api_auth=(
-                self.state.github_api_auth
-                or (existing.github.api_auth if existing is not None else "none")
-            ),
-            api_token_path=(
-                Path(self.state.github_api_token_path)
-                if self.state.github_api_token_path is not None
-                else existing.github.api_token_path
-                if existing is not None
-                else None
-            ),
-            api_base_url=(
-                existing.github.api_base_url if existing is not None else "https://api.github.com"
-            ),
-            repositories=(list(existing.github.repositories) if existing is not None else []),
+        github = GithubConfig.model_validate(
+            {
+                "api_auth": self.state.github_api_auth
+                or (existing.github.api_auth if existing is not None else "none"),
+                "api_token_path": (
+                    self.state.github_api_token_path
+                    if self.state.github_api_token_path is not None
+                    else str(existing.github.api_token_path)
+                    if existing is not None and existing.github.api_token_path is not None
+                    else None
+                ),
+                "api_base_url": (
+                    existing.github.api_base_url
+                    if existing is not None
+                    else "https://api.github.com"
+                ),
+                "repositories": list(existing.github.repositories) if existing is not None else [],
+            }
         )
         return ssh, github
 
@@ -556,16 +559,20 @@ class SetupController:
     ) -> None:
         _, _, keys_dir, known_hosts = self.effective_storage()
         try:
-            ssh = SSHConfig(
-                mode=ssh_mode,
-                scope=ssh_scope,
-                keys_dir=Path(keys_dir),
-                known_hosts=Path(known_hosts),
-                shared_key=shared_key or None,
+            ssh = SSHConfig.model_validate(
+                {
+                    "mode": ssh_mode,
+                    "scope": ssh_scope,
+                    "keys_dir": keys_dir,
+                    "known_hosts": known_hosts,
+                    "shared_key": shared_key or None,
+                }
             )
-            github = GithubConfig(
-                api_auth=github_api_auth,
-                api_token_path=Path(github_api_token_path) if github_api_token_path else None,
+            github = GithubConfig.model_validate(
+                {
+                    "api_auth": github_api_auth,
+                    "api_token_path": github_api_token_path or None,
+                }
             )
         except (ValueError, TypeError) as exc:
             raise SetupControllerError(f"Invalid SSH/GitHub settings: {exc}") from exc
