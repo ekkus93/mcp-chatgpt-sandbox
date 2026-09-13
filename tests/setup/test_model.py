@@ -111,9 +111,7 @@ def test_wizv_002_runtime_secret_never_reaches_serialized_state() -> None:
         (SetupStep.FINAL_VALIDATION, set()),
     ],
 )
-def test_wcr_003_dependency_graph_is_explicit(
-    changed: SetupStep, expected: set[SetupStep]
-) -> None:
+def test_wcr_003_dependency_graph_is_explicit(changed: SetupStep, expected: set[SetupStep]) -> None:
     assert dependent_steps(changed) == expected
 
 

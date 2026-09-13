@@ -473,7 +473,9 @@ class SetupStepActionsMixin:
     def validate_git_policy(self) -> None:
         host = self._action_host()
         try:
-            preset = GitPolicyPreset(_selected(host, "#git-policy-preset", label="Git safety preset"))
+            preset = GitPolicyPreset(
+                _selected(host, "#git-policy-preset", label="Git safety preset")
+            )
             custom: dict[str, object] | None = None
             if preset is GitPolicyPreset.CUSTOM:
                 raw = json.loads(host.query_one("#git-policy-custom", Input).value)
@@ -558,7 +560,9 @@ class SetupStepActionsMixin:
             resources={
                 "cpus": _optional_float(host, "#runtime-resources-cpus", label="CPUs"),
                 "memory": memory,
-                "pids_limit": _optional_int(host, "#runtime-resources-pids-limit", label="PID limit"),
+                "pids_limit": _optional_int(
+                    host, "#runtime-resources-pids-limit", label="PID limit"
+                ),
             },
             logging={"level": level},
         )
