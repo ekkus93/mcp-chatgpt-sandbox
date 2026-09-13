@@ -3,6 +3,7 @@
 **Status:** Implementation in progress  
 **Spec:** `docs/SETUP_WIZARD_HARDENING_SPEC.md`  
 **Baseline reviewed:** `340bf1bdef4cc9d4f7aa37ec97bcb13734fcdf8d`  
+**Implementation branch:** `ralph/setup-wizard-hardening-impl`  
 **Task series:** `SWH-001` through `SWH-007`  
 **Validation series:** `SWHV-*`
 
@@ -74,7 +75,7 @@ This TODO implements the focused hardening pass defined by `docs/SETUP_WIZARD_HA
 - [x] Regression test: unsafe state DB target does not return PASS.
 - [x] Regression test: absent audit/state file with writable parent still behaves as intended.
 - [x] Regression test: unexpected diagnostic exception still fails closed.
-- [ ] Headless `doctor` / `setup --check` and TUI final diagnostics use the same result model.
+- [x] Headless `doctor` / `setup --check` and TUI final diagnostics use the same result model.
 
 ### SWH-003 — Quote tunnel profile server commands safely
 
@@ -170,7 +171,7 @@ This TODO implements the focused hardening pass defined by `docs/SETUP_WIZARD_HA
 - [x] Textual pilot test edits at least one sequence/list Git-policy field through guided controls.
 - [x] Custom guided values round-trip through `GitPolicyConfig`.
 - [x] Exhaustiveness test fails if a new `GitPolicyConfig` field lacks a UI/support decision.
-- [ ] Recommended and Conservative preset tests still pass.
+- [x] Recommended and Conservative preset tests still pass.
 - [ ] Existing setup materialization tests still pass.
 
 ---
@@ -189,7 +190,7 @@ This TODO implements the focused hardening pass defined by `docs/SETUP_WIZARD_HA
 - [x] Run a final code review focused on config write review/CAS/atomic/reload semantics.
 - [x] Run a final code review focused on Git-policy field exhaustiveness.
 - [x] Confirm docs accurately describe the hardened behavior.
-- [x] Confirm no public MCP tool/schema changes.
+- [ ] Confirm no public MCP tool/schema changes.
 - [ ] Record `contract_version` decision explicitly.
 - [ ] Record exact implementation commit evidence.
 - [ ] Record exact CI run/job evidence.
@@ -222,5 +223,5 @@ This TODO implements the focused hardening pass defined by `docs/SETUP_WIZARD_HA
 - [x] Raw secrets remain absent from setup state/logs/diagnostics/tests/docs.
 - [x] Config writes remain reviewed, CAS-bound, atomic, backed up, byte-verified, and production-reloaded.
 - [x] Manual YAML and CLI workflows remain supported.
-- [x] No public MCP contract drift occurs unless explicitly versioned.
+- [ ] No public MCP contract drift occurs unless explicitly versioned.
 - [ ] Complete CI is green on the implementation head and merged `master`.
