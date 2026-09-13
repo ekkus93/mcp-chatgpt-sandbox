@@ -427,9 +427,7 @@ class SetupWizardApp(App[int]):
         return value
 
     @staticmethod
-    def _runtime_section(
-        values: dict[str, dict[str, object]], name: str
-    ) -> dict[str, object]:
+    def _runtime_section(values: dict[str, dict[str, object]], name: str) -> dict[str, object]:
         return values[name]
 
     @staticmethod

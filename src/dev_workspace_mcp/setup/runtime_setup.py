@@ -74,10 +74,6 @@ def runtime_editor_values(
         if section_name not in values or not isinstance(section_override, dict):
             continue
         values[section_name].update(
-            {
-                key: value
-                for key, value in section_override.items()
-                if isinstance(key, str)
-            }
+            {key: value for key, value in section_override.items() if isinstance(key, str)}
         )
     return values

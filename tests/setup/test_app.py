@@ -68,7 +68,9 @@ async def test_wizv_013_advanced_flag_exposes_guided_production_defaults(tmp_pat
     )
     async with app.run_test() as pilot:
         runtime_index = next(
-            index for index, definition in enumerate(STEPS) if definition.step is SetupStep.RUNTIME_LIMITS
+            index
+            for index, definition in enumerate(STEPS)
+            if definition.step is SetupStep.RUNTIME_LIMITS
         )
         app._current_index = runtime_index
         app._refresh()
@@ -95,7 +97,9 @@ async def test_wizv_013_guided_runtime_controls_validate_with_production_models(
     )
     async with app.run_test() as pilot:
         runtime_index = next(
-            index for index, definition in enumerate(STEPS) if definition.step is SetupStep.RUNTIME_LIMITS
+            index
+            for index, definition in enumerate(STEPS)
+            if definition.step is SetupStep.RUNTIME_LIMITS
         )
         app._current_index = runtime_index
         app._refresh()

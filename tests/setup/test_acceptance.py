@@ -137,7 +137,9 @@ async def test_wizv_016_generated_config_opens_workspace_through_mcp_harness(
 ) -> None:
     """Prove the wizard product is usable by the real MCP workspace path, not only loadable."""
 
-    del docker_client  # fixture establishes the isolated Docker namespace and exact-resource cleanup
+    del (
+        docker_client
+    )  # fixture establishes the isolated Docker namespace and exact-resource cleanup
     repository = _init_repository(tmp_path / "repo")
     storage = _storage(tmp_path)
     prepare_storage_directories(storage, approved=True)

@@ -308,7 +308,10 @@ class WizardStepPanels(Vertical):
                 yield Static("Operational logging", markup=False)
                 yield Label("Logging level")
                 yield Select(
-                    tuple((level, level) for level in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")),
+                    tuple(
+                        (level, level)
+                        for level in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+                    ),
                     id="runtime-logging-level",
                     value=_display(logging["level"]),
                     allow_blank=False,
