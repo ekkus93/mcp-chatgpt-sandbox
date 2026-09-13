@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from textual.widget import Widget
@@ -93,10 +94,10 @@ class StepViewBuilder:
         directories = {
             str(self.controller.config_path.parent),
             str(self.controller.state_path.expanduser().parent),
-            str(__import__("pathlib").Path(state_db).parent),
-            str(__import__("pathlib").Path(audit).parent),
-            str(__import__("pathlib").Path(keys_dir)),
-            str(__import__("pathlib").Path(known_hosts).parent),
+            str(Path(state_db).parent),
+            str(Path(audit).parent),
+            str(Path(keys_dir)),
+            str(Path(known_hosts).parent),
         }
         yield Static(
             "Reviewed directory targets:\n" + "\n".join(f"  {path}" for path in sorted(directories)),
