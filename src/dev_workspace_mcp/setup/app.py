@@ -527,7 +527,9 @@ class SetupApp(App[int]):
         self._repositories = [repo for repo in self._repositories if repo.id != repository.id]
         self._repositories.append(repository)
         self._repositories.sort(key=lambda repo: repo.id)
-        self.controller.state.statuses[SetupStep.REPOSITORY_ACCESS] = SetupStepStatus.ACTION_REQUIRED
+        self.controller.state.statuses[SetupStep.REPOSITORY_ACCESS] = (
+            SetupStepStatus.ACTION_REQUIRED
+        )
         self._render_step()
 
     def _review_repository_removal(self) -> None:
