@@ -86,9 +86,7 @@ TOP_LEVEL_FIELD_DISPOSITIONS: Final[dict[str, SetupFieldDisposition]] = {
 # These manifests describe what happens *inside* a reviewed top-level section.
 # For example, the guided Docker step reviews container.user and
 # container.git_dir_mode but deliberately preserves an existing container.sudo.
-NESTED_FIELD_DISPOSITIONS: Final[
-    dict[type[object], dict[str, SetupFieldDisposition]]
-] = {
+NESTED_FIELD_DISPOSITIONS: Final[dict[type[object], dict[str, SetupFieldDisposition]]] = {
     RepositoryConfig: {
         "id": SetupFieldDisposition.MANAGED,
         "path": SetupFieldDisposition.MANAGED,

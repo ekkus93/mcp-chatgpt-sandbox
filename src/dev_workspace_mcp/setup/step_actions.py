@@ -267,9 +267,7 @@ class SetupStepActionsMixin:
                 else "Docker workspace values are valid; missing image explicitly deferred."
             )
         command = " ".join(default_image_build_command(choices.default_image))
-        host.query_one("#docker-build-command", Static).update(
-            f"Reviewed build action: {command}"
-        )
+        host.query_one("#docker-build-command", Static).update(f"Reviewed build action: {command}")
         candidate = clone_setup_state(host.state)
         candidate.choices.docker_image = choices.default_image
         candidate.choices.workspace_path = choices.workspace_path
