@@ -677,7 +677,8 @@ class SetupStepActionsMixin:
                 SetupStep.CHATGPT,
                 valid=False,
                 message=(
-                    "Tunnel health and user attestation are required when ChatGPT setup is selected."
+                    "Tunnel health and user attestation are required when ChatGPT "
+                    "setup is selected."
                 ),
             )
             return
@@ -728,7 +729,10 @@ class SetupStepActionsMixin:
         host.set_step_validation(
             SetupStep.REVIEW,
             valid=False,
-            message="Review prepared. Explicitly write the reviewed configuration before continuing.",
+            message=(
+                "Review prepared. Explicitly write the reviewed configuration "
+                "before continuing."
+            ),
         )
 
     @on(Button.Pressed, "#write-reviewed-config")
