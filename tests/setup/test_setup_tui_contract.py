@@ -7,7 +7,7 @@ from pathlib import Path
 from textual.widgets import Button, Input
 
 from dev_workspace_mcp.config.models import GitPolicyConfig
-from dev_workspace_mcp.setup.app import ConfirmScreen, GIT_POLICY_UI_FIELDS, SetupApp
+from dev_workspace_mcp.setup.app import GIT_POLICY_UI_FIELDS, ConfirmScreen, SetupApp
 from dev_workspace_mcp.setup.controller import SetupController
 from dev_workspace_mcp.setup.model import SetupStep, SetupStepStatus
 
