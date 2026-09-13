@@ -14,7 +14,12 @@ from dev_workspace_mcp.setup.git_policy_setup import (
     materialize_policy,
     recommended_policy,
 )
-from dev_workspace_mcp.setup.host import SetupHostError, StorageChoices, parent_is_writable
+from dev_workspace_mcp.setup.host import (
+    SetupHostError,
+    StorageChoices,
+    check_prerequisites,
+    parent_is_writable,
+)
 from dev_workspace_mcp.setup.model import SetupRepositoryState
 from dev_workspace_mcp.setup.repository_setup import (
     SetupRepositoryError,
@@ -44,6 +49,20 @@ def test_wizv_008_storage_paths_use_production_absolute_path_rules(tmp_path: Pat
     )
     with pytest.raises(SetupHostError):
         invalid.validate()
+
+
+def test_wizv_008_unwritable_parent_and_docker_outage_are_degraded_not_fatal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("dev_workspace_mcp.setup.host.os.access", lambda *args: False)
+    assert not parent_is_writable(tmp_path / "nested" / "state.db")
+
+    monkeypatch.setattr("dev_workspace_mcp.setup.host.docker_available", lambda: False)
+    report = check_prerequisites()
+    assert report.python_supported
+    assert not report.docker_reachable
+    assert not report.fatal
 
 
 def test_wizv_009_docker_choices_validate_duration_and_workspace_path() -> None:
@@ -115,6 +134,25 @@ def test_wizv_011_recommended_ssh_mapping_and_missing_key_status(tmp_path: Path)
     reports = verify_credential_files(choices, (_repo(tmp_path),))
     assert any(report.status == "action_required" for report in reports)
     assert all("public-host-key" not in report.message for report in reports)
+
+
+def test_wizv_011_unimplemented_github_app_verification_never_becomes_success(
+    tmp_path: Path,
+) -> None:
+    known = tmp_path / "known_hosts"
+    known.write_text("github.com ssh-ed25519 public-host-key\n")
+    keys = tmp_path / "keys"
+    keys.mkdir()
+    choices = CredentialChoices(
+        keys_dir=keys,
+        known_hosts=known,
+        github_api_auth="app",
+    )
+    reports = verify_credential_files(choices, ())
+    github = reports[-1]
+    assert not github.valid
+    assert github.status == "unverified"
+    assert "not implemented" in github.message
 
 
 def test_wizv_012_git_policy_presets_and_field_exhaustiveness() -> None:

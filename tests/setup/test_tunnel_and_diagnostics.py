@@ -5,13 +5,16 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 from click.testing import CliRunner
 
+from dev_workspace_mcp.config import ServerConfig
 from dev_workspace_mcp.entrypoint import main
 from dev_workspace_mcp.setup.diagnostics import (
     DiagnosticsReport,
     DiagnosticStatus,
     format_diagnostics,
+    run_diagnostics,
 )
 from dev_workspace_mcp.setup.tunnel import (
     SetupTunnelError,
@@ -135,3 +138,48 @@ def test_wizv_015_config_mode_check_is_owner_only(tmp_path: Path) -> None:
     path.chmod(stat.S_IRUSR | stat.S_IWUSR)
     result = _config_safety(path)
     assert result.status is DiagnosticStatus.PASS
+
+
+def test_wizv_018_docker_unavailable_is_action_required_not_false_pass(
+    minimal_config: ServerConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dev_workspace_mcp.setup.diagnostics import _docker_checks
+
+    def unavailable() -> object:
+        raise OSError("simulated docker outage")
+
+    monkeypatch.setattr("dev_workspace_mcp.setup.diagnostics.docker.from_env", unavailable)
+    daemon, image = _docker_checks(minimal_config)
+    assert daemon.status is DiagnosticStatus.ACTION_REQUIRED
+    assert image.status is DiagnosticStatus.SKIPPED
+
+
+def test_wizv_015_unexpected_diagnostic_exception_is_secret_safe_and_fail_closed(
+    tmp_path: Path,
+    minimal_config: ServerConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dev_workspace_mcp.setup.diagnostics import DiagnosticCode
+
+    path = tmp_path / "config.yml"
+    path.write_text(yaml.safe_dump(minimal_config.model_dump(mode="json"), sort_keys=False))
+    path.chmod(0o600)
+
+    def unexpected(_: ServerConfig) -> tuple[()]:
+        raise RuntimeError("sensitive-diagnostic-sentinel")
+
+    monkeypatch.setattr(
+        "dev_workspace_mcp.setup.diagnostics._repository_checks",
+        unexpected,
+    )
+    report = run_diagnostics(path)
+    failures = [
+        result
+        for result in report.results
+        if result.code is DiagnosticCode.SERVER_CONSTRUCTION
+        and result.status is DiagnosticStatus.FAIL
+    ]
+    assert failures
+    assert not report.ready_to_finish
+    assert all("sensitive-diagnostic-sentinel" not in result.message for result in failures)
