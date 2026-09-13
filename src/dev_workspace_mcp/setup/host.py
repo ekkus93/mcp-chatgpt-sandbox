@@ -17,6 +17,8 @@ from dev_workspace_mcp.config import (
     SSHConfig,
     docker_available,
 )
+from dev_workspace_mcp.config.loader import GITHUB_SSH_HOST_KEYS
+from dev_workspace_mcp.setup.filesystem import SetupFilesystemError, atomic_write_text
 
 
 class SetupHostError(RuntimeError):
@@ -97,11 +99,34 @@ def _create_missing_parent(path: Path) -> None:
         raise SetupHostError(f"Could not create parent directory for {path.expanduser()}") from exc
 
 
+def _ensure_pinned_known_hosts(path: Path) -> None:
+    expanded = path.expanduser()
+    try:
+        metadata = expanded.lstat()
+    except FileNotFoundError:
+        metadata = None
+    except OSError as exc:
+        raise SetupHostError(f"Could not inspect known_hosts path {expanded}") from exc
+
+    if metadata is not None and metadata.st_size > 0:
+        return
+
+    try:
+        atomic_write_text(
+            expanded,
+            "\n".join(GITHUB_SSH_HOST_KEYS) + "\n",
+            mode=0o644,
+            create_backup=metadata is not None,
+        )
+    except SetupFilesystemError as exc:
+        raise SetupHostError(f"Could not create pinned known_hosts file {expanded}") from exc
+
+
 def prepare_storage_directories(choices: StorageChoices, *, approved: bool) -> None:
-    """Create only reviewed missing storage directories; never mutate implicitly."""
+    """Create only explicitly reviewed storage paths and pinned host keys."""
     choices.validate()
     if not approved:
-        raise SetupHostError("Storage directory creation requires explicit approval")
+        raise SetupHostError("Storage path creation requires explicit approval")
     for target in (choices.state_db_path, choices.audit_path, choices.known_hosts):
         _create_missing_parent(target)
     if not choices.keys_dir.exists():
@@ -111,3 +136,4 @@ def prepare_storage_directories(choices: StorageChoices, *, approved: bool) -> N
             raise SetupHostError(f"Could not create SSH keys directory {choices.keys_dir}") from exc
     elif not choices.keys_dir.is_dir():
         raise SetupHostError(f"SSH keys path is not a directory: {choices.keys_dir}")
+    _ensure_pinned_known_hosts(choices.known_hosts)

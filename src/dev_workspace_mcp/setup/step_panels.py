@@ -39,11 +39,13 @@ class WizardStepPanels(Vertical):
             yield Label("Pinned known_hosts path")
             yield Input(id="storage-known-hosts")
             yield Static(
-                "Validation is read-only. Directory creation is a separate explicit action below.",
+                "Validation is read-only. Creation/population is a separate explicit action below; "
+                "when known_hosts is absent or empty, that action writes the production-pinned "
+                "GitHub host-key set rather than using trust-on-first-use.",
                 markup=False,
             )
             yield Button("Validate storage paths", id="validate-storage", variant="primary")
-            yield Button("Create reviewed missing directories", id="create-storage")
+            yield Button("Create reviewed storage paths / pinned known_hosts", id="create-storage")
 
         with Vertical(id="panel-docker_workspace", classes="step-panel"):
             yield Label("Default workspace image")
