@@ -200,6 +200,23 @@ def _summary(
     return tuple(lines)
 
 
+def _merge_reviewed_value(existing: object, reviewed: object) -> object:
+    """Recursively preserve mapping keys the wizard did not review.
+
+    Lists and scalars are replaced as units. Mapping fragments are merged so a
+    guided edit of (for example) ``github.api_auth`` does not erase a valid
+    existing ``github.repositories`` allowlist. Explicit ``None`` remains a
+    real reviewed value and therefore clears the corresponding key.
+    """
+
+    if isinstance(existing, dict) and isinstance(reviewed, dict):
+        merged = deepcopy(existing)
+        for key, value in reviewed.items():
+            merged[key] = _merge_reviewed_value(merged.get(key), value)
+        return merged
+    return deepcopy(reviewed)
+
+
 def prepare_config_update(
     path: Path,
     *,
@@ -235,7 +252,9 @@ def prepare_config_update(
         candidate = {}
 
     for field_name in managed:
-        candidate[field_name] = deepcopy(wizard_values[field_name])
+        candidate[field_name] = _merge_reviewed_value(
+            candidate.get(field_name), wizard_values[field_name]
+        )
 
     _validate_mapping(candidate)
     try:

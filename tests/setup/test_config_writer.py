@@ -40,16 +40,25 @@ def test_wizv_004_existing_advanced_values_are_preserved(tmp_path: Path) -> None
     target = tmp_path / "config.yml"
     existing = _minimal(tmp_path)
     existing["filesystem"] = {"max_read_bytes": 12345}
+    existing["github"] = {
+        "api_auth": "none",
+        "repositories": ["org/extra"],
+    }
     target.write_text(yaml.safe_dump(existing, sort_keys=False))
 
     plan = prepare_config_update(
         target,
-        wizard_values={"logging": {"level": "DEBUG"}},
-        managed_fields={"logging"},
+        wizard_values={
+            "logging": {"level": "DEBUG"},
+            "github": {"api_auth": "token", "api_token_path": str(tmp_path / "api.txt")},
+        },
+        managed_fields={"logging", "github"},
     )
     candidate = yaml.safe_load(plan.candidate_text)
     assert candidate["filesystem"] == {"max_read_bytes": 12345}
     assert candidate["logging"] == {"level": "DEBUG"}
+    assert candidate["github"]["repositories"] == ["org/extra"]
+    assert candidate["github"]["api_auth"] == "token"
 
 
 def test_wizv_004_unknown_or_duplicate_yaml_remains_rejected(tmp_path: Path) -> None:
