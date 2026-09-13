@@ -4,6 +4,7 @@ import json
 import subprocess
 from pathlib import Path
 
+import docker
 import pytest
 
 from dev_workspace_mcp.config import load_config
@@ -126,6 +127,49 @@ def test_wizv_016_fresh_install_generates_and_validates_without_yaml_editing(
     assert all(
         item.status in {DiagnosticStatus.PASS, DiagnosticStatus.SKIPPED} for item in report.results
     )
+
+
+@pytest.mark.asyncio
+async def test_wizv_016_generated_config_opens_workspace_through_mcp_harness(
+    tmp_path: Path,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+) -> None:
+    """Prove the wizard product is usable by the real MCP workspace path, not only loadable."""
+
+    del docker_client  # fixture establishes the isolated Docker namespace and exact-resource cleanup
+    repository = _init_repository(tmp_path / "repo")
+    storage = _storage(tmp_path)
+    prepare_storage_directories(storage, approved=True)
+    key = storage.keys_dir / "example.ed25519"
+    subprocess.run(
+        ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)],
+        check=True,
+    )
+    key.chmod(0o600)
+    sensitive_sentinel = key.read_text()
+
+    state = _fresh_state(tmp_path, repository)
+    state.choices.docker_image = default_image_tag
+    materialized = materialize_setup(state, new_config=True)
+    plan = prepare_config_update(
+        tmp_path / "config.yml",
+        wizard_values=materialized.values,
+        managed_fields=materialized.managed_fields,
+    )
+    result = commit_config_update(tmp_path / "config.yml", plan)
+    config = load_config(result.path)
+
+    server = create_server(config)
+    opened = await server.call_tool("workspace_open", {"repository_id": "example"})
+    assert opened.structured_content["container_state"] == "running"
+    assert opened.structured_content["repository_id"] == "example"
+    assert opened.structured_content["workspace_id"] == "ws_example"
+
+    persisted = result.path.read_text() + json.dumps(state.to_dict())
+    if storage.audit_path.exists():
+        persisted += storage.audit_path.read_text()
+    assert sensitive_sentinel not in persisted
 
 
 def test_wizv_017_existing_config_preserves_unedited_advanced_values_and_cas(
