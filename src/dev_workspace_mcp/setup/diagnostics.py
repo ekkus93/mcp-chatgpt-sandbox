@@ -396,6 +396,8 @@ def _github_checks(config: ServerConfig) -> tuple[DiagnosticResult, ...]:
 def _server_construction(config: ServerConfig) -> DiagnosticResult:
     try:
         create_server(config)
+    # WCR-013: fail closed at the server-construction diagnostic boundary;
+    # suppress arbitrary exception text because it may contain environment details.
     except Exception:
         return _result(
             DiagnosticCode.SERVER_CONSTRUCTION,
@@ -482,6 +484,8 @@ def run_diagnostics(
                     mandatory=False,
                 )
             )
+    # WCR-013: fail closed at the outer diagnostic boundary; suppress arbitrary
+    # exception text so an unexpected library failure cannot leak sensitive data or PASS.
     except Exception:
         results.append(
             _result(

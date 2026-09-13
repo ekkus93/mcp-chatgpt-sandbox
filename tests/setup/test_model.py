@@ -14,6 +14,8 @@ from dev_workspace_mcp.setup.model import (
     SetupStep,
     SetupStepStatus,
     clone_setup_state,
+    dependent_steps,
+    invalidate_from_step,
     load_setup_state,
     rewind_for_missing_process_local_material,
     save_setup_state,
@@ -88,12 +90,57 @@ def test_wizv_002_runtime_secret_never_reaches_serialized_state() -> None:
     assert "password" not in serialized.casefold()
 
 
+@pytest.mark.parametrize(
+    ("changed", "expected"),
+    [
+        (SetupStep.PREREQUISITES, {SetupStep.FINAL_VALIDATION}),
+        (
+            SetupStep.STORAGE,
+            {SetupStep.CREDENTIALS, SetupStep.REVIEW, SetupStep.FINAL_VALIDATION},
+        ),
+        (SetupStep.DOCKER, {SetupStep.REVIEW, SetupStep.FINAL_VALIDATION}),
+        (
+            SetupStep.REPOSITORIES,
+            {SetupStep.CREDENTIALS, SetupStep.REVIEW, SetupStep.FINAL_VALIDATION},
+        ),
+        (SetupStep.CREDENTIALS, {SetupStep.REVIEW, SetupStep.FINAL_VALIDATION}),
+        (SetupStep.GIT_POLICY, {SetupStep.REVIEW, SetupStep.FINAL_VALIDATION}),
+        (SetupStep.RUNTIME_LIMITS, {SetupStep.REVIEW, SetupStep.FINAL_VALIDATION}),
+        (SetupStep.CHATGPT, {SetupStep.FINAL_VALIDATION}),
+        (SetupStep.REVIEW, {SetupStep.FINAL_VALIDATION}),
+        (SetupStep.FINAL_VALIDATION, set()),
+    ],
+)
+def test_wcr_003_dependency_graph_is_explicit(changed: SetupStep, expected: set[SetupStep]) -> None:
+    assert dependent_steps(changed) == expected
+
+
+@pytest.mark.parametrize("changed", list(SetupStep))
+def test_wcr_003_invalidation_preserves_unrelated_completion(changed: SetupStep) -> None:
+    state = SetupState(
+        current_step=changed,
+        statuses=dict.fromkeys(SetupStep, SetupStepStatus.COMPLETE),
+    )
+
+    invalidated = invalidate_from_step(state, changed)
+    expected = dependent_steps(changed)
+    assert invalidated.statuses[changed] is SetupStepStatus.ACTION_REQUIRED
+    for step in SetupStep:
+        if step is changed:
+            continue
+        if step in expected:
+            assert step not in invalidated.statuses
+        else:
+            assert invalidated.statuses[step] is SetupStepStatus.COMPLETE
+
+
 def test_wizv_002_resume_rewinds_for_missing_process_local_material() -> None:
     state = SetupState(
         current_step=SetupStep.REVIEW,
         statuses={
             SetupStep.CREDENTIALS: SetupStepStatus.COMPLETE,
             SetupStep.CHATGPT: SetupStepStatus.COMPLETE,
+            SetupStep.FINAL_VALIDATION: SetupStepStatus.COMPLETE,
         },
     )
     rewound = rewind_for_missing_process_local_material(
@@ -103,6 +150,8 @@ def test_wizv_002_resume_rewinds_for_missing_process_local_material() -> None:
     )
     assert rewound.current_step is SetupStep.CHATGPT
     assert rewound.statuses[SetupStep.CHATGPT] is SetupStepStatus.ACTION_REQUIRED
+    assert SetupStep.FINAL_VALIDATION not in rewound.statuses
+    assert rewound.statuses[SetupStep.CREDENTIALS] is SetupStepStatus.COMPLETE
 
 
 def test_wizv_002_invalid_state_file_fails_without_echoing_contents(tmp_path: Path) -> None:

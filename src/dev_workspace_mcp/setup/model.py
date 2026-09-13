@@ -60,6 +60,26 @@ class SetupStepStatus(StrEnum):
     SKIPPED_OPTIONAL = "skipped_optional"
 
 
+# Explicit rather than positional: changing one choice invalidates only evidence
+# that semantically depends on it. The closure is computed transitively below.
+_SETUP_STEP_DEPENDENCIES: dict[SetupStep, frozenset[SetupStep]] = {
+    SetupStep.PREREQUISITES: frozenset({SetupStep.FINAL_VALIDATION}),
+    SetupStep.STORAGE: frozenset(
+        {SetupStep.CREDENTIALS, SetupStep.REVIEW, SetupStep.FINAL_VALIDATION}
+    ),
+    SetupStep.DOCKER: frozenset({SetupStep.REVIEW, SetupStep.FINAL_VALIDATION}),
+    SetupStep.REPOSITORIES: frozenset(
+        {SetupStep.CREDENTIALS, SetupStep.REVIEW, SetupStep.FINAL_VALIDATION}
+    ),
+    SetupStep.CREDENTIALS: frozenset({SetupStep.REVIEW, SetupStep.FINAL_VALIDATION}),
+    SetupStep.GIT_POLICY: frozenset({SetupStep.REVIEW, SetupStep.FINAL_VALIDATION}),
+    SetupStep.RUNTIME_LIMITS: frozenset({SetupStep.REVIEW, SetupStep.FINAL_VALIDATION}),
+    SetupStep.CHATGPT: frozenset({SetupStep.FINAL_VALIDATION}),
+    SetupStep.REVIEW: frozenset({SetupStep.FINAL_VALIDATION}),
+    SetupStep.FINAL_VALIDATION: frozenset(),
+}
+
+
 @dataclass(frozen=True, slots=True)
 class SetupRepositoryState:
     id: str
@@ -246,18 +266,29 @@ def clone_setup_state(state: SetupState) -> SetupState:
     return SetupState.from_dict(state.to_dict())
 
 
+def dependent_steps(step: SetupStep) -> frozenset[SetupStep]:
+    """Return the transitive setup evidence that depends on ``step``."""
+
+    pending = list(_SETUP_STEP_DEPENDENCIES[step])
+    dependents: set[SetupStep] = set()
+    while pending:
+        candidate = pending.pop()
+        if candidate in dependents:
+            continue
+        dependents.add(candidate)
+        pending.extend(_SETUP_STEP_DEPENDENCIES[candidate])
+    return frozenset(dependents)
+
+
 def invalidate_from_step(state: SetupState, changed_step: SetupStep) -> SetupState:
-    """Invalidate downstream validation after an upstream reviewed value changes."""
+    """Invalidate only evidence that semantically depends on an edited step."""
 
     candidate = clone_setup_state(state)
-    order = list(SetupStep)
-    changed_index = order.index(changed_step)
-    for step in order[changed_index:]:
-        if step is changed_step:
-            candidate.statuses[step] = SetupStepStatus.ACTION_REQUIRED
-        else:
-            candidate.statuses.pop(step, None)
-    if order.index(candidate.current_step) > changed_index:
+    affected = dependent_steps(changed_step)
+    candidate.statuses[changed_step] = SetupStepStatus.ACTION_REQUIRED
+    for step in affected:
+        candidate.statuses.pop(step, None)
+    if candidate.current_step in affected:
         candidate.current_step = changed_step
     return candidate
 
@@ -278,8 +309,8 @@ def rewind_for_missing_process_local_material(
             order.index(step) <= current_index
             and candidate.statuses.get(step) is SetupStepStatus.COMPLETE
         ):
+            candidate = invalidate_from_step(candidate, step)
             candidate.current_step = step
-            candidate.statuses[step] = SetupStepStatus.ACTION_REQUIRED
             break
     return candidate
 
