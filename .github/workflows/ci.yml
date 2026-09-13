@@ -5,6 +5,9 @@ on:
     branches: [master]
   pull_request:
 
+permissions:
+  contents: write
+
 jobs:
   test:
     # Self-hosted (the `mcp-chatgpt-sandbox` runner) — GitHub-hosted
@@ -31,6 +34,26 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --group dev
+
+      # Temporary, source-branch-only maintenance while WIZ-001/WIZ-020 are
+      # being closed. The generated commit is not qualification evidence;
+      # this step and its write permission are removed before final CI.
+      - name: Normalize wizard source and dependency lock
+        if: github.event_name == 'pull_request' && github.head_ref == 'ralph/setup-wizard-foundation'
+        env:
+          SOURCE_BRANCH: ${{ github.head_ref }}
+        run: |
+          uv run ruff format .
+          uv lock
+          git add uv.lock src/dev_workspace_mcp/setup tests/setup
+          if git diff --cached --quiet; then
+            echo "No generated changes."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: normalize setup wizard generated files"
+          git push origin "HEAD:${SOURCE_BRANCH}"
 
       # §71's "Docker-backed integration tests" needs a running Docker
       # daemon — true of `ubuntu-latest` by default; the self-hosted
