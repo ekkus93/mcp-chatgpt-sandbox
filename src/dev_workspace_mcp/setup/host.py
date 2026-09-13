@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -108,8 +109,13 @@ def _ensure_pinned_known_hosts(path: Path) -> None:
     except OSError as exc:
         raise SetupHostError(f"Could not inspect known_hosts path {expanded}") from exc
 
-    if metadata is not None and metadata.st_size > 0:
-        return
+    if metadata is not None:
+        if stat.S_ISLNK(metadata.st_mode):
+            raise SetupHostError(f"Refusing symlink known_hosts target: {expanded}")
+        if not stat.S_ISREG(metadata.st_mode):
+            raise SetupHostError(f"known_hosts target is not a regular file: {expanded}")
+        if metadata.st_size > 0:
+            return
 
     try:
         atomic_write_text(

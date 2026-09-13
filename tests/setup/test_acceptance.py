@@ -17,7 +17,11 @@ from dev_workspace_mcp.setup.config_writer import (
 )
 from dev_workspace_mcp.setup.diagnostics import DiagnosticCode, DiagnosticStatus, run_diagnostics
 from dev_workspace_mcp.setup.filesystem import SetupFilesystemError, atomic_write_text
-from dev_workspace_mcp.setup.host import StorageChoices, prepare_storage_directories
+from dev_workspace_mcp.setup.host import (
+    SetupHostError,
+    StorageChoices,
+    prepare_storage_directories,
+)
 from dev_workspace_mcp.setup.materialize import materialize_setup, state_from_existing_config
 from dev_workspace_mcp.setup.model import SetupRepositoryState, SetupState, load_setup_state
 
@@ -221,3 +225,16 @@ def test_wizv_018_atomic_writer_refuses_symlink_even_after_review(tmp_path: Path
     with pytest.raises(SetupFilesystemError, match="symlink"):
         atomic_write_text(alias, "replacement\n")
     assert target.read_text() == "original\n"
+
+
+def test_wizv_018_storage_provisioning_refuses_symlink_known_hosts(tmp_path: Path) -> None:
+    storage = _storage(tmp_path)
+    storage.known_hosts.parent.mkdir(parents=True)
+    target = tmp_path / "operator-known-hosts"
+    target.write_text("operator-managed\n")
+    storage.known_hosts.symlink_to(target)
+
+    with pytest.raises(SetupHostError, match="symlink"):
+        prepare_storage_directories(storage, approved=True)
+
+    assert target.read_text() == "operator-managed\n"
