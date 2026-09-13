@@ -15,7 +15,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.dom import DOMNode
 from textual.screen import ModalScreen
-from textual.widgets import Button, Checkbox, DataTable, Footer, Input, Label, Static
+from textual.widgets import Button, Checkbox, DataTable, Footer, Input, Label, Select, Static
 
 from dev_workspace_mcp.config import ConfigError
 from dev_workspace_mcp.setup.config_writer import (
@@ -72,7 +72,11 @@ from dev_workspace_mcp.setup.repository_setup import (
     validate_repository_roots,
     verify_repository,
 )
-from dev_workspace_mcp.setup.runtime_setup import RuntimeChoices, SetupRuntimeError
+from dev_workspace_mcp.setup.runtime_setup import (
+    RuntimeChoices,
+    SetupRuntimeError,
+    runtime_editor_values,
+)
 from dev_workspace_mcp.setup.ssh_github_setup import (
     CredentialChoices,
     SetupCredentialError,
@@ -248,8 +252,10 @@ class SetupWizardApp(App[int]):
     #step-title { height: 3; text-style: bold; }
     #instructions-scroll { height: 1fr; border: round $surface-lighten-2; padding: 1 2; }
     #step-content { height: auto; margin-top: 1; }
+    #runtime-advanced-fields { display: none; height: auto; }
     .step-panel { display: none; height: auto; }
     .step-panel Input { margin-bottom: 1; }
+    .step-panel Select { margin-bottom: 1; }
     .step-panel Button { margin-top: 1; }
     #validation-message { height: auto; min-height: 2; margin-top: 1; }
     #wizard-controls { height: 3; align-horizontal: right; margin-top: 1; }
@@ -414,36 +420,115 @@ class SetupWizardApp(App[int]):
         next_button.disabled = not valid
         next_button.label = "Finish" if self._current_index == len(STEPS) - 1 else "Next"
 
+    @staticmethod
+    def _select_value(value: object, *, label: str) -> str:
+        if not isinstance(value, str):
+            raise ValueError(f"{label} must be selected")
+        return value
+
+    @staticmethod
+    def _runtime_section(
+        values: dict[str, dict[str, object]], name: str
+    ) -> dict[str, object]:
+        return values[name]
+
+    @staticmethod
+    def _display_runtime_value(value: object) -> str:
+        return "" if value is None else str(value)
+
     def _populate_widgets(self) -> None:
         self._populating = True
         try:
             choices = self.state.choices
-            values = {
+            input_values = {
                 "#storage-state-db": choices.state_db_path or "",
                 "#storage-audit": choices.audit_path or "",
                 "#storage-keys": choices.keys_dir or "",
                 "#storage-known-hosts": choices.known_hosts or "",
                 "#docker-image": choices.docker_image,
                 "#docker-workspace-path": choices.workspace_path,
-                "#docker-user": choices.container_user,
-                "#docker-git-dir-mode": choices.git_dir_mode,
                 "#docker-idle-stop": choices.idle_stop_after,
                 "#repository-roots": ", ".join(choices.repository_roots),
-                "#ssh-mode": choices.ssh_mode,
-                "#ssh-scope": choices.ssh_scope,
                 "#ssh-shared-key": choices.shared_key or "",
-                "#github-api-auth": choices.github_api_auth,
                 "#github-auth-file": choices.github_auth_file or "",
                 "#github-api-base-url": choices.github_api_base_url,
-                "#git-policy-preset": choices.git_policy_preset,
                 "#git-policy-custom": json.dumps(choices.git_policy_custom or {}, sort_keys=True),
-                "#runtime-json": json.dumps(choices.runtime_overrides or {}, sort_keys=True),
                 "#tunnel-id": choices.tunnel_id or "",
                 "#tunnel-profile": choices.tunnel_profile,
             }
-            for selector, value in values.items():
+            runtime_values = runtime_editor_values(choices.runtime_overrides)
+            filesystem = self._runtime_section(runtime_values, "filesystem")
+            execution = self._runtime_section(runtime_values, "execution")
+            resources = self._runtime_section(runtime_values, "resources")
+            input_values.update(
+                {
+                    "#runtime-fs-max-read-bytes": self._display_runtime_value(
+                        filesystem["max_read_bytes"]
+                    ),
+                    "#runtime-fs-max-write-bytes": self._display_runtime_value(
+                        filesystem["max_write_bytes"]
+                    ),
+                    "#runtime-fs-max-patch-bytes": self._display_runtime_value(
+                        filesystem["max_patch_bytes"]
+                    ),
+                    "#runtime-fs-max-listing-entries": self._display_runtime_value(
+                        filesystem["max_listing_entries"]
+                    ),
+                    "#runtime-fs-max-search-results": self._display_runtime_value(
+                        filesystem["max_search_results"]
+                    ),
+                    "#runtime-exec-sync-timeout-seconds": self._display_runtime_value(
+                        execution["sync_timeout_seconds"]
+                    ),
+                    "#runtime-exec-default-job-timeout-seconds": self._display_runtime_value(
+                        execution["default_job_timeout_seconds"]
+                    ),
+                    "#runtime-exec-max-output-bytes": self._display_runtime_value(
+                        execution["max_output_bytes"]
+                    ),
+                    "#runtime-exec-tail-keep-bytes": self._display_runtime_value(
+                        execution["tail_keep_bytes"]
+                    ),
+                    "#runtime-exec-response-tail-lines": self._display_runtime_value(
+                        execution["response_tail_lines"]
+                    ),
+                    "#runtime-exec-job-retention-days": self._display_runtime_value(
+                        execution["job_retention_days"]
+                    ),
+                    "#runtime-exec-job-log-max-total-bytes": self._display_runtime_value(
+                        execution["job_log_max_total_bytes"]
+                    ),
+                    "#runtime-exec-default-output-response-bytes": self._display_runtime_value(
+                        execution["default_output_response_bytes"]
+                    ),
+                    "#runtime-resources-cpus": self._display_runtime_value(resources["cpus"]),
+                    "#runtime-resources-memory": self._display_runtime_value(resources["memory"]),
+                    "#runtime-resources-pids-limit": self._display_runtime_value(
+                        resources["pids_limit"]
+                    ),
+                }
+            )
+            for selector, value in input_values.items():
                 self.query_one(selector, Input).value = value
-            self.query_one("#runtime-edit", Checkbox).value = bool(choices.runtime_overrides)
+
+            select_values = {
+                "#docker-user": choices.container_user,
+                "#docker-git-dir-mode": choices.git_dir_mode,
+                "#ssh-mode": choices.ssh_mode,
+                "#ssh-scope": choices.ssh_scope,
+                "#github-api-auth": choices.github_api_auth,
+                "#git-policy-preset": choices.git_policy_preset,
+                "#runtime-logging-level": self._select_value(
+                    self._runtime_section(runtime_values, "logging")["level"],
+                    label="logging level",
+                ),
+            }
+            for selector, value in select_values.items():
+                self.query_one(selector, Select).value = value
+
+            edit_runtime = bool(choices.runtime_overrides) or self.advanced
+            self.query_one("#runtime-edit", Checkbox).value = edit_runtime
+            self.query_one("#runtime-advanced-fields", Vertical).display = edit_runtime
             self.query_one("#chatgpt-enabled", Checkbox).value = self.state.chatgpt_requested
             self.query_one("#chatgpt-attested", Checkbox).value = choices.chatgpt_user_attested
             self._refresh_repository_table()
@@ -503,12 +588,12 @@ class SetupWizardApp(App[int]):
         if step is self.current_step:
             self._refresh()
 
-    def _is_current_step_control(self, widget: Input | Checkbox) -> bool:
+    def _is_current_step_control(self, widget: DOMNode) -> bool:
         """Return True only for controls owned by the currently visible step panel.
 
-        Textual may deliver queued Changed events after navigation.  Hidden panels remain mounted,
-        so accepting any descendant of ``#step-content`` lets a stale event invalidate the newly
-        active step.  Bind invalidation to the control's owning panel instead.
+        Textual may deliver queued Changed events after navigation. Hidden panels remain mounted, so
+        accepting any descendant of ``#step-content`` lets a stale event invalidate the newly active
+        step. Bind invalidation to the control's owning panel instead.
         """
 
         expected_panel_id = f"panel-{self.current_step.value}"
@@ -531,6 +616,15 @@ class SetupWizardApp(App[int]):
     @on(Checkbox.Changed)
     def checkbox_changed(self, event: Checkbox.Changed) -> None:
         if self._populating or not self._is_current_step_control(event.checkbox):
+            return
+        if event.checkbox.id == "runtime-edit":
+            self.query_one("#runtime-advanced-fields", Vertical).display = event.checkbox.value
+        if self.current_step not in {SetupStep.REVIEW, SetupStep.FINAL_VALIDATION}:
+            self._mark_changed(self.current_step)
+
+    @on(Select.Changed)
+    def select_changed(self, event: Select.Changed) -> None:
+        if self._populating or not self._is_current_step_control(event.select):
             return
         if self.current_step not in {SetupStep.REVIEW, SetupStep.FINAL_VALIDATION}:
             self._mark_changed(self.current_step)
@@ -602,12 +696,15 @@ class SetupWizardApp(App[int]):
             "Reviewed missing storage directories were created with restrictive permissions."
         )
 
+    def _selected(self, selector: str, *, label: str) -> str:
+        return self._select_value(self.query_one(selector, Select).value, label=label)
+
     def _docker_from_widgets(self) -> DockerSetupChoices:
         return DockerSetupChoices(
             default_image=self.query_one("#docker-image", Input).value.strip(),
             workspace_path=self.query_one("#docker-workspace-path", Input).value.strip(),
-            container_user=self.query_one("#docker-user", Input).value.strip(),
-            git_dir_mode=self.query_one("#docker-git-dir-mode", Input).value.strip(),
+            container_user=self._selected("#docker-user", label="container user"),  # type: ignore[arg-type]
+            git_dir_mode=self._selected("#docker-git-dir-mode", label="Git directory mode"),  # type: ignore[arg-type]
             idle_stop_after=self.query_one("#docker-idle-stop", Input).value.strip(),
         )
 
@@ -626,10 +723,15 @@ class SetupWizardApp(App[int]):
                 raise SetupDockerError(
                     "Selected image is missing; build it or explicitly defer to final diagnostics"
                 )
-        except DockerException:
+        except (DockerException, ValueError):
             present = False
-            defer_image = True
-            message = "Docker is unavailable; workspace configuration is accepted but final diagnostics will block Finish."
+            message = (
+                "Docker is unavailable or a selection is invalid; workspace configuration remains "
+                "action-required until corrected or Docker-dependent checks can run."
+            )
+            if isinstance(sys.exc_info()[1], ValueError):
+                self.set_step_validation(SetupStep.DOCKER, valid=False, message=message)
+                return
         except SetupDockerError as exc:
             self.set_step_validation(SetupStep.DOCKER, valid=False, message=str(exc))
             return
@@ -652,7 +754,11 @@ class SetupWizardApp(App[int]):
 
     @on(Button.Pressed, "#build-docker-image")
     def build_docker_image(self) -> None:
-        choices = self._docker_from_widgets()
+        try:
+            choices = self._docker_from_widgets()
+        except ValueError as exc:
+            self.set_step_validation(SetupStep.DOCKER, valid=False, message=str(exc))
+            return
         self.query_one("#docker-build-command", Static).update(
             "Reviewed build action: " + " ".join(default_image_build_command(choices.default_image))
         )
@@ -774,13 +880,19 @@ class SetupWizardApp(App[int]):
         if choices.keys_dir is None or choices.known_hosts is None:
             raise SetupCredentialError("Storage step must select keys_dir and known_hosts first")
         auth_file = _blank_to_none(self.query_one("#github-auth-file", Input).value)
+        try:
+            mode = self._selected("#ssh-mode", label="SSH mode")
+            scope = self._selected("#ssh-scope", label="SSH scope")
+            api_auth = self._selected("#github-api-auth", label="GitHub API authentication")
+        except ValueError as exc:
+            raise SetupCredentialError(str(exc)) from exc
         return CredentialChoices(
-            mode=self.query_one("#ssh-mode", Input).value.strip(),  # type: ignore[arg-type]
-            scope=self.query_one("#ssh-scope", Input).value.strip(),  # type: ignore[arg-type]
+            mode=mode,  # type: ignore[arg-type]
+            scope=scope,  # type: ignore[arg-type]
             keys_dir=Path(choices.keys_dir),
             known_hosts=Path(choices.known_hosts),
             shared_key=_blank_to_none(self.query_one("#ssh-shared-key", Input).value),
-            github_api_auth=self.query_one("#github-api-auth", Input).value.strip(),  # type: ignore[arg-type]
+            github_api_auth=api_auth,  # type: ignore[arg-type]
             github_api_token_path=Path(auth_file).expanduser() if auth_file is not None else None,
             github_api_base_url=self.query_one("#github-api-base-url", Input).value.strip(),
         )
@@ -825,8 +937,8 @@ class SetupWizardApp(App[int]):
 
     @on(Button.Pressed, "#validate-git-policy")
     def validate_git_policy(self) -> None:
-        raw_preset = self.query_one("#git-policy-preset", Input).value.strip()
         try:
+            raw_preset = self._selected("#git-policy-preset", label="Git safety preset")
             preset = GitPolicyPreset(raw_preset)
             custom: dict[str, object] | None = None
             if preset is GitPolicyPreset.CUSTOM:
@@ -853,6 +965,90 @@ class SetupWizardApp(App[int]):
             message="Git safety policy is production-valid.",
         )
 
+    def _required_int(self, selector: str, *, label: str) -> int:
+        raw = self.query_one(selector, Input).value.strip()
+        try:
+            return int(raw)
+        except ValueError as exc:
+            raise SetupRuntimeError(f"{label} must be an integer") from exc
+
+    def _optional_int(self, selector: str, *, label: str) -> int | None:
+        raw = self.query_one(selector, Input).value.strip()
+        if not raw:
+            return None
+        try:
+            return int(raw)
+        except ValueError as exc:
+            raise SetupRuntimeError(f"{label} must be an integer or blank") from exc
+
+    def _optional_float(self, selector: str, *, label: str) -> float | None:
+        raw = self.query_one(selector, Input).value.strip()
+        if not raw:
+            return None
+        try:
+            return float(raw)
+        except ValueError as exc:
+            raise SetupRuntimeError(f"{label} must be a number or blank") from exc
+
+    def _runtime_choices_from_widgets(self) -> RuntimeChoices:
+        level = self._selected("#runtime-logging-level", label="logging level")
+        memory = _blank_to_none(self.query_one("#runtime-resources-memory", Input).value)
+        return RuntimeChoices(
+            filesystem={
+                "max_read_bytes": self._required_int(
+                    "#runtime-fs-max-read-bytes", label="Maximum read bytes"
+                ),
+                "max_write_bytes": self._required_int(
+                    "#runtime-fs-max-write-bytes", label="Maximum write bytes"
+                ),
+                "max_patch_bytes": self._required_int(
+                    "#runtime-fs-max-patch-bytes", label="Maximum patch bytes"
+                ),
+                "max_listing_entries": self._required_int(
+                    "#runtime-fs-max-listing-entries", label="Maximum listing entries"
+                ),
+                "max_search_results": self._required_int(
+                    "#runtime-fs-max-search-results", label="Maximum search results"
+                ),
+            },
+            execution={
+                "sync_timeout_seconds": self._required_int(
+                    "#runtime-exec-sync-timeout-seconds", label="Synchronous timeout"
+                ),
+                "default_job_timeout_seconds": self._required_int(
+                    "#runtime-exec-default-job-timeout-seconds",
+                    label="Default job timeout",
+                ),
+                "max_output_bytes": self._required_int(
+                    "#runtime-exec-max-output-bytes", label="Maximum captured output bytes"
+                ),
+                "tail_keep_bytes": self._required_int(
+                    "#runtime-exec-tail-keep-bytes", label="Tail keep bytes"
+                ),
+                "response_tail_lines": self._required_int(
+                    "#runtime-exec-response-tail-lines", label="Response tail lines"
+                ),
+                "job_retention_days": self._required_int(
+                    "#runtime-exec-job-retention-days", label="Job retention days"
+                ),
+                "job_log_max_total_bytes": self._required_int(
+                    "#runtime-exec-job-log-max-total-bytes", label="Maximum total job-log bytes"
+                ),
+                "default_output_response_bytes": self._required_int(
+                    "#runtime-exec-default-output-response-bytes",
+                    label="Default output response bytes",
+                ),
+            },
+            resources={
+                "cpus": self._optional_float("#runtime-resources-cpus", label="CPUs"),
+                "memory": memory,
+                "pids_limit": self._optional_int(
+                    "#runtime-resources-pids-limit", label="PID limit"
+                ),
+            },
+            logging={"level": level},
+        )
+
     @on(Button.Pressed, "#validate-runtime")
     def validate_runtime(self) -> None:
         edit = self.query_one("#runtime-edit", Checkbox).value
@@ -864,29 +1060,15 @@ class SetupWizardApp(App[int]):
             self._save_validated_state(
                 candidate,
                 step=SetupStep.RUNTIME_LIMITS,
-                message="Advanced runtime values remain untouched and use production defaults/existing values.",
+                message=(
+                    "Advanced runtime values remain untouched and use production "
+                    "defaults/existing values."
+                ),
             )
             return
         try:
-            raw = json.loads(self.query_one("#runtime-json", Input).value)
-            if not isinstance(raw, dict):
-                raise ValueError("Advanced runtime JSON must be an object")
-            unknown = set(raw) - runtime_fields
-            if unknown:
-                raise ValueError("Advanced runtime JSON contains unsupported sections")
-            fragments = RuntimeChoices(
-                filesystem=raw.get("filesystem")
-                if isinstance(raw.get("filesystem"), dict)
-                else None,
-                execution=(
-                    raw.get("execution") if isinstance(raw.get("execution"), dict) else None
-                ),
-                resources=(
-                    raw.get("resources") if isinstance(raw.get("resources"), dict) else None
-                ),
-                logging=raw.get("logging") if isinstance(raw.get("logging"), dict) else None,
-            ).reviewed_fragments()
-        except (json.JSONDecodeError, ValueError, SetupRuntimeError) as exc:
+            fragments = self._runtime_choices_from_widgets().reviewed_fragments()
+        except (ValueError, SetupRuntimeError) as exc:
             self.set_step_validation(SetupStep.RUNTIME_LIMITS, valid=False, message=str(exc))
             return
         candidate.choices.runtime_overrides = fragments
@@ -973,7 +1155,9 @@ class SetupWizardApp(App[int]):
             self.set_step_validation(
                 SetupStep.CHATGPT,
                 valid=False,
-                message="Tunnel health and user attestation are required when ChatGPT setup is selected.",
+                message=(
+                    "Tunnel health and user attestation are required when ChatGPT setup is selected."
+                ),
             )
             return
         candidate.chatgpt_requested = True
@@ -983,7 +1167,9 @@ class SetupWizardApp(App[int]):
         self._save_validated_state(
             candidate,
             step=SetupStep.CHATGPT,
-            message="Tunnel is machine-healthy; ChatGPT UI completion is recorded as USER-ATTESTED.",
+            message=(
+                "Tunnel is machine-healthy; ChatGPT UI completion is recorded as USER-ATTESTED."
+            ),
         )
 
     @on(Button.Pressed, "#prepare-review")
@@ -1073,6 +1259,11 @@ class SetupWizardApp(App[int]):
             else "WAITING FOR USER ChatGPT custom app/refresh"
         )
         self.query_one("#attestation-summary", Static).update(attestation)
+        self.query_one("#smoke-guidance", Static).update(
+            "Copyable smoke checks:\n"
+            f"dev-workspace-mcp setup --check --config {self.config_path}\n"
+            f"dev-workspace-mcp serve --config {self.config_path}"
+        )
         self.set_step_validation(
             SetupStep.FINAL_VALIDATION,
             valid=report.ready_to_finish,
