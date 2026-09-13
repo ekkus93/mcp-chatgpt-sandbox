@@ -46,7 +46,9 @@ def _mapping_value(values: dict[str, object], key: str) -> dict[str, object] | N
         return None
     if any(not isinstance(item_key, str) for item_key in value):
         return None
-    return {item_key: item_value for item_key, item_value in value.items() if isinstance(item_key, str)}
+    return {
+        item_key: item_value for item_key, item_value in value.items() if isinstance(item_key, str)
+    }
 
 
 def choices_from_config(config: ServerConfig) -> SetupChoices:
