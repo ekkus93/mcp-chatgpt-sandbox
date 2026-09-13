@@ -11,6 +11,7 @@ from dev_workspace_mcp.setup.filesystem import (
     SetupFilesystemError,
     atomic_write_text,
     backup_regular_file,
+    ensure_private_directory,
     is_owner_only_directory,
     is_owner_only_file,
     read_bounded_utf8,
@@ -24,6 +25,27 @@ def test_wizv_003_atomic_new_file_is_owner_only(tmp_path: Path) -> None:
     assert result.backup_path is None
     assert is_owner_only_file(target)
     assert is_owner_only_directory(target.parent)
+
+
+
+def test_swhv_001_existing_parent_mode_is_not_changed_by_write(tmp_path: Path) -> None:
+    parent = tmp_path / "operator-owned"
+    parent.mkdir()
+    parent.chmod(0o755)
+    target = parent / "config.yml"
+
+    atomic_write_text(target, "version: 1\n", create_backup=False)
+
+    assert target.read_text() == "version: 1\n"
+    assert stat.S_IMODE(parent.stat().st_mode) == 0o755
+
+
+def test_swhv_001_missing_setup_owned_directory_is_created_private(tmp_path: Path) -> None:
+    setup_dir = tmp_path / "missing" / "setup-state"
+
+    ensure_private_directory(setup_dir)
+
+    assert is_owner_only_directory(setup_dir)
 
 
 def test_wizv_003_replacement_creates_timestamped_owner_only_backup(tmp_path: Path) -> None:
