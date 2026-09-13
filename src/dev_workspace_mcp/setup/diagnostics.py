@@ -326,9 +326,7 @@ def _github_checks(config: ServerConfig) -> list[DiagnosticResult]:
                 f"Remote protection is {protection.status}: {reason}; "
                 f"policy={policy} is nonblocking"
             )
-            results.append(
-                _result(code, label, DiagnosticStatus.SKIPPED, message)
-            )
+            results.append(_result(code, label, DiagnosticStatus.SKIPPED, message))
     return results
 
 
