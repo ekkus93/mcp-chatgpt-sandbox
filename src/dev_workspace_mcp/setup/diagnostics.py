@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -13,9 +14,12 @@ import docker
 from docker.errors import DockerException, ImageNotFound
 
 from dev_workspace_mcp.config import ConfigError, ServerConfig, load_config
+from dev_workspace_mcp.github_api import verify_remote_protection
 from dev_workspace_mcp.repositories import RepositoryRegistry
-from dev_workspace_mcp.setup.model import SetupRepository
-from dev_workspace_mcp.setup.repository_verification import verify_repository
+from dev_workspace_mcp.setup.filesystem import SetupFilesystemError, reject_unsafe_sensitive_target
+from dev_workspace_mcp.setup.model import SetupRepository, SetupState
+from dev_workspace_mcp.setup.repository_verification import detect_default_branch, verify_repository
+from dev_workspace_mcp.setup.tunnel import DEFAULT_TUNNEL_PROFILE, doctor_tunnel_profile
 from dev_workspace_mcp.workspace.ssh_agent import resolve_ssh_key_path
 
 _SERVER_PROBE_TIMEOUT_SECONDS = 15.0
@@ -64,6 +68,35 @@ def _result(
     return DiagnosticResult(code, label, status, message, remediation)
 
 
+def _config_path_check(config_file: Path) -> DiagnosticResult:
+    path = config_file.expanduser().absolute()
+    try:
+        reject_unsafe_sensitive_target(path)
+        mode = stat.S_IMODE(path.stat().st_mode)
+    except (OSError, SetupFilesystemError):
+        return _result(
+            "config.path_safety",
+            "Configuration file safety",
+            DiagnosticStatus.FAIL,
+            "Configuration target is missing, unsafe, or cannot be inspected",
+            "Use a regular non-symlink configuration file at a safe path.",
+        )
+    if mode & 0o022:
+        return _result(
+            "config.path_safety",
+            "Configuration file safety",
+            DiagnosticStatus.FAIL,
+            "Configuration file is writable by group or other users",
+            "Remove group/other write permission before starting the server.",
+        )
+    return _result(
+        "config.path_safety",
+        "Configuration file safety",
+        DiagnosticStatus.PASS,
+        f"Safe regular configuration file with mode {mode:04o}: {path}",
+    )
+
+
 def _path_parent_check(code: str, label: str, path: Path) -> DiagnosticResult:
     parent = path.expanduser().parent
     if not parent.exists():
@@ -82,6 +115,26 @@ def _path_parent_check(code: str, label: str, path: Path) -> DiagnosticResult:
             f"Parent directory is not writable: {parent}",
         )
     return _result(code, label, DiagnosticStatus.PASS, f"Writable parent: {parent}")
+
+
+def _known_hosts_check(config: ServerConfig) -> DiagnosticResult:
+    try:
+        valid = config.ssh.known_hosts.is_file() and config.ssh.known_hosts.stat().st_size > 0
+    except OSError:
+        valid = False
+    if valid:
+        return _result(
+            "ssh.known_hosts",
+            "SSH known hosts",
+            DiagnosticStatus.PASS,
+            f"Pinned known-hosts file exists: {config.ssh.known_hosts}",
+        )
+    return _result(
+        "ssh.known_hosts",
+        "SSH known hosts",
+        DiagnosticStatus.FAIL,
+        "Pinned known-hosts file is missing or empty",
+    )
 
 
 def _docker_checks(config: ServerConfig) -> list[DiagnosticResult]:
@@ -190,6 +243,87 @@ def _repository_checks(config: ServerConfig) -> list[DiagnosticResult]:
     return results
 
 
+def _github_checks(config: ServerConfig) -> list[DiagnosticResult]:
+    if config.github.api_auth == "none":
+        return [
+            _result(
+                "github.api",
+                "GitHub API verification",
+                DiagnosticStatus.SKIPPED,
+                "GitHub API integration is disabled",
+            )
+        ]
+    if config.github.api_auth == "app":
+        return [
+            _result(
+                "github.api",
+                "GitHub API verification",
+                DiagnosticStatus.ACTION_REQUIRED,
+                "Production api_auth=app is not implemented",
+            )
+        ]
+    if config.github.api_token_path is None or not config.github.api_token_path.is_file():
+        return [
+            _result(
+                "github.api",
+                "GitHub API verification",
+                DiagnosticStatus.ACTION_REQUIRED,
+                "GitHub token mode is configured but its credential file is unavailable",
+            )
+        ]
+
+    results = [
+        _result(
+            "github.api",
+            "GitHub API credential",
+            DiagnosticStatus.PASS,
+            "GitHub API credential file is available",
+        )
+    ]
+    policy = config.git_policy.require_remote_protection
+    for repository in config.repositories:
+        default_branch = detect_default_branch(repository.path)
+        protection = verify_remote_protection(
+            github_config=config.github,
+            owner_repo=repository.github,
+            default_branch=default_branch,
+            checks=config.git_policy.remote_protection_checks,
+        )
+        code = f"repository.{repository.id}.remote_protection"
+        label = f"Repository {repository.id} remote protection"
+        if protection.status == "verified":
+            results.append(
+                _result(
+                    code,
+                    label,
+                    DiagnosticStatus.PASS,
+                    "Configured remote-protection checks are verified",
+                )
+            )
+            continue
+        reason = protection.reason or f"remote protection status is {protection.status}"
+        if policy == "deny":
+            results.append(
+                _result(
+                    code,
+                    label,
+                    DiagnosticStatus.ACTION_REQUIRED,
+                    f"Remote protection is {protection.status}: {reason}",
+                    "Resolve GitHub verification/protection before using deny policy.",
+                )
+            )
+        else:
+            results.append(
+                _result(
+                    code,
+                    label,
+                    DiagnosticStatus.SKIPPED,
+                    f"Remote protection is {protection.status}: {reason}; policy={policy} is nonblocking",
+                )
+            )
+    return results
+
+
 def _server_construction_check(config_file: Path) -> DiagnosticResult:
     script = (
         "import sys; from pathlib import Path; "
@@ -227,24 +361,87 @@ def _server_construction_check(config_file: Path) -> DiagnosticResult:
     )
 
 
-def run_setup_diagnostics(config_file: Path) -> SetupDiagnosticsReport:
-    """Run deterministic checks; ordinary failures become explicit results."""
+def _tunnel_check(state: SetupState | None, runtime_key: str | None) -> DiagnosticResult:
+    if state is None or not state.chatgpt_enabled:
+        return _result(
+            "tunnel.profile",
+            "Secure MCP Tunnel",
+            DiagnosticStatus.SKIPPED,
+            "Optional tunnel health check is not selected",
+        )
+    if doctor_tunnel_profile(DEFAULT_TUNNEL_PROFILE, runtime_key=runtime_key):
+        return _result(
+            "tunnel.profile",
+            "Secure MCP Tunnel",
+            DiagnosticStatus.PASS,
+            f"tunnel-client doctor passed for profile {DEFAULT_TUNNEL_PROFILE!r}",
+        )
+    return _result(
+        "tunnel.profile",
+        "Secure MCP Tunnel",
+        DiagnosticStatus.ACTION_REQUIRED,
+        f"tunnel-client doctor did not pass for profile {DEFAULT_TUNNEL_PROFILE!r}",
+        "Reacquire any process-local runtime credential and repair/rerun tunnel-client doctor.",
+    )
+
+
+def run_setup_diagnostics(
+    config_file: Path,
+    *,
+    setup_state: SetupState | None = None,
+    tunnel_runtime_key: str | None = None,
+    setup_state_error: str | None = None,
+) -> SetupDiagnosticsReport:
+    """Run deterministic checks; ordinary failures become explicit results.
+
+    ``setup_state_error`` is accepted only from the strict setup-state loader.
+    A corrupt resumable state is reported rather than silently ignored; absence
+    of setup state remains valid for operators who configure the server by hand.
+    """
 
     results: list[DiagnosticResult] = []
+    if setup_state_error is not None:
+        results.append(
+            _result(
+                "setup.state",
+                "Setup wizard state",
+                DiagnosticStatus.ACTION_REQUIRED,
+                "Persisted setup state is invalid and cannot be trusted",
+                "Use interactive setup Repair or Start fresh; production configuration is untouched.",
+            )
+        )
+    elif setup_state is None:
+        results.append(
+            _result(
+                "setup.state",
+                "Setup wizard state",
+                DiagnosticStatus.SKIPPED,
+                "No matching wizard state; manual configuration remains supported",
+            )
+        )
+    else:
+        results.append(
+            _result(
+                "setup.state",
+                "Setup wizard state",
+                DiagnosticStatus.PASS,
+                "Strict non-secret setup state loaded",
+            )
+        )
+
     try:
         config = load_config(config_file)
     except ConfigError:
-        return SetupDiagnosticsReport(
-            (
-                _result(
-                    "config.reload",
-                    "Production configuration",
-                    DiagnosticStatus.FAIL,
-                    "Production load_config() rejected the configuration",
-                    "Repair the configuration and run diagnostics again.",
-                ),
+        results.append(
+            _result(
+                "config.reload",
+                "Production configuration",
+                DiagnosticStatus.FAIL,
+                "Production load_config() rejected the configuration",
+                "Repair the configuration and run diagnostics again.",
             )
         )
+        return SetupDiagnosticsReport(tuple(results))
 
     results.append(
         _result(
@@ -254,65 +451,15 @@ def run_setup_diagnostics(config_file: Path) -> SetupDiagnosticsReport:
             "Production load_config() accepted the configuration",
         )
     )
+    results.append(_config_path_check(config_file))
     results.append(_path_parent_check("state_db.parent", "State database", config.state_db_path))
     results.append(_path_parent_check("audit.parent", "Audit log", config.audit.path))
-    if config.ssh.known_hosts.is_file() and config.ssh.known_hosts.stat().st_size > 0:
-        results.append(
-            _result(
-                "ssh.known_hosts",
-                "SSH known hosts",
-                DiagnosticStatus.PASS,
-                f"Pinned known-hosts file exists: {config.ssh.known_hosts}",
-            )
-        )
-    else:
-        results.append(
-            _result(
-                "ssh.known_hosts",
-                "SSH known hosts",
-                DiagnosticStatus.FAIL,
-                "Pinned known-hosts file is missing or empty",
-            )
-        )
+    results.append(_known_hosts_check(config))
     results.extend(_docker_checks(config))
     results.extend(_repository_checks(config))
-    if config.github.api_auth == "none":
-        results.append(
-            _result(
-                "github.api",
-                "GitHub API verification",
-                DiagnosticStatus.SKIPPED,
-                "GitHub API integration is disabled",
-            )
-        )
-    elif config.github.api_auth == "app":
-        results.append(
-            _result(
-                "github.api",
-                "GitHub API verification",
-                DiagnosticStatus.ACTION_REQUIRED,
-                "Production api_auth=app is not implemented",
-            )
-        )
-    elif config.github.api_token_path is None or not config.github.api_token_path.is_file():
-        results.append(
-            _result(
-                "github.api",
-                "GitHub API verification",
-                DiagnosticStatus.ACTION_REQUIRED,
-                "GitHub token mode is configured but its credential file is unavailable",
-            )
-        )
-    else:
-        results.append(
-            _result(
-                "github.api",
-                "GitHub API verification",
-                DiagnosticStatus.PASS,
-                "GitHub API credential file is available; repository protection is checked at use",
-            )
-        )
+    results.extend(_github_checks(config))
     results.append(_server_construction_check(config_file))
+    results.append(_tunnel_check(setup_state, tunnel_runtime_key))
     return SetupDiagnosticsReport(tuple(results))
 
 
