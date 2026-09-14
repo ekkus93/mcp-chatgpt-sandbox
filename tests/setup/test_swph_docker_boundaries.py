@@ -52,6 +52,7 @@ async def test_swph_002_missing_context_during_validation_stays_inside_handler(
     app = SetupWizardApp(config_path=tmp_path / "config.yml", state_path=tmp_path / "state.json")
     async with app.run_test() as pilot:
         _go_to(app, SetupStep.DOCKER)
+        await pilot.pause()
         app.validate_docker()
         await pilot.pause()
 
@@ -94,6 +95,7 @@ async def test_swph_002_context_removed_before_apply_never_acquires_docker(
     app = SetupWizardApp(config_path=tmp_path / "config.yml", state_path=tmp_path / "state.json")
     async with app.run_test() as pilot:
         _go_to(app, SetupStep.DOCKER)
+        await pilot.pause()
         app._pending_docker_build_plan = plan
         app.build_docker_image()
         await pilot.pause()
@@ -203,6 +205,7 @@ async def test_swph_002_docker_daemon_unavailable_remains_degraded(
     app = SetupWizardApp(config_path=tmp_path / "config.yml", state_path=tmp_path / "state.json")
     async with app.run_test() as pilot:
         _go_to(app, SetupStep.DOCKER)
+        await pilot.pause()
         app.validate_docker()
         await pilot.pause()
 
