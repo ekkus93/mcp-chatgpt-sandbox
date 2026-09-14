@@ -128,10 +128,7 @@ def test_swphv_006_concurrent_writers_cannot_both_commit_same_reviewed_source(
     assert outcomes.count("success") == 1
     failures = [outcome for outcome in outcomes if outcome != "success"]
     assert len(failures) == 1
-    assert (
-        "changed after review" in failures[0]
-        or "locked by another setup writer" in failures[0]
-    )
+    assert "changed after review" in failures[0] or "locked by another setup writer" in failures[0]
 
 
 def test_swphv_006_persistent_lock_file_has_no_secret_payload(tmp_path: Path) -> None:
