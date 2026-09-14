@@ -31,7 +31,7 @@ async def test_swf_001_docker_prepare_displays_plan_without_mutation(
     def fail_build(*_args: Any, **_kwargs: Any) -> None:
         raise AssertionError("prepare must not build Docker images")
 
-    monkeypatch.setattr("dev_workspace_mcp.setup.step_actions.build_default_image", fail_build)
+    monkeypatch.setattr("dev_workspace_mcp.setup.step_actions_docker.build_default_image", fail_build)
     app = SetupWizardApp(config_path=tmp_path / "config.yml", state_path=tmp_path / "state.json")
     async with app.run_test() as pilot:
         _go_to(app, SetupStep.DOCKER)
@@ -79,8 +79,8 @@ async def test_swf_001_docker_apply_uses_stored_plan(
         assert approved
         built.append(image)
 
-    monkeypatch.setattr("dev_workspace_mcp.setup.step_actions.docker.from_env", FakeClient)
-    monkeypatch.setattr("dev_workspace_mcp.setup.step_actions.build_default_image", fake_build)
+    monkeypatch.setattr("dev_workspace_mcp.setup.step_actions_docker.docker.from_env", FakeClient)
+    monkeypatch.setattr("dev_workspace_mcp.setup.step_actions_docker.build_default_image", fake_build)
     app = SetupWizardApp(config_path=tmp_path / "config.yml", state_path=tmp_path / "state.json")
     async with app.run_test() as pilot:
         _go_to(app, SetupStep.DOCKER)
