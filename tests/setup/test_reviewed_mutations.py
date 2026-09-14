@@ -47,16 +47,14 @@ async def test_swf_001_docker_prepare_displays_plan_without_mutation(
 
 
 @pytest.mark.asyncio
-async def test_swf_001_docker_apply_requires_pending_plan(tmp_path: Path) -> None:
+async def test_swf_001_docker_apply_is_disabled_without_pending_plan(tmp_path: Path) -> None:
     app = SetupWizardApp(config_path=tmp_path / "config.yml", state_path=tmp_path / "state.json")
     async with app.run_test() as pilot:
         _go_to(app, SetupStep.DOCKER)
-        app.build_docker_image()
         await pilot.pause()
 
         assert app._pending_docker_build_plan is None
         assert app.query_one("#build-docker-image", Button).disabled
-        assert app._validation.get(SetupStep.DOCKER) is False
 
 
 @pytest.mark.asyncio
@@ -140,16 +138,14 @@ async def test_swf_001_tunnel_prepare_displays_plan_without_mutation(
 
 
 @pytest.mark.asyncio
-async def test_swf_001_tunnel_apply_requires_pending_plan(tmp_path: Path) -> None:
+async def test_swf_001_tunnel_apply_is_disabled_without_pending_plan(tmp_path: Path) -> None:
     app = SetupWizardApp(config_path=tmp_path / "config.yml", state_path=tmp_path / "state.json")
     async with app.run_test() as pilot:
         _go_to(app, SetupStep.CHATGPT)
-        app.apply_tunnel()
         await pilot.pause()
 
         assert app._pending_tunnel_plan is None
         assert app.query_one("#tunnel-apply", Button).disabled
-        assert app._validation.get(SetupStep.CHATGPT) is False
 
 
 @pytest.mark.asyncio

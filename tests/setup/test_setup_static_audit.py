@@ -99,8 +99,11 @@ def test_wcr_002_presentation_does_not_own_yaml_or_atomic_config_writes() -> Non
 
 
 def test_wcr_002_coordinator_growth_requires_explicit_architecture_change() -> None:
+    # The app shell cap intentionally accounts for the integrated PR #64 guided
+    # Git-policy population plus SWF pending-plan state, while keeping each
+    # extracted presentation/action module independently bounded.
     limits = {
-        "app.py": 750,
+        "app.py": 800,
         "step_actions.py": 900,
         "step_actions_hardened.py": 200,
         "step_panels.py": 450,
