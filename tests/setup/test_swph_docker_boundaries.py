@@ -87,7 +87,9 @@ async def test_swph_002_context_removed_before_apply_never_acquires_docker(
         raise AssertionError("Docker build must not run for a missing context")
 
     monkeypatch.setattr("dev_workspace_mcp.setup.step_actions_docker.docker.from_env", fail_docker)
-    monkeypatch.setattr("dev_workspace_mcp.setup.step_actions_docker.build_default_image", fail_build)
+    monkeypatch.setattr(
+        "dev_workspace_mcp.setup.step_actions_docker.build_default_image", fail_build
+    )
 
     app = SetupWizardApp(config_path=tmp_path / "config.yml", state_path=tmp_path / "state.json")
     async with app.run_test() as pilot:
@@ -162,7 +164,9 @@ async def test_swph_003_preview_round_trips_and_apply_uses_exact_reviewed_plan(
         prepare_with_sensitive_path,
     )
     monkeypatch.setattr("dev_workspace_mcp.setup.step_actions_docker.docker.from_env", FakeClient)
-    monkeypatch.setattr("dev_workspace_mcp.setup.step_actions_docker.build_default_image", fake_build)
+    monkeypatch.setattr(
+        "dev_workspace_mcp.setup.step_actions_docker.build_default_image", fake_build
+    )
 
     app = SetupWizardApp(config_path=tmp_path / "config.yml", state_path=tmp_path / "state.json")
     async with app.run_test() as pilot:
