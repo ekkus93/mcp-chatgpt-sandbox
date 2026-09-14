@@ -21,8 +21,8 @@ def test_swphv_004_manifest_matches_production_and_editor_fields_bidirectionally
     production_fields = frozenset(GitPolicyConfig.model_fields)
     editor_fields = frozenset(field.name for field in fields(GitPolicyEditorValues))
 
-    assert GIT_POLICY_GUIDED_FIELDS == production_fields
-    assert GIT_POLICY_GUIDED_FIELDS == editor_fields
+    assert production_fields == GIT_POLICY_GUIDED_FIELDS
+    assert editor_fields == GIT_POLICY_GUIDED_FIELDS
     assert GIT_POLICY_UI_FIELDS == GIT_POLICY_GUIDED_FIELDS
     assert frozenset(GIT_POLICY_GUIDED_CONTROLS) == GIT_POLICY_GUIDED_FIELDS
 
