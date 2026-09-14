@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
+import importlib
+import os
+import stat
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,10 +22,14 @@ from dev_workspace_mcp.config import ConfigError, ServerConfig, load_config, par
 from dev_workspace_mcp.setup.filesystem import (
     SetupFilesystemError,
     atomic_write_text,
+    ensure_private_directory,
     read_bounded_utf8,
     reject_unsafe_sensitive_target,
 )
 from dev_workspace_mcp.setup.ownership import managed_fields_for_session
+
+_CONFIG_COMMIT_LOCK_TIMEOUT_SECONDS = 2.0
+_CONFIG_COMMIT_LOCK_POLL_SECONDS = 0.05
 
 
 class SetupConfigError(RuntimeError):
@@ -274,35 +285,130 @@ def prepare_config_update(
     )
 
 
-def commit_config_update(path: Path, plan: ConfigUpdatePlan) -> ConfigCommitResult:
-    """Persist exactly one reviewed plan and accept it only after production reload."""
+def _commit_lock_path(path: Path) -> Path:
+    expanded = path.expanduser()
+    return expanded.with_name(f".{expanded.name}.setup.lock")
 
-    exists, current = _read_existing(path)
-    current_digest = _digest(current) if exists else None
-    if exists != plan.source_exists or current_digest != plan.source_digest:
-        raise SetupConfigError("Configuration changed after review; review the current file again")
 
+def _fcntl_module() -> Any:
     try:
-        result = atomic_write_text(
-            path,
-            plan.candidate_text,
-            mode=0o600,
-            create_backup=exists,
-        )
-    except SetupFilesystemError as exc:
-        raise SetupConfigError("Could not atomically write reviewed configuration") from exc
-
-    try:
-        persisted = read_bounded_utf8(result.path)
-    except SetupFilesystemError as exc:
-        raise SetupConfigError("Could not verify newly written configuration") from exc
-    if persisted != plan.candidate_text:
-        raise SetupConfigError("Written configuration did not match the reviewed candidate")
-
-    try:
-        config = load_config(result.path)
-    except ConfigError as exc:
+        return importlib.import_module("fcntl")
+    except ImportError as exc:
         raise SetupConfigError(
-            "Written configuration failed production reload; backup was preserved"
+            "Safe serialized configuration replacement is unavailable on this platform"
         ) from exc
-    return ConfigCommitResult(path=result.path, backup_path=result.backup_path, config=config)
+
+
+@contextmanager
+def _config_commit_lock(
+    path: Path,
+    *,
+    timeout_seconds: float = _CONFIG_COMMIT_LOCK_TIMEOUT_SECONDS,
+) -> Iterator[Path]:
+    """Serialize setup config commits with a bounded kernel advisory lock.
+
+    Lock identity is the persistent empty sibling ``.<config>.setup.lock``.
+    The file is never unlinked: unlink-on-release can create two independently
+    lockable inodes during contention. Kernel lock ownership is tied to the
+    descriptor and is released automatically on process exit, so crashes do not
+    leave stale lock ownership. Existing config bytes are revalidated only after
+    this lock is held; backup, replacement, byte verification, and production
+    reload remain inside the same critical section.
+    """
+
+    if timeout_seconds < 0:
+        raise SetupConfigError("Configuration commit lock timeout cannot be negative")
+
+    expanded = path.expanduser()
+    try:
+        ensure_private_directory(expanded.parent)
+    except SetupFilesystemError as exc:
+        raise SetupConfigError("Could not prepare the configuration commit lock directory") from exc
+
+    lock_path = _commit_lock_path(expanded)
+    try:
+        reject_unsafe_sensitive_target(lock_path)
+        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(lock_path, flags, 0o600)
+    except (OSError, SetupFilesystemError) as exc:
+        raise SetupConfigError("Could not open the configuration commit lock") from exc
+
+    fcntl = _fcntl_module()
+    acquired = False
+    try:
+        try:
+            lock_stat = os.fstat(fd)
+            if not stat.S_ISREG(lock_stat.st_mode):
+                raise SetupConfigError("Configuration commit lock is not a regular file")
+            os.fchmod(fd, 0o600)
+        except OSError as exc:
+            raise SetupConfigError("Could not validate the configuration commit lock") from exc
+
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except OSError as exc:
+                if exc.errno not in {errno.EACCES, errno.EAGAIN}:
+                    raise SetupConfigError(
+                        "Could not acquire the configuration commit lock"
+                    ) from exc
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise SetupConfigError(
+                        "Timed out waiting for another setup writer; retry after it finishes"
+                    ) from exc
+                time.sleep(min(_CONFIG_COMMIT_LOCK_POLL_SECONDS, remaining))
+
+        yield lock_path
+    finally:
+        if acquired:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+        os.close(fd)
+
+
+def commit_config_update(
+    path: Path,
+    plan: ConfigUpdatePlan,
+    *,
+    lock_timeout_seconds: float = _CONFIG_COMMIT_LOCK_TIMEOUT_SECONDS,
+) -> ConfigCommitResult:
+    """Persist exactly one reviewed plan under serialized final verification."""
+
+    with _config_commit_lock(path, timeout_seconds=lock_timeout_seconds):
+        exists, current = _read_existing(path)
+        current_digest = _digest(current) if exists else None
+        if exists != plan.source_exists or current_digest != plan.source_digest:
+            raise SetupConfigError(
+                "Configuration changed after review; review the current file again"
+            )
+
+        try:
+            result = atomic_write_text(
+                path,
+                plan.candidate_text,
+                mode=0o600,
+                create_backup=exists,
+            )
+        except SetupFilesystemError as exc:
+            raise SetupConfigError("Could not atomically write reviewed configuration") from exc
+
+        try:
+            persisted = read_bounded_utf8(result.path)
+        except SetupFilesystemError as exc:
+            raise SetupConfigError("Could not verify newly written configuration") from exc
+        if persisted != plan.candidate_text:
+            raise SetupConfigError("Written configuration did not match the reviewed candidate")
+
+        try:
+            config = load_config(result.path)
+        except ConfigError as exc:
+            raise SetupConfigError(
+                "Written configuration failed production reload; backup was preserved"
+            ) from exc
+        return ConfigCommitResult(path=result.path, backup_path=result.backup_path, config=config)
