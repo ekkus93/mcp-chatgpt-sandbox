@@ -301,7 +301,9 @@ class WizardStepPanels(Vertical):
             yield Static(id="tunnel-command", markup=False)
             yield Button("Open current Secure MCP Tunnel documentation", id="tunnel-open-docs")
             yield Button("Prepare reviewed tunnel profile", id="tunnel-prepare")
-            yield Button("Create / repair reviewed tunnel profile", id="tunnel-apply", disabled=True)
+            yield Button(
+                "Create / repair reviewed tunnel profile", id="tunnel-apply", disabled=True
+            )
             yield Checkbox(
                 "I completed the ChatGPT custom MCP app/refresh step (USER-ATTESTED)",
                 id="chatgpt-attested",
