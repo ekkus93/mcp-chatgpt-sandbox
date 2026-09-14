@@ -39,7 +39,7 @@ The wizard guides these areas in order:
 
 1. Python/Docker prerequisites.
 2. State DB, audit, SSH-key, and pinned `known_hosts` paths.
-3. Docker image/workspace settings, including an explicit image-build action.
+3. Docker image/workspace settings, including an explicit reviewed image-build action whose bundled context is resolved independently of caller cwd.
 4. Repository registration and read-only Git remote verification.
 5. SSH isolation and optional GitHub API credential-file references.
 6. Git safety policy presets or a complete custom policy.
@@ -47,6 +47,13 @@ The wizard guides these areas in order:
 8. Optional OpenAI Secure MCP Tunnel / ChatGPT guidance.
 9. Exact configuration review and explicit write authorization.
 10. Final machine-verifiable diagnostics.
+
+The Docker build action keeps the exact command as argv through planning and
+renders it shell-safely for review. Preview and execution use the same selected
+image/tag and resolved context. If the bundled context is unavailable or invalid,
+the Docker step reports **ACTION REQUIRED** and no Docker client/build call is
+made. Docker-daemon unavailability remains a degraded/action-required condition
+rather than a fatal configuration error.
 
 The wizard never stores raw private-key/API/tunnel credential material in its
 resumable state. Existing valid configs are edited by preserving settings that
@@ -79,7 +86,8 @@ validation step.
 
 The wizard's reviewed storage action creates/populates an absent or empty
 `known_hosts` file with the production-pinned GitHub host-key set; it does not
-use trust-on-first-use.
+use trust-on-first-use. Setup-owned selected directory leaves are secured to
+`0700`; existing arbitrary parent-directory modes are preserved.
 
 Full repository credential walkthrough:
 [`docs/CONNECTING_A_REPOSITORY.md`](CONNECTING_A_REPOSITORY.md).

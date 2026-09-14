@@ -1,6 +1,6 @@
 # Setup Wizard Hardening TODO
 
-**Status:** Complete  
+**Status:** Complete for the original SWH-001–SWH-007 scope; superseded for later second-order findings by `docs/SETUP_WIZARD_POST_HARDENING_REVIEW_TODO_2026-09-14.md`  
 **Spec:** `docs/SETUP_WIZARD_HARDENING_SPEC.md`  
 **Baseline reviewed:** `340bf1bdef4cc9d4f7aa37ec97bcb13734fcdf8d`  
 **Implementation replay base:** `53f9518ba206efa2aae537983601f196da3374c4`  
@@ -14,6 +14,19 @@ This TODO implements the focused hardening pass defined by
 `docs/SETUP_WIZARD_HARDENING_SPEC.md`. It fixes concrete issues found during the
 post-merge setup wizard code review and captures the setup TUI maintainability
 and UX follow-ups.
+
+> **Historical closure note (2026-09-14):** the checked items below accurately
+> record what PR #64 and its acceptance suite proved at that time; they are not a
+> claim that later, stricter review found no second-order gaps. The post-hardening
+> review subsequently identified and tracks additional requirements for
+> cwd-independent persistent tunnel invocation, Textual Docker error boundaries,
+> argv-faithful Docker previews, independent Git-policy exhaustiveness proof,
+> persisted Custom-policy recovery, serialized config commits, complete
+> presentation-module guards, and explicit recursive permission semantics. Those
+> findings are remediated/qualified under
+> `docs/SETUP_WIZARD_POST_HARDENING_REVIEW_TODO_2026-09-14.md`. In particular,
+> SWHV-006's original exhaustiveness checkbox describes the original test intent;
+> SWPH-004 replaces its self-derived proof with an independent support manifest.
 
 ## Final evidence
 
