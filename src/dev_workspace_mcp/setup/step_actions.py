@@ -555,7 +555,9 @@ class SetupStepActionsMixin:
                 "max_listing_entries": _required_int(
                     host, "#runtime-fs-max-listing-entries", label="Maximum listing entries"
                 ),
-                "max_search_results": _required_int(host, "#runtime-fs-max-search-results", label="Maximum search results"),
+                "max_search_results": _required_int(
+                    host, "#runtime-fs-max-search-results", label="Maximum search results"
+                ),
             },
             execution={
                 "sync_timeout_seconds": _required_int(
