@@ -6,22 +6,31 @@ import re
 import tomllib
 from pathlib import Path
 
+from dev_workspace_mcp.setup.presentation_architecture import PRESENTATION_MODULE_LINE_LIMITS
 from dev_workspace_mcp.setup.step_actions import SetupStepActionsMixin
 
 _REPO_ROOT = Path(__file__).parents[2]
 _SETUP_ROOT = _REPO_ROOT / "src" / "dev_workspace_mcp" / "setup"
-_PRESENTATION_FILES = (
-    _SETUP_ROOT / "app.py",
-    _SETUP_ROOT / "step_actions.py",
-    _SETUP_ROOT / "step_actions_docker.py",
-    _SETUP_ROOT / "step_actions_hardened.py",
-    _SETUP_ROOT / "step_panels.py",
-    _SETUP_ROOT / "git_policy_panel.py",
+_PRESENTATION_FILES = tuple(
+    _SETUP_ROOT / filename for filename in PRESENTATION_MODULE_LINE_LIMITS
 )
 
 
 def _python_sources() -> list[Path]:
     return sorted(_SETUP_ROOT.rglob("*.py"))
+
+
+def _imports_textual(path: Path) -> bool:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(alias.name == "textual" or alias.name.startswith("textual.") for alias in node.names):
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module == "textual" or module.startswith("textual."):
+                return True
+    return False
 
 
 def _line_has_boundary_rationale(path: Path, lineno: int) -> bool:
@@ -84,6 +93,14 @@ def test_wcr_013_setup_has_no_retry_or_sleep_framework() -> None:
         assert "backoff" not in text
 
 
+def test_swphv_007_manifest_covers_every_textual_setup_module() -> None:
+    discovered = {path.name for path in _python_sources() if _imports_textual(path)}
+    assert discovered == set(PRESENTATION_MODULE_LINE_LIMITS), (
+        "Every setup module importing Textual requires an explicit presentation architecture "
+        "disposition and line limit"
+    )
+
+
 def test_wcr_002_presentation_does_not_own_yaml_or_atomic_config_writes() -> None:
     forbidden = (
         "import yaml",
@@ -100,18 +117,7 @@ def test_wcr_002_presentation_does_not_own_yaml_or_atomic_config_writes() -> Non
 
 
 def test_wcr_002_coordinator_growth_requires_explicit_architecture_change() -> None:
-    # The app shell cap intentionally accounts for the integrated PR #64 guided
-    # Git-policy population plus SWF pending-plan state, while keeping each
-    # extracted presentation/action module independently bounded.
-    limits = {
-        "app.py": 800,
-        "step_actions.py": 900,
-        "step_actions_docker.py": 200,
-        "step_actions_hardened.py": 200,
-        "step_panels.py": 450,
-        "git_policy_panel.py": 200,
-    }
-    for filename, limit in limits.items():
+    for filename, limit in PRESENTATION_MODULE_LINE_LIMITS.items():
         lines = (_SETUP_ROOT / filename).read_text(encoding="utf-8").splitlines()
         assert len(lines) <= limit, (
             f"{filename} grew past architecture guard: {len(lines)} > {limit}"
