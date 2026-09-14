@@ -1,6 +1,6 @@
 # Setup Wizard Post-Hardening Review TODO
 
-**Status:** Proposed / implementation not started  
+**Status:** In progress — SWPH-001 complete  
 **Date:** 2026-09-14  
 **Spec:** `docs/SETUP_WIZARD_POST_HARDENING_REVIEW_SPEC_2026-09-14.md`  
 **Reviewed baseline:** `dc47ba58cd8a4e9eb7f32c5b5938a172bcb53d68`  
@@ -34,27 +34,38 @@ This TODO implements the post-hardening remediation defined by `docs/SETUP_WIZAR
 
 **Goal:** persistent Secure MCP Tunnel profiles must launch the intended server regardless of the directory from which setup was invoked.
 
-- [ ] Audit every call to `build_tunnel_profile_plan()` and every source of its project/server invocation.
-- [ ] Remove `Path.cwd()` as the persistent tunnel project's identity.
-- [ ] Define one deterministic installed/source-checkout server invocation strategy.
-- [ ] If source checkout mode uses `uv run --project`, resolve the project root deterministically rather than from cwd.
-- [ ] Ensure installed-distribution invocation works without a repository checkout where supported.
-- [ ] Keep command construction argv-first.
-- [ ] Render persistent shell command text using `shlex.join()` or equivalent.
-- [ ] Preserve config-path quoting for spaces and shell-sensitive characters.
-- [ ] Preserve `--no-browser` behavior.
-- [ ] Ensure unresolved required project/server location is ACTION REQUIRED rather than a persisted broken profile.
-- [ ] Ensure tunnel plan/profile content contains no secrets.
-- [ ] Update `docs/CONNECTING_CHATGPT.md` to match the final invocation model.
+- [x] Audit every call to `build_tunnel_profile_plan()` and every source of its project/server invocation.
+- [x] Remove `Path.cwd()` as the persistent tunnel project's identity.
+- [x] Define one deterministic installed/source-checkout server invocation strategy.
+- [x] Source checkout mode does not persist a project root: the tunnel command reuses the exact active Python environment and invokes `python -m dev_workspace_mcp`.
+- [x] Ensure installed-distribution invocation works without a repository checkout where supported.
+- [x] Keep command construction argv-first.
+- [x] Render persistent shell command text using `shlex.join()` or equivalent.
+- [x] Preserve config-path quoting for spaces and shell-sensitive characters.
+- [x] Preserve `--no-browser` behavior.
+- [x] Ensure unresolved required project/server location is ACTION REQUIRED rather than a persisted broken profile.
+- [x] Ensure tunnel plan/profile content contains no secrets.
+- [x] Update `docs/CONNECTING_CHATGPT.md` to match the final invocation model.
 
 **Validation — SWPHV-001**
 
-- [ ] Unit test: normal server invocation has the intended argv.
-- [ ] Unit test: spaces/shell-sensitive paths round-trip through shell parsing.
-- [ ] TUI/action test: wizard invoked from an unrelated cwd still generates the correct server command.
-- [ ] Test: unresolved source project produces an actionable setup error and does not persist a broken profile.
-- [ ] Test: `--no-browser` still suppresses browser launch.
-- [ ] Test: profile plan remains secret-free.
+- [x] Unit test: normal server invocation has the intended argv.
+- [x] Unit test: spaces/shell-sensitive paths round-trip through shell parsing.
+- [x] TUI/action test: wizard invoked from an unrelated cwd still generates the correct server command.
+- [x] Test: unresolved required runtime produces an actionable setup error and does not persist a broken profile; no source-project identity is persisted by the final strategy.
+- [x] Test: `--no-browser` still suppresses browser launch.
+- [x] Test: profile plan remains secret-free.
+
+**Closure evidence (2026-09-14)**
+
+- Inspected baseline: `c1c1c8f1c0074499bf06eebd6ab51a9e776037fa` (`master`).
+- Implementation head: `f14184f2febc90346e1a3802acaa7cd179d17adf`.
+- Pull request: #68, `fix: make tunnel profiles independent of caller cwd`.
+- Exact-head PR CI: run `34822382893`, job `103906671761` — Ruff format/lint PASS; strict mypy PASS; MCP contract PASS; contract-version gate PASS; docs/TOOLS drift PASS; `1383 passed, 4 warnings`; coverage `88%` (`9129` statements / `1105` misses).
+- Focused SWPHV-001 regression file `tests/setup/test_swph_tunnel_invocation.py`: 4/4 PASS, covering unrelated cwd, module invocation from unrelated cwd, unavailable interpreter fail-closed behavior, shell-sensitive paths, and secret-free plans. Existing no-browser regression remained green in `tests/setup/test_tunnel_and_diagnostics.py`.
+- Guarded merge: PR #68 merged at exact head `f14184f2febc90346e1a3802acaa7cd179d17adf` to merge commit `80aa7d8375f870f0710b70b6c9e858a642e7038e`.
+- Public MCP tool/schema contract unchanged; no `contract_version` bump required.
+- Post-merge `master` CI: run `34849793193`, job `103994533298` on merge SHA `80aa7d8375f870f0710b70b6c9e858a642e7038e` — all gates PASS; `1383 passed, 4 warnings` in `661.07s`; coverage `88%` (`9129` statements / `1105` misses).
 
 ### SWPH-002 — Contain Docker build-context failures inside Textual actions
 
