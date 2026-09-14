@@ -51,8 +51,8 @@ def test_swphv_006_lock_contention_is_bounded_and_never_modifies_config(tmp_path
     fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        with pytest.raises(SetupConfigError, match="Timed out waiting for another setup writer"):
-            commit_config_update(target, plan, lock_timeout_seconds=0.02)
+        with pytest.raises(SetupConfigError, match="locked by another setup writer"):
+            commit_config_update(target, plan)
         assert target.read_bytes() == before
     finally:
         fcntl.flock(fd, fcntl.LOCK_UN)
@@ -71,12 +71,7 @@ def test_swphv_006_source_is_revalidated_after_commit_lock_is_acquired(
     competing = before + b"# competing edit after review\n"
 
     @contextmanager
-    def competing_writer_after_lock(
-        _path: Path,
-        *,
-        timeout_seconds: float,
-    ) -> Iterator[Path]:
-        assert timeout_seconds > 0
+    def competing_writer_after_lock(_path: Path) -> Iterator[Path]:
         target.write_bytes(competing)
         yield target.with_name(f".{target.name}.setup.lock")
 
@@ -133,7 +128,10 @@ def test_swphv_006_concurrent_writers_cannot_both_commit_same_reviewed_source(
     assert outcomes.count("success") == 1
     failures = [outcome for outcome in outcomes if outcome != "success"]
     assert len(failures) == 1
-    assert "changed after review" in failures[0]
+    assert (
+        "changed after review" in failures[0]
+        or "locked by another setup writer" in failures[0]
+    )
 
 
 def test_swphv_006_persistent_lock_file_has_no_secret_payload(tmp_path: Path) -> None:
