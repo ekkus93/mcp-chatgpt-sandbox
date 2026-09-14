@@ -440,6 +440,7 @@ def _github_checks(config: ServerConfig) -> tuple[DiagnosticResult, ...]:
 def _server_construction(config: ServerConfig) -> DiagnosticResult:
     try:
         create_server(config)
+    # WCR-013: this is a diagnostics boundary; construction surprises fail closed.
     except Exception:
         return _result(
             DiagnosticCode.SERVER_CONSTRUCTION,
