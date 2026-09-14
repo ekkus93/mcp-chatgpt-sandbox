@@ -1,4 +1,12 @@
-"""Hardened setup step actions that replace JSON-first Git-policy editing."""
+"""Hardened setup step actions that replace JSON-first Git-policy editing.
+
+SWPH-007 keeps this layer separate deliberately: it is a small, bounded adapter
+that overlays guided Git-policy extraction/validation on the ordinary action
+layer while ``step_actions_docker`` independently owns the reviewed Docker
+boundary. Folding both back into ``step_actions.py`` would increase coordinator
+size and blur those independently guarded responsibilities without removing a
+runtime indirection that affects behavior.
+"""
 
 from __future__ import annotations
 
