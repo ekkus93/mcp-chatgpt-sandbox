@@ -136,13 +136,14 @@ Final commit is serialized with an empty sibling lock file named
 Linux hosts, `setup/config_writer.py` opens that file owner-only and takes an
 exclusive advisory `flock` before the final source re-read.
 
-Lock acquisition is bounded (currently two seconds, polled in short intervals),
-not an indefinite wait. The lock file is intentionally persistent and contains
-no configuration or credential material. Removing an advisory lock file after
-release can create a second independently lockable inode during contention, so
-only the kernel lock state is released. Kernel ownership is tied to the open
-descriptor and is released automatically on process exit/crash; there is no
-stale-lock age or PID-file recovery path.
+Lock acquisition is bounded by one non-blocking attempt rather than an indefinite
+wait. Contention fails immediately with an actionable error; setup does not retry
+or sleep. The lock file is intentionally persistent and contains no configuration
+or credential material. Removing an advisory lock file after release can create a
+second independently lockable inode during contention, so only the kernel lock
+state is released. Kernel ownership is tied to the open descriptor and is released
+automatically on process exit/crash; there is no stale-lock age or PID-file recovery
+path.
 
 While the lock is held, the writer revalidates the reviewed source digest and
 then performs backup creation, same-directory atomic replacement, byte-for-byte
@@ -217,8 +218,9 @@ Manual configuration remains supported. See
 - **A config changed after the review screen.** The writer intentionally rejects
   the stale source digest while holding the setup-writer lock. Prepare a fresh
   review; there is no overwrite bypass.
-- **Another setup writer owns the config lock.** Acquisition is bounded; let the
-  other setup operation finish and review again if the source changed.
+- **Another setup writer owns the config lock.** Acquisition fails immediately;
+  let the other setup operation finish, then retry and review again if the source
+  changed.
 - **Docker is unavailable.** Configuration may continue, but final diagnostics
   remain ACTION REQUIRED for Docker-dependent checks.
 - **The bundled Docker build context is unavailable.** The Docker step remains
