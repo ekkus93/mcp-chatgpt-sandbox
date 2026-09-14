@@ -13,6 +13,7 @@ _SETUP_ROOT = _REPO_ROOT / "src" / "dev_workspace_mcp" / "setup"
 _PRESENTATION_FILES = (
     _SETUP_ROOT / "app.py",
     _SETUP_ROOT / "step_actions.py",
+    _SETUP_ROOT / "step_actions_docker.py",
     _SETUP_ROOT / "step_actions_hardened.py",
     _SETUP_ROOT / "step_panels.py",
     _SETUP_ROOT / "git_policy_panel.py",
@@ -105,6 +106,7 @@ def test_wcr_002_coordinator_growth_requires_explicit_architecture_change() -> N
     limits = {
         "app.py": 800,
         "step_actions.py": 900,
+        "step_actions_docker.py": 200,
         "step_actions_hardened.py": 200,
         "step_panels.py": 450,
         "git_policy_panel.py": 200,
