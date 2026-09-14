@@ -195,5 +195,5 @@ async def test_swf_001_tunnel_control_edits_invalidate_pending_plan(tmp_path: Pa
         app.query_one("#tunnel-id", Input).value = "tun_changed"
         await pilot.pause()
 
-        assert app._pending_tunnel_build_plan is None
+        assert app._pending_tunnel_plan is None
         assert app.query_one("#tunnel-apply", Button).disabled
