@@ -10,14 +10,43 @@ from dev_workspace_mcp.setup.step_actions import SetupStepActionsMixin
 
 _REPO_ROOT = Path(__file__).parents[2]
 _SETUP_ROOT = _REPO_ROOT / "src" / "dev_workspace_mcp" / "setup"
-_PRESENTATION_FILES = (
-    _SETUP_ROOT / "app.py",
-    _SETUP_ROOT / "step_actions.py",
-    _SETUP_ROOT / "step_actions_docker.py",
-    _SETUP_ROOT / "step_actions_hardened.py",
-    _SETUP_ROOT / "step_panels.py",
-    _SETUP_ROOT / "git_policy_panel.py",
-)
+
+# SWPH-007: this manifest is deliberately independent of filesystem discovery.
+# Adding a presentation module requires an explicit architecture disposition and
+# line-budget decision here; removing/renaming one must update the manifest too.
+_PRESENTATION_MODULE_LIMITS = {
+    "app.py": 800,
+    "step_actions.py": 900,
+    "step_actions_docker.py": 200,
+    "step_actions_hardened.py": 200,
+    "step_panels.py": 450,
+    "git_policy_panel.py": 200,
+}
+
+
+def _is_presentation_module(path: Path) -> bool:
+    """Discover setup presentation modules by documented naming convention."""
+
+    name = path.name
+    return (
+        name == "app.py"
+        or name == "step_panels.py"
+        or name.startswith("step_actions")
+        or name.endswith("_panel.py")
+    )
+
+
+def _presentation_files() -> tuple[Path, ...]:
+    discovered = tuple(
+        sorted(path for path in _SETUP_ROOT.glob("*.py") if _is_presentation_module(path))
+    )
+    discovered_names = {path.name for path in discovered}
+    assert discovered_names == set(_PRESENTATION_MODULE_LIMITS), (
+        "setup presentation-module discovery changed without an explicit architecture "
+        f"disposition: discovered={sorted(discovered_names)!r}, "
+        f"manifest={sorted(_PRESENTATION_MODULE_LIMITS)!r}"
+    )
+    return discovered
 
 
 def _python_sources() -> list[Path]:
@@ -84,6 +113,12 @@ def test_wcr_013_setup_has_no_retry_or_sleep_framework() -> None:
         assert "backoff" not in text
 
 
+def test_swphv_007_presentation_manifest_matches_discovery_rule() -> None:
+    # Calling the helper is the contract: an unclassified new presentation
+    # module fails this test until its ownership and line budget are explicit.
+    assert {path.name for path in _presentation_files()} == set(_PRESENTATION_MODULE_LIMITS)
+
+
 def test_wcr_002_presentation_does_not_own_yaml_or_atomic_config_writes() -> None:
     forbidden = (
         "import yaml",
@@ -93,28 +128,23 @@ def test_wcr_002_presentation_does_not_own_yaml_or_atomic_config_writes() -> Non
         "write_text(",
         "write_bytes(",
     )
-    for path in _PRESENTATION_FILES:
+    for path in _presentation_files():
         source = path.read_text(encoding="utf-8")
         for token in forbidden:
-            assert token not in source, f"presentation owns config persistence token {token!r}"
+            assert token not in source, (
+                f"presentation module {path.name} owns config persistence token {token!r}"
+            )
 
 
 def test_wcr_002_coordinator_growth_requires_explicit_architecture_change() -> None:
-    # The app shell cap intentionally accounts for the integrated PR #64 guided
-    # Git-policy population plus SWF pending-plan state, while keeping each
-    # extracted presentation/action module independently bounded.
-    limits = {
-        "app.py": 800,
-        "step_actions.py": 900,
-        "step_actions_docker.py": 200,
-        "step_actions_hardened.py": 200,
-        "step_panels.py": 450,
-        "git_policy_panel.py": 200,
-    }
-    for filename, limit in limits.items():
-        lines = (_SETUP_ROOT / filename).read_text(encoding="utf-8").splitlines()
+    # Limits are intentionally per module rather than one aggregate allowance.
+    # A new module cannot bypass this guard because discovery must first match
+    # the independent manifest above.
+    for path in _presentation_files():
+        limit = _PRESENTATION_MODULE_LIMITS[path.name]
+        lines = path.read_text(encoding="utf-8").splitlines()
         assert len(lines) <= limit, (
-            f"{filename} grew past architecture guard: {len(lines)} > {limit}"
+            f"{path.name} grew past architecture guard: {len(lines)} > {limit}"
         )
 
 
