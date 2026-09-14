@@ -91,8 +91,11 @@ uv run dev-workspace-mcp doctor --config /tmp/dev-workspace-mcp/config.yml
 The setup implementation is intentionally layered:
 
 - `setup/model.py` / `choices.py` — versioned non-secret resumable state;
-- `setup/filesystem.py` — fail-closed bounded reads, backups, atomic writes;
-- `setup/config_writer.py` — reviewed/CAS-bound config planning and commit;
+- `setup/filesystem.py` — fail-closed bounded reads, backups, atomic writes, and
+  explicit leaf-private setup-directory creation;
+- `setup/config_writer.py` — reviewed/CAS-bound config planning, serialized final
+  source verification, backup/atomic replacement, byte verification, and
+  production reload;
 - `setup/host.py`, `docker_setup.py`, `repository_setup.py`,
   `ssh_github_setup.py`, `git_policy_setup.py`, `runtime_setup.py` — independently
   testable domain validation/actions;
@@ -102,15 +105,51 @@ The setup implementation is intentionally layered:
   setup choices;
 - `setup/tunnel.py` — optional Secure MCP Tunnel planning/health;
 - `setup/diagnostics.py` — shared TUI/headless final diagnostic engine;
-- `setup/step_panels.py` — Textual controls for each wizard step;
-- `setup/step_actions.py` / `setup/step_actions_hardened.py` — step-specific
-  Textual event handlers that call the domain modules without owning production
-  config semantics;
-- `setup/app.py` — setup lifecycle, navigation, validation-gating, and state
-  activation shell.
+- `setup/step_panels.py` and `setup/git_policy_panel.py` — Textual controls;
+- `setup/step_actions.py`, `setup/step_actions_docker.py`, and
+  `setup/step_actions_hardened.py` — step-specific Textual actions that call
+  domain modules without owning production config persistence/semantics;
+- `setup/app.py` — setup lifecycle, navigation, validation-gating, resumable-state
+  activation, and widget population shell.
+
+`step_actions_hardened.py` remains separate deliberately: it is a small bounded
+adapter for guided Git-policy extraction/validation, while
+`step_actions_docker.py` independently owns reviewed Docker action boundaries.
+Folding those back into the main action module would increase coordinator size
+without clarifying ownership.
+
+The static architecture suite discovers presentation modules by the documented
+convention (`app.py`, `step_panels.py`, `step_actions*`, and `*_panel.py`) and
+requires that discovery to equal an explicit per-module manifest. New
+presentation modules therefore require an explicit ownership/line-budget
+disposition. Current coordinator caps remain 800 lines for `app.py` and 900 for
+`step_actions.py`; the extracted modules have smaller independent caps.
 
 Production config models remain authoritative. Do not add a second validator to
 the TUI when an existing production helper can be reused or extracted.
+
+### Reviewed config commit serialization
+
+A reviewed configuration plan is bound to the source bytes seen during review.
+Final commit is serialized with an empty sibling lock file named
+`.CONFIG_NAME.setup.lock` (for example, `.config.yml.setup.lock`). On supported
+Linux hosts, `setup/config_writer.py` opens that file owner-only and takes an
+exclusive advisory `flock` before the final source re-read.
+
+Lock acquisition is bounded (currently two seconds, polled in short intervals),
+not an indefinite wait. The lock file is intentionally persistent and contains
+no configuration or credential material. Removing an advisory lock file after
+release can create a second independently lockable inode during contention, so
+only the kernel lock state is released. Kernel ownership is tied to the open
+descriptor and is released automatically on process exit/crash; there is no
+stale-lock age or PID-file recovery path.
+
+While the lock is held, the writer revalidates the reviewed source digest and
+then performs backup creation, same-directory atomic replacement, byte-for-byte
+verification, and production `load_config()` reload before releasing the lock.
+All setup writers use the same lock identity. A platform without the required
+safe advisory-lock primitive fails closed instead of reverting to an
+unserialized writer.
 
 ### Focused setup tests
 
@@ -176,9 +215,15 @@ Manual configuration remains supported. See
   validated. Use that screen's explicit validation/remediation action; changing
   an upstream input intentionally invalidates dependent review/diagnostics.
 - **A config changed after the review screen.** The writer intentionally rejects
-  the stale source digest. Prepare a fresh review; there is no overwrite bypass.
+  the stale source digest while holding the setup-writer lock. Prepare a fresh
+  review; there is no overwrite bypass.
+- **Another setup writer owns the config lock.** Acquisition is bounded; let the
+  other setup operation finish and review again if the source changed.
 - **Docker is unavailable.** Configuration may continue, but final diagnostics
   remain ACTION REQUIRED for Docker-dependent checks.
+- **The bundled Docker build context is unavailable.** The Docker step remains
+  ACTION REQUIRED and the wizard does not invoke a build. Repair/reinstall the
+  package/source checkout or build an appropriate image manually.
 - **A setup-state file is corrupt.** Use Repair or Start fresh. Start fresh resets
   wizard progress; it does not delete the production config, repositories,
   credentials, database contents, Docker volumes, or workspaces.

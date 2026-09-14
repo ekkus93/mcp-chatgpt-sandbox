@@ -52,11 +52,20 @@ Before a config write, the wizard:
 4. validates and serializes the exact candidate;
 5. shows a structured review summary;
 6. binds that review to the digest/existence of the source file;
-7. refuses if the source changes before commit;
-8. creates a timestamped backup when replacing a file;
-9. writes atomically with restrictive permissions;
-10. byte-verifies the persisted candidate;
-11. reloads it through production `load_config()` before reporting success.
+7. acquires the bounded sibling setup-writer lock and rechecks source identity while the lock is held;
+8. refuses if the source changed after review or another setup writer cannot be serialized safely;
+9. creates a timestamped backup when replacing a file;
+10. writes atomically with restrictive permissions;
+11. byte-verifies the persisted candidate;
+12. reloads it through production `load_config()` before reporting success.
+
+The serialization lock is an empty owner-only sibling named
+`.CONFIG_NAME.setup.lock` (for example, `.config.yml.setup.lock`). It contains no
+configuration or credential material and remains on disk between runs. Kernel
+advisory-lock ownership is tied to the open descriptor, so process exit/crash
+releases ownership without a stale-PID or stale-age recovery protocol. Lock
+acquisition is bounded; failure is actionable and does not modify the reviewed
+config.
 
 Raw private keys, GitHub tokens, passwords, and tunnel runtime credentials are
 not fields in resumable setup state. Credential **paths** and non-secret tunnel
@@ -83,6 +92,14 @@ creation action can create reviewed parent directories and, when the selected
 `known_hosts` file is absent or empty, populate it with the same production-
 pinned GitHub host-key set used by the loader. It does not use trust-on-first-use.
 
+Setup directory creation uses **leaf-private** semantics. When a selected
+setup-owned directory is missing, that selected leaf is explicitly secured to
+`0700`. Existing arbitrary ancestors are never chmodded as a side effect of a
+setup write. If `parents=True` must create intermediate ancestors, those
+intermediate components follow normal filesystem/umask semantics and are outside
+the private-leaf guarantee. Failure to secure a leaf that setup promises to keep
+private is a hard setup error.
+
 ## Block-by-block summary
 
 - **`repositories`** (§7) — explicit repository registrations: stable `id`,
@@ -93,8 +110,12 @@ pinned GitHub host-key set used by the loader. It does not use trust-on-first-us
   may be auto-discovered. Discovery does not replace remote-identity or SSH
   policy.
 - **`docker`** (§9) — `default_image` and `workspace_path` (`/workspace` by
-  default). The wizard can inspect the selected image and explicitly run the
-  project's reviewed default-image build action.
+  default). The wizard resolves the packaged/repository-bundled default image
+  build context independently of the caller's current working directory, shows a
+  shell-safe preview of the exact build argv, and builds only after explicit
+  approval. If that bundled context cannot be resolved or validated, the Docker
+  step remains **ACTION REQUIRED** and no Docker build/client mutation is
+  attempted.
 - **`workspace`** (§8.1) — `idle_stop_after`, e.g. `4h` or `never`, controlling
   idle stop for persistent workspaces.
 - **`container`** (§5.3, §18.2) — `user` (`host` default or `root`), `sudo`, and
@@ -116,7 +137,11 @@ pinned GitHub host-key set used by the loader. It does not use trust-on-first-us
   Recommended preset equal to current production defaults, a stricter
   Conservative preset, and Custom mode that covers every current production
   `GitPolicyConfig` field. Presets materialize to the production model; they are
-  not a parallel runtime policy layer.
+  not a parallel runtime policy layer. If resumable Custom state is no longer
+  compatible with the current production schema, activation remains interactive,
+  the Git-policy step becomes action-required, the stored payload is not silently
+  rewritten to defaults, and the operator can recover with a preset or validated
+  Custom values.
 - **`resources`** (§26) — optional Docker CPU/memory/PID limits. Unset means no
   daemon-imposed limit.
 - **`audit`** (§24) — `enabled` (default `true`) and required output `path`.

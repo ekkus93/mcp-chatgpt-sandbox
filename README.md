@@ -119,7 +119,10 @@ credential references, Git safety policy, optional advanced limits, and an
 optional ChatGPT Secure MCP Tunnel profile. It shows the exact configuration
 changes before writing, creates timestamped backups when replacing an existing
 config, reloads the result through the production config loader, and finishes
-with machine-verifiable diagnostics.
+with machine-verifiable diagnostics. Docker image builds are separately
+reviewed/apply actions: the wizard resolves the bundled default build context
+independently of the caller's current directory and, if that context is missing,
+reports **ACTION REQUIRED** without invoking Docker.
 
 The default config path is:
 
@@ -201,8 +204,12 @@ uv run dev-workspace-mcp setup --config /path/to/config.yml
 
 The wizard preserves valid settings it did not review, persists only non-secret
 resume state, and keeps raw private keys/API/runtime credentials out of both the
-config and setup-state file. Manual YAML authoring remains supported for
-recovery, automation, and operators who deliberately prefer it.
+config and setup-state file. Reviewed config commits are serialized across the
+final source check and atomic replacement so a competing setup writer cannot
+silently overwrite the same reviewed source. Existing arbitrary parent
+directories are never chmodded merely because setup writes a file inside them.
+Manual YAML authoring remains supported for recovery, automation, and operators
+who deliberately prefer it.
 
 Required top-level/operator fields are:
 
@@ -254,8 +261,11 @@ and `2` for a mandatory hard failure.
 
 ## Running the app
 
-The wizard can build the project default workspace image explicitly. For manual
-setup, build it yourself:
+The wizard can build the project default workspace image explicitly. It keeps
+the exact Docker build as argv until shell-safe preview rendering and validates
+the same bundled context before the approved build. If the bundled context is
+unavailable, the action stays **ACTION REQUIRED** and no Docker build is run.
+For manual setup, build it yourself from a source checkout:
 
 ```bash
 docker build -t mcp-dev-ubuntu:24.04 docker/default/
