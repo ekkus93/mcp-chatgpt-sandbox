@@ -7,7 +7,6 @@ import hashlib
 import importlib
 import os
 import stat
-import time
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from copy import deepcopy
@@ -27,9 +26,6 @@ from dev_workspace_mcp.setup.filesystem import (
     reject_unsafe_sensitive_target,
 )
 from dev_workspace_mcp.setup.ownership import managed_fields_for_session
-
-_CONFIG_COMMIT_LOCK_TIMEOUT_SECONDS = 2.0
-_CONFIG_COMMIT_LOCK_POLL_SECONDS = 0.05
 
 
 class SetupConfigError(RuntimeError):
@@ -300,24 +296,18 @@ def _fcntl_module() -> Any:
 
 
 @contextmanager
-def _config_commit_lock(
-    path: Path,
-    *,
-    timeout_seconds: float = _CONFIG_COMMIT_LOCK_TIMEOUT_SECONDS,
-) -> Iterator[Path]:
-    """Serialize setup config commits with a bounded kernel advisory lock.
+def _config_commit_lock(path: Path) -> Iterator[Path]:
+    """Serialize setup config commits with a non-blocking kernel advisory lock.
 
     Lock identity is the persistent empty sibling ``.<config>.setup.lock``.
     The file is never unlinked: unlink-on-release can create two independently
-    lockable inodes during contention. Kernel lock ownership is tied to the
-    descriptor and is released automatically on process exit, so crashes do not
-    leave stale lock ownership. Existing config bytes are revalidated only after
-    this lock is held; backup, replacement, byte verification, and production
-    reload remain inside the same critical section.
+    lockable inodes during contention. Acquisition is one non-blocking attempt,
+    so contention is bounded without retry/sleep behavior. Kernel lock ownership
+    is tied to the descriptor and is released automatically on process exit, so
+    crashes do not leave stale lock ownership. Existing config bytes are
+    revalidated only after this lock is held; backup, replacement, byte
+    verification, and production reload remain inside the same critical section.
     """
-
-    if timeout_seconds < 0:
-        raise SetupConfigError("Configuration commit lock timeout cannot be negative")
 
     expanded = path.expanduser()
     try:
@@ -344,23 +334,15 @@ def _config_commit_lock(
         except OSError as exc:
             raise SetupConfigError("Could not validate the configuration commit lock") from exc
 
-        deadline = time.monotonic() + timeout_seconds
-        while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                acquired = True
-                break
-            except OSError as exc:
-                if exc.errno not in {errno.EACCES, errno.EAGAIN}:
-                    raise SetupConfigError(
-                        "Could not acquire the configuration commit lock"
-                    ) from exc
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise SetupConfigError(
-                        "Timed out waiting for another setup writer; retry after it finishes"
-                    ) from exc
-                time.sleep(min(_CONFIG_COMMIT_LOCK_POLL_SECONDS, remaining))
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            acquired = True
+        except OSError as exc:
+            if exc.errno in {errno.EACCES, errno.EAGAIN}:
+                raise SetupConfigError(
+                    "Configuration is locked by another setup writer; retry after it finishes"
+                ) from exc
+            raise SetupConfigError("Could not acquire the configuration commit lock") from exc
 
         yield lock_path
     finally:
@@ -370,15 +352,10 @@ def _config_commit_lock(
         os.close(fd)
 
 
-def commit_config_update(
-    path: Path,
-    plan: ConfigUpdatePlan,
-    *,
-    lock_timeout_seconds: float = _CONFIG_COMMIT_LOCK_TIMEOUT_SECONDS,
-) -> ConfigCommitResult:
+def commit_config_update(path: Path, plan: ConfigUpdatePlan) -> ConfigCommitResult:
     """Persist exactly one reviewed plan under serialized final verification."""
 
-    with _config_commit_lock(path, timeout_seconds=lock_timeout_seconds):
+    with _config_commit_lock(path):
         exists, current = _read_existing(path)
         current_digest = _digest(current) if exists else None
         if exists != plan.source_exists or current_digest != plan.source_digest:
