@@ -73,12 +73,68 @@ def test_wizv_002_secret_bearing_state_fields_are_rejected() -> None:
         SetupState.from_dict(payload)
 
 
+@pytest.mark.parametrize(
+    "secret_field",
+    [
+        "api_key",
+        "token",
+        "secret",
+        "password",
+        "private_key",
+        "credential",
+        "runtime_key",
+    ],
+)
+def test_swf_005_secret_shaped_state_fields_are_rejected(secret_field: str) -> None:
+    payload = SetupState().to_dict()
+    payload["choices"] = {**payload["choices"], secret_field: "raw-secret-value"}
+    with pytest.raises(ValueError, match="secret-bearing"):
+        SetupState.from_dict(payload)
+
+
+def test_swf_005_secret_directory_path_references_remain_allowed() -> None:
+    payload = SetupState().to_dict()
+    payload["choices"] = {
+        **payload["choices"],
+        "github_auth_file": "/run/secrets/github-token",
+        "tunnel_id": "tun_abc123_non_secret_identifier",
+        "tunnel_profile": "chatgpt-sandbox-prod",
+    }
+    state = SetupState.from_dict(payload)
+    assert state.choices.github_auth_file == "/run/secrets/github-token"
+    assert state.choices.tunnel_id == "tun_abc123_non_secret_identifier"
+    assert state.choices.tunnel_profile == "chatgpt-sandbox-prod"
+
+
 def test_wizv_002_duplicate_or_conflicting_repository_state_is_rejected() -> None:
     repo = _repository().to_dict()
     base = SetupState().to_dict()
     base["repositories"] = [repo, repo]
     with pytest.raises(ValueError, match="duplicate"):
         SetupState.from_dict(base)
+
+
+def test_swf_002_duplicate_repository_paths_are_rejected() -> None:
+    base = SetupState().to_dict()
+    base["repositories"] = [
+        {"id": "one", "path": "/srv/repos/example", "github": "example/example"},
+        {"id": "two", "path": "/srv/repos/example", "github": "example/other"},
+    ]
+    with pytest.raises(ValueError, match="duplicate paths"):
+        SetupState.from_dict(base)
+
+
+def test_swf_002_duplicate_github_identities_are_allowed_with_distinct_ids_and_paths() -> None:
+    base = SetupState().to_dict()
+    base["repositories"] = [
+        {"id": "one", "path": "/srv/repos/example-one", "github": "example/example"},
+        {"id": "two", "path": "/srv/repos/example-two", "github": "example/example"},
+    ]
+    state = SetupState.from_dict(base)
+    assert [repository.github for repository in state.repositories] == [
+        "example/example",
+        "example/example",
+    ]
 
 
 def test_wizv_002_runtime_secret_never_reaches_serialized_state() -> None:

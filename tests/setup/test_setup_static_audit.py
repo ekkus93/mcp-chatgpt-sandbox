@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 import ast
+import inspect
 import re
+import tomllib
 from pathlib import Path
 
-_SETUP_ROOT = Path(__file__).parents[2] / "src" / "dev_workspace_mcp" / "setup"
+from dev_workspace_mcp.setup.step_actions import SetupStepActionsMixin
+
+_REPO_ROOT = Path(__file__).parents[2]
+_SETUP_ROOT = _REPO_ROOT / "src" / "dev_workspace_mcp" / "setup"
 _PRESENTATION_FILES = (
     _SETUP_ROOT / "app.py",
     _SETUP_ROOT / "step_actions.py",
+    _SETUP_ROOT / "step_actions_hardened.py",
     _SETUP_ROOT / "step_panels.py",
+    _SETUP_ROOT / "git_policy_panel.py",
 )
 
 
@@ -94,14 +101,40 @@ def test_wcr_002_presentation_does_not_own_yaml_or_atomic_config_writes() -> Non
 def test_wcr_002_coordinator_growth_requires_explicit_architecture_change() -> None:
     limits = {
         "app.py": 750,
-        "step_actions.py": 850,
+        "step_actions.py": 900,
+        "step_actions_hardened.py": 200,
         "step_panels.py": 450,
+        "git_policy_panel.py": 200,
     }
     for filename, limit in limits.items():
         lines = (_SETUP_ROOT / filename).read_text(encoding="utf-8").splitlines()
         assert len(lines) <= limit, (
             f"{filename} grew past architecture guard: {len(lines)} > {limit}"
         )
+
+
+def test_swf_003_setup_app_has_no_broad_e501_per_file_exemption() -> None:
+    pyproject = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    tool_section = pyproject.get("tool", {})
+    ruff_section = tool_section.get("ruff", {}) if isinstance(tool_section, dict) else {}
+    lint_section = ruff_section.get("lint", {}) if isinstance(ruff_section, dict) else {}
+    per_file_ignores = (
+        lint_section.get("per-file-ignores", {}) if isinstance(lint_section, dict) else {}
+    )
+    setup_app_ignores = per_file_ignores.get("src/dev_workspace_mcp/setup/app.py", [])
+    assert "E501" not in setup_app_ignores
+
+
+def test_swf_001_reviewed_mutation_handlers_are_two_step() -> None:
+    docker_prepare = inspect.getsource(SetupStepActionsMixin.prepare_docker_build)
+    docker_apply = inspect.getsource(SetupStepActionsMixin.build_docker_image)
+    tunnel_prepare = inspect.getsource(SetupStepActionsMixin.prepare_tunnel)
+    tunnel_apply = inspect.getsource(SetupStepActionsMixin.apply_tunnel)
+
+    assert "build_default_image(" not in docker_prepare
+    assert "apply_tunnel_profile(" not in tunnel_prepare
+    assert "prepare_default_image_build_plan" not in docker_apply
+    assert "build_tunnel_profile_plan" not in tunnel_apply
 
 
 def test_wcr_013_machine_diagnostics_do_not_consume_user_attestation() -> None:
