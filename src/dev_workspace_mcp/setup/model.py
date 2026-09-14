@@ -28,6 +28,7 @@ _FORBIDDEN_STATE_KEY_FRAGMENTS = (
     "password",
     "private_key",
     "credential",
+    "runtime_key",
 )
 
 
@@ -157,13 +158,10 @@ def _validate_repositories(values: object) -> tuple[SetupRepositoryState, ...]:
     repositories = tuple(SetupRepositoryState.from_dict(value) for value in values)
     ids = [repository.id for repository in repositories]
     paths = [str(Path(repository.path)) for repository in repositories]
-    github = [repository.github.casefold() for repository in repositories]
     if len(ids) != len(set(ids)):
         raise ValueError("setup state repositories contain duplicate ids")
     if len(paths) != len(set(paths)):
         raise ValueError("setup state repositories contain duplicate paths")
-    if len(github) != len(set(github)):
-        raise ValueError("setup state repositories contain duplicate GitHub identities")
     return repositories
 
 
