@@ -55,12 +55,14 @@ def reject_unsafe_sensitive_target(path: Path) -> None:
 
 
 def ensure_private_directory(path: Path) -> Path:
-    """Create or validate a setup-owned directory.
+    """Create or validate one setup-owned leaf directory.
 
-    Missing directories are created owner-only. Existing directories are
-    inspected but not chmodded: callers may point setup/config writes at an
-    operator-owned parent, and a write inside that parent must not silently
-    change the parent's sharing policy.
+    SWPH-008 chooses *leaf-private* semantics.  If ``path`` is missing, the
+    selected leaf is explicitly secured to ``0700``.  Any intermediate
+    ancestors created by ``mkdir(parents=True)`` follow the process umask and
+    are outside this helper's privacy guarantee.  Pre-existing arbitrary
+    ancestors are never chmodded.  Failure to secure the selected leaf fails
+    closed.
     """
 
     expanded = path.expanduser()
