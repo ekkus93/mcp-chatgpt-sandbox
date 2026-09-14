@@ -17,7 +17,30 @@ REMOTE_PROTECTION_VALUES = ("off", "warn", "deny")
 REMOTE_PROTECTION_CHECK_VALUES = ("force_push", "deletion")
 ALLOWED_URL_SCHEME_VALUES = ("ssh", "https")
 
-GIT_POLICY_GUIDED_FIELDS = frozenset(GitPolicyConfig.model_fields)
+# SWPH-004: this is intentionally independent of GitPolicyConfig.model_fields.
+# Adding or removing a production field must therefore require an explicit guided
+# editor support decision instead of silently changing the setup coverage claim.
+GIT_POLICY_GUIDED_CONTROLS: dict[str, tuple[str, ...]] = {
+    "push": ("git-policy-push-allow",),
+    "default_branch_push": ("git-policy-default-branch-push",),
+    "force_push": ("git-policy-force-push",),
+    "force_with_lease": ("git-policy-force-with-lease",),
+    "delete_remote_branch": ("git-policy-delete-remote-branch",),
+    "delete_remote_tag": ("git-policy-delete-remote-tag",),
+    "default_branch_commit": ("git-policy-default-branch-commit-allow",),
+    "amend_published": ("git-policy-amend-published",),
+    "pull_strategy": ("git-policy-pull-strategy",),
+    "require_remote_protection": ("git-policy-remote-protection",),
+    "remote_protection_checks": (
+        "git-policy-check-force-push",
+        "git-policy-check-deletion",
+    ),
+    "allowed_url_schemes": (
+        "git-policy-url-ssh",
+        "git-policy-url-https",
+    ),
+}
+GIT_POLICY_GUIDED_FIELDS = frozenset(GIT_POLICY_GUIDED_CONTROLS)
 
 
 class SetupGitPolicyFormError(ValueError):
