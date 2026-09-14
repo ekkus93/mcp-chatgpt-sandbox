@@ -22,10 +22,7 @@ from dev_workspace_mcp.setup.filesystem import (
     backup_regular_file,
     reject_unsafe_sensitive_target,
 )
-from dev_workspace_mcp.setup.git_policy_form import (
-    GitPolicyEditorValues,
-    SetupGitPolicyFormError,
-)
+from dev_workspace_mcp.setup.git_policy_form import GitPolicyEditorValues, SetupGitPolicyFormError
 from dev_workspace_mcp.setup.materialize import (
     fresh_choices,
     state_from_existing_config,
