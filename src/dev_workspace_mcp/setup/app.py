@@ -22,7 +22,7 @@ from dev_workspace_mcp.setup.filesystem import (
     backup_regular_file,
     reject_unsafe_sensitive_target,
 )
-from dev_workspace_mcp.setup.git_policy_form import GitPolicyEditorValues
+from dev_workspace_mcp.setup.git_policy_form import GitPolicyEditorValues, SetupGitPolicyFormError
 from dev_workspace_mcp.setup.materialize import (
     fresh_choices,
     state_from_existing_config,
@@ -394,11 +394,40 @@ class SetupWizardApp(SetupStepActionsMixin, App[int]):
     def _display_runtime_value(value: object) -> str:
         return "" if value is None else str(value)
 
+    def _git_policy_editor_values_for_population(self) -> GitPolicyEditorValues:
+        choices = self.state.choices
+        custom = choices.git_policy_custom if choices.git_policy_preset == "custom" else None
+        try:
+            return GitPolicyEditorValues.from_mapping(custom)
+        except SetupGitPolicyFormError:
+            candidate = invalidate_from_step(self.state, SetupStep.GIT_POLICY)
+            git_policy_index = next(
+                index
+                for index, definition in enumerate(STEPS)
+                if definition.step is SetupStep.GIT_POLICY
+            )
+            if self._current_index >= git_policy_index:
+                self._current_index = git_policy_index
+                candidate.current_step = SetupStep.GIT_POLICY
+            self.state = candidate
+            message = (
+                "Persisted custom Git policy is incompatible with the current production schema. "
+                "The stored values were left unchanged and were not applied to the editor. "
+                "Select Recommended or Conservative, or review/re-enter the visible Custom "
+                "values and validate them to repair this step."
+            )
+            self._validation[SetupStep.GIT_POLICY] = False
+            self._validation_messages[SetupStep.GIT_POLICY] = message
+            self.query_one("#git-policy-message", Static).update(message)
+            self._save(candidate)
+            return GitPolicyEditorValues.from_mapping(None)
+
     def _populate_widgets(self) -> None:
         self._populating = True
         try:
             choices = self.state.choices
-            git_policy_values = GitPolicyEditorValues.from_mapping(choices.git_policy_custom)
+            git_policy_values = self._git_policy_editor_values_for_population()
+            choices = self.state.choices
             input_values = {
                 "#storage-state-db": choices.state_db_path or "",
                 "#storage-audit": choices.audit_path or "",
