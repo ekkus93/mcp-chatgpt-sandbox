@@ -6,7 +6,13 @@ from pathlib import Path
 import pytest
 
 from dev_workspace_mcp.config import GitPolicyConfig
-from dev_workspace_mcp.setup.docker_setup import DockerSetupChoices, SetupDockerError
+from dev_workspace_mcp.setup.docker_setup import (
+    DockerSetupChoices,
+    SetupDockerError,
+    build_default_image,
+    bundled_default_image_build_context,
+    default_image_build_command,
+)
 from dev_workspace_mcp.setup.git_policy_setup import (
     GIT_POLICY_UI_FIELDS,
     GitPolicyPreset,
@@ -86,6 +92,40 @@ def _repo(path: Path, *, repository_id: str = "example") -> SetupRepositoryState
             "ssh_key": f"{repository_id}.ed25519",
         }
     )
+
+
+def test_swhv_004_default_docker_build_context_is_independent_of_cwd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = Path.cwd()
+    monkeypatch.chdir(tmp_path)
+
+    context = bundled_default_image_build_context()
+
+    assert Path.cwd() != original
+    assert context.name == "default"
+    assert context.parent.name == "docker"
+    command = default_image_build_command("mcp-dev-test:24.04")
+    assert command[-1] == str(context)
+
+
+def test_swhv_004_absent_docker_build_context_is_actionable_without_invoking_docker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Images:
+        def build(self, **_: object) -> None:
+            raise AssertionError("Docker build should not run without a build context")
+
+    class Client:
+        images = Images()
+
+    monkeypatch.setattr(
+        "dev_workspace_mcp.setup.docker_setup.bundled_default_image_build_context",
+        lambda: (_ for _ in ()).throw(SetupDockerError("missing context")),
+    )
+    with pytest.raises(SetupDockerError, match="missing context"):
+        build_default_image(Client(), image="mcp-dev-test:24.04", approved=True)
 
 
 def test_wizv_010_temporary_git_repository_verifies_remote_identity(tmp_path: Path) -> None:

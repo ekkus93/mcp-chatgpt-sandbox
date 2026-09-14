@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from dataclasses import dataclass
 from enum import StrEnum
@@ -22,6 +21,7 @@ from dev_workspace_mcp.setup.filesystem import (
     backup_regular_file,
     reject_unsafe_sensitive_target,
 )
+from dev_workspace_mcp.setup.git_policy_form import GitPolicyEditorValues
 from dev_workspace_mcp.setup.materialize import (
     fresh_choices,
     state_from_existing_config,
@@ -39,7 +39,7 @@ from dev_workspace_mcp.setup.model import (
     save_setup_state,
 )
 from dev_workspace_mcp.setup.runtime_setup import runtime_editor_values
-from dev_workspace_mcp.setup.step_actions import SetupStepActionsMixin
+from dev_workspace_mcp.setup.step_actions_hardened import SetupStepActionsMixin
 from dev_workspace_mcp.setup.step_panels import WizardStepPanels
 
 
@@ -382,6 +382,7 @@ class SetupWizardApp(SetupStepActionsMixin, App[int]):
         self._populating = True
         try:
             choices = self.state.choices
+            git_policy_values = GitPolicyEditorValues.from_mapping(choices.git_policy_custom)
             input_values = {
                 "#storage-state-db": choices.state_db_path or "",
                 "#storage-audit": choices.audit_path or "",
@@ -394,7 +395,6 @@ class SetupWizardApp(SetupStepActionsMixin, App[int]):
                 "#ssh-shared-key": choices.shared_key or "",
                 "#github-auth-file": choices.github_auth_file or "",
                 "#github-api-base-url": choices.github_api_base_url,
-                "#git-policy-custom": json.dumps(choices.git_policy_custom or {}, sort_keys=True),
                 "#tunnel-id": choices.tunnel_id or "",
                 "#tunnel-profile": choices.tunnel_profile,
             }
@@ -460,6 +460,14 @@ class SetupWizardApp(SetupStepActionsMixin, App[int]):
                 "#ssh-scope": choices.ssh_scope,
                 "#github-api-auth": choices.github_api_auth,
                 "#git-policy-preset": choices.git_policy_preset,
+                "#git-policy-default-branch-push": git_policy_values.default_branch_push,
+                "#git-policy-force-push": git_policy_values.force_push,
+                "#git-policy-force-with-lease": git_policy_values.force_with_lease,
+                "#git-policy-delete-remote-branch": git_policy_values.delete_remote_branch,
+                "#git-policy-delete-remote-tag": git_policy_values.delete_remote_tag,
+                "#git-policy-amend-published": git_policy_values.amend_published,
+                "#git-policy-pull-strategy": git_policy_values.pull_strategy,
+                "#git-policy-remote-protection": git_policy_values.require_remote_protection,
                 "#runtime-logging-level": self._select_value(
                     self._runtime_section(runtime_values, "logging")["level"],
                     label="logging level",
@@ -468,6 +476,24 @@ class SetupWizardApp(SetupStepActionsMixin, App[int]):
             for selector, value in select_values.items():
                 self.query_one(selector, Select).value = value
 
+            self.query_one("#git-policy-push-allow", Checkbox).value = (
+                git_policy_values.push == "allow"
+            )
+            self.query_one("#git-policy-default-branch-commit-allow", Checkbox).value = (
+                git_policy_values.default_branch_commit == "allow"
+            )
+            self.query_one("#git-policy-check-force-push", Checkbox).value = (
+                "force_push" in git_policy_values.remote_protection_checks
+            )
+            self.query_one("#git-policy-check-deletion", Checkbox).value = (
+                "deletion" in git_policy_values.remote_protection_checks
+            )
+            self.query_one("#git-policy-url-ssh", Checkbox).value = (
+                "ssh" in git_policy_values.allowed_url_schemes
+            )
+            self.query_one("#git-policy-url-https", Checkbox).value = (
+                "https" in git_policy_values.allowed_url_schemes
+            )
             edit_runtime = bool(choices.runtime_overrides) or self.advanced
             self.query_one("#runtime-edit", Checkbox).value = edit_runtime
             self.query_one("#runtime-advanced-fields", Vertical).display = edit_runtime

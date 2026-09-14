@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import json
-
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Button, Checkbox, DataTable, Input, Label, Select, Static
 
-from dev_workspace_mcp.setup.git_policy_setup import recommended_policy
+from dev_workspace_mcp.setup.git_policy_panel import git_policy_panel
 from dev_workspace_mcp.setup.runtime_setup import production_runtime_defaults
 
 
@@ -173,39 +171,7 @@ class WizardStepPanels(Vertical):
             )
             yield Static(id="credential-message", markup=False)
 
-        with Vertical(id="panel-git_safety_policy", classes="step-panel"):
-            yield Static(
-                "Recommended uses the production safe defaults. Conservative denies ordinary push, "
-                "default-branch commit/push, branch deletion, and requires verified remote "
-                "protection. Custom must specify every current GitPolicyConfig field as JSON.",
-                markup=False,
-            )
-            yield Static(
-                "Consequences: force push rewrites remote history; force-with-lease is safer but "
-                "still rewrites published history; branch/tag deletion removes remote refs; amend "
-                "rewrites a published commit; default-branch controls protect the main line; "
-                "ff_only pull refuses implicit merge/rebase; remote protection off/warn/deny "
-                "controls how uncertainty affects mutating Git operations.",
-                markup=False,
-            )
-            yield Label("Safety preset")
-            yield Select(
-                (
-                    ("Recommended", "recommended"),
-                    ("Conservative", "conservative"),
-                    ("Custom", "custom"),
-                ),
-                id="git-policy-preset",
-                value="recommended",
-                allow_blank=False,
-            )
-            yield Label("Custom policy JSON (used only when preset=custom)")
-            yield Input(
-                id="git-policy-custom",
-                value=json.dumps(recommended_policy().model_dump(mode="json")),
-            )
-            yield Button("Validate Git safety policy", id="validate-git-policy", variant="primary")
-            yield Static(id="git-policy-message", markup=False)
+        yield from git_policy_panel()
 
         runtime_defaults = production_runtime_defaults()
         filesystem = runtime_defaults["filesystem"]
