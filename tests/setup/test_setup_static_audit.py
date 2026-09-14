@@ -13,9 +13,7 @@ from dev_workspace_mcp.setup.step_actions import SetupStepActionsMixin
 
 _REPO_ROOT = Path(__file__).parents[2]
 _SETUP_ROOT = _REPO_ROOT / "src" / "dev_workspace_mcp" / "setup"
-_PRESENTATION_FILES = tuple(
-    _SETUP_ROOT / filename for filename in PRESENTATION_MODULE_LINE_LIMITS
-)
+_PRESENTATION_FILES = tuple(_SETUP_ROOT / filename for filename in PRESENTATION_MODULE_LINE_LIMITS)
 
 
 def _python_sources() -> list[Path]:
@@ -27,8 +25,7 @@ def _imports_textual(path: Path) -> bool:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             if any(
-                alias.name == "textual" or alias.name.startswith("textual.")
-                for alias in node.names
+                alias.name == "textual" or alias.name.startswith("textual.") for alias in node.names
             ):
                 return True
         elif isinstance(node, ast.ImportFrom):
