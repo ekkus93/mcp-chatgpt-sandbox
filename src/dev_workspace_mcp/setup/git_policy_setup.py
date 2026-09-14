@@ -7,8 +7,9 @@ from enum import StrEnum
 from pydantic import ValidationError
 
 from dev_workspace_mcp.config import GitPolicyConfig
+from dev_workspace_mcp.setup.git_policy_form import GIT_POLICY_GUIDED_FIELDS
 
-GIT_POLICY_UI_FIELDS = frozenset(GitPolicyConfig.model_fields)
+GIT_POLICY_UI_FIELDS = GIT_POLICY_GUIDED_FIELDS
 
 
 class GitPolicyPreset(StrEnum):
