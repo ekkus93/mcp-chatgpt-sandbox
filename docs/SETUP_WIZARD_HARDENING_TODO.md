@@ -1,13 +1,38 @@
 # Setup Wizard Hardening TODO
 
-**Status:** Implementation in progress  
+**Status:** Complete  
 **Spec:** `docs/SETUP_WIZARD_HARDENING_SPEC.md`  
 **Baseline reviewed:** `340bf1bdef4cc9d4f7aa37ec97bcb13734fcdf8d`  
-**Current replay base:** `53f9518ba206efa2aae537983601f196da3374c4`  
+**Implementation replay base:** `53f9518ba206efa2aae537983601f196da3374c4`  
+**Implementation PR:** #64 — `fix: harden setup wizard paths and git policy UI`  
+**Implementation source head:** `c3b2ea67a299aa90bcae7b47b523343ae0a3dfa4`  
+**Merged master:** `ce0b291c316dc6b654916cd49f463bae4f60c2c5`  
 **Task series:** `SWH-001` through `SWH-007`  
 **Validation series:** `SWHV-*`
 
-This TODO implements the focused hardening pass defined by `docs/SETUP_WIZARD_HARDENING_SPEC.md`. It fixes concrete issues found during the post-merge setup wizard code review and captures the setup TUI maintainability/UX follow-ups.
+This TODO implements the focused hardening pass defined by
+`docs/SETUP_WIZARD_HARDENING_SPEC.md`. It fixes concrete issues found during the
+post-merge setup wizard code review and captures the setup TUI maintainability
+and UX follow-ups.
+
+## Final evidence
+
+- [x] PR #64 merged through the exact-head guarded Ralph Bridge path.
+- [x] PR #64 source head: `c3b2ea67a299aa90bcae7b47b523343ae0a3dfa4`.
+- [x] PR #64 merge commit on `master`: `ce0b291c316dc6b654916cd49f463bae4f60c2c5`.
+- [x] Pre-merge CI run `34804404962`, job `103853298626`: success.
+- [x] Pre-merge pytest: `1356 passed, 4 warnings in 665.76s`.
+- [x] Pre-merge coverage: `88%`, TOTAL `9038` statements / `1120` misses.
+- [x] Post-merge `master` CI run `34805286398`, job `103855873454`: success.
+- [x] Post-merge pytest: `1356 passed, 4 warnings in 649.87s`.
+- [x] Post-merge coverage: `88%`, TOTAL `9038` statements / `1120` misses.
+- [x] Ruff format: passed before merge and after merge.
+- [x] Ruff lint: passed before merge and after merge.
+- [x] Strict mypy: passed before merge and after merge.
+- [x] MCP contract check: passed before merge and after merge.
+- [x] `contract_version` history gate: passed before merge and after merge.
+- [x] `docs/TOOLS.md` drift gate: passed before merge and after merge.
+- [x] Contract decision: no `contract_version` bump required because the public MCP tool schema did not change.
 
 ## Global rules
 
@@ -24,8 +49,8 @@ This TODO implements the focused hardening pass defined by `docs/SETUP_WIZARD_HA
 - [x] Preserve manual YAML configuration and existing CLI workflows.
 - [x] Preserve destructive-safety and repository-isolation invariants.
 - [x] Add focused regression tests for every correctness fix.
-- [ ] Run focused validation plus complete Docker-backed CI before merge.
-- [ ] Record exact commit/run/job evidence as tasks close.
+- [x] Run focused validation plus complete Docker-backed CI before merge.
+- [x] Record exact commit/run/job evidence as tasks close.
 
 ---
 
@@ -51,7 +76,7 @@ This TODO implements the focused hardening pass defined by `docs/SETUP_WIZARD_HA
 - [x] Regression test: setup state save still creates a private setup-owned parent when needed.
 - [x] Regression test: config write still rejects symlink targets.
 - [x] Regression test: existing config replacement still creates a backup and reloads through production config.
-- [ ] Focused filesystem/config-writer tests pass.
+- [x] Focused filesystem/config-writer coverage included in full CI.
 
 ### SWH-002 — Make setup diagnostics symlink-safe with `lstat()`
 
@@ -81,7 +106,7 @@ This TODO implements the focused hardening pass defined by `docs/SETUP_WIZARD_HA
 
 **Goal:** make generated tunnel profiles robust when paths contain spaces or shell-sensitive characters.
 
-- [x] Replace f-string command assembly in tunnel profile generation with a shell-safe mechanism such as `shlex.join()`.
+- [x] Replace f-string command assembly in tunnel profile generation with `shlex.join()`.
 - [x] Preserve the intended argv shape: `uv run --project <project> dev-workspace-mcp serve --config <config>`.
 - [x] Ensure project paths with spaces are represented safely.
 - [x] Ensure config paths with spaces are represented safely.
@@ -95,7 +120,7 @@ This TODO implements the focused hardening pass defined by `docs/SETUP_WIZARD_HA
 - [x] Regression test: generated command for normal paths remains equivalent to the previous intended invocation.
 - [x] Regression test: profile plan contains no runtime secret material.
 - [x] Regression test: `--no-browser` mode still avoids browser launches.
-- [ ] Focused tunnel tests pass.
+- [x] Focused tunnel coverage included in full CI.
 
 ### SWH-004 — Resolve Docker default build context independently of cwd
 
@@ -117,7 +142,7 @@ This TODO implements the focused hardening pass defined by `docs/SETUP_WIZARD_HA
 - [x] Regression test: absent context returns an actionable error/result without invoking Docker.
 - [x] Regression test: Docker unavailable remains action-required/degraded, not fatal.
 - [x] Regression test: build action remains explicit and is not triggered by rendering the screen.
-- [ ] Focused Docker setup tests pass.
+- [x] Focused Docker setup coverage included in full CI.
 
 ---
 
@@ -138,12 +163,13 @@ This TODO implements the focused hardening pass defined by `docs/SETUP_WIZARD_HA
 
 **Validation — SWHV-005**
 
-- [ ] Existing Textual pilot tests pass without weakening assertions.
-- [ ] Existing setup lifecycle tests pass.
-- [ ] Existing review/write and diagnostics tests pass.
+- [x] Existing Textual pilot tests pass without weakening assertions.
+- [x] Existing setup lifecycle tests pass.
+- [x] Existing review/write and diagnostics tests pass.
 - [x] `src/dev_workspace_mcp/setup/app.py` is materially smaller and primarily composes behavior.
-- [ ] Ruff, strict mypy, and full pytest pass.
-- [ ] MCP contract remains unchanged.
+- [x] `src/dev_workspace_mcp/setup/step_panels.py` remains under its static architecture guard after extracting `git_policy_panel.py`.
+- [x] Ruff, strict mypy, and full pytest pass.
+- [x] MCP contract remains unchanged.
 
 ### SWH-006 — Improve Git-policy custom editor ergonomics
 
@@ -171,8 +197,8 @@ This TODO implements the focused hardening pass defined by `docs/SETUP_WIZARD_HA
 - [x] Textual pilot test edits at least one sequence/list Git-policy field through guided controls.
 - [x] Custom guided values round-trip through `GitPolicyConfig`.
 - [x] Exhaustiveness test fails if a new `GitPolicyConfig` field lacks a UI/support decision.
-- [ ] Recommended and Conservative preset tests still pass.
-- [ ] Existing setup materialization tests still pass.
+- [x] Recommended and Conservative preset tests still pass.
+- [x] Existing setup materialization tests still pass.
 
 ---
 
@@ -182,31 +208,31 @@ This TODO implements the focused hardening pass defined by `docs/SETUP_WIZARD_HA
 
 **Goal:** prove the hardening pass fixed the reviewed issues without regressing the completed setup wizard.
 
-- [ ] Run a final code review focused on filesystem mutation boundaries.
-- [ ] Run a final code review focused on diagnostics fail-closed behavior.
-- [ ] Run a final code review focused on tunnel profile command generation.
-- [ ] Run a final code review focused on Docker build-context resolution.
-- [ ] Run a final code review focused on setup state secret exposure.
-- [ ] Run a final code review focused on config write review/CAS/atomic/reload semantics.
-- [ ] Run a final code review focused on Git-policy field exhaustiveness.
-- [ ] Confirm docs accurately describe the hardened behavior.
-- [ ] Confirm no public MCP tool/schema changes.
-- [ ] Record `contract_version` decision explicitly.
-- [ ] Record exact implementation commit evidence.
-- [ ] Record exact CI run/job evidence.
-- [ ] Exact-head guarded merge.
-- [ ] Post-merge `master` CI green.
+- [x] Run a final code review focused on filesystem mutation boundaries.
+- [x] Run a final code review focused on diagnostics fail-closed behavior.
+- [x] Run a final code review focused on tunnel profile command generation.
+- [x] Run a final code review focused on Docker build-context resolution.
+- [x] Run a final code review focused on setup state secret exposure.
+- [x] Run a final code review focused on config write review/CAS/atomic/reload semantics.
+- [x] Run a final code review focused on Git-policy field exhaustiveness.
+- [x] Confirm docs accurately describe the hardened behavior.
+- [x] Confirm no public MCP tool/schema changes.
+- [x] Record `contract_version` decision explicitly.
+- [x] Record exact implementation commit evidence.
+- [x] Record exact CI run/job evidence.
+- [x] Exact-head guarded merge.
+- [x] Post-merge `master` CI green.
 
 **Validation — SWHV-007**
 
-- [ ] Full Ruff format/lint passes.
-- [ ] Full strict mypy passes.
-- [ ] MCP contract check passes.
-- [ ] `contract_version` history gate passes.
-- [ ] `docs/TOOLS.md` drift gate passes.
-- [ ] Full Docker-backed pytest + coverage passes.
-- [ ] Post-merge `master` CI passes.
-- [ ] TODO status is updated with exact SHA/run/job/test/coverage evidence.
+- [x] Full Ruff format/lint passes.
+- [x] Full strict mypy passes.
+- [x] MCP contract check passes.
+- [x] `contract_version` history gate passes.
+- [x] `docs/TOOLS.md` drift gate passes.
+- [x] Full Docker-backed pytest + coverage passes.
+- [x] Post-merge `master` CI passes.
+- [x] TODO status is updated with exact SHA/run/job/test/coverage evidence.
 
 ---
 
@@ -223,5 +249,5 @@ This TODO implements the focused hardening pass defined by `docs/SETUP_WIZARD_HA
 - [x] Raw secrets remain absent from setup state/logs/diagnostics/tests/docs.
 - [x] Config writes remain reviewed, CAS-bound, atomic, backed up, byte-verified, and production-reloaded.
 - [x] Manual YAML and CLI workflows remain supported.
-- [ ] No public MCP contract drift occurs unless explicitly versioned.
-- [ ] Complete CI is green on the implementation head and merged `master`.
+- [x] No public MCP contract drift occurs unless explicitly versioned.
+- [x] Complete CI is green on the implementation head and merged `master`.
