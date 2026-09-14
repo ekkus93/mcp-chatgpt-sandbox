@@ -338,7 +338,9 @@ def commit_config_update(path: Path, plan: ConfigUpdatePlan) -> ConfigCommitResu
         exists, current = _read_existing(path)
         current_digest = _digest(current) if exists else None
         if exists != plan.source_exists or current_digest != plan.source_digest:
-            raise SetupConfigError("Configuration changed after review; review the current file again")
+            raise SetupConfigError(
+                "Configuration changed after review; review the current file again"
+            )
 
         try:
             result = atomic_write_text(
