@@ -8,6 +8,7 @@ from typing import Protocol, TypeVar
 from textual import on
 from textual.widgets import Button, Checkbox, Select, Static
 
+from dev_workspace_mcp.setup.docker_setup import SetupDockerError, default_image_build_command
 from dev_workspace_mcp.setup.git_policy_form import (
     GitPolicyEditorValues,
     SetupGitPolicyFormError,
@@ -53,7 +54,37 @@ def _allowed_url_schemes(host: _GuidedActionHost) -> tuple[str, ...]:
 
 
 class SetupStepActionsMixin(_BaseSetupStepActionsMixin):
-    """Step handlers with a guided, production-validated custom Git-policy editor."""
+    """Hardened setup handlers layered over the ordinary step actions."""
+
+    @on(Button.Pressed, "#validate-docker")
+    def validate_docker(self) -> None:
+        host = self._action_host()
+        try:
+            choices = self._docker_from_widgets()
+            default_image_build_command(choices.default_image)
+        except ValueError:
+            super().validate_docker()
+            return
+        except SetupDockerError as exc:
+            host.set_step_validation(SetupStep.DOCKER, valid=False, message=str(exc))
+            return
+        try:
+            super().validate_docker()
+        except SetupDockerError as exc:
+            host.set_step_validation(SetupStep.DOCKER, valid=False, message=str(exc))
+
+    @on(Button.Pressed, "#build-docker-image")
+    def build_docker_image(self) -> None:
+        host = self._action_host()
+        try:
+            plan = host._pending_docker_build_plan
+            if plan is not None and not plan.build_context.is_dir():
+                raise SetupDockerError(
+                    "Default Docker build context is unavailable; build or pull the image manually."
+                )
+            super().build_docker_image()
+        except SetupDockerError as exc:
+            host.set_step_validation(SetupStep.DOCKER, valid=False, message=str(exc))
 
     def _custom_git_policy_from_guided_widgets(self) -> dict[str, object]:
         host = self._action_host()
