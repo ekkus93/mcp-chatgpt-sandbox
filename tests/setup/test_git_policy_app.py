@@ -56,22 +56,22 @@ async def test_swhv_006_existing_custom_git_policy_populates_guided_controls(
         config_path=tmp_path / "config.yml",
         state_path=tmp_path / "state.json",
     )
-    app.state.choices.git_policy_preset = "custom"
-    app.state.choices.git_policy_custom = {
-        "push": "deny",
-        "default_branch_push": "require_approval",
-        "force_push": "deny",
-        "force_with_lease": "require_approval",
-        "delete_remote_branch": "deny",
-        "delete_remote_tag": "deny",
-        "default_branch_commit": "deny",
-        "amend_published": "deny",
-        "pull_strategy": "merge",
-        "require_remote_protection": "deny",
-        "remote_protection_checks": ["force_push"],
-        "allowed_url_schemes": ["ssh"],
-    }
     async with app.run_test() as pilot:
+        app.state.choices.git_policy_preset = "custom"
+        app.state.choices.git_policy_custom = {
+            "push": "deny",
+            "default_branch_push": "require_approval",
+            "force_push": "deny",
+            "force_with_lease": "require_approval",
+            "delete_remote_branch": "deny",
+            "delete_remote_tag": "deny",
+            "default_branch_commit": "deny",
+            "amend_published": "deny",
+            "pull_strategy": "merge",
+            "require_remote_protection": "deny",
+            "remote_protection_checks": ["force_push"],
+            "allowed_url_schemes": ["ssh"],
+        }
         git_policy_index = next(
             index
             for index, definition in enumerate(STEPS)

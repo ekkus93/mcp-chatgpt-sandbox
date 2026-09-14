@@ -526,6 +526,7 @@ def run_diagnostics(
                     mandatory=False,
                 )
             )
+    # WCR-013: this is the diagnostic boundary; unexpected errors fail closed.
     except Exception:
         results.append(
             _result(
