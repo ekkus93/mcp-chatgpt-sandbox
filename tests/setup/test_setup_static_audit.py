@@ -37,7 +37,9 @@ def _is_presentation_module(path: Path) -> bool:
 
 
 def _presentation_files() -> tuple[Path, ...]:
-    discovered = tuple(sorted(path for path in _SETUP_ROOT.glob("*.py") if _is_presentation_module(path)))
+    discovered = tuple(
+        sorted(path for path in _SETUP_ROOT.glob("*.py") if _is_presentation_module(path))
+    )
     discovered_names = {path.name for path in discovered}
     assert discovered_names == set(_PRESENTATION_MODULE_LIMITS), (
         "setup presentation-module discovery changed without an explicit architecture "
