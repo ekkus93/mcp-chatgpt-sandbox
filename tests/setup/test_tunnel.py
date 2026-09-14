@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -29,7 +28,9 @@ def test_swf_004_runtime_environment_preserves_ambient_values(
     captured: dict[str, str] = {}
     monkeypatch.setenv("PATH", "/ambient/bin")
     monkeypatch.setenv("AMBIENT_ONLY", "keep-me")
-    monkeypatch.setattr("dev_workspace_mcp.setup.tunnel.tunnel_client_path", lambda: "tunnel-client")
+    monkeypatch.setattr(
+        "dev_workspace_mcp.setup.tunnel.tunnel_client_path", lambda: "tunnel-client"
+    )
 
     def fake_run(
         argv: list[str],
@@ -65,7 +66,9 @@ def test_swf_004_runtime_environment_overrides_ambient_values(
 ) -> None:
     captured: dict[str, str] = {}
     monkeypatch.setenv("PATH", "/ambient/bin")
-    monkeypatch.setattr("dev_workspace_mcp.setup.tunnel.tunnel_client_path", lambda: "tunnel-client")
+    monkeypatch.setattr(
+        "dev_workspace_mcp.setup.tunnel.tunnel_client_path", lambda: "tunnel-client"
+    )
 
     def fake_run(
         argv: list[str],
@@ -96,7 +99,9 @@ def test_swf_004_tunnel_failure_message_does_not_echo_runtime_environment(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr("dev_workspace_mcp.setup.tunnel.tunnel_client_path", lambda: "tunnel-client")
+    monkeypatch.setattr(
+        "dev_workspace_mcp.setup.tunnel.tunnel_client_path", lambda: "tunnel-client"
+    )
 
     def fake_run(
         argv: list[str],
