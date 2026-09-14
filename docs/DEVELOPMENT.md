@@ -92,7 +92,8 @@ The setup implementation is intentionally layered:
 
 - `setup/model.py` / `choices.py` — versioned non-secret resumable state;
 - `setup/filesystem.py` — fail-closed bounded reads, backups, atomic writes;
-- `setup/config_writer.py` — reviewed/CAS-bound config planning and commit;
+- `setup/config_writer.py` — reviewed/CAS-bound config planning, serialized final
+  source verification, and atomic commit;
 - `setup/host.py`, `docker_setup.py`, `repository_setup.py`,
   `ssh_github_setup.py`, `git_policy_setup.py`, `runtime_setup.py` — independently
   testable domain validation/actions;
@@ -103,14 +104,38 @@ The setup implementation is intentionally layered:
 - `setup/tunnel.py` — optional Secure MCP Tunnel planning/health;
 - `setup/diagnostics.py` — shared TUI/headless final diagnostic engine;
 - `setup/step_panels.py` — Textual controls for each wizard step;
-- `setup/step_actions.py` / `setup/step_actions_hardened.py` — step-specific
-  Textual event handlers that call the domain modules without owning production
-  config semantics;
+- `setup/step_actions.py`, `setup/step_actions_docker.py`, and
+  `setup/step_actions_hardened.py` — step-specific Textual event handlers that
+  call the domain modules without owning production config semantics;
 - `setup/app.py` — setup lifecycle, navigation, validation-gating, and state
   activation shell.
 
 Production config models remain authoritative. Do not add a second validator to
 the TUI when an existing production helper can be reused or extracted.
+
+### Reviewed config commit serialization
+
+A reviewed configuration plan is bound to the source bytes seen during review.
+Final commit is serialized with an empty sibling lock file named
+`.CONFIG_NAME.setup.lock` (for example, `.config.yml.setup.lock`). On Linux,
+`setup/config_writer.py` opens that file owner-only and takes an exclusive,
+non-blocking `flock` before it re-reads the source configuration.
+
+The lock file is intentionally persistent and contains no configuration or
+credential material. Removing an advisory lock file after release can create a
+second independently lockable inode during contention, so only the kernel lock
+state is released. Kernel lock ownership is tied to the open descriptor and is
+therefore released if the process exits or crashes; there is no stale-lock age
+or PID file to recover.
+
+Lock contention fails immediately with an actionable setup error; setup never
+waits indefinitely or retries in the background. While the lock is held, the
+writer revalidates the reviewed source digest and then performs backup creation,
+same-directory atomic replacement, byte-for-byte verification, and production
+`load_config()` reload before releasing the lock. All setup writers use this
+same lock identity. Operators or other writers that bypass the setup protocol
+are not made cooperative by an advisory lock, so manual edits should not be
+performed concurrently with an approved setup commit.
 
 ### Focused setup tests
 
@@ -177,6 +202,9 @@ Manual configuration remains supported. See
   an upstream input intentionally invalidates dependent review/diagnostics.
 - **A config changed after the review screen.** The writer intentionally rejects
   the stale source digest. Prepare a fresh review; there is no overwrite bypass.
+- **Another setup writer is committing the same config.** Commit lock contention
+  fails immediately. Let the other setup operation finish, then prepare/review
+  again if the source changed.
 - **Docker is unavailable.** Configuration may continue, but final diagnostics
   remain ACTION REQUIRED for Docker-dependent checks.
 - **A setup-state file is corrupt.** Use Repair or Start fresh. Start fresh resets
