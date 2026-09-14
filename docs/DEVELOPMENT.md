@@ -66,9 +66,9 @@ uv run pytest --cov --cov-report=term-missing
 ```
 
 `mypy` runs in strict mode against `src/`; Ruff uses the configured rule set and
-100-column default. `src/dev_workspace_mcp/setup/app.py` has a narrow E501
-exception because it contains operator-facing Textual orchestration strings;
-formatting, every other lint rule, and strict mypy still apply normally.
+100-column default. The setup Textual shell and step panels have narrow E501
+exceptions because they contain operator-facing TUI strings; formatting, every
+other lint rule, and strict mypy still apply normally.
 
 ## Setup wizard development
 

@@ -42,7 +42,7 @@ def test_swhv_006_guided_git_policy_values_round_trip_through_production_model()
 
 
 def test_swhv_006_guided_git_policy_exhaustively_covers_current_fields() -> None:
-    assert GIT_POLICY_GUIDED_FIELDS == frozenset(GitPolicyConfig.model_fields)
+    assert frozenset(GitPolicyConfig.model_fields) == GIT_POLICY_GUIDED_FIELDS
 
 
 def test_swhv_006_guided_git_policy_rejects_invalid_values() -> None:

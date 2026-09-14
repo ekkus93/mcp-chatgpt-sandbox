@@ -58,6 +58,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/dev_workspace_mcp/setup/app.py" = ["E501"]
+"src/dev_workspace_mcp/setup/step_panels.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"
