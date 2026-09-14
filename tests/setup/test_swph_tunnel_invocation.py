@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shlex
+import subprocess
 import sys
 from pathlib import Path
 
@@ -48,6 +49,22 @@ async def test_swphv_001_tunnel_prepare_is_independent_of_caller_cwd(
             str(config_path.resolve(strict=False)),
         ]
         assert str(unrelated) not in plan.server_command
+
+
+def test_swphv_001_module_entrypoint_runs_from_unrelated_cwd(tmp_path: Path) -> None:
+    unrelated = tmp_path / "module cwd"
+    unrelated.mkdir()
+    result = subprocess.run(
+        [sys.executable, "-m", "dev_workspace_mcp", "--help"],
+        cwd=unrelated,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 0
+    assert "Usage:" in result.stdout
 
 
 @pytest.mark.asyncio
