@@ -70,6 +70,17 @@ def image_exists(client: docker.DockerClient, image: str) -> bool:
     return True
 
 
+def validate_default_image_build_context(build_context: Path) -> Path:
+    """Return one normalized usable build context or raise a safe setup error."""
+
+    resolved = build_context.expanduser().resolve(strict=False)
+    if not resolved.is_dir():
+        raise SetupDockerError(
+            "Docker build context is unavailable; build or pull the image manually."
+        )
+    return resolved
+
+
 def bundled_default_image_build_context() -> Path:
     """Resolve the repository-bundled default Docker build context.
 
@@ -79,17 +90,17 @@ def bundled_default_image_build_context() -> Path:
     """
 
     context = Path(__file__).resolve().parents[3] / "docker" / "default"
-    if not context.is_dir():
-        raise SetupDockerError(
-            "Default Docker build context is unavailable; build or pull the image manually."
-        )
-    return context
+    return validate_default_image_build_context(context)
 
 
 def default_image_build_command(
     image: str, *, build_context: Path | None = None
 ) -> tuple[str, ...]:
-    context = bundled_default_image_build_context() if build_context is None else build_context
+    context = (
+        bundled_default_image_build_context()
+        if build_context is None
+        else validate_default_image_build_context(build_context)
+    )
     return ("docker", "build", "-t", image, str(context))
 
 
@@ -102,15 +113,15 @@ def prepare_default_image_build_plan(
         docker_config = DockerConfig.model_validate({"default_image": image.strip()})
     except ValidationError as exc:
         raise SetupDockerError("Docker image name is rejected by production models") from exc
-    context = bundled_default_image_build_context() if build_context is None else build_context
-    resolved_context = context.expanduser().resolve(strict=False)
+    context = (
+        bundled_default_image_build_context()
+        if build_context is None
+        else validate_default_image_build_context(build_context)
+    )
     return DockerBuildPlan(
         image=docker_config.default_image,
-        build_context=resolved_context,
-        argv=default_image_build_command(
-            docker_config.default_image,
-            build_context=resolved_context,
-        ),
+        build_context=context,
+        argv=("docker", "build", "-t", docker_config.default_image, str(context)),
     )
 
 
@@ -125,7 +136,11 @@ def build_default_image(
 
     if not approved:
         raise SetupDockerError("Docker image build requires explicit approval")
-    build_path = bundled_default_image_build_context() if build_context is None else build_context
+    build_path = (
+        bundled_default_image_build_context()
+        if build_context is None
+        else validate_default_image_build_context(build_context)
+    )
     try:
         client.images.build(path=str(build_path), tag=image, rm=True)
     except (DockerException, OSError) as exc:

@@ -14,7 +14,7 @@ from dev_workspace_mcp.setup.git_policy_form import (
 )
 from dev_workspace_mcp.setup.git_policy_setup import GitPolicyPreset, materialize_policy
 from dev_workspace_mcp.setup.model import SetupStep, clone_setup_state
-from dev_workspace_mcp.setup.step_actions import SetupStepActionsMixin as _BaseSetupStepActionsMixin
+from dev_workspace_mcp.setup.step_actions_docker import DockerStepActionsMixin
 
 _T = TypeVar("_T")
 
@@ -52,7 +52,7 @@ def _allowed_url_schemes(host: _GuidedActionHost) -> tuple[str, ...]:
     return tuple(values)
 
 
-class SetupStepActionsMixin(_BaseSetupStepActionsMixin):
+class SetupStepActionsMixin(DockerStepActionsMixin):
     """Step handlers with a guided, production-validated custom Git-policy editor."""
 
     def _custom_git_policy_from_guided_widgets(self) -> dict[str, object]:
