@@ -20,7 +20,7 @@ def _go_to(app: SetupWizardApp, step: SetupStep) -> None:
 
 
 def _static_text(app: SetupWizardApp, selector: str) -> str:
-    return str(app.query_one(selector, Static).renderable)
+    return str(app.query_one(selector, Static).render())
 
 
 @pytest.mark.asyncio
@@ -56,7 +56,7 @@ async def test_swf_001_docker_apply_requires_pending_plan(tmp_path: Path) -> Non
 
         assert app._pending_docker_build_plan is None
         assert app.query_one("#build-docker-image", Button).disabled
-        assert app._validation[SetupStep.DOCKER] is False
+        assert app._validation.get(SetupStep.DOCKER, False) is False
 
 
 @pytest.mark.asyncio
@@ -143,7 +143,7 @@ async def test_swf_001_tunnel_apply_requires_pending_plan(tmp_path: Path) -> Non
 
         assert app._pending_tunnel_plan is None
         assert app.query_one("#tunnel-apply", Button).disabled
-        assert app._validation[SetupStep.CHATGPT] is False
+        assert app._validation.get(SetupStep.CHATGPT, False) is False
 
 
 @pytest.mark.asyncio

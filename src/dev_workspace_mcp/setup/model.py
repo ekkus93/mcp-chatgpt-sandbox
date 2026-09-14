@@ -28,6 +28,7 @@ _FORBIDDEN_STATE_KEY_FRAGMENTS = (
     "password",
     "private_key",
     "credential",
+    "runtime_key",
 )
 
 
