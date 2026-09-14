@@ -96,11 +96,18 @@ The setup implementation is intentionally layered:
 - `setup/host.py`, `docker_setup.py`, `repository_setup.py`,
   `ssh_github_setup.py`, `git_policy_setup.py`, `runtime_setup.py` — independently
   testable domain validation/actions;
+- `setup/git_policy_form.py` — guided Custom `GitPolicyConfig` form snapshots
+  validated through the production model;
 - `setup/materialize.py` — translation between production config and reviewed
   setup choices;
 - `setup/tunnel.py` — optional Secure MCP Tunnel planning/health;
 - `setup/diagnostics.py` — shared TUI/headless final diagnostic engine;
-- `setup/step_panels.py` / `app.py` — Textual presentation/orchestration only.
+- `setup/step_panels.py` — Textual controls for each wizard step;
+- `setup/step_actions.py` / `setup/step_actions_hardened.py` — step-specific
+  Textual event handlers that call the domain modules without owning production
+  config semantics;
+- `setup/app.py` — setup lifecycle, navigation, validation-gating, and state
+  activation shell.
 
 Production config models remain authoritative. Do not add a second validator to
 the TUI when an existing production helper can be reused or extracted.
@@ -113,10 +120,10 @@ Run the setup suite independently while iterating:
 uv run pytest tests/setup
 ```
 
-Textual pilot tests cover navigation, validation gating, and lifecycle behavior.
-The setup acceptance tests cover fresh configuration, existing-config
-preservation/CAS, repair/backups, unsafe targets, production reload, diagnostics,
-and server construction.
+Textual pilot tests cover navigation, validation gating, lifecycle behavior, and
+guided Git-policy editing. The setup acceptance tests cover fresh configuration,
+existing-config preservation/CAS, repair/backups, unsafe targets, production
+reload, diagnostics, and server construction.
 
 When adding persisted setup-state fields, update the secret-field/state-schema
 tests. Raw credentials must never become resumable state merely to simplify a
