@@ -22,7 +22,10 @@ from dev_workspace_mcp.setup.filesystem import (
     backup_regular_file,
     reject_unsafe_sensitive_target,
 )
-from dev_workspace_mcp.setup.git_policy_form import GitPolicyEditorValues
+from dev_workspace_mcp.setup.git_policy_form import (
+    GitPolicyEditorValues,
+    SetupGitPolicyFormError,
+)
 from dev_workspace_mcp.setup.materialize import (
     fresh_choices,
     state_from_existing_config,
@@ -395,10 +398,18 @@ class SetupWizardApp(SetupStepActionsMixin, App[int]):
         return "" if value is None else str(value)
 
     def _populate_widgets(self) -> None:
+        git_policy_population_error: str | None = None
         self._populating = True
         try:
             choices = self.state.choices
-            git_policy_values = GitPolicyEditorValues.from_mapping(choices.git_policy_custom)
+            try:
+                git_policy_values = GitPolicyEditorValues.from_mapping(choices.git_policy_custom)
+            except SetupGitPolicyFormError:
+                git_policy_values = GitPolicyEditorValues.from_mapping(None)
+                git_policy_population_error = (
+                    "Persisted custom Git policy is incompatible with this version. Choose "
+                    "Recommended or Conservative, or re-enter Custom values and validate them."
+                )
             input_values = {
                 "#storage-state-db": choices.state_db_path or "",
                 "#storage-audit": choices.audit_path or "",
@@ -519,6 +530,10 @@ class SetupWizardApp(SetupStepActionsMixin, App[int]):
             self._clear_pending_reviewed_host_mutation(None)
         finally:
             self._populating = False
+        if git_policy_population_error is not None:
+            self.state.statuses[SetupStep.GIT_POLICY] = SetupStepStatus.ACTION_REQUIRED
+            self._validation[SetupStep.GIT_POLICY] = False
+            self._validation_messages[SetupStep.GIT_POLICY] = git_policy_population_error
 
     def _refresh_repository_table(self) -> None:
         table = self.query_one("#repository-table", DataTable)
