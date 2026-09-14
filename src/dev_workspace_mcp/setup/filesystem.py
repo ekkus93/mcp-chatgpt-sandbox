@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 DEFAULT_MAX_SETUP_FILE_BYTES = 1024 * 1024
+PRIVATE_DIRECTORY_POLICY = "leaf-private"
 
 
 class SetupFilesystemError(RuntimeError):
@@ -55,12 +56,14 @@ def reject_unsafe_sensitive_target(path: Path) -> None:
 
 
 def ensure_private_directory(path: Path) -> Path:
-    """Create or validate a setup-owned directory.
+    """Create or validate a directory under the leaf-private setup policy.
 
-    Missing directories are created owner-only. Existing directories are
-    inspected but not chmodded: callers may point setup/config writes at an
-    operator-owned parent, and a write inside that parent must not silently
-    change the parent's sharing policy.
+    A missing requested leaf is explicitly secured to ``0700`` after recursive
+    creation. Any intermediate ancestors created by ``parents=True`` remain
+    subject to the process umask and are outside the privacy guarantee.
+    Pre-existing directories are inspected but never chmodded: callers may point
+    setup/config writes at an operator-owned parent whose sharing policy setup
+    must not silently change.
     """
 
     expanded = path.expanduser()
