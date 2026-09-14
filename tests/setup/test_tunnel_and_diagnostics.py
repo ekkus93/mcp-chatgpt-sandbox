@@ -3,6 +3,7 @@ from __future__ import annotations
 import shlex
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -30,23 +31,20 @@ def test_wizv_014_profile_plan_contains_exact_server_command_without_secret(
     tmp_path: Path,
 ) -> None:
     config_path = tmp_path / "config dir" / "config.yml"
-    project_root = tmp_path / "project dir"
     plan = build_tunnel_profile_plan(
         profile="chatgpt-sandbox",
         tunnel_id="tunnel-example",
         config_path=config_path,
-        project_root=project_root,
     )
     expected_argv = [
-        "uv",
-        "run",
-        "--project",
-        str(project_root.resolve(strict=False)),
-        "dev-workspace-mcp",
+        str(Path(sys.executable).expanduser()),
+        "-m",
+        "dev_workspace_mcp",
         "serve",
         "--config",
         str(config_path.resolve(strict=False)),
     ]
+    assert list(plan.server_argv) == expected_argv
     assert shlex.split(plan.server_command) == expected_argv
     assert "tunnel-example" in plan.argv
     assert all("secret" not in argument.casefold() for argument in plan.argv)
