@@ -89,6 +89,12 @@ def parent_is_writable(path: Path) -> bool:
 
 
 def _create_missing_parent(path: Path) -> None:
+    """Create only the selected missing parent as a private leaf.
+
+    Recursive intermediate ancestors follow normal umask semantics. Existing
+    parents are never chmodded by setup.
+    """
+
     parent = path.expanduser().parent
     if parent.exists():
         if not parent.is_dir():
@@ -96,6 +102,7 @@ def _create_missing_parent(path: Path) -> None:
         return
     try:
         parent.mkdir(parents=True, mode=0o700)
+        parent.chmod(0o700)
     except OSError as exc:
         raise SetupHostError(f"Could not create parent directory for {path.expanduser()}") from exc
 
@@ -129,7 +136,8 @@ def _ensure_pinned_known_hosts(path: Path) -> None:
 
 
 def prepare_storage_directories(choices: StorageChoices, *, approved: bool) -> None:
-    """Create only explicitly reviewed storage paths and pinned host keys."""
+    """Create reviewed storage paths under the leaf-private directory policy."""
+
     choices.validate()
     if not approved:
         raise SetupHostError("Storage path creation requires explicit approval")
@@ -138,6 +146,7 @@ def prepare_storage_directories(choices: StorageChoices, *, approved: bool) -> N
     if not choices.keys_dir.exists():
         try:
             choices.keys_dir.mkdir(parents=True, mode=0o700)
+            choices.keys_dir.chmod(0o700)
         except OSError as exc:
             raise SetupHostError(f"Could not create SSH keys directory {choices.keys_dir}") from exc
     elif not choices.keys_dir.is_dir():
