@@ -9,7 +9,7 @@ import os
 import stat
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -365,10 +365,8 @@ def _config_commit_lock(
         yield lock_path
     finally:
         if acquired:
-            try:
+            with suppress(OSError):
                 fcntl.flock(fd, fcntl.LOCK_UN)
-            except OSError:
-                pass
         os.close(fd)
 
 
