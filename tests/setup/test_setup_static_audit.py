@@ -6,7 +6,9 @@ import re
 import tomllib
 from pathlib import Path
 
-from dev_workspace_mcp.setup.presentation_architecture import PRESENTATION_MODULE_LINE_LIMITS
+from dev_workspace_mcp.setup.presentation_architecture import (
+    PRESENTATION_MODULE_LINE_LIMITS,
+)
 from dev_workspace_mcp.setup.step_actions import SetupStepActionsMixin
 
 _REPO_ROOT = Path(__file__).parents[2]
@@ -24,7 +26,10 @@ def _imports_textual(path: Path) -> bool:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            if any(alias.name == "textual" or alias.name.startswith("textual.") for alias in node.names):
+            if any(
+                alias.name == "textual" or alias.name.startswith("textual.")
+                for alias in node.names
+            ):
                 return True
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
