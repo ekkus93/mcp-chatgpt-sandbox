@@ -60,11 +60,17 @@ In the optional **ChatGPT connection** step:
 
 1. Select **Configure optional ChatGPT Secure MCP Tunnel**.
 2. Enter the non-secret tunnel ID and local profile name.
-3. Review the server command shown by the wizard. It launches:
+3. Review the server command shown by the wizard. It records the absolute Python
+   interpreter from the environment running setup and launches the installed package
+   as a module, for example:
 
    ```text
-   uv run --project <project-root> dev-workspace-mcp serve --config <config-path>
+   '/path/to/.venv/bin/python' -m dev_workspace_mcp serve --config '/path/to/config.yml'
    ```
+
+   The profile does not depend on the repository checkout or the directory from which
+   the wizard was launched. If that Python environment is not available when the plan
+   is prepared, setup reports **ACTION REQUIRED** and does not enable profile creation.
 
 4. Explicitly run **Create / repair reviewed tunnel profile**.
 5. Run the profile validation action.
@@ -108,7 +114,7 @@ tunnel-client init \
   --sample sample_mcp_stdio_local \
   --profile chatgpt-sandbox \
   --tunnel-id <tunnel-id> \
-  --mcp-command "uv run --project /path/to/mcp-chatgpt-sandbox dev-workspace-mcp serve --config /path/to/config.yml"
+  --mcp-command "'/path/to/.venv/bin/python' -m dev_workspace_mcp serve --config '/path/to/config.yml'"
 ```
 
 ### 4. Verify it
@@ -177,8 +183,9 @@ Refresh/Scan/Update UI and review the resulting tool permissions.
 - **Wizard says `tunnel-client` is unavailable.** Install it using OpenAI's
   current Secure MCP Tunnel instructions, or skip the optional step.
 - **`tunnel-client doctor` cannot start the server command.** Run the exact
-  displayed `dev-workspace-mcp serve --config ...` command directly and fix the
-  local error first.
+  displayed `python -m dev_workspace_mcp serve --config ...` command directly and
+  fix the local environment/config error first. The wizard intentionally records the
+  absolute interpreter path from the environment that ran setup.
 - **ChatGPT cannot see the tunnel.** Reconfirm tunnel ID, Platform organization,
   runtime credential context, and ChatGPT workspace using current OpenAI docs.
 - **Tools are stale/missing.** Restart the tunnel and rescan the app; compare

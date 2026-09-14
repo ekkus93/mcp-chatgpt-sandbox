@@ -6,6 +6,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 import webbrowser
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -27,7 +28,8 @@ class TunnelProfilePlan:
     profile: str
     tunnel_id: str
     config_path: Path
-    project_root: Path
+    python_executable: Path
+    server_argv: tuple[str, ...]
     server_command: str
     argv: tuple[str, ...]
 
@@ -43,15 +45,46 @@ def tunnel_client_path() -> str | None:
     return shutil.which("tunnel-client")
 
 
+def _server_python_executable(python_executable: Path | None = None) -> Path:
+    """Return an absolute, executable interpreter path without dereferencing venv links."""
+
+    candidate = Path(sys.executable) if python_executable is None else python_executable
+    candidate = candidate.expanduser()
+    if not candidate.is_absolute():
+        candidate = Path(os.path.abspath(candidate))
+    try:
+        usable = candidate.is_file() and os.access(candidate, os.X_OK)
+    except OSError as exc:
+        raise SetupTunnelError(
+            "ACTION REQUIRED: the Python environment running setup cannot be reused by "
+            "the tunnel profile; rerun setup from the environment that provides "
+            "dev-workspace-mcp"
+        ) from exc
+    if not usable:
+        raise SetupTunnelError(
+            "ACTION REQUIRED: the Python environment running setup cannot be reused by "
+            "the tunnel profile; rerun setup from the environment that provides "
+            "dev-workspace-mcp"
+        )
+    return candidate
+
+
 def build_tunnel_profile_plan(
     *,
     profile: str,
     tunnel_id: str,
     config_path: Path,
-    project_root: Path,
+    project_root: Path | None = None,
+    python_executable: Path | None = None,
 ) -> TunnelProfilePlan:
-    """Build the exact profile command an operator must review before mutation."""
+    """Build the exact profile command an operator must review before mutation.
 
+    ``project_root`` is retained only for source compatibility with callers from
+    before SWPH-001. It is intentionally ignored: persistent tunnel profiles are
+    bound to the active Python environment, never to the caller's working directory.
+    """
+
+    del project_root
     profile = profile.strip()
     tunnel_id = tunnel_id.strip()
     if not profile or any(character.isspace() for character in profile):
@@ -59,13 +92,11 @@ def build_tunnel_profile_plan(
     if not tunnel_id or any(character.isspace() for character in tunnel_id):
         raise SetupTunnelError("Tunnel id must be a non-empty token")
     resolved_config = config_path.expanduser().resolve(strict=False)
-    resolved_project = project_root.expanduser().resolve(strict=False)
+    resolved_python = _server_python_executable(python_executable)
     command_argv = (
-        "uv",
-        "run",
-        "--project",
-        str(resolved_project),
-        "dev-workspace-mcp",
+        str(resolved_python),
+        "-m",
+        "dev_workspace_mcp",
         "serve",
         "--config",
         str(resolved_config),
@@ -87,7 +118,8 @@ def build_tunnel_profile_plan(
         profile=profile,
         tunnel_id=tunnel_id,
         config_path=resolved_config,
-        project_root=resolved_project,
+        python_executable=resolved_python,
+        server_argv=command_argv,
         server_command=server_command,
         argv=argv,
     )
