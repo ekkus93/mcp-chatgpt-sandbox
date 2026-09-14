@@ -27,11 +27,13 @@ from dev_workspace_mcp.setup.config_writer import (
 )
 from dev_workspace_mcp.setup.diagnostics import format_diagnostics, run_diagnostics
 from dev_workspace_mcp.setup.docker_setup import (
+    DockerBuildPlan,
     DockerSetupChoices,
     SetupDockerError,
     build_default_image,
     default_image_build_command,
     image_exists,
+    prepare_default_image_build_plan,
 )
 from dev_workspace_mcp.setup.git_policy_setup import GitPolicyPreset, materialize_policy
 from dev_workspace_mcp.setup.host import (
@@ -81,6 +83,8 @@ class _ActionHost(Protocol):
     config_path: Path
     no_browser: bool
     _review_plan: ConfigUpdatePlan | None
+    _pending_docker_build_plan: DockerBuildPlan | None
+    _pending_tunnel_plan: TunnelProfilePlan | None
 
     def query_one(self, selector: str, expect_type: type[_T]) -> _T: ...
 
@@ -142,6 +146,10 @@ def _optional_float(host: _ActionHost, selector: str, *, label: str) -> float | 
         return float(raw)
     except ValueError as exc:
         raise SetupRuntimeError(f"{label} must be a number or blank") from exc
+
+
+def _command_text(argv: tuple[str, ...]) -> str:
+    return " ".join(argv)
 
 
 class SetupStepActionsMixin:
@@ -266,8 +274,8 @@ class SetupStepActionsMixin:
                 if present
                 else "Docker workspace values are valid; missing image explicitly deferred."
             )
-        command = " ".join(default_image_build_command(choices.default_image))
-        host.query_one("#docker-build-command", Static).update(f"Reviewed build action: {command}")
+        command = _command_text(default_image_build_command(choices.default_image))
+        host.query_one("#docker-build-command", Static).update(f"Build command: {command}")
         candidate = clone_setup_state(host.state)
         candidate.choices.docker_image = choices.default_image
         candidate.choices.workspace_path = choices.workspace_path
@@ -277,24 +285,46 @@ class SetupStepActionsMixin:
         candidate.reviewed_fields |= frozenset({"docker", "workspace", "container"})
         host._save_validated_state(candidate, step=SetupStep.DOCKER, message=message)
 
+    @on(Button.Pressed, "#prepare-docker-build")
+    def prepare_docker_build(self) -> None:
+        host = self._action_host()
+        host._pending_docker_build_plan = None
+        host.query_one("#build-docker-image", Button).disabled = True
+        try:
+            choices = self._docker_from_widgets()
+            plan = prepare_default_image_build_plan(image=choices.default_image)
+        except (ValueError, SetupDockerError) as exc:
+            host.set_step_validation(SetupStep.DOCKER, valid=False, message=str(exc))
+            return
+        host._pending_docker_build_plan = plan
+        host.query_one("#docker-build-command", Static).update(
+            "Reviewed build plan: " + _command_text(plan.argv)
+        )
+        host.query_one("#build-docker-image", Button).disabled = False
+        host.set_step_validation(
+            SetupStep.DOCKER,
+            valid=False,
+            message="Review the Docker build command, then apply the stored plan separately.",
+        )
+
     @on(Button.Pressed, "#build-docker-image")
     def build_docker_image(self) -> None:
         host = self._action_host()
-        try:
-            choices = self._docker_from_widgets()
-        except ValueError as exc:
-            host.set_step_validation(SetupStep.DOCKER, valid=False, message=str(exc))
+        plan = host._pending_docker_build_plan
+        if plan is None:
+            host.set_step_validation(
+                SetupStep.DOCKER,
+                valid=False,
+                message="Prepare and review a Docker build plan before applying it.",
+            )
             return
-        host.query_one("#docker-build-command", Static).update(
-            "Reviewed build action: " + " ".join(default_image_build_command(choices.default_image))
-        )
         try:
             client = docker.from_env()
             try:
                 build_default_image(
                     client,
-                    image=choices.default_image,
-                    project_root=Path.cwd(),
+                    image=plan.image,
+                    build_context=plan.build_context,
                     approved=True,
                 )
             finally:
@@ -302,7 +332,13 @@ class SetupStepActionsMixin:
         except (DockerException, SetupDockerError) as exc:
             host.set_step_validation(SetupStep.DOCKER, valid=False, message=str(exc))
             return
-        self.validate_docker()
+        host._pending_docker_build_plan = None
+        host.query_one("#build-docker-image", Button).disabled = True
+        host.set_step_validation(
+            SetupStep.DOCKER,
+            valid=False,
+            message="Docker build completed from the reviewed plan; validate Docker again.",
+        )
 
     def _repository_from_widgets(self) -> SetupRepositoryState:
         host = self._action_host()
@@ -628,18 +664,46 @@ class SetupStepActionsMixin:
             "Browser opened." if opened else f"Open this URL manually: {OPENAI_TUNNEL_DOC_URL}"
         )
 
+    @on(Button.Pressed, "#tunnel-prepare")
+    def prepare_tunnel(self) -> None:
+        host = self._action_host()
+        host._pending_tunnel_plan = None
+        host.query_one("#tunnel-apply", Button).disabled = True
+        try:
+            plan = self._tunnel_plan_from_widgets()
+        except SetupTunnelError as exc:
+            host.set_step_validation(SetupStep.CHATGPT, valid=False, message=str(exc))
+            return
+        host._pending_tunnel_plan = plan
+        host.query_one("#tunnel-command", Static).update(
+            "Server command: "
+            f"{plan.server_command}\nReviewed profile command: {_command_text(plan.argv)}"
+        )
+        host.query_one("#tunnel-apply", Button).disabled = False
+        host.set_step_validation(
+            SetupStep.CHATGPT,
+            valid=False,
+            message="Review the tunnel profile command, then apply the stored plan separately.",
+        )
+
     @on(Button.Pressed, "#tunnel-apply")
     def apply_tunnel(self) -> None:
         host = self._action_host()
-        try:
-            plan = self._tunnel_plan_from_widgets()
-            host.query_one("#tunnel-command", Static).update(
-                "Reviewed profile command: " + " ".join(plan.argv)
+        plan = host._pending_tunnel_plan
+        if plan is None:
+            host.set_step_validation(
+                SetupStep.CHATGPT,
+                valid=False,
+                message="Prepare and review a tunnel profile plan before applying it.",
             )
+            return
+        try:
             apply_tunnel_profile(plan, approved=True)
         except SetupTunnelError as exc:
             host.query_one("#tunnel-message", Static).update(str(exc))
             return
+        host._pending_tunnel_plan = None
+        host.query_one("#tunnel-apply", Button).disabled = True
         host.query_one("#tunnel-message", Static).update(
             "Reviewed tunnel profile mutation completed; run validation next."
         )

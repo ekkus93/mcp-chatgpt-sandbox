@@ -1,4 +1,4 @@
-"""Docker workspace setup choices and read-only image inspection."""
+"""Docker workspace setup choices and reviewed image build planning."""
 
 from __future__ import annotations
 
@@ -14,6 +14,15 @@ from dev_workspace_mcp.config import ContainerConfig, DockerConfig, WorkspaceCon
 
 class SetupDockerError(RuntimeError):
     """Safe Docker-setup validation failure."""
+
+
+@dataclass(frozen=True, slots=True)
+class DockerBuildPlan:
+    """Exact non-secret Docker build action reviewed before mutation."""
+
+    image: str
+    build_context: Path
+    argv: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,22 +93,36 @@ def default_image_build_command(
     return ("docker", "build", "-t", image, str(context))
 
 
+def prepare_default_image_build_plan(
+    *, image: str, build_context: Path | None = None
+) -> DockerBuildPlan:
+    """Build the exact Docker build command without mutating Docker state."""
+
+    try:
+        docker_config = DockerConfig.model_validate({"default_image": image.strip()})
+    except ValidationError as exc:
+        raise SetupDockerError("Docker image name is rejected by production models") from exc
+    context = bundled_default_image_build_context() if build_context is None else build_context
+    resolved_context = context.expanduser().resolve(strict=False)
+    return DockerBuildPlan(
+        image=docker_config.default_image,
+        build_context=resolved_context,
+        argv=default_image_build_command(
+            docker_config.default_image,
+            build_context=resolved_context,
+        ),
+    )
+
+
 def build_default_image(
     client: docker.DockerClient,
     *,
     image: str,
     approved: bool,
     build_context: Path | None = None,
-    project_root: Path | None = None,
 ) -> None:
-    """Build the bundled default image after explicit approval.
+    """Build the bundled default image after explicit approval."""
 
-    ``project_root`` is accepted only for compatibility with older setup TUI
-    callers. It is deliberately ignored so the default context is resolved from
-    this installed module, not from the caller's current working directory.
-    """
-
-    del project_root
     if not approved:
         raise SetupDockerError("Docker image build requires explicit approval")
     build_path = bundled_default_image_build_context() if build_context is None else build_context

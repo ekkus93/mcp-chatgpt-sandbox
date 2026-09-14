@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shlex
 import shutil
 import subprocess
@@ -104,6 +105,9 @@ def apply_tunnel_profile(
         raise SetupTunnelError("Tunnel profile creation requires explicit approval")
     if tunnel_client_path() is None:
         raise SetupTunnelError("tunnel-client is not installed or not on PATH")
+    child_environment = None
+    if runtime_environment is not None:
+        child_environment = {**os.environ, **runtime_environment}
     try:
         result = subprocess.run(
             list(plan.argv),
@@ -111,7 +115,7 @@ def apply_tunnel_profile(
             capture_output=True,
             text=True,
             timeout=30,
-            env=None if runtime_environment is None else dict(runtime_environment),
+            env=child_environment,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise SetupTunnelError("tunnel-client profile creation could not be completed") from exc
