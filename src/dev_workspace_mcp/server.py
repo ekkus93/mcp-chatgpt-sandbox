@@ -38,6 +38,8 @@ from dev_workspace_mcp.tools import operations as operations_tools
 from dev_workspace_mcp.tools import prune as prune_tools
 from dev_workspace_mcp.tools import repository as repository_tools
 from dev_workspace_mcp.tools import workspace as workspace_tools
+from dev_workspace_mcp.tools.workspace_models import ServerInfoOutput as WorkspaceServerInfoOutput
+from dev_workspace_mcp.tools.workspace_server_info import get_server_info
 
 Transport = Literal["stdio", "sse", "streamable-http"]
 
@@ -45,7 +47,7 @@ SERVER_NAME = "dev-workspace-mcp"
 
 
 @dataclass
-class ServerInfoOutput(workspace_tools.ServerInfoOutput):
+class ServerInfoOutput(WorkspaceServerInfoOutput):
     """Daemon health extends the existing server-info payload."""
 
     audit: AuditHealth
@@ -200,7 +202,7 @@ def _replace_server_info_with_daemon_health(
 ) -> None:
     """Extend the base workspace diagnostic with daemon subsystem health.
 
-    `workspace_tools.get_server_info` remains the single builder for the
+    `workspace_server_info.get_server_info` remains the single builder for the
     existing Docker/workspace/job/capability fields. Audit, maintenance, and
     O10 operational pressure are process-level diagnostics, so server assembly
     adds them without duplicating or weakening those established base checks.
@@ -218,7 +220,7 @@ def _replace_server_info_with_daemon_health(
     )
     @translate_workspace_errors
     async def server_info() -> ServerInfoOutput:
-        base = workspace_tools.get_server_info(
+        base = get_server_info(
             docker_client=docker_client,
             db=db,
             job_store=job_store,

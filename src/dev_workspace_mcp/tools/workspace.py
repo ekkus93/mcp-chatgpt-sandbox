@@ -10,13 +10,11 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
-from dataclasses import dataclass
 from pathlib import Path
 
 import docker
 from mcp.server import MCPServer
 
-from dev_workspace_mcp import __version__
 from dev_workspace_mcp.audit import write_audit_event
 from dev_workspace_mcp.config.models import (
     AuditConfig,
@@ -41,22 +39,26 @@ from dev_workspace_mcp.execution.service import ExecutionService
 from dev_workspace_mcp.git.commit import detect_default_branch
 from dev_workspace_mcp.git_state import NO_GIT_STATE, read_basic_git_state
 from dev_workspace_mcp.github_api import (
-    RemoteProtectionReportOutput,
     RemoteProtectionResult,
     deserialize_remote_protection,
     serialize_remote_protection,
     to_report_output,
     verify_remote_protection,
 )
-from dev_workspace_mcp.jobs.store import JobState, JobStore
+from dev_workspace_mcp.jobs.store import JobStore
 from dev_workspace_mcp.project_config import (
     ProjectWorkspaceConfig,
     devcontainer_json_is_ignored,
     load_project_config,
 )
 from dev_workspace_mcp.repositories import RepositoryRegistry
-from dev_workspace_mcp.schema_export import CONTRACT_VERSION
 from dev_workspace_mcp.tools.execution import kill_after_timeout
+from dev_workspace_mcp.tools.workspace_models import (
+    GitStateOutput,
+    ServerInfoOutput,
+    WorkspaceInfoOutput,
+)
+from dev_workspace_mcp.tools.workspace_server_info import get_server_info
 from dev_workspace_mcp.workspace.caches import build_cache_mounts, resolve_caches
 from dev_workspace_mcp.workspace.container_config import (
     build_workspace_run_kwargs,
@@ -91,68 +93,6 @@ _SETUP_STEP_TIMEOUT_SECONDS = 600.0
 #: reason to duplicate rather than import, but that was the exact
 #: condition that let this one grace period and `run_exec`'s kill-failure
 #: handling (missing entirely from the setup-step copy) drift apart.
-
-
-@dataclass
-class GitStateOutput:
-    branch: str | None
-    head_sha: str | None
-    clean: bool | None
-    upstream: str | None
-
-
-@dataclass
-class WorkspaceInfoOutput:
-    workspace_id: str
-    repository_id: str
-    container_state: str
-    workspace_path: str
-    git_dir_mode: str
-    ssh_key_mode: str
-    ssh_key_scope: str
-    remote_protection: RemoteProtectionReportOutput
-    git: GitStateOutput
-    image: str | None = None
-    image_digest: str | None = None
-    """§9.2's reproducibility record: base image reference, its digest,
-    the `.mcp-workspace.yml` `version` that configured it (`None` when no
-    project config was present), and the workspace's own creation time —
-    `None`/absent for a workspace that predates this task's migration."""
-    configured_image: str | None = None
-    """G2R-014 (`docs/GAP2_SPEC.md`): what `.mcp-workspace.yml` `image:`
-    (or `docker.default_image`) currently resolves to — as opposed to
-    `image` above, what the container actually runs. A persistent
-    workspace's container is never rebuilt just because this changed
-    (`workspace_open` reconciles an already-`RUNNING` container without
-    touching its image at all), so the two can legitimately diverge
-    until an operator runs `reset`/`rebuild` (`cli.py`); this field is
-    what makes that divergence visible instead of silently reconciled
-    into a reported `image_digest` that no longer describes the running
-    container."""
-    config_version: int | None = None
-    created_at: str | None = None
-    oom_killed: bool = False
-    """H32 (`docs/HARDENING_SPEC.md` §9/§26 row): the reporting surface
-    OOM detection was missing — `container_state: "failed"` alone does
-    not distinguish an OOM kill from any other crash. Reflects the
-    *current* container's state (`WorkspaceRecord.oom_killed`'s own
-    docstring), not a sticky history flag."""
-    devcontainer_ignored: bool = False
-    """H32 (`docs/HARDENING_SPEC.md` §9/§30 row): `True` when this
-    repository has a `.devcontainer/devcontainer.json` the daemon is
-    not reading — see `devcontainer_json_is_ignored`'s own docstring."""
-
-
-@dataclass
-class ServerInfoOutput:
-    version: str
-    contract_version: str
-    docker_available: bool
-    docker_version: str | None
-    active_workspaces: int
-    running_jobs: int
-    configured_repositories: int
-    capabilities: dict[str, bool]
 
 
 async def run_setup_steps(
@@ -705,49 +645,6 @@ async def open_workspace(
         if credential_cleanup_needed and ssh_agent_manager is not None:
             ssh_agent_manager.unload_key(record.id)
         raise
-
-
-def get_server_info(
-    *,
-    docker_client: docker.DockerClient | None,
-    db: sqlite3.Connection,
-    job_store: JobStore,
-    registry: RepositoryRegistry,
-) -> ServerInfoOutput:
-    docker_available = False
-    docker_version: str | None = None
-    if docker_client is not None:
-        try:
-            docker_client.ping()
-            docker_available = True
-            docker_version = docker_client.version().get("Version")
-        except docker.errors.DockerException:
-            pass
-
-    (active_workspaces,) = db.execute(
-        "SELECT COUNT(*) FROM workspace WHERE state = 'running'"
-    ).fetchone()
-    running_jobs = len(
-        job_store.list_by_state(JobState.QUEUED, JobState.STARTING, JobState.RUNNING)
-    )
-
-    return ServerInfoOutput(
-        version=__version__,
-        contract_version=CONTRACT_VERSION,
-        docker_available=docker_available,
-        docker_version=docker_version,
-        active_workspaces=active_workspaces,
-        running_jobs=running_jobs,
-        configured_repositories=len(registry.list_all()),
-        capabilities={
-            "filesystem.patch.unified_diff": True,
-            "filesystem.write.expected_sha256": True,
-            "exec.jobs": True,
-            "git.commit.expected_head_sha": True,
-            "git.push.remote_protection": True,
-            "workspace.devcontainer": False,
-        },
-    )
 
 
 def register(
