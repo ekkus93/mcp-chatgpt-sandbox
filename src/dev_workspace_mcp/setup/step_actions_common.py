@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol, TypeVar
+from typing import TYPE_CHECKING, Protocol, TypeVar
 
 from textual.widgets import Input, Select
 
-from dev_workspace_mcp.setup.config_writer import ConfigUpdatePlan
-from dev_workspace_mcp.setup.docker_setup import DockerBuildPlan
-from dev_workspace_mcp.setup.model import SetupState, SetupStep
 from dev_workspace_mcp.setup.runtime_setup import SetupRuntimeError
-from dev_workspace_mcp.setup.tunnel import TunnelProfilePlan
 
+if TYPE_CHECKING:
+    from dev_workspace_mcp.setup.config_writer import ConfigUpdatePlan
+    from dev_workspace_mcp.setup.docker_setup import DockerBuildPlan
+    from dev_workspace_mcp.setup.model import SetupState, SetupStep
+    from dev_workspace_mcp.setup.tunnel import TunnelProfilePlan
 
 _T = TypeVar("_T")
 
