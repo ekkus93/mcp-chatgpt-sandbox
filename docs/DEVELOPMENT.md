@@ -106,24 +106,43 @@ The setup implementation is intentionally layered:
 - `setup/tunnel.py` — optional Secure MCP Tunnel planning/health;
 - `setup/diagnostics.py` — shared TUI/headless final diagnostic engine;
 - `setup/step_panels.py` and `setup/git_policy_panel.py` — Textual controls;
-- `setup/step_actions.py`, `setup/step_actions_docker.py`, and
-  `setup/step_actions_hardened.py` — step-specific Textual actions that call
-  domain modules without owning production config persistence/semantics;
+- `setup/dialogs_panel.py` — existing-installation, repair, start-fresh, and
+  cancellation dialogs;
+- `setup/step_actions_common.py` — shared presentation protocols and widget/value
+  helpers used by action mixins;
+- `setup/step_actions_core.py` — prerequisites, storage, repository, SSH/GitHub,
+  runtime, and ordinary step validation/actions;
+- `setup/step_actions.py` — tunnel review/apply, config review/write, and final
+  diagnostics coordination;
+- `setup/step_actions_docker.py` — reviewed Docker prepare/apply boundaries;
+- `setup/step_actions_hardened.py` — guided Git-policy extraction/validation
+  adapter;
 - `setup/app.py` — setup lifecycle, navigation, validation-gating, resumable-state
   activation, and widget population shell.
 
-`step_actions_hardened.py` remains separate deliberately: it is a small bounded
-adapter for guided Git-policy extraction/validation, while
-`step_actions_docker.py` independently owns reviewed Docker action boundaries.
-Folding those back into the main action module would increase coordinator size
-without clarifying ownership.
+The split keeps host/domain mutations out of `app.py`, keeps the ordinary action
+surface out of the final-review coordinator, and leaves Docker and Git-policy
+hardening boundaries independently reviewable. `step_actions_hardened.py` remains
+separate deliberately because folding it back into the main action layer would
+increase coordinator size without clarifying ownership.
 
 The static architecture suite discovers presentation modules by the documented
 convention (`app.py`, `step_panels.py`, `step_actions*`, and `*_panel.py`) and
 requires that discovery to equal an explicit per-module manifest. New
 presentation modules therefore require an explicit ownership/line-budget
-disposition. Current coordinator caps remain 800 lines for `app.py` and 900 for
-`step_actions.py`; the extracted modules have smaller independent caps.
+disposition. Current caps are 750 lines for `app.py`, 300 for `step_actions.py`,
+150 for `step_actions_common.py`, 650 for `step_actions_core.py`, 200 each for
+`step_actions_docker.py` and `step_actions_hardened.py`, 150 for
+`dialogs_panel.py`, 450 for `step_panels.py`, and 200 for
+`git_policy_panel.py`.
+
+The larger MCP tool coordinators use the same responsibility-splitting approach:
+`tools/workspace_models.py` owns workspace output dataclasses,
+`tools/workspace_server_info.py` owns base server-info construction, and
+`tools/execution_models.py` owns execution output dataclasses. The four
+coordinators refactored in September 2026 (`tools/workspace.py`,
+`tools/execution.py`, `setup/step_actions.py`, and `setup/app.py`) are protected
+by a repository test requiring each to stay below 800 physical lines.
 
 Production config models remain authoritative. Do not add a second validator to
 the TUI when an existing production helper can be reused or extracted.
