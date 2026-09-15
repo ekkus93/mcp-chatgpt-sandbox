@@ -10,7 +10,7 @@ from typing import cast
 import docker
 from docker.errors import DockerException
 from textual import on
-from textual.widgets import Button, Checkbox, Input, Select, Static
+from textual.widgets import Button, Checkbox, Input, Static
 
 from dev_workspace_mcp.setup.docker_setup import (
     DockerSetupChoices,
