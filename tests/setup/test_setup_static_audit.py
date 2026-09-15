@@ -15,8 +15,10 @@ _SETUP_ROOT = _REPO_ROOT / "src" / "dev_workspace_mcp" / "setup"
 # Adding a presentation module requires an explicit architecture disposition and
 # line-budget decision here; removing/renaming one must update the manifest too.
 _PRESENTATION_MODULE_LIMITS = {
-    "app.py": 800,
-    "step_actions.py": 900,
+    "app.py": 750,
+    "dialogs_panel.py": 150,
+    "step_actions.py": 800,
+    "step_actions_common.py": 150,
     "step_actions_docker.py": 200,
     "step_actions_hardened.py": 200,
     "step_panels.py": 450,
