@@ -5,9 +5,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-from dev_workspace_mcp.config.models import ServerConfig
-from dev_workspace_mcp.operations.pressure import PidPressureObservation, PidPressureStatus
-from dev_workspace_mcp.server import create_server
+from mcp_chatgpt_sandbox.config.models import ServerConfig
+from mcp_chatgpt_sandbox.operations.pressure import PidPressureObservation, PidPressureStatus
+from mcp_chatgpt_sandbox.server import create_server
 
 
 class _EmptyCollection:
@@ -45,13 +45,13 @@ async def test_o10_server_info_reports_healthy_operational_state_and_preserves_h
     minimal_config: ServerConfig,
     monkeypatch: Any,
 ) -> None:
-    monkeypatch.setattr("dev_workspace_mcp.server._try_docker_client", lambda: _HealthyDocker())
+    monkeypatch.setattr("mcp_chatgpt_sandbox.server._try_docker_client", lambda: _HealthyDocker())
     monkeypatch.setattr(
-        "dev_workspace_mcp.operations.inventory.os.statvfs",
+        "mcp_chatgpt_sandbox.operations.inventory.os.statvfs",
         lambda _path: _statvfs(capacity=1_000, free=500),
     )
     monkeypatch.setattr(
-        "dev_workspace_mcp.tools.operations.observe_pid_pressure",
+        "mcp_chatgpt_sandbox.tools.operations.observe_pid_pressure",
         lambda: _available_pid(current=0, limit=100),
     )
 
@@ -91,13 +91,13 @@ async def test_o10_server_info_reports_pressure_without_calling_destructive_tool
     minimal_config: ServerConfig,
     monkeypatch: Any,
 ) -> None:
-    monkeypatch.setattr("dev_workspace_mcp.server._try_docker_client", lambda: _HealthyDocker())
+    monkeypatch.setattr("mcp_chatgpt_sandbox.server._try_docker_client", lambda: _HealthyDocker())
     monkeypatch.setattr(
-        "dev_workspace_mcp.operations.inventory.os.statvfs",
+        "mcp_chatgpt_sandbox.operations.inventory.os.statvfs",
         lambda _path: _statvfs(capacity=1_000, free=50),
     )
     monkeypatch.setattr(
-        "dev_workspace_mcp.tools.operations.observe_pid_pressure",
+        "mcp_chatgpt_sandbox.tools.operations.observe_pid_pressure",
         lambda: _available_pid(current=95, limit=100),
     )
 
@@ -129,16 +129,16 @@ async def test_o10_optional_probe_degrades_server_info_and_recovers_without_bloc
     minimal_config: ServerConfig,
     monkeypatch: Any,
 ) -> None:
-    monkeypatch.setattr("dev_workspace_mcp.server._try_docker_client", lambda: _HealthyDocker())
+    monkeypatch.setattr("mcp_chatgpt_sandbox.server._try_docker_client", lambda: _HealthyDocker())
     monkeypatch.setattr(
-        "dev_workspace_mcp.tools.operations.observe_pid_pressure",
+        "mcp_chatgpt_sandbox.tools.operations.observe_pid_pressure",
         lambda: PidPressureObservation.unavailable("PermissionError"),
     )
 
     def unavailable_statvfs(_path: object) -> object:
         raise PermissionError("sensitive host path must not escape")
 
-    monkeypatch.setattr("dev_workspace_mcp.operations.inventory.os.statvfs", unavailable_statvfs)
+    monkeypatch.setattr("mcp_chatgpt_sandbox.operations.inventory.os.statvfs", unavailable_statvfs)
 
     # Optional pressure probes are not startup prerequisites.
     server = create_server(minimal_config)
@@ -168,11 +168,11 @@ async def test_o10_optional_probe_degrades_server_info_and_recovers_without_bloc
     assert "sensitive host path" not in str(degraded)
 
     monkeypatch.setattr(
-        "dev_workspace_mcp.operations.inventory.os.statvfs",
+        "mcp_chatgpt_sandbox.operations.inventory.os.statvfs",
         lambda _path: _statvfs(capacity=1_000, free=500),
     )
     monkeypatch.setattr(
-        "dev_workspace_mcp.tools.operations.observe_pid_pressure",
+        "mcp_chatgpt_sandbox.tools.operations.observe_pid_pressure",
         lambda: _available_pid(current=10, limit=100),
     )
 

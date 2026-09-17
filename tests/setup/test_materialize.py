@@ -4,14 +4,14 @@ from pathlib import Path
 
 import yaml
 
-from dev_workspace_mcp.config import load_config
-from dev_workspace_mcp.setup.config_writer import prepare_config_update
-from dev_workspace_mcp.setup.materialize import (
+from mcp_chatgpt_sandbox.config import load_config
+from mcp_chatgpt_sandbox.setup.config_writer import prepare_config_update
+from mcp_chatgpt_sandbox.setup.materialize import (
     choices_from_config,
     materialize_setup,
     state_from_existing_config,
 )
-from dev_workspace_mcp.setup.model import SetupState
+from mcp_chatgpt_sandbox.setup.model import SetupState
 
 
 def _write_config(tmp_path: Path) -> Path:

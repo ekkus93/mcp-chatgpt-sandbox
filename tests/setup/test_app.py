@@ -6,8 +6,8 @@ import pytest
 from textual.containers import Vertical
 from textual.widgets import Button, Checkbox, Input, Select
 
-from dev_workspace_mcp.setup.app import STEPS, SetupStartChoice, SetupWizardApp
-from dev_workspace_mcp.setup.model import (
+from mcp_chatgpt_sandbox.setup.app import STEPS, SetupStartChoice, SetupWizardApp
+from mcp_chatgpt_sandbox.setup.model import (
     SetupState,
     SetupStep,
     SetupStepStatus,

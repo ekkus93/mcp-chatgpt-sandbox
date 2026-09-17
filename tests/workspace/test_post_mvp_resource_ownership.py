@@ -7,8 +7,8 @@ import contextlib
 import docker
 import pytest
 
-from dev_workspace_mcp.errors import ContainerCreateFailedError
-from dev_workspace_mcp.operations.resources import (
+from mcp_chatgpt_sandbox.errors import ContainerCreateFailedError
+from mcp_chatgpt_sandbox.operations.resources import (
     INVENTORY_ONLY_RESOURCE_KINDS,
     LABEL_RESOURCE_KIND,
     OWNERSHIP_RULES,
@@ -20,11 +20,11 @@ from dev_workspace_mcp.operations.resources import (
     classify_cache_volume,
     classify_workspace_container,
 )
-from dev_workspace_mcp.project_config import ProjectCacheEntry
-from dev_workspace_mcp.repositories import RepositoryRecord
-from dev_workspace_mcp.workspace.caches import build_cache_mounts, resolve_caches
-from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
-from dev_workspace_mcp.workspace.naming import (
+from mcp_chatgpt_sandbox.project_config import ProjectCacheEntry
+from mcp_chatgpt_sandbox.repositories import RepositoryRecord
+from mcp_chatgpt_sandbox.workspace.caches import build_cache_mounts, resolve_caches
+from mcp_chatgpt_sandbox.workspace.manager import DockerWorkspaceManager
+from mcp_chatgpt_sandbox.workspace.naming import (
     LABEL_MANAGED,
     LABEL_REPOSITORY_ID,
     LABEL_TEST_NAMESPACE,
@@ -192,7 +192,7 @@ def test_pmoat_001_workspace_classifier_requires_all_positive_identity_labels(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Managed=true alone is not enough to own a container."""
-    monkeypatch.delenv("DEV_WORKSPACE_MCP_TEST_RESOURCE_NAMESPACE", raising=False)
+    monkeypatch.delenv("MCP_CHATGPT_SANDBOX_TEST_RESOURCE_NAMESPACE", raising=False)
     incomplete = classify_workspace_container({LABEL_MANAGED: "true"})
     assert incomplete.status is OwnershipStatus.UNKNOWN
     assert not incomplete.positively_owned

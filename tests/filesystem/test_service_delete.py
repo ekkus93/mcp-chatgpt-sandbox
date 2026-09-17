@@ -17,10 +17,10 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.config.models import FilesystemConfig
-from dev_workspace_mcp.errors import InvalidArgumentError
-from dev_workspace_mcp.filesystem.security import FilesystemSecurity
-from dev_workspace_mcp.filesystem.service import FilesystemService
+from mcp_chatgpt_sandbox.config.models import FilesystemConfig
+from mcp_chatgpt_sandbox.errors import InvalidArgumentError
+from mcp_chatgpt_sandbox.filesystem.security import FilesystemSecurity
+from mcp_chatgpt_sandbox.filesystem.service import FilesystemService
 
 
 def _service(root: Path, *, config: FilesystemConfig | None = None) -> FilesystemService:
@@ -72,7 +72,7 @@ def test_delete_file_nonexistent_raises(tmp_path: Path) -> None:
 def test_delete_file_git_metadata_raises(tmp_path: Path) -> None:
     root = _repo(tmp_path)
     svc = _service(root)
-    from dev_workspace_mcp.errors import PathGitMetadataError
+    from mcp_chatgpt_sandbox.errors import PathGitMetadataError
 
     with pytest.raises(PathGitMetadataError):
         svc.delete_file(".git", recursive=True)
@@ -147,7 +147,7 @@ def test_at_hat003_a_nested_git_directory_blocks_the_recursive_delete_of_its_par
     (root / "vendored" / ".git").mkdir()
     (root / "vendored" / "file.txt").write_text("hi\n")
     svc = _service(root)
-    from dev_workspace_mcp.errors import PathGitMetadataError
+    from mcp_chatgpt_sandbox.errors import PathGitMetadataError
 
     with pytest.raises(PathGitMetadataError):
         svc.delete_file("vendored", recursive=True)
@@ -164,7 +164,7 @@ def test_at_hat003_a_nested_gitfile_also_blocks_the_recursive_delete(tmp_path: P
     (root / "linked-worktree").mkdir()
     (root / "linked-worktree" / ".git").write_text("gitdir: /somewhere/else\n")
     svc = _service(root)
-    from dev_workspace_mcp.errors import PathGitMetadataError
+    from mcp_chatgpt_sandbox.errors import PathGitMetadataError
 
     with pytest.raises(PathGitMetadataError):
         svc.delete_file("linked-worktree", recursive=True)

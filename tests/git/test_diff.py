@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.errors import InvalidArgumentError
-from dev_workspace_mcp.git.diff import (
+from mcp_chatgpt_sandbox.errors import InvalidArgumentError
+from mcp_chatgpt_sandbox.git.diff import (
     GitDiffResult,
     _trim_incomplete_trailing_char,
     build_diff_argv,

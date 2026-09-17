@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.errors import GitRefspecNotAllowedError
-from dev_workspace_mcp.git.push import (
+from mcp_chatgpt_sandbox.errors import GitRefspecNotAllowedError
+from mcp_chatgpt_sandbox.git.push import (
     PUSH_NON_FAST_FORWARD_MARKERS,
     build_push_argv,
     build_refspec,

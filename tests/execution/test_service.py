@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 import docker
 import pytest
 
-from dev_workspace_mcp.execution.service import ExecutionService
+from mcp_chatgpt_sandbox.execution.service import ExecutionService
 
 
 def _service_with_exec_inspect(side_effect_or_return: object) -> ExecutionService:
@@ -37,7 +37,7 @@ def test_at_vat006_a_docker_exception_from_exec_inspect_is_logged(
     that an absence be *surfaced* — the `DockerException` branch was the
     one path where it wasn't."""
     service = _service_with_exec_inspect(docker.errors.DockerException("daemon unreachable"))
-    with caplog.at_level("WARNING", logger="dev_workspace_mcp.execution.service"):
+    with caplog.at_level("WARNING", logger="mcp_chatgpt_sandbox.execution.service"):
         pid = service.pid_of("exec123")
     assert pid is None
     matching = [r for r in caplog.records if "exec123" in r.message]
@@ -53,7 +53,7 @@ def test_retry_exhaustion_is_logged_baseline_unchanged_by_this_fix(
     the retry budget is exhausted. Not a reproduction — this already
     passed before this task."""
     service = _service_with_exec_inspect({"Pid": 0})
-    with caplog.at_level("WARNING", logger="dev_workspace_mcp.execution.service"):
+    with caplog.at_level("WARNING", logger="mcp_chatgpt_sandbox.execution.service"):
         pid = service.pid_of("exec456")
     assert pid is None
     matching = [r for r in caplog.records if "exec456" in r.message]

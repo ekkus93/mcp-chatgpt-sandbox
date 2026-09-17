@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.filesystem.patch import (
+from mcp_chatgpt_sandbox.filesystem.patch import (
     PatchFormatError,
     apply_unified_diff,
     parse_unified_diff,

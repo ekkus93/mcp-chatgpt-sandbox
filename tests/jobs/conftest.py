@@ -9,8 +9,8 @@ from collections.abc import Iterator
 
 import pytest
 
-from dev_workspace_mcp.db import open_db
-from dev_workspace_mcp.jobs.store import JobStore
+from mcp_chatgpt_sandbox.db import open_db
+from mcp_chatgpt_sandbox.jobs.store import JobStore
 
 WORKSPACE_ID = "ws_test"
 

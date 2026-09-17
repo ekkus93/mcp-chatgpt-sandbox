@@ -5,36 +5,36 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.config import GitPolicyConfig
-from dev_workspace_mcp.setup.docker_setup import (
+from mcp_chatgpt_sandbox.config import GitPolicyConfig
+from mcp_chatgpt_sandbox.setup.docker_setup import (
     DockerSetupChoices,
     SetupDockerError,
     build_default_image,
     bundled_default_image_build_context,
     default_image_build_command,
 )
-from dev_workspace_mcp.setup.git_policy_setup import (
+from mcp_chatgpt_sandbox.setup.git_policy_setup import (
     GIT_POLICY_UI_FIELDS,
     GitPolicyPreset,
     conservative_policy,
     materialize_policy,
     recommended_policy,
 )
-from dev_workspace_mcp.setup.host import (
+from mcp_chatgpt_sandbox.setup.host import (
     SetupHostError,
     StorageChoices,
     check_prerequisites,
     parent_is_writable,
 )
-from dev_workspace_mcp.setup.model import SetupRepositoryState
-from dev_workspace_mcp.setup.repository_setup import (
+from mcp_chatgpt_sandbox.setup.model import SetupRepositoryState
+from mcp_chatgpt_sandbox.setup.repository_setup import (
     SetupRepositoryError,
     add_repository,
     remove_repository,
     verify_repository,
 )
-from dev_workspace_mcp.setup.runtime_setup import RuntimeChoices, SetupRuntimeError
-from dev_workspace_mcp.setup.ssh_github_setup import CredentialChoices, verify_credential_files
+from mcp_chatgpt_sandbox.setup.runtime_setup import RuntimeChoices, SetupRuntimeError
+from mcp_chatgpt_sandbox.setup.ssh_github_setup import CredentialChoices, verify_credential_files
 
 
 def test_wizv_008_storage_paths_use_production_absolute_path_rules(tmp_path: Path) -> None:
@@ -61,10 +61,10 @@ def test_wizv_008_unwritable_parent_and_docker_outage_are_degraded_not_fatal(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("dev_workspace_mcp.setup.host.os.access", lambda *args: False)
+    monkeypatch.setattr("mcp_chatgpt_sandbox.setup.host.os.access", lambda *args: False)
     assert not parent_is_writable(tmp_path / "nested" / "state.db")
 
-    monkeypatch.setattr("dev_workspace_mcp.setup.host.docker_available", lambda: False)
+    monkeypatch.setattr("mcp_chatgpt_sandbox.setup.host.docker_available", lambda: False)
     report = check_prerequisites()
     assert report.python_supported
     assert not report.docker_reachable
@@ -74,7 +74,7 @@ def test_wizv_008_unwritable_parent_and_docker_outage_are_degraded_not_fatal(
 def test_wizv_009_docker_choices_validate_duration_and_workspace_path() -> None:
     fragments = DockerSetupChoices().config_fragments()
     assert fragments["docker"] == {
-        "default_image": "mcp-dev-ubuntu:24.04",
+        "default_image": "mcp-chatgpt-sandbox-ubuntu:24.04",
         "workspace_path": "/workspace",
     }
     with pytest.raises(SetupDockerError):
@@ -106,7 +106,7 @@ def test_swhv_004_default_docker_build_context_is_independent_of_cwd(
     assert Path.cwd() != original
     assert context.name == "default"
     assert context.parent.name == "docker"
-    command = default_image_build_command("mcp-dev-test:24.04")
+    command = default_image_build_command("mcp-chatgpt-sandbox-test:24.04")
     assert command[-1] == str(context)
 
 
@@ -121,11 +121,11 @@ def test_swhv_004_absent_docker_build_context_is_actionable_without_invoking_doc
         images = Images()
 
     monkeypatch.setattr(
-        "dev_workspace_mcp.setup.docker_setup.bundled_default_image_build_context",
+        "mcp_chatgpt_sandbox.setup.docker_setup.bundled_default_image_build_context",
         lambda: (_ for _ in ()).throw(SetupDockerError("missing context")),
     )
     with pytest.raises(SetupDockerError, match="missing context"):
-        build_default_image(Client(), image="mcp-dev-test:24.04", approved=True)
+        build_default_image(Client(), image="mcp-chatgpt-sandbox-test:24.04", approved=True)
 
 
 def test_wizv_010_temporary_git_repository_verifies_remote_identity(tmp_path: Path) -> None:

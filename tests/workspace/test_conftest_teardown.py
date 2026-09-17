@@ -25,8 +25,8 @@ import docker
 import docker.types
 import pytest
 
-from dev_workspace_mcp.workspace.caches import cache_volume_name
-from dev_workspace_mcp.workspace.naming import LABEL_MANAGED
+from mcp_chatgpt_sandbox.workspace.caches import cache_volume_name
+from mcp_chatgpt_sandbox.workspace.naming import LABEL_MANAGED
 
 from .conftest import remove_tracked_docker_resources
 
@@ -120,7 +120,7 @@ def test_uses_docker_client_and_creates_a_tracked_container(docker_client):
     docker_client.containers.run(
         "alpine:3.20",
         ["sleep", "3600"],
-        labels={"dev-workspace-mcp.managed": "true"},
+        labels={"mcp-chatgpt-sandbox.managed": "true"},
         detach=True,
     )
 """

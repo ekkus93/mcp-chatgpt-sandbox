@@ -2,7 +2,7 @@
 
 import pytest
 
-from dev_workspace_mcp.errors import redact_secrets
+from mcp_chatgpt_sandbox.errors import redact_secrets
 
 MASK = "[REDACTED]"
 

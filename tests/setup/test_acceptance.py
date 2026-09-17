@@ -6,23 +6,23 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.config import load_config
-from dev_workspace_mcp.server import create_server
-from dev_workspace_mcp.setup.choices import SetupChoices
-from dev_workspace_mcp.setup.config_writer import (
+from mcp_chatgpt_sandbox.config import load_config
+from mcp_chatgpt_sandbox.server import create_server
+from mcp_chatgpt_sandbox.setup.choices import SetupChoices
+from mcp_chatgpt_sandbox.setup.config_writer import (
     SetupConfigError,
     commit_config_update,
     prepare_config_update,
 )
-from dev_workspace_mcp.setup.diagnostics import DiagnosticCode, DiagnosticStatus, run_diagnostics
-from dev_workspace_mcp.setup.filesystem import SetupFilesystemError, atomic_write_text
-from dev_workspace_mcp.setup.host import (
+from mcp_chatgpt_sandbox.setup.diagnostics import DiagnosticCode, DiagnosticStatus, run_diagnostics
+from mcp_chatgpt_sandbox.setup.filesystem import SetupFilesystemError, atomic_write_text
+from mcp_chatgpt_sandbox.setup.host import (
     SetupHostError,
     StorageChoices,
     prepare_storage_directories,
 )
-from dev_workspace_mcp.setup.materialize import materialize_setup, state_from_existing_config
-from dev_workspace_mcp.setup.model import (
+from mcp_chatgpt_sandbox.setup.materialize import materialize_setup, state_from_existing_config
+from mcp_chatgpt_sandbox.setup.model import (
     SetupRepositoryState,
     SetupState,
     SetupStateError,
@@ -71,7 +71,7 @@ def _fresh_state(tmp_path: Path, repository: SetupRepositoryState) -> SetupState
         audit_path=str(storage.audit_path),
         keys_dir=str(storage.keys_dir),
         known_hosts=str(storage.known_hosts),
-        docker_image="mcp-dev-test-s7:24.04",
+        docker_image="mcp-chatgpt-sandbox-test-s7:24.04",
     )
     return SetupState(
         config_path=str(tmp_path / "config.yml"),
@@ -117,7 +117,7 @@ def test_wizv_016_fresh_install_generates_and_validates_without_yaml_editing(
     assert config.repositories[0].id == "example"
     assert config.repositories[0].github == "example/example"
     assert config.ssh.known_hosts.read_text().startswith("github.com ")
-    assert create_server(config).name == "dev-workspace-mcp"
+    assert create_server(config).name == "mcp-chatgpt-sandbox"
 
     state_text = json.dumps(state.to_dict())
     assert "fixture-sensitive-material" not in state_text
@@ -153,7 +153,7 @@ def test_wizv_017_existing_config_preserves_unedited_advanced_values_and_cas(
     commit_config_update(tmp_path / "config.yml", initial_plan)
 
     edit_state = state_from_existing_config(tmp_path / "config.yml", advanced=False)
-    edit_state.choices.docker_image = "mcp-dev-test-s7:24.04"
+    edit_state.choices.docker_image = "mcp-chatgpt-sandbox-test-s7:24.04"
     edit_state.reviewed_fields = frozenset({"docker"})
     edited = materialize_setup(edit_state, new_config=False)
     plan = prepare_config_update(
@@ -185,7 +185,7 @@ def test_wizv_018_repair_and_failure_paths_preserve_recovery_material(
     values = {
         "version": 1,
         "state_db_path": str(tmp_path / "state.db"),
-        "docker": {"default_image": "mcp-dev-test-s7:24.04"},
+        "docker": {"default_image": "mcp-chatgpt-sandbox-test-s7:24.04"},
         "ssh": {
             "keys_dir": str(tmp_path / "keys"),
             "known_hosts": str(tmp_path / "known_hosts"),
@@ -214,7 +214,7 @@ def test_wizv_018_repair_and_failure_paths_preserve_recovery_material(
     atomic_write_text(state_path, "{not-json}\n", create_backup=False)
     with pytest.raises(SetupStateError):
         load_setup_state(state_path)
-    assert load_config(target).docker.default_image == "mcp-dev-test-s7:24.04"
+    assert load_config(target).docker.default_image == "mcp-chatgpt-sandbox-test-s7:24.04"
 
     statuses = {item.code: item.status for item in run_diagnostics(target).results}
     assert statuses[DiagnosticCode.CONFIG_RELOAD] is DiagnosticStatus.PASS

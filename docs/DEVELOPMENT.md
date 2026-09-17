@@ -75,17 +75,17 @@ other lint rule, and strict mypy still apply normally.
 Launch the TUI against an isolated config path while developing:
 
 ```bash
-uv run dev-workspace-mcp setup --config /tmp/dev-workspace-mcp/config.yml
+uv run mcp-chatgpt-sandbox setup --config /tmp/mcp-chatgpt-sandbox/config.yml
 ```
 
 Useful modes:
 
 ```bash
-uv run dev-workspace-mcp setup --resume --config /tmp/dev-workspace-mcp/config.yml
-uv run dev-workspace-mcp setup --advanced --config /tmp/dev-workspace-mcp/config.yml
-uv run dev-workspace-mcp setup --no-browser --config /tmp/dev-workspace-mcp/config.yml
-uv run dev-workspace-mcp setup --check --config /tmp/dev-workspace-mcp/config.yml
-uv run dev-workspace-mcp doctor --config /tmp/dev-workspace-mcp/config.yml
+uv run mcp-chatgpt-sandbox setup --resume --config /tmp/mcp-chatgpt-sandbox/config.yml
+uv run mcp-chatgpt-sandbox setup --advanced --config /tmp/mcp-chatgpt-sandbox/config.yml
+uv run mcp-chatgpt-sandbox setup --no-browser --config /tmp/mcp-chatgpt-sandbox/config.yml
+uv run mcp-chatgpt-sandbox setup --check --config /tmp/mcp-chatgpt-sandbox/config.yml
+uv run mcp-chatgpt-sandbox doctor --config /tmp/mcp-chatgpt-sandbox/config.yml
 ```
 
 The setup implementation is intentionally layered:
@@ -205,7 +205,7 @@ than adding retries that hide the collision.
 For a normal developer/operator first run, use the wizard:
 
 ```bash
-uv run dev-workspace-mcp setup
+uv run mcp-chatgpt-sandbox setup
 ```
 
 It can explicitly build the selected project default image, create reviewed
@@ -215,8 +215,8 @@ and run final diagnostics.
 Then start the server:
 
 ```bash
-uv run dev-workspace-mcp serve \
-  --config ~/.config/dev-workspace-mcp/config.yml
+uv run mcp-chatgpt-sandbox serve \
+  --config ~/.config/mcp-chatgpt-sandbox/config.yml
 ```
 
 The default transport is `stdio`. A local MCP client can spawn it directly;
@@ -229,7 +229,7 @@ Manual configuration remains supported. See
 
 ## Troubleshooting
 
-- **`serve` rejects the config.** Run `dev-workspace-mcp doctor --config ...`
+- **`serve` rejects the config.** Run `mcp-chatgpt-sandbox doctor --config ...`
   and compare the field with `docs/CONFIGURATION.md` / the production models.
 - **The setup wizard will not enable Next.** The active step is not currently
   validated. Use that screen's explicit validation/remediation action; changing
@@ -249,14 +249,14 @@ Manual configuration remains supported. See
   wizard progress; it does not delete the production config, repositories,
   credentials, database contents, Docker volumes, or workspaces.
 - **Tool schemas changed.** Regenerate `schemas/tools.json` with
-  `dev-workspace-mcp export-schemas` and make the required `contract_version`
+  `mcp-chatgpt-sandbox export-schemas` and make the required `contract_version`
   decision; the setup TUI itself does not alter the public MCP tool surface.
 
 ## Project layout
 
 ```text
-src/dev_workspace_mcp/        runtime package
-src/dev_workspace_mcp/setup/  interactive setup + shared diagnostics
+src/mcp_chatgpt_sandbox/        runtime package
+src/mcp_chatgpt_sandbox/setup/  interactive setup + shared diagnostics
 tests/setup/                   setup unit/TUI/acceptance tests
 tests/                         remaining unit/integration tests
 docs/SPEC.md                   authoritative server behavior

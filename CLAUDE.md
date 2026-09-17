@@ -5,8 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project
 
 A private MCP server giving MCP clients Docker-backed dev workspaces scoped to configured
-local Git repositories. Note the three names differ: repo `mcp-chatgpt-sandbox`, package
-`dev_workspace_mcp`, CLI `dev-workspace-mcp`.
+local Git repositories. Repo, distribution, CLI and package share one name:
+`mcp-chatgpt-sandbox` (`mcp_chatgpt_sandbox` as the Python module path).
 
 Large reference docs — read on demand, do not assume their contents:
 `docs/DEVELOPMENT.md` (workflow), `docs/SPEC.md` (architecture + trust model, §-numbered),
@@ -35,7 +35,7 @@ Single test: `uv run pytest tests/<area>/test_x.py::test_name`.
 Run the full suite for any change, not just a targeted subset.
 
 - Requires a reachable Docker daemon **and** the test image:
-  `docker build -t mcp-dev-test-s7:24.04 docker/default/`. That tag must match
+  `docker build -t mcp-chatgpt-sandbox-test-s7:24.04 docker/default/`. That tag must match
   `DEFAULT_IMAGE_TEST_TAG` in `tests/workspace/conftest.py`.
 - Any pytest skip is converted into a session failure (`tests/_skip_policy.py`). A skip here
   means Docker was unreachable — never resolve a failure by adding or tolerating a skip.
@@ -65,7 +65,7 @@ rejected alternative actually failed when you know.
 ## Guards that fail on structure, not behavior
 
 - **Tool surface.** Changing it requires all three, each gated separately in CI: regenerate
-  `schemas/tools.json` via `uv run dev-workspace-mcp export-schemas`, make the
+  `schemas/tools.json` via `uv run mcp-chatgpt-sandbox export-schemas`, make the
   `contract_version` bump decision (must increase monotonically), and update the matching
   `docs/TOOLS.md` table row.
 - **Module line budgets.** `tools/workspace.py`, `tools/execution.py`, `setup/step_actions.py`

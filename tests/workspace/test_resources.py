@@ -11,8 +11,8 @@ from pathlib import Path
 
 import docker
 
-from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
-from dev_workspace_mcp.server import create_server
+from mcp_chatgpt_sandbox.config.models import RepositoryConfig, ServerConfig
+from mcp_chatgpt_sandbox.server import create_server
 
 
 def _configured(
@@ -46,7 +46,7 @@ async def test_no_resources_config_means_no_limits(
     workspace_id = opened.structured_content["workspace_id"]
 
     containers = docker_client.containers.list(
-        all=True, filters={"label": f"dev-workspace-mcp.workspace-id={workspace_id}"}
+        all=True, filters={"label": f"mcp-chatgpt-sandbox.workspace-id={workspace_id}"}
     )
     assert len(containers) == 1
     host_config = containers[0].attrs["HostConfig"]
@@ -74,7 +74,7 @@ async def test_cpus_memory_and_pids_limit_are_applied_to_the_real_container(
     workspace_id = opened.structured_content["workspace_id"]
 
     containers = docker_client.containers.list(
-        all=True, filters={"label": f"dev-workspace-mcp.workspace-id={workspace_id}"}
+        all=True, filters={"label": f"mcp-chatgpt-sandbox.workspace-id={workspace_id}"}
     )
     assert len(containers) == 1
     host_config = containers[0].attrs["HostConfig"]

@@ -19,8 +19,8 @@ import json
 import re
 from pathlib import Path
 
-from dev_workspace_mcp.config.models import ServerConfig
-from dev_workspace_mcp.server import create_server
+from mcp_chatgpt_sandbox.config.models import ServerConfig
+from mcp_chatgpt_sandbox.server import create_server
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DOCS_PATH = _REPO_ROOT / "docs" / "TOOLS.md"

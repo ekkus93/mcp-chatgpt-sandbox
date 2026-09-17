@@ -6,10 +6,10 @@ import re
 import tomllib
 from pathlib import Path
 
-from dev_workspace_mcp.setup.step_actions import SetupStepActionsMixin
+from mcp_chatgpt_sandbox.setup.step_actions import SetupStepActionsMixin
 
 _REPO_ROOT = Path(__file__).parents[2]
-_SETUP_ROOT = _REPO_ROOT / "src" / "dev_workspace_mcp" / "setup"
+_SETUP_ROOT = _REPO_ROOT / "src" / "mcp_chatgpt_sandbox" / "setup"
 
 # SWPH-007: this manifest is deliberately independent of filesystem discovery.
 # Adding a presentation module requires an explicit architecture disposition and
@@ -159,7 +159,7 @@ def test_swf_003_setup_app_has_no_broad_e501_per_file_exemption() -> None:
     per_file_ignores = (
         lint_section.get("per-file-ignores", {}) if isinstance(lint_section, dict) else {}
     )
-    setup_app_ignores = per_file_ignores.get("src/dev_workspace_mcp/setup/app.py", [])
+    setup_app_ignores = per_file_ignores.get("src/mcp_chatgpt_sandbox/setup/app.py", [])
     assert "E501" not in setup_app_ignores
 
 

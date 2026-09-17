@@ -1,16 +1,16 @@
 # Configuration
 
 The production configuration is YAML and is enforced by the Pydantic models in
-`src/dev_workspace_mcp/config/models.py`. `docs/SPEC.md` remains the complete
+`src/mcp_chatgpt_sandbox/config/models.py`. `docs/SPEC.md` remains the complete
 server configuration reference: §52 contains the worked example and the feature
 sections explain the semantics behind each block.
 
 For normal first-time setup and interactive edits, use the wizard:
 
 ```bash
-uv run dev-workspace-mcp setup
+uv run mcp-chatgpt-sandbox setup
 # or choose an explicit target
-uv run dev-workspace-mcp setup --config /absolute/path/config.yml
+uv run mcp-chatgpt-sandbox setup --config /absolute/path/config.yml
 ```
 
 Manual YAML authoring is still fully supported for automation, recovery, and
@@ -186,16 +186,16 @@ field.
 After either wizard or manual edits:
 
 ```bash
-uv run dev-workspace-mcp doctor --config /path/to/config.yml
+uv run mcp-chatgpt-sandbox doctor --config /path/to/config.yml
 ```
 
 or:
 
 ```bash
-uv run dev-workspace-mcp setup --check --config /path/to/config.yml
+uv run mcp-chatgpt-sandbox setup --check --config /path/to/config.yml
 ```
 
 Both call the same diagnostic engine used by the wizard's final screen.
 
 For the full field list, types, and validation rules, read
-`src/dev_workspace_mcp/config/models.py` and `docs/SPEC.md`.
+`src/mcp_chatgpt_sandbox/config/models.py` and `docs/SPEC.md`.

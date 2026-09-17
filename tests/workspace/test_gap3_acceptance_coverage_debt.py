@@ -5,12 +5,12 @@ from pathlib import Path
 import docker
 import pytest
 
-from dev_workspace_mcp.config.models import FilesystemConfig, ServerConfig
-from dev_workspace_mcp.errors import WorkspaceError
-from dev_workspace_mcp.execution.service import ExecResult, ExecutionService
-from dev_workspace_mcp.filesystem.security import FilesystemSecurity
-from dev_workspace_mcp.filesystem.service import FilesystemService
-from dev_workspace_mcp.server import create_server
+from mcp_chatgpt_sandbox.config.models import FilesystemConfig, ServerConfig
+from mcp_chatgpt_sandbox.errors import WorkspaceError
+from mcp_chatgpt_sandbox.execution.service import ExecResult, ExecutionService
+from mcp_chatgpt_sandbox.filesystem.security import FilesystemSecurity
+from mcp_chatgpt_sandbox.filesystem.service import FilesystemService
+from mcp_chatgpt_sandbox.server import create_server
 from tests.workspace import test_audit_logging as audit_tests
 
 

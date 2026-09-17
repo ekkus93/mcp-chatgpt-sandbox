@@ -12,13 +12,13 @@ from pathlib import Path
 import docker
 import pytest
 
-from dev_workspace_mcp.config.models import AuditConfig, RepositoryConfig, ServerConfig
-from dev_workspace_mcp.db import open_db
-from dev_workspace_mcp.errors import ContainerRuntimeFailedError
-from dev_workspace_mcp.jobs.store import JobState, JobStore
-from dev_workspace_mcp.repositories import RepositoryRecord
-from dev_workspace_mcp.server import create_server
-from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager, WorkspaceState
+from mcp_chatgpt_sandbox.config.models import AuditConfig, RepositoryConfig, ServerConfig
+from mcp_chatgpt_sandbox.db import open_db
+from mcp_chatgpt_sandbox.errors import ContainerRuntimeFailedError
+from mcp_chatgpt_sandbox.jobs.store import JobState, JobStore
+from mcp_chatgpt_sandbox.repositories import RepositoryRecord
+from mcp_chatgpt_sandbox.server import create_server
+from mcp_chatgpt_sandbox.workspace.manager import DockerWorkspaceManager, WorkspaceState
 from tests.workspace.conftest import KEEP_ALIVE_RUN_KWARGS, TEST_IMAGE
 
 

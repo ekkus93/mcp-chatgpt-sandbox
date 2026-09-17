@@ -1,0 +1,323 @@
+"""Durable, identity-bound SSH-agent secondary cleanup debt for O9.
+
+The primary ssh-agent process/row can already be gone when unlinking its host
+socket fails. This module keeps that post-primary obligation durable without
+resurrecting workspace/agent metadata and without persisting a deletion path.
+The only cleanup target is reconstructed beneath the trusted state directory,
+and an existing artifact is removed only when its device/inode still matches
+the identity captured before primary metadata deletion.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+import sqlite3
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+
+from mcp_chatgpt_sandbox.workspace.ssh_agent import SSHAgentRecord, agent_socket_path
+
+_logger = logging.getLogger(__name__)
+
+_SAFE_DURABLE_CLEANUP_ERROR_RE = re.compile(
+    r"^(?:identity_unprovable|identity_changed|identity_probe_failed|"
+    r"secondary_cleanup_failed|deletion_probe_failed|deletion_unproven)"
+    r"(?:: [A-Za-z_][A-Za-z0-9_]*(?:: errno=[0-9]+)?)?$"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SSHAgentCleanupDebt:
+    workspace_id: str
+    created_at: str
+    last_attempt_at: str | None
+    last_error: str | None
+    bytes_hint: int | None
+    socket_device: int | None
+    socket_inode: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class SocketIdentity:
+    bytes_hint: int | None
+    device: int | None
+    inode: int | None
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _safe_persisted_cleanup_error(value: object) -> str | None:
+    """Fail closed when reading legacy free-form durable cleanup diagnostics."""
+    if value is None:
+        return None
+    if (
+        isinstance(value, str)
+        and len(value) <= 128
+        and _SAFE_DURABLE_CLEANUP_ERROR_RE.fullmatch(value)
+    ):
+        return value
+    return "cleanup_failure_recorded"
+
+
+def _debt_from_row(row: sqlite3.Row) -> SSHAgentCleanupDebt:
+    return SSHAgentCleanupDebt(
+        workspace_id=str(row["workspace_id"]),
+        created_at=str(row["created_at"]),
+        last_attempt_at=row["last_attempt_at"],
+        last_error=_safe_persisted_cleanup_error(row["last_error"]),
+        bytes_hint=row["bytes_hint"],
+        socket_device=row["socket_device"],
+        socket_inode=row["socket_inode"],
+    )
+
+
+def get_ssh_agent_cleanup_debt(
+    connection: sqlite3.Connection,
+    workspace_id: str,
+) -> SSHAgentCleanupDebt | None:
+    row = connection.execute(
+        """
+        SELECT workspace_id, created_at, last_attempt_at, last_error, bytes_hint,
+               socket_device, socket_inode
+        FROM ssh_agent_cleanup
+        WHERE workspace_id = ?
+        """,
+        (workspace_id,),
+    ).fetchone()
+    return None if row is None else _debt_from_row(row)
+
+
+def list_ssh_agent_cleanup_debt(connection: sqlite3.Connection) -> list[SSHAgentCleanupDebt]:
+    rows = connection.execute(
+        """
+        SELECT workspace_id, created_at, last_attempt_at, last_error, bytes_hint,
+               socket_device, socket_inode
+        FROM ssh_agent_cleanup
+        ORDER BY created_at, workspace_id
+        """
+    ).fetchall()
+    return [_debt_from_row(row) for row in rows]
+
+
+def _validate_workspace_id(workspace_id: str) -> None:
+    if (
+        not workspace_id
+        or workspace_id in {".", ".."}
+        or Path(workspace_id).name != workspace_id
+        or "/" in workspace_id
+    ):
+        raise ValueError("unsafe workspace id for ssh-agent cleanup")
+
+
+def cleanup_socket_path(state_dir: Path, workspace_id: str) -> Path:
+    """Reconstruct the only host path this debt is allowed to remove."""
+    _validate_workspace_id(workspace_id)
+    return agent_socket_path(state_dir / "ssh-agents", workspace_id)
+
+
+def observe_socket_identity(path: Path) -> SocketIdentity:
+    """Best-effort no-follow identity/size snapshot for one exact socket path."""
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return SocketIdentity(bytes_hint=0, device=None, inode=None)
+    except OSError:
+        return SocketIdentity(bytes_hint=None, device=None, inode=None)
+    return SocketIdentity(
+        bytes_hint=max(int(info.st_size), 0),
+        device=int(info.st_dev),
+        inode=int(info.st_ino),
+    )
+
+
+def transition_ssh_agent_to_cleanup_debt(
+    connection: sqlite3.Connection,
+    record: SSHAgentRecord,
+    identity: SocketIdentity,
+) -> SSHAgentCleanupDebt:
+    """Atomically replace an exact primary ssh-agent row with cleanup debt."""
+    created_at = _now()
+    with connection:
+        connection.execute(
+            """
+            INSERT INTO ssh_agent_cleanup
+                (workspace_id, created_at, last_attempt_at, last_error, bytes_hint,
+                 socket_device, socket_inode)
+            VALUES (?, ?, NULL, NULL, ?, ?, ?)
+            """,
+            (
+                record.workspace_id,
+                created_at,
+                identity.bytes_hint,
+                identity.device,
+                identity.inode,
+            ),
+        )
+        cursor = connection.execute(
+            """
+            DELETE FROM ssh_agent
+            WHERE workspace_id = ? AND pid = ? AND boot_id = ?
+              AND process_start_time = ? AND socket_path = ?
+            """,
+            (
+                record.workspace_id,
+                record.pid,
+                record.boot_id,
+                record.process_start_time,
+                str(record.socket_path),
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise sqlite3.IntegrityError("exact ssh-agent primary identity changed")
+    return SSHAgentCleanupDebt(
+        workspace_id=record.workspace_id,
+        created_at=created_at,
+        last_attempt_at=None,
+        last_error=None,
+        bytes_hint=identity.bytes_hint,
+        socket_device=identity.device,
+        socket_inode=identity.inode,
+    )
+
+
+def _safe_error(exc: BaseException) -> str:
+    """Persist only a bounded, path-free failure class/errno."""
+    if isinstance(exc, OSError) and exc.errno is not None:
+        return f"{type(exc).__name__}: errno={exc.errno}"
+    return type(exc).__name__
+
+
+def _update_failure(
+    connection: sqlite3.Connection,
+    debt: SSHAgentCleanupDebt,
+    *,
+    reason: str,
+    error: BaseException | None = None,
+    bytes_hint: int | None = None,
+) -> None:
+    diagnostic = reason if error is None else f"{reason}: {_safe_error(error)}"
+    try:
+        with connection:
+            connection.execute(
+                """
+                UPDATE ssh_agent_cleanup
+                SET last_attempt_at = ?, last_error = ?, bytes_hint = ?
+                WHERE workspace_id = ?
+                """,
+                (_now(), diagnostic[:1024], bytes_hint, debt.workspace_id),
+            )
+    except sqlite3.Error as exc:
+        _logger.error(
+            "ssh-agent cleanup: failed to update durable debt for %s: %s",
+            debt.workspace_id,
+            _safe_error(exc),
+        )
+
+
+def _clear_debt(connection: sqlite3.Connection, workspace_id: str) -> bool:
+    try:
+        with connection:
+            connection.execute(
+                "DELETE FROM ssh_agent_cleanup WHERE workspace_id = ?",
+                (workspace_id,),
+            )
+    except sqlite3.Error as exc:
+        _logger.error(
+            "ssh-agent cleanup: failed to clear durable debt for %s: %s",
+            workspace_id,
+            _safe_error(exc),
+        )
+        return False
+    return True
+
+
+def attempt_ssh_agent_cleanup(
+    connection: sqlite3.Connection,
+    *,
+    state_dir: Path,
+    debt: SSHAgentCleanupDebt,
+) -> str | None:
+    """Retry one exact secondary artifact; return failure reason or ``None``."""
+    try:
+        path = cleanup_socket_path(state_dir, debt.workspace_id)
+    except ValueError as exc:
+        _update_failure(
+            connection,
+            debt,
+            reason="identity_unprovable",
+            error=exc,
+            bytes_hint=debt.bytes_hint,
+        )
+        return "identity_unprovable"
+
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return None if _clear_debt(connection, debt.workspace_id) else "deletion_unproven"
+    except OSError as exc:
+        _update_failure(
+            connection,
+            debt,
+            reason="identity_probe_failed",
+            error=exc,
+            bytes_hint=debt.bytes_hint,
+        )
+        return "identity_probe_failed"
+
+    measured_bytes = max(int(info.st_size), 0)
+    if debt.socket_device is None or debt.socket_inode is None:
+        _update_failure(
+            connection,
+            debt,
+            reason="identity_unprovable",
+            bytes_hint=measured_bytes,
+        )
+        return "identity_unprovable"
+    if int(info.st_dev) != debt.socket_device or int(info.st_ino) != debt.socket_inode:
+        _update_failure(
+            connection,
+            debt,
+            reason="identity_changed",
+            bytes_hint=debt.bytes_hint,
+        )
+        return "identity_changed"
+
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return None if _clear_debt(connection, debt.workspace_id) else "deletion_unproven"
+    except OSError as exc:
+        _update_failure(
+            connection,
+            debt,
+            reason="secondary_cleanup_failed",
+            error=exc,
+            bytes_hint=measured_bytes,
+        )
+        return "secondary_cleanup_failed"
+
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return None if _clear_debt(connection, debt.workspace_id) else "deletion_unproven"
+    except OSError as exc:
+        _update_failure(
+            connection,
+            debt,
+            reason="deletion_probe_failed",
+            error=exc,
+            bytes_hint=measured_bytes,
+        )
+        return "deletion_probe_failed"
+
+    _update_failure(
+        connection,
+        debt,
+        reason="deletion_unproven",
+        bytes_hint=measured_bytes,
+    )
+    return "deletion_unproven"

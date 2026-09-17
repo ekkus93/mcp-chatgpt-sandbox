@@ -2176,7 +2176,7 @@ image.** `docker/default/Dockerfile` is `FROM ubuntu:24.04` —
 it proved nothing about whether the real image (built lazily by
 `tests/workspace/conftest.py`'s `default_image_tag` fixture, from the
 same context) actually builds. Replaced with `docker build -t
-mcp-dev-test-s7:24.04 docker/default/` — same tag `DEFAULT_IMAGE_TEST_TAG`
+mcp-chatgpt-sandbox-test-s7:24.04 docker/default/` — same tag `DEFAULT_IMAGE_TEST_TAG`
 names, so this step's build becomes the fixture's later build's cache
 hit, keeping the cost visible as a distinct CI step rather than hidden
 inside the first test that needs it (the CI step's own original intent,
@@ -2209,7 +2209,7 @@ defect this check exists for: hand-edited a scratch copy of the current
 `schemas/tools.json` with a real schema change (a tool's `description`)
 while keeping `contract_version` unchanged — the same comparison
 correctly flagged it as a violation. `docker build -t
-mcp-dev-test-s7:24.04 docker/default/` was run for real, confirmed it
+mcp-chatgpt-sandbox-test-s7:24.04 docker/default/` was run for real, confirmed it
 builds and produces exactly the tag the fixture expects. The workflow
 YAML was parsed with `yaml.safe_load` to confirm it's syntactically
 valid — this repo has no way to run the real GitHub Actions runner, so

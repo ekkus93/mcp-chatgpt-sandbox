@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
-from dev_workspace_mcp.errors import RepositoryNotAllowedError
-from dev_workspace_mcp.repositories import RepositoryRegistry
+from mcp_chatgpt_sandbox.config.models import RepositoryConfig, ServerConfig
+from mcp_chatgpt_sandbox.errors import RepositoryNotAllowedError
+from mcp_chatgpt_sandbox.repositories import RepositoryRegistry
 
 
 def _make_git_repo(path: Path) -> None:

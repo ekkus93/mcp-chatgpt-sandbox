@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from dev_workspace_mcp.errors import ContainerCreateFailedError
-from dev_workspace_mcp.project_config import (
+from mcp_chatgpt_sandbox.errors import ContainerCreateFailedError
+from mcp_chatgpt_sandbox.project_config import (
     SUPPORTED_PROJECT_CONFIG_FIELDS,
     UNSUPPORTED_PROJECT_CONFIG_FIELDS,
     ProjectWorkspaceConfig,
@@ -317,7 +317,7 @@ def test_at_hat011_a_secret_in_the_malformed_yaml_line_does_not_reach_the_client
     accidentally left in a malformed `.mcp-workspace.yml` to leak through
     `ContainerCreateFailedError`'s `message`, which `to_tool_error`
     redacts the same way `details` is."""
-    from dev_workspace_mcp.errors import to_tool_error
+    from mcp_chatgpt_sandbox.errors import to_tool_error
 
     repo_path = tmp_path / "repo"
     repo_path.mkdir()

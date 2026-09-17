@@ -10,20 +10,20 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.config.models import ServerConfig
-from dev_workspace_mcp.db.connection import open_db
-from dev_workspace_mcp.jobs import retention
-from dev_workspace_mcp.jobs.retention import (
+from mcp_chatgpt_sandbox.config.models import ServerConfig
+from mcp_chatgpt_sandbox.db.connection import open_db
+from mcp_chatgpt_sandbox.jobs import retention
+from mcp_chatgpt_sandbox.jobs.retention import (
     attempt_job_log_cleanup,
     get_job_log_cleanup_debt,
 )
-from dev_workspace_mcp.jobs.store import JobStore
-from dev_workspace_mcp.maintenance import MaintenanceScheduler
-from dev_workspace_mcp.operations.ssh_agent_cleanup import (
+from mcp_chatgpt_sandbox.jobs.store import JobStore
+from mcp_chatgpt_sandbox.maintenance import MaintenanceScheduler
+from mcp_chatgpt_sandbox.operations.ssh_agent_cleanup import (
     attempt_ssh_agent_cleanup,
     get_ssh_agent_cleanup_debt,
 )
-from dev_workspace_mcp.server import create_server
+from mcp_chatgpt_sandbox.server import create_server
 
 _HOSTILE_DETAIL = (
     "cannot remove /home/phil/.ssh/id_rsa; "
@@ -147,7 +147,7 @@ async def test_r3_legacy_raw_cleanup_error_is_not_republished(
     # Keep the legacy row present so the scheduler reports the existing debt
     # rather than retrying/clearing it during this compatibility assertion.
     monkeypatch.setattr(
-        "dev_workspace_mcp.maintenance.prune_job_logs",
+        "mcp_chatgpt_sandbox.maintenance.prune_job_logs",
         lambda *args, **kwargs: [],
     )
     scheduler = MaintenanceScheduler(minimal_config)
@@ -162,7 +162,7 @@ async def test_r3_legacy_raw_cleanup_error_is_not_republished(
     assert _LEGACY_DETAIL not in json.dumps(asdict(health), sort_keys=True)
 
     monkeypatch.setattr(
-        "dev_workspace_mcp.server._try_docker_client",
+        "mcp_chatgpt_sandbox.server._try_docker_client",
         lambda: None,
     )
     server = create_server(minimal_config)

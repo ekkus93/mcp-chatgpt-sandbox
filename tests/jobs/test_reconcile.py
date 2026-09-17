@@ -6,8 +6,8 @@ import sys
 
 import pytest
 
-from dev_workspace_mcp.jobs.reconcile import reconcile_jobs
-from dev_workspace_mcp.jobs.store import JobState, JobStore
+from mcp_chatgpt_sandbox.jobs.reconcile import reconcile_jobs
+from mcp_chatgpt_sandbox.jobs.store import JobState, JobStore
 from tests.jobs.conftest import WORKSPACE_ID
 
 
@@ -54,7 +54,7 @@ def test_at_h031_reconciliation_outcome_is_logged(
     shutdown should see this in the log, not only in `serve()`'s own
     stderr summary."""
     _create(job_store)
-    with caplog.at_level("INFO", logger="dev_workspace_mcp.jobs.reconcile"):
+    with caplog.at_level("INFO", logger="mcp_chatgpt_sandbox.jobs.reconcile"):
         reconcile_jobs(job_store)
 
     messages = [r.message for r in caplog.records]
@@ -66,7 +66,7 @@ def test_at_h031_a_clean_reconciliation_logs_nothing(
     job_store: JobStore, caplog: pytest.LogCaptureFixture
 ) -> None:
     """No false positives: nothing non-terminal means nothing to log."""
-    with caplog.at_level("INFO", logger="dev_workspace_mcp.jobs.reconcile"):
+    with caplog.at_level("INFO", logger="mcp_chatgpt_sandbox.jobs.reconcile"):
         result = reconcile_jobs(job_store)
     assert result == []
     assert caplog.records == []
@@ -158,12 +158,12 @@ def test_reconcile_handles_multiple_jobs_independently(job_store: JobStore) -> N
 
 
 def test_pid_alive_helper_true_for_current_process() -> None:
-    from dev_workspace_mcp.jobs.reconcile import _pid_alive
+    from mcp_chatgpt_sandbox.jobs.reconcile import _pid_alive
 
     assert _pid_alive(os.getpid()) is True
 
 
 def test_pid_alive_helper_false_for_a_pid_almost_certainly_unused() -> None:
-    from dev_workspace_mcp.jobs.reconcile import _pid_alive
+    from mcp_chatgpt_sandbox.jobs.reconcile import _pid_alive
 
     assert _pid_alive(2**30) is False

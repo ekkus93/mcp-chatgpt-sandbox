@@ -91,9 +91,9 @@ independently testable) but do not stop after one.
 ```
 $ uv run ruff check .
 I001 Import block is un-sorted or un-formatted
-  --> src/dev_workspace_mcp/workspace/manager_core.py:14:1
-  --> src/dev_workspace_mcp/workspace/manager_lifecycle.py:16:1
-  --> src/dev_workspace_mcp/workspace/records.py:20:1
+  --> src/mcp_chatgpt_sandbox/workspace/manager_core.py:14:1
+  --> src/mcp_chatgpt_sandbox/workspace/manager_lifecycle.py:16:1
+  --> src/mcp_chatgpt_sandbox/workspace/records.py:20:1
 Found 3 errors. [*] 3 fixable with the `--fix` option.
 ```
 
@@ -101,7 +101,7 @@ All three files were created by `05fe306`. The pre-split `manager.py`
 passes — verified by extracting it and running the pinned ruff against it:
 
 ```
-$ git show 05fe306^:src/dev_workspace_mcp/workspace/manager.py > /tmp/presplit.py
+$ git show 05fe306^:src/mcp_chatgpt_sandbox/workspace/manager.py > /tmp/presplit.py
 $ uv run ruff check --no-cache /tmp/presplit.py
 All checks passed!
 ```
@@ -117,7 +117,7 @@ ruff 0.16.4
 
 `05fe306` ran the bare one. Its `--fix` **actively rewrote** the import
 blocks into the order 0.16.4 rejects — moving `from docker.errors …`
-below the first-party `dev_workspace_mcp` imports. This was not a skipped
+below the first-party `mcp_chatgpt_sandbox` imports. This was not a skipped
 check; it was a wrong edit made by the wrong tool.
 
 **Shape of the fix.** `uv run ruff check --fix` on the three files. The
@@ -126,10 +126,10 @@ rest of the codebase already uses — confirmed with `--diff` on
 `records.py`:
 
 ```diff
--from dev_workspace_mcp.workspace.naming import WorkspaceMode
+-from mcp_chatgpt_sandbox.workspace.naming import WorkspaceMode
  from docker.models.containers import Container
 +
-+from dev_workspace_mcp.workspace.naming import WorkspaceMode
++from mcp_chatgpt_sandbox.workspace.naming import WorkspaceMode
 ```
 
 **Do not** hand-edit the import blocks, and **do not** run the bare
@@ -190,7 +190,7 @@ reformatted). `uv run mypy src`: no issues in 60 source files.
 - [x] Test both a rejected key and an ordinary key that still passes
 
 **Defect (reproduced in live containers).**
-`src/dev_workspace_mcp/project_config.py:128` rejects only
+`src/mcp_chatgpt_sandbox/project_config.py:128` rejects only
 `SSH_AUTH_SOCK` and `MCP_*`:
 
 ```python
@@ -723,7 +723,7 @@ before and after.
 **Satisfies:** GR-008
 **Commit:** `e09ad82`
 
-- [x] `src/dev_workspace_mcp/git/commit.py:107` — `tools/git.py` →
+- [x] `src/mcp_chatgpt_sandbox/git/commit.py:107` — `tools/git.py` →
       `tools/git_commit.py`
 - [x] `docs/REVIEW_TODO.md:104,115,196`
 - [x] `docs/REMEDIATION_TODO.md:2008,2010,2012`
@@ -791,7 +791,7 @@ GR-008's own audit had missed, corrected in the same table it sits in.**
 
 **Verified rather than assumed** that no *other* `tools/git.py`
 reference in `src/` needed the same fix: `grep -n "tools/git\.py"
-src/dev_workspace_mcp/git/commit.py` after the edit shows exactly one
+src/mcp_chatgpt_sandbox/git/commit.py` after the edit shows exactly one
 remaining hit (the module docstring's "the execution service `tools/
 git.py` shares with `exec`") — accurate as written, since it describes
 shared execution infrastructure at the hub/subsystem level, not a
@@ -940,7 +940,7 @@ it; confirmed it doesn't.
 **Defect (reproduced).** `tests/workspace/test_manager.py:61`:
 
 ```python
-with caplog.at_level("INFO", logger="dev_workspace_mcp.workspace.manager"):
+with caplog.at_level("INFO", logger="mcp_chatgpt_sandbox.workspace.manager"):
 ```
 
 `05fe306` moved the `"...created"`/`"...deleted"` emissions to
@@ -977,7 +977,7 @@ production. What broke is the test's ability to detect a regression.
 mixin modules:
 
 ```python
-with caplog.at_level("INFO", logger="dev_workspace_mcp.workspace"):
+with caplog.at_level("INFO", logger="mcp_chatgpt_sandbox.workspace"):
 ```
 
 Then close the leak so the fix is verifiable: restore the root logger's
@@ -991,7 +991,7 @@ would still pass in any run containing `tests/test_cli.py`, so revert-
 verification couldn't distinguish a working fix from a broken one unless
 the leak was closed first. Tested directly: `caplog.at_level(level,
 logger=name)` sets `getLogger(name)`'s own explicit level (not just the
-capturing handler's), so retargeting to `dev_workspace_mcp.workspace` —
+capturing handler's), so retargeting to `mcp_chatgpt_sandbox.workspace` —
 a genuine ancestor of both `manager_core.py`/`manager_lifecycle.py` —
 makes `test_manager.py` pass **standalone**, with the leak fixture
 disabled entirely (verified: reverting *only* the fixture's restoration,

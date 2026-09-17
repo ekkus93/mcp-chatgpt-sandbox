@@ -17,12 +17,12 @@ import docker
 import docker.types
 import pytest
 
-from dev_workspace_mcp.config.models import ContainerConfig, SSHConfig
-from dev_workspace_mcp.errors import ContainerCreateFailedError
-from dev_workspace_mcp.repositories import RepositoryRecord
-from dev_workspace_mcp.workspace.container_config import build_workspace_run_kwargs
-from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
-from dev_workspace_mcp.workspace.naming import LABEL_MANAGED, LABEL_WORKSPACE_ID
+from mcp_chatgpt_sandbox.config.models import ContainerConfig, SSHConfig
+from mcp_chatgpt_sandbox.errors import ContainerCreateFailedError
+from mcp_chatgpt_sandbox.repositories import RepositoryRecord
+from mcp_chatgpt_sandbox.workspace.container_config import build_workspace_run_kwargs
+from mcp_chatgpt_sandbox.workspace.manager import DockerWorkspaceManager
+from mcp_chatgpt_sandbox.workspace.naming import LABEL_MANAGED, LABEL_WORKSPACE_ID
 
 
 def _run_oneshot(

@@ -3,13 +3,13 @@
 import json
 from pathlib import Path
 
-from dev_workspace_mcp.config.models import ServerConfig
-from dev_workspace_mcp.schema_export import (
+from mcp_chatgpt_sandbox.config.models import ServerConfig
+from mcp_chatgpt_sandbox.schema_export import (
     collect_tool_schemas,
     export_schemas,
     render_schema_document,
 )
-from dev_workspace_mcp.server import create_server
+from mcp_chatgpt_sandbox.server import create_server
 
 
 async def test_collect_tool_schemas_covers_every_registered_tool(
@@ -97,5 +97,5 @@ async def test_committed_schemas_file_matches_a_fresh_export(
     fresh_document = json.loads(fresh)
     assert fresh_document == committed_document, (
         "schemas/tools.json is stale — run "
-        "`dev-workspace-mcp export-schemas --config <path>` and commit the result"
+        "`mcp-chatgpt-sandbox export-schemas --config <path>` and commit the result"
     )

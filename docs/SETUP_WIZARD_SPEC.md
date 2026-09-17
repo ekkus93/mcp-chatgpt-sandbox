@@ -1,8 +1,8 @@
 # Interactive Setup Wizard Specification
 
 **Status:** Proposed  
-**Project:** `mcp-chatgpt-sandbox` / `dev-workspace-mcp`  
-**Primary command:** `dev-workspace-mcp setup`  
+**Project:** `mcp-chatgpt-sandbox`  
+**Primary command:** `mcp-chatgpt-sandbox setup`  
 **Companion task plan:** `docs/SETUP_WIZARD_TODO.md`
 
 ## 1. Purpose
@@ -15,7 +15,7 @@ The intended first-run experience is:
 
 ```bash
 uv sync --group dev
-uv run dev-workspace-mcp setup
+uv run mcp-chatgpt-sandbox setup
 ```
 
 A user who follows the wizard SHALL NOT need to hand-author YAML for the normal supported deployment path.
@@ -75,7 +75,7 @@ The first implementation SHALL NOT:
 ### 5.1 Primary setup command
 
 ```text
-dev-workspace-mcp setup
+mcp-chatgpt-sandbox setup
 ```
 
 Launches the interactive Textual wizard.
@@ -97,11 +97,11 @@ Recommended options:
 The component architecture SHOULD permit these later without duplicating logic:
 
 ```text
-dev-workspace-mcp config
-dev-workspace-mcp repo add
-dev-workspace-mcp repo edit
-dev-workspace-mcp repo remove
-dev-workspace-mcp doctor
+mcp-chatgpt-sandbox config
+mcp-chatgpt-sandbox repo add
+mcp-chatgpt-sandbox repo edit
+mcp-chatgpt-sandbox repo remove
+mcp-chatgpt-sandbox doctor
 ```
 
 `doctor` SHOULD be an alias or thin wrapper over the same diagnostics engine used by `setup --check` and the final wizard step.
@@ -110,7 +110,7 @@ dev-workspace-mcp doctor
 
 The implementation SHOULD use Textual, matching the proven approach in Ralph Bridge.
 
-Textual SHALL be a normal runtime dependency if `dev-workspace-mcp setup` is part of the installed CLI. The project SHALL pin a compatible major version range in `pyproject.toml` and SHALL cover the setup package with normal Ruff, mypy, and pytest gates.
+Textual SHALL be a normal runtime dependency if `mcp-chatgpt-sandbox setup` is part of the installed CLI. The project SHALL pin a compatible major version range in `pyproject.toml` and SHALL cover the setup package with normal Ruff, mypy, and pytest gates.
 
 The TUI SHALL remain keyboard-operable and usable in an ordinary terminal without mouse input.
 
@@ -583,7 +583,7 @@ Specifically:
 ## 18. Proposed package architecture
 
 ```text
-src/dev_workspace_mcp/setup/
+src/mcp_chatgpt_sandbox/setup/
     __init__.py
     app.py
     app_base.py

@@ -10,15 +10,15 @@ import pytest
 import yaml
 from click.testing import CliRunner
 
-from dev_workspace_mcp.config import ServerConfig
-from dev_workspace_mcp.entrypoint import main
-from dev_workspace_mcp.setup.diagnostics import (
+from mcp_chatgpt_sandbox.config import ServerConfig
+from mcp_chatgpt_sandbox.entrypoint import main
+from mcp_chatgpt_sandbox.setup.diagnostics import (
     DiagnosticsReport,
     DiagnosticStatus,
     format_diagnostics,
     run_diagnostics,
 )
-from dev_workspace_mcp.setup.tunnel import (
+from mcp_chatgpt_sandbox.setup.tunnel import (
     SetupTunnelError,
     apply_tunnel_profile,
     build_tunnel_profile_plan,
@@ -39,7 +39,7 @@ def test_wizv_014_profile_plan_contains_exact_server_command_without_secret(
     expected_argv = [
         str(Path(sys.executable).expanduser()),
         "-m",
-        "dev_workspace_mcp",
+        "mcp_chatgpt_sandbox",
         "serve",
         "--config",
         str(config_path.resolve(strict=False)),
@@ -78,7 +78,7 @@ def test_wizv_014_doctor_classifies_external_profile_without_exposing_output(
 
 
 def test_wizv_015_report_finish_gate_and_rendering() -> None:
-    from dev_workspace_mcp.setup.diagnostics import DiagnosticCode, DiagnosticResult
+    from mcp_chatgpt_sandbox.setup.diagnostics import DiagnosticCode, DiagnosticResult
 
     report = DiagnosticsReport(
         (
@@ -141,7 +141,7 @@ def test_wizv_015_doctor_alias_and_setup_check_share_cli_contract(tmp_path: Path
 
 
 def test_wizv_015_config_mode_check_is_owner_only(tmp_path: Path) -> None:
-    from dev_workspace_mcp.setup.diagnostics import _config_safety
+    from mcp_chatgpt_sandbox.setup.diagnostics import _config_safety
 
     path = tmp_path / "config.yml"
     path.write_text("version: 1\n")
@@ -156,7 +156,7 @@ def test_wizv_015_config_mode_check_is_owner_only(tmp_path: Path) -> None:
 def test_swhv_002_audit_path_rejects_symlink_and_directory_targets(
     tmp_path: Path,
 ) -> None:
-    from dev_workspace_mcp.setup.diagnostics import _audit_check
+    from mcp_chatgpt_sandbox.setup.diagnostics import _audit_check
 
     missing = tmp_path / "missing-audit.jsonl"
     broken_link = tmp_path / "broken-audit"
@@ -178,7 +178,7 @@ def test_swhv_002_audit_path_rejects_symlink_and_directory_targets(
 
 
 def test_swhv_002_state_db_path_rejects_symlink_targets(tmp_path: Path) -> None:
-    from dev_workspace_mcp.setup.diagnostics import _state_db_check
+    from mcp_chatgpt_sandbox.setup.diagnostics import _state_db_check
 
     real = tmp_path / "state.db"
     real.write_text("not-a-real-db")
@@ -193,12 +193,12 @@ def test_wizv_018_docker_unavailable_is_action_required_not_false_pass(
     minimal_config: ServerConfig,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dev_workspace_mcp.setup.diagnostics import _docker_checks
+    from mcp_chatgpt_sandbox.setup.diagnostics import _docker_checks
 
     def unavailable() -> object:
         raise OSError("simulated docker outage")
 
-    monkeypatch.setattr("dev_workspace_mcp.setup.diagnostics.docker.from_env", unavailable)
+    monkeypatch.setattr("mcp_chatgpt_sandbox.setup.diagnostics.docker.from_env", unavailable)
     daemon, image = _docker_checks(minimal_config)
     assert daemon.status is DiagnosticStatus.ACTION_REQUIRED
     assert image.status is DiagnosticStatus.SKIPPED
@@ -209,7 +209,7 @@ def test_wizv_015_unexpected_diagnostic_exception_is_secret_safe_and_fail_closed
     minimal_config: ServerConfig,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dev_workspace_mcp.setup.diagnostics import DiagnosticCode
+    from mcp_chatgpt_sandbox.setup.diagnostics import DiagnosticCode
 
     path = tmp_path / "config.yml"
     path.write_text(yaml.safe_dump(minimal_config.model_dump(mode="json"), sort_keys=False))
@@ -219,7 +219,7 @@ def test_wizv_015_unexpected_diagnostic_exception_is_secret_safe_and_fail_closed
         raise RuntimeError("sensitive-diagnostic-sentinel")
 
     monkeypatch.setattr(
-        "dev_workspace_mcp.setup.diagnostics._repository_checks",
+        "mcp_chatgpt_sandbox.setup.diagnostics._repository_checks",
         unexpected,
     )
     report = run_diagnostics(path)

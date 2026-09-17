@@ -13,7 +13,7 @@ server, see [`docs/CONNECTING_CHATGPT.md`](CONNECTING_CHATGPT.md).
 
 ## Prerequisites
 
-- Install dependencies and start the wizard with `uv run dev-workspace-mcp setup`.
+- Install dependencies and start the wizard with `uv run mcp-chatgpt-sandbox setup`.
 - A local Git clone at an absolute path readable by the daemon.
 - Push access to the GitHub repository if you want to install a write-capable
   deploy key.
@@ -33,7 +33,7 @@ same key material as the production loader and does not use trust-on-first-use.
 If you configure manually instead, verify GitHub's currently published SSH
 fingerprints at GitHub's official documentation before creating your pinned file.
 The production source-of-truth copy used by this project is
-`GITHUB_SSH_HOST_KEYS` in `src/dev_workspace_mcp/config/loader.py`.
+`GITHUB_SSH_HOST_KEYS` in `src/mcp_chatgpt_sandbox/config/loader.py`.
 
 ## 2. Generate a dedicated deploy key
 
@@ -42,9 +42,9 @@ repository directly under the configured `ssh.keys_dir`:
 
 ```bash
 ssh-keygen -t ed25519 \
-  -f ~/.config/dev-workspace-mcp/keys/my-repo.ed25519 \
-  -C "dev-workspace-mcp: my-repo" -N ""
-chmod 600 ~/.config/dev-workspace-mcp/keys/my-repo.ed25519
+  -f ~/.config/mcp-chatgpt-sandbox/keys/my-repo.ed25519 \
+  -C "mcp-chatgpt-sandbox: my-repo" -N ""
+chmod 600 ~/.config/mcp-chatgpt-sandbox/keys/my-repo.ed25519
 ```
 
 Do not use your personal key. The daemon refuses key material resolving under
@@ -55,7 +55,7 @@ your own `~/.ssh` path.
 On the GitHub repository:
 
 1. Open **Settings → Deploy keys → Add deploy key**.
-2. Give it a descriptive title such as `dev-workspace-mcp: my-repo`.
+2. Give it a descriptive title such as `mcp-chatgpt-sandbox: my-repo`.
 3. Paste the `.pub` file contents — never the private key.
 4. Enable **Allow write access** if this MCP server should push.
 5. Add the key.
@@ -123,8 +123,8 @@ and source changes after review force a fresh review instead of being overwritte
 After writing, use final diagnostics or run them later with:
 
 ```bash
-uv run dev-workspace-mcp doctor \
-  --config ~/.config/dev-workspace-mcp/config.yml
+uv run mcp-chatgpt-sandbox doctor \
+  --config ~/.config/mcp-chatgpt-sandbox/config.yml
 ```
 
 Repository path, remote identity, SSH references, pinned hosts, Docker, and
@@ -133,8 +133,8 @@ server construction are all included in the final matrix.
 ## 7. Start and confirm
 
 ```bash
-uv run dev-workspace-mcp serve \
-  --config ~/.config/dev-workspace-mcp/config.yml
+uv run mcp-chatgpt-sandbox serve \
+  --config ~/.config/mcp-chatgpt-sandbox/config.yml
 ```
 
 Then call:

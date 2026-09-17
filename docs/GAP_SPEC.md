@@ -71,9 +71,9 @@ layer.
 
 ```
 I001 Import block is un-sorted or un-formatted
-  --> src/dev_workspace_mcp/workspace/manager_core.py:14:1
-  --> src/dev_workspace_mcp/workspace/manager_lifecycle.py:16:1
-  --> src/dev_workspace_mcp/workspace/records.py:20:1
+  --> src/mcp_chatgpt_sandbox/workspace/manager_core.py:14:1
+  --> src/mcp_chatgpt_sandbox/workspace/manager_lifecycle.py:16:1
+  --> src/mcp_chatgpt_sandbox/workspace/records.py:20:1
 ```
 
 All three files were created by `05fe306` (the `workspace/manager.py`
@@ -93,7 +93,7 @@ environment:
 `05fe306` ran the bare binary. Worse than a missed check: bare
 `ruff check --fix` **actively rewrote** the import blocks into the order
 0.16.4 rejects, moving `from docker.errors import …` below the
-first-party `dev_workspace_mcp` imports. The fix is to run the pinned
+first-party `mcp_chatgpt_sandbox` imports. The fix is to run the pinned
 binary's own `--fix`, which restores the third-party-before-first-party
 order the rest of the codebase already uses.
 
@@ -178,7 +178,7 @@ write-up, per the convention `docs/REMEDIATION_TODO.md` and
 
 ### GR-004 — Project-authored `environment:` SHALL NOT supply variables that control the entrypoint's interpreter or command resolution
 
-`src/dev_workspace_mcp/project_config.py:128` rejects exactly two classes
+`src/mcp_chatgpt_sandbox/project_config.py:128` rejects exactly two classes
 of key:
 
 ```python
@@ -281,9 +281,9 @@ Verified by GAT-003.
 AR-001 (`docs/AUDIT_SPEC.md`) added `CapturedOutput.stdout_lossy` and
 guarded both index-capture sites in `git_commit`. A repository-wide grep
 finds `stdout_lossy` consumed in exactly two places, both in
-`src/dev_workspace_mcp/tools/git_commit.py` (lines 307 and 356).
+`src/mcp_chatgpt_sandbox/tools/git_commit.py` (lines 307 and 356).
 
-`run_git_in_container` (`src/dev_workspace_mcp/git/service.py:175`) — the
+`run_git_in_container` (`src/mcp_chatgpt_sandbox/git/service.py:175`) — the
 shared read path behind `git_status`, `git_diff`, `git_log`, and
 `read_committed_files` — guards the *truncation* flag and not the *lossy*
 one:
@@ -367,7 +367,7 @@ the Requirement governs.** "Every value `_redact` can return SHALL be
 JSON-serializable" and "`frozenset`/`memoryview`/namedtuple-degradation
 … are out of scope" cannot both be true of the same requirement — the
 carve-out reads as an exemption from JSON-serializability itself, which
-is exactly what the Requirement forbids. `src/dev_workspace_mcp/
+is exactly what the Requirement forbids. `src/mcp_chatgpt_sandbox/
 errors.py`'s current `_redact` (G2R-004, `docs/GAP2_SPEC.md` — landed
 after this document, in the same X1–X22 pass this correction belongs
 to) resolves this in code, not just in prose: every explicitly
@@ -401,7 +401,7 @@ correction paragraph:
 
 | file:line | says | referent actually lives in |
 | --- | --- | --- |
-| `src/dev_workspace_mcp/git/commit.py:107` | `` `tools/git.py`'s `capture_index` `` | `tools/git_commit.py:260` (X20, `docs/GAP2_TODO.md`; was `:255`, re-verified against `HEAD`) |
+| `src/mcp_chatgpt_sandbox/git/commit.py:107` | `` `tools/git.py`'s `capture_index` `` | `tools/git_commit.py:260` (X20, `docs/GAP2_TODO.md`; was `:255`, re-verified against `HEAD`) |
 
 Verified that the other `tools/git.py` references in `src/` are **still
 accurate** — `audit_denials`, `git_pull_tool`, and `git_push_tool` all
@@ -494,7 +494,7 @@ This is a forward-looking note, not a defect, and no task in
 container lifecycle transitions are logged:
 
 ```python
-with caplog.at_level("INFO", logger="dev_workspace_mcp.workspace.manager"):
+with caplog.at_level("INFO", logger="mcp_chatgpt_sandbox.workspace.manager"):
 ```
 
 `05fe306` moved the `_logger.info("...created")` and
@@ -503,8 +503,8 @@ with caplog.at_level("INFO", logger="dev_workspace_mcp.workspace.manager"):
 a logger at all; `manager_core.py:38` and `manager_lifecycle.py:53` each
 define their own.
 
-`dev_workspace_mcp.workspace.manager_lifecycle` is a **sibling** of
-`dev_workspace_mcp.workspace.manager` in the logging hierarchy, not a
+`mcp_chatgpt_sandbox.workspace.manager_lifecycle` is a **sibling** of
+`mcp_chatgpt_sandbox.workspace.manager` in the logging hierarchy, not a
 child, so `at_level(..., logger="…manager")` does not enable it. Its
 effective level falls back to the root logger's, and the INFO records are
 dropped before reaching caplog.
@@ -530,7 +530,7 @@ transitions are logged — still holds in production. The defect is in the
 test's ability to detect a regression, not in the logging itself.
 
 **Requirement.** The assertion SHALL target a logger that actually covers
-the emitting modules. `dev_workspace_mcp.workspace` is the common parent
+the emitting modules. `mcp_chatgpt_sandbox.workspace` is the common parent
 of both `manager_core` and `manager_lifecycle` and satisfies this. The
 test SHALL fail if the logging calls are removed, **independently of
 which other tests ran first** — see GR-011, without which this cannot be
@@ -543,7 +543,7 @@ Verified by GAT-008.
 The reason GR-010's defect survived a full-suite run is a separate,
 pre-existing defect that masks it.
 
-`configure_logging` (`src/dev_workspace_mcp/logging_config.py:34`) calls
+`configure_logging` (`src/mcp_chatgpt_sandbox/logging_config.py:34`) calls
 `logging.basicConfig(level=…, force=True)` on the **root** logger.
 `force=True` is deliberate and correct for its actual caller
 (`cli.py:86`, once at daemon startup). But `tests/test_cli.py` exercises

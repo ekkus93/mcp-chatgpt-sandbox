@@ -13,8 +13,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from dev_workspace_mcp.db import open_db
-from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager
+from mcp_chatgpt_sandbox.db import open_db
+from mcp_chatgpt_sandbox.workspace.ssh_agent import SSHAgentManager
 
 
 def _is_alive(pid: int) -> bool:

@@ -12,7 +12,7 @@ verified on a clean run with no concurrent Docker activity). This document
 is not a re-litigation of that work.
 
 It exists because **G2 does not close the vulnerability it was written
-for.** The denylist at `src/dev_workspace_mcp/project_config.py:46`
+for.** The denylist at `src/mcp_chatgpt_sandbox/project_config.py:46`
 blocks the variables `docs/GAP_SPEC.md` GR-004 enumerated and nothing
 else, and a bypass was reproduced against the current tree in a live
 container. Two further findings are regressions the `GAP_TODO.md` pass
@@ -49,7 +49,7 @@ through a project-authored configuration file.
 
 ### G2R-001 — `environment:` SHALL NOT supply exported shell functions
 
-`src/dev_workspace_mcp/project_config.py:46` denies six exact names plus
+`src/mcp_chatgpt_sandbox/project_config.py:46` denies six exact names plus
 an `LD_` prefix:
 
 ```python
@@ -68,15 +68,15 @@ Full chain verified, not inferred:
 1. `ProjectWorkspaceConfig(version=1, environment={"BASH_FUNC_id%%": "() { echo 1234; }"})`
    is **accepted** — not an exact-set member, does not start with `LD_`,
    is not `SSH_AUTH_SOCK`, does not start with `MCP_`.
-2. `src/dev_workspace_mcp/tools/workspace.py:405` and
-   `src/dev_workspace_mcp/cli.py:270`: `extra_env = dict(project_config.environment)`.
-3. `src/dev_workspace_mcp/workspace/container_config.py:147-150` strips
+2. `src/mcp_chatgpt_sandbox/tools/workspace.py:405` and
+   `src/mcp_chatgpt_sandbox/cli.py:270`: `extra_env = dict(project_config.environment)`.
+3. `src/mcp_chatgpt_sandbox/workspace/container_config.py:147-150` strips
    only `_DAEMON_CONTROLLED_ENV_KEYS` (`:57-68`) — the key survives.
 4. `entrypoint.sh:68` (`if [ "$(id -u)" != "0" ]`) resolves `id` to the
    imported function, takes the "not root" branch, and `exec "$@"` runs
    the workspace command as uid 0 with **no drop performed**.
 
-Reproduced against the shipped `mcp-dev-ubuntu:24.04` image:
+Reproduced against the shipped `mcp-chatgpt-sandbox-ubuntu:24.04` image:
 
 ```
 CONTROL (no BASH_FUNC):                 REAL_EUID=1234
@@ -218,7 +218,7 @@ Verified by G2AT-003.
 GR-007 carved `frozenset` and `memoryview` out of scope, reasoning only
 about JSON-serializability. That carve-out has a second consequence its
 own justification did not consider: `_redact`
-(`src/dev_workspace_mcp/errors.py:294-378`) has no branch for either
+(`src/mcp_chatgpt_sandbox/errors.py:294-378`) has no branch for either
 type, so both reach the terminal `return value` at `errors.py:378`
 **regardless of `key_flags_secret`**, and the secret is returned in the
 clear. Reproduced:
@@ -272,7 +272,7 @@ Verified by G2AT-004.
 
 `FilesystemSecurity.resolve()` enforces three rules: the external-git-dir
 check, containment, and `_reject_in_tree_git_metadata`.
-`verify_fd_within_root` (`src/dev_workspace_mcp/filesystem/security.py:290-306`)
+`verify_fd_within_root` (`src/mcp_chatgpt_sandbox/filesystem/security.py:290-306`)
 re-checks **only containment** after the open. `write_file` has the same
 shape (`filesystem/service.py:439-445`: `resolve_open_fd` +
 `is_within_root`).

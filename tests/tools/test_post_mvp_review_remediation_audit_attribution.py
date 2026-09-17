@@ -9,9 +9,9 @@ from typing import Any
 
 import pytest
 
-from dev_workspace_mcp.config.models import ServerConfig
-from dev_workspace_mcp.db.connection import open_db
-from dev_workspace_mcp.server import create_server
+from mcp_chatgpt_sandbox.config.models import ServerConfig
+from mcp_chatgpt_sandbox.db.connection import open_db
+from mcp_chatgpt_sandbox.server import create_server
 
 _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
@@ -45,7 +45,7 @@ async def test_r1_reclamation_audit_has_request_attribution(
     )
     db.commit()
 
-    monkeypatch.setattr("dev_workspace_mcp.server._try_docker_client", lambda: None)
+    monkeypatch.setattr("mcp_chatgpt_sandbox.server._try_docker_client", lambda: None)
     server = create_server(minimal_config)
 
     plan = (

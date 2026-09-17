@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from dev_workspace_mcp.setup.config_writer import (
+from mcp_chatgpt_sandbox.setup.config_writer import (
     SetupConfigError,
     commit_config_update,
     inspect_config,
@@ -17,7 +17,7 @@ def _minimal(tmp_path: Path) -> dict[str, object]:
     return {
         "version": 1,
         "state_db_path": str(tmp_path / "state.db"),
-        "docker": {"default_image": "mcp-dev-test:24.04"},
+        "docker": {"default_image": "mcp-chatgpt-sandbox-test:24.04"},
         "ssh": {
             "keys_dir": str(tmp_path / "keys"),
             "known_hosts": str(tmp_path / "known_hosts"),
@@ -33,7 +33,7 @@ def test_wizv_004_new_minimal_plan_is_production_model_valid(tmp_path: Path) -> 
     assert not plan.source_exists
     assert "new configuration" in plan.summary[0]
     parsed = yaml.safe_load(plan.candidate_text)
-    assert parsed["docker"]["default_image"] == "mcp-dev-test:24.04"
+    assert parsed["docker"]["default_image"] == "mcp-chatgpt-sandbox-test:24.04"
 
 
 def test_wizv_004_existing_advanced_values_are_preserved(tmp_path: Path) -> None:
@@ -131,7 +131,7 @@ def test_wizv_005_new_file_commit_reloads_production_config(tmp_path: Path) -> N
     plan = prepare_config_update(target, wizard_values=values, managed_fields=set(values))
     result = commit_config_update(target, plan)
     assert result.backup_path is None
-    assert result.config.docker.default_image == "mcp-dev-test:24.04"
+    assert result.config.docker.default_image == "mcp-chatgpt-sandbox-test:24.04"
     assert target.read_text() == plan.candidate_text
 
 
@@ -172,7 +172,7 @@ def test_wizv_005_post_write_byte_mismatch_fails_closed(
     values = _minimal(tmp_path)
     plan = prepare_config_update(target, wizard_values=values, managed_fields=set(values))
     monkeypatch.setattr(
-        "dev_workspace_mcp.setup.config_writer.read_bounded_utf8",
+        "mcp_chatgpt_sandbox.setup.config_writer.read_bounded_utf8",
         lambda _: "simulated post-write mismatch\n",
     )
     with pytest.raises(SetupConfigError, match="did not match the reviewed candidate"):

@@ -27,9 +27,9 @@ import yaml
 from click.testing import CliRunner
 from mcp.server.mcpserver.exceptions import ToolError
 
-from dev_workspace_mcp.cli import main
-from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
-from dev_workspace_mcp.server import create_server
+from mcp_chatgpt_sandbox.cli import main
+from mcp_chatgpt_sandbox.config.models import RepositoryConfig, ServerConfig
+from mcp_chatgpt_sandbox.server import create_server
 
 
 def _configured(
@@ -115,8 +115,8 @@ async def test_at_h028_a_crashed_jobs_output_survives_a_real_restart(
     # through its real startup sequence — reconciliation included — with
     # only the blocking transport step mocked out.
     with (
-        patch("dev_workspace_mcp.cli.docker_available", return_value=True),
-        patch("dev_workspace_mcp.cli.run_server") as mock_run,
+        patch("mcp_chatgpt_sandbox.cli.docker_available", return_value=True),
+        patch("mcp_chatgpt_sandbox.cli.run_server") as mock_run,
     ):
         result = CliRunner().invoke(main, ["serve", "--config", str(config_path)])
     assert result.exit_code == 0, result.output
@@ -167,8 +167,8 @@ async def test_at_h028_a_finished_jobs_output_survives_a_real_restart(
     # `session_before_restart` is never touched again below.
 
     with (
-        patch("dev_workspace_mcp.cli.docker_available", return_value=True),
-        patch("dev_workspace_mcp.cli.run_server") as mock_run,
+        patch("mcp_chatgpt_sandbox.cli.docker_available", return_value=True),
+        patch("mcp_chatgpt_sandbox.cli.run_server") as mock_run,
     ):
         result = CliRunner().invoke(main, ["serve", "--config", str(config_path)])
     assert result.exit_code == 0, result.output

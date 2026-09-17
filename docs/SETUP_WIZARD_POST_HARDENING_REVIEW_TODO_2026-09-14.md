@@ -37,7 +37,7 @@ This TODO implements the post-hardening remediation defined by `docs/SETUP_WIZAR
 - [x] Audit every call to `build_tunnel_profile_plan()` and every source of its project/server invocation.
 - [x] Remove `Path.cwd()` as the persistent tunnel project's identity.
 - [x] Define one deterministic installed/source-checkout server invocation strategy.
-- [x] Source checkout mode does not persist a project root: the tunnel command reuses the exact active Python environment and invokes `python -m dev_workspace_mcp`.
+- [x] Source checkout mode does not persist a project root: the tunnel command reuses the exact active Python environment and invokes `python -m mcp_chatgpt_sandbox`.
 - [x] Ensure installed-distribution invocation works without a repository checkout where supported.
 - [x] Keep command construction argv-first.
 - [x] Render persistent shell command text using `shlex.join()` or equivalent.

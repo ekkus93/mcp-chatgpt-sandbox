@@ -18,8 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.config.models import GithubConfig
-from dev_workspace_mcp.github_api import verify_remote_protection
+from mcp_chatgpt_sandbox.config.models import GithubConfig
+from mcp_chatgpt_sandbox.github_api import verify_remote_protection
 
 
 class _FakeGitHubHandler(BaseHTTPRequestHandler):

@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.errors import InvalidArgumentError
-from dev_workspace_mcp.git.log import GitLogEntry, build_log_argv, parse_git_log_output
+from mcp_chatgpt_sandbox.errors import InvalidArgumentError
+from mcp_chatgpt_sandbox.git.log import GitLogEntry, build_log_argv, parse_git_log_output
 
 
 def _init_repo(path: Path) -> Path:

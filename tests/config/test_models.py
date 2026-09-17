@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from dev_workspace_mcp.config.models import (
+from mcp_chatgpt_sandbox.config.models import (
     RepositoryConfig,
     ServerConfig,
     WorkspaceConfig,

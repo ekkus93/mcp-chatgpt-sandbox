@@ -9,13 +9,13 @@ from types import ModuleType
 
 import pytest
 
-from dev_workspace_mcp.operations.inventory import (
+from mcp_chatgpt_sandbox.operations.inventory import (
     ByteObservation,
     ByteProvenance,
     InventoryResource,
     ResourceInventoryResult,
 )
-from dev_workspace_mcp.operations.resources import (
+from mcp_chatgpt_sandbox.operations.resources import (
     OwnershipProof,
     OwnershipStatus,
     ResourceKind,
@@ -24,7 +24,7 @@ from dev_workspace_mcp.operations.resources import (
 
 
 def _planning_module() -> ModuleType:
-    module_name = "dev_workspace_mcp.operations.prune_candidates"
+    module_name = "mcp_chatgpt_sandbox.operations.prune_candidates"
     assert importlib.util.find_spec(module_name) is not None, (
         "PMOAT-006 RED: O5 has no deterministic read-only prune-candidate builder yet"
     )

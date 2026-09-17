@@ -8,13 +8,13 @@ import pytest
 from docker.errors import DockerException
 from textual.widgets import Input, Static
 
-from dev_workspace_mcp.setup.app import STEPS, SetupWizardApp
-from dev_workspace_mcp.setup.docker_setup import (
+from mcp_chatgpt_sandbox.setup.app import STEPS, SetupWizardApp
+from mcp_chatgpt_sandbox.setup.docker_setup import (
     SetupDockerError,
     build_default_image,
     prepare_default_image_build_plan,
 )
-from dev_workspace_mcp.setup.model import SetupStep
+from mcp_chatgpt_sandbox.setup.model import SetupStep
 
 
 def _go_to(app: SetupWizardApp, step: SetupStep) -> None:
@@ -44,10 +44,12 @@ async def test_swph_002_missing_context_during_validation_stays_inside_handler(
         raise AssertionError("Docker must not be touched after context resolution fails")
 
     monkeypatch.setattr(
-        "dev_workspace_mcp.setup.docker_setup.bundled_default_image_build_context",
+        "mcp_chatgpt_sandbox.setup.docker_setup.bundled_default_image_build_context",
         missing_context,
     )
-    monkeypatch.setattr("dev_workspace_mcp.setup.step_actions_docker.docker.from_env", fail_docker)
+    monkeypatch.setattr(
+        "mcp_chatgpt_sandbox.setup.step_actions_docker.docker.from_env", fail_docker
+    )
 
     app = SetupWizardApp(config_path=tmp_path / "config.yml", state_path=tmp_path / "state.json")
     async with app.run_test() as pilot:
@@ -87,9 +89,11 @@ async def test_swph_002_context_removed_before_apply_never_acquires_docker(
         build_calls += 1
         raise AssertionError("Docker build must not run for a missing context")
 
-    monkeypatch.setattr("dev_workspace_mcp.setup.step_actions_docker.docker.from_env", fail_docker)
     monkeypatch.setattr(
-        "dev_workspace_mcp.setup.step_actions_docker.build_default_image", fail_build
+        "mcp_chatgpt_sandbox.setup.step_actions_docker.docker.from_env", fail_docker
+    )
+    monkeypatch.setattr(
+        "mcp_chatgpt_sandbox.setup.step_actions_docker.build_default_image", fail_build
     )
 
     app = SetupWizardApp(config_path=tmp_path / "config.yml", state_path=tmp_path / "state.json")
@@ -162,12 +166,12 @@ async def test_swph_003_preview_round_trips_and_apply_uses_exact_reviewed_plan(
         built.append((image, build_context, approved))
 
     monkeypatch.setattr(
-        "dev_workspace_mcp.setup.step_actions_docker.prepare_default_image_build_plan",
+        "mcp_chatgpt_sandbox.setup.step_actions_docker.prepare_default_image_build_plan",
         prepare_with_sensitive_path,
     )
-    monkeypatch.setattr("dev_workspace_mcp.setup.step_actions_docker.docker.from_env", FakeClient)
+    monkeypatch.setattr("mcp_chatgpt_sandbox.setup.step_actions_docker.docker.from_env", FakeClient)
     monkeypatch.setattr(
-        "dev_workspace_mcp.setup.step_actions_docker.build_default_image", fake_build
+        "mcp_chatgpt_sandbox.setup.step_actions_docker.build_default_image", fake_build
     )
 
     app = SetupWizardApp(config_path=tmp_path / "config.yml", state_path=tmp_path / "state.json")
@@ -200,7 +204,9 @@ async def test_swph_002_docker_daemon_unavailable_remains_degraded(
     def unavailable() -> Any:
         raise DockerException("daemon unavailable")
 
-    monkeypatch.setattr("dev_workspace_mcp.setup.step_actions_docker.docker.from_env", unavailable)
+    monkeypatch.setattr(
+        "mcp_chatgpt_sandbox.setup.step_actions_docker.docker.from_env", unavailable
+    )
 
     app = SetupWizardApp(config_path=tmp_path / "config.yml", state_path=tmp_path / "state.json")
     async with app.run_test() as pilot:

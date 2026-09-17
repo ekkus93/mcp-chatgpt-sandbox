@@ -17,9 +17,9 @@ def test_g3at_017_touched_security_comments_remain_current_and_test_backed() -> 
     """G3AT-017: security comments describe current, adversarially tested controls."""
     dockerfile = _read("docker/default/Dockerfile")
     wrapper = _read("docker/default/entrypoint-wrapper.py")
-    workspace = _read("src/dev_workspace_mcp/tools/workspace.py")
-    retention = _read("src/dev_workspace_mcp/jobs/retention.py")
-    maintenance = _read("src/dev_workspace_mcp/maintenance.py")
+    workspace = _read("src/mcp_chatgpt_sandbox/tools/workspace.py")
+    retention = _read("src/mcp_chatgpt_sandbox/jobs/retention.py")
+    maintenance = _read("src/mcp_chatgpt_sandbox/maintenance.py")
 
     # X3/Y1: the production control is isolated Python startup, not merely
     # sanitization after Python has already started.
@@ -46,15 +46,15 @@ def test_g3at_017_touched_security_comments_remain_current_and_test_backed() -> 
     assert "G3R-014 / G3AT-014" in maintenance
 
     stale_claims = {
-        "src/dev_workspace_mcp/tools/workspace.py": (
+        "src/mcp_chatgpt_sandbox/tools/workspace.py": (
             "no scheduler exists in the daemon",
             "rather than on a real timer",
         ),
-        "src/dev_workspace_mcp/jobs/retention.py": (
+        "src/mcp_chatgpt_sandbox/jobs/retention.py": (
             "will put the same functions on a real periodic scheduler",
             "until then,",
         ),
-        "src/dev_workspace_mcp/maintenance.py": ("existed before Y14",),
+        "src/mcp_chatgpt_sandbox/maintenance.py": ("existed before Y14",),
     }
     for path, phrases in stale_claims.items():
         source = _read(path)

@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.db import schema
-from dev_workspace_mcp.db.connection import open_db
-from dev_workspace_mcp.db.schema import MIGRATIONS, apply_migrations, current_version
+from mcp_chatgpt_sandbox.db import schema
+from mcp_chatgpt_sandbox.db.connection import open_db
+from mcp_chatgpt_sandbox.db.schema import MIGRATIONS, apply_migrations, current_version
 
 
 def _table_names(connection: sqlite3.Connection) -> set[str]:
@@ -139,7 +139,7 @@ def test_full_row_round_trip_across_all_four_tables() -> None:
             (id, repository_id, mode, container_id, container_name, image,
              workspace_path, state, created_at, last_used_at)
         VALUES ('ws_example', 'example', 'persistent', 'c0ffee', 'mcp-dev-example',
-                'mcp-dev-ubuntu:24.04', '/workspace', 'running',
+                'mcp-chatgpt-sandbox-ubuntu:24.04', '/workspace', 'running',
                 '2026-08-26T00:00:00Z', '2026-08-26T00:00:00Z')
         """
     )

@@ -7,10 +7,10 @@ from typing import Any
 
 from docker.errors import DockerException, NotFound
 
-from dev_workspace_mcp.config.models import ServerConfig
-from dev_workspace_mcp.operations.resources import LABEL_RESOURCE_KIND, RESOURCE_KIND_CACHE_VOLUME
-from dev_workspace_mcp.server import create_server
-from dev_workspace_mcp.workspace.naming import (
+from mcp_chatgpt_sandbox.config.models import ServerConfig
+from mcp_chatgpt_sandbox.operations.resources import LABEL_RESOURCE_KIND, RESOURCE_KIND_CACHE_VOLUME
+from mcp_chatgpt_sandbox.server import create_server
+from mcp_chatgpt_sandbox.workspace.naming import (
     LABEL_MANAGED,
     LABEL_REPOSITORY_ID,
     LABEL_WORKSPACE_ID,
@@ -192,7 +192,7 @@ async def test_pmoat_008_omit_or_false_confirmation_is_non_destructive_then_true
 ) -> None:
     mutations = _Mutations()
     docker_client, container, volume = _docker_fixture(mutations)
-    monkeypatch.setattr("dev_workspace_mcp.server._try_docker_client", lambda: docker_client)
+    monkeypatch.setattr("mcp_chatgpt_sandbox.server._try_docker_client", lambda: docker_client)
     server = create_server(minimal_config)
     plan = await _plan(server)
 
@@ -244,7 +244,7 @@ async def test_o8_revalidates_each_candidate_and_does_not_delete_changed_identit
 ) -> None:
     mutations = _Mutations()
     docker_client, container, volume = _docker_fixture(mutations)
-    monkeypatch.setattr("dev_workspace_mcp.server._try_docker_client", lambda: docker_client)
+    monkeypatch.setattr("mcp_chatgpt_sandbox.server._try_docker_client", lambda: docker_client)
     server = create_server(minimal_config)
     plan = await _plan(server)
 
@@ -275,7 +275,7 @@ async def test_o8_complete_exact_absence_is_idempotent_success_noop(
 ) -> None:
     mutations = _Mutations()
     docker_client, _container, volume = _docker_fixture(mutations)
-    monkeypatch.setattr("dev_workspace_mcp.server._try_docker_client", lambda: docker_client)
+    monkeypatch.setattr("mcp_chatgpt_sandbox.server._try_docker_client", lambda: docker_client)
     server = create_server(minimal_config)
     plan = await _plan(server, kinds=["cache_volume"])
 
@@ -302,7 +302,7 @@ async def test_o8_unprovable_exact_identity_is_failure_not_success(
 ) -> None:
     mutations = _Mutations()
     docker_client, _container, volume = _docker_fixture(mutations)
-    monkeypatch.setattr("dev_workspace_mcp.server._try_docker_client", lambda: docker_client)
+    monkeypatch.setattr("mcp_chatgpt_sandbox.server._try_docker_client", lambda: docker_client)
     server = create_server(minimal_config)
     plan = await _plan(server, kinds=["cache_volume"])
     docker_client.volumes.fail_get_for.add(volume.name)

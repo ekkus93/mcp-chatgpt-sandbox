@@ -11,8 +11,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from dev_workspace_mcp.setup import config_writer
-from dev_workspace_mcp.setup.config_writer import (
+from mcp_chatgpt_sandbox.setup import config_writer
+from mcp_chatgpt_sandbox.setup.config_writer import (
     ConfigUpdatePlan,
     SetupConfigError,
     commit_config_update,
@@ -24,7 +24,7 @@ def _minimal(tmp_path: Path) -> dict[str, object]:
     return {
         "version": 1,
         "state_db_path": str(tmp_path / "state.db"),
-        "docker": {"default_image": "mcp-dev-test:24.04"},
+        "docker": {"default_image": "mcp-chatgpt-sandbox-test:24.04"},
         "ssh": {
             "keys_dir": str(tmp_path / "keys"),
             "known_hosts": str(tmp_path / "known_hosts"),

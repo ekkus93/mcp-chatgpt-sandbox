@@ -12,12 +12,12 @@ from pathlib import Path
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 
-from dev_workspace_mcp.config.models import FilesystemConfig, RepositoryConfig, ServerConfig
-from dev_workspace_mcp.db import open_db
-from dev_workspace_mcp.filesystem.service import FilesystemService
-from dev_workspace_mcp.repositories import RepositoryRegistry
-from dev_workspace_mcp.server import create_server
-from dev_workspace_mcp.tools import filesystem as filesystem_tools
+from mcp_chatgpt_sandbox.config.models import FilesystemConfig, RepositoryConfig, ServerConfig
+from mcp_chatgpt_sandbox.db import open_db
+from mcp_chatgpt_sandbox.filesystem.service import FilesystemService
+from mcp_chatgpt_sandbox.repositories import RepositoryRegistry
+from mcp_chatgpt_sandbox.server import create_server
+from mcp_chatgpt_sandbox.tools import filesystem as filesystem_tools
 
 
 def _workspace_with_repo(config: ServerConfig, repo_path: Path) -> tuple[ServerConfig, str]:

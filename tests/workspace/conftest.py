@@ -3,7 +3,7 @@
 Teardown (H1, `docs/HARDENING_SPEC.md` HR-026) removes only the specific
 containers and volumes THIS test created — never a global label or name
 filter. The previous version filtered by `LABEL_MANAGED`
-(`dev-workspace-mcp.managed`) and by the `mcp-cache-` name prefix, both of
+(`mcp-chatgpt-sandbox.managed`) and by the `mcp-cache-` name prefix, both of
 which are the exact labels/names a real deployment's own live containers
 and dependency caches carry: running this suite on a machine serving real
 workspaces destroyed them, reproduced during the 2026-08-27 review.
@@ -41,12 +41,12 @@ import docker.models.containers
 import docker.models.volumes
 import pytest
 
-from dev_workspace_mcp.config.models import SSHConfig
-from dev_workspace_mcp.db import open_db
-from dev_workspace_mcp.repositories import RepositoryRecord
-from dev_workspace_mcp.workspace.container_config import DEFAULT_IMAGE_BUILD_CONTEXT
-from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
-from dev_workspace_mcp.workspace.naming import TEST_RESOURCE_NAMESPACE_ENV
+from mcp_chatgpt_sandbox.config.models import SSHConfig
+from mcp_chatgpt_sandbox.db import open_db
+from mcp_chatgpt_sandbox.repositories import RepositoryRecord
+from mcp_chatgpt_sandbox.workspace.container_config import DEFAULT_IMAGE_BUILD_CONTEXT
+from mcp_chatgpt_sandbox.workspace.manager import DockerWorkspaceManager
+from mcp_chatgpt_sandbox.workspace.naming import TEST_RESOURCE_NAMESPACE_ENV
 
 #: Small, always-fast, already present on this host (verified in S6's
 #: development). Needs a foreground command or it exits immediately.
@@ -55,7 +55,7 @@ KEEP_ALIVE_RUN_KWARGS = {"command": ["sleep", "3600"]}
 
 #: Distinct from DEFAULT_IMAGE_TAG so a test build never overwrites
 #: whatever an operator has actually deployed under that name.
-DEFAULT_IMAGE_TEST_TAG = "mcp-dev-test-s7:24.04"
+DEFAULT_IMAGE_TEST_TAG = "mcp-chatgpt-sandbox-test-s7:24.04"
 
 #: Populated by the process-global class-method interceptors installed by
 #: `_track_created_docker_resources` and drained by `docker_client` teardown.

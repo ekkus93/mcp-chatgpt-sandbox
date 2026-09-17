@@ -7,9 +7,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from dev_workspace_mcp.config.models import ContainerConfig, SSHConfig
-from dev_workspace_mcp.errors import ContainerCreateFailedError
-from dev_workspace_mcp.workspace.container_config import (
+from mcp_chatgpt_sandbox.config.models import ContainerConfig, SSHConfig
+from mcp_chatgpt_sandbox.errors import ContainerCreateFailedError
+from mcp_chatgpt_sandbox.workspace.container_config import (
     build_workspace_run_kwargs,
     userns_remap_active,
 )

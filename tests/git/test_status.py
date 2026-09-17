@@ -14,8 +14,8 @@ end-to-end, in-container."""
 import subprocess
 from pathlib import Path
 
-from dev_workspace_mcp.git.service import InterruptedOperation, detect_interrupted_operation
-from dev_workspace_mcp.git.status import GitStatus, head_sha_matches, parse_git_status_output
+from mcp_chatgpt_sandbox.git.service import InterruptedOperation, detect_interrupted_operation
+from mcp_chatgpt_sandbox.git.status import GitStatus, head_sha_matches, parse_git_status_output
 
 
 def _init_repo(path: Path) -> Path:

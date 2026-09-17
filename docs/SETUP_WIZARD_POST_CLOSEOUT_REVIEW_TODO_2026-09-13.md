@@ -28,7 +28,7 @@ A checkbox closes only from source, test, documentation, CI, and merge evidence.
 - [x] Add tests proving Docker apply is bound to the stored reviewed plan or explicitly rejects stale plans.
 - [x] Add tests proving Docker control edits invalidate pending reviewed build plans.
 
-**Evidence:** `src/dev_workspace_mcp/setup/step_panels.py` exposes separate `prepare-docker-build` and disabled-by-default `build-docker-image` controls. `src/dev_workspace_mcp/setup/docker_setup.py` defines `DockerBuildPlan` and `prepare_default_image_build_plan()`. `src/dev_workspace_mcp/setup/step_actions.py` implements `prepare_docker_build()` as a non-mutating plan builder and `build_docker_image()` as a stored-plan-only apply path. `src/dev_workspace_mcp/setup/app.py` clears `_pending_docker_build_plan` when Docker controls change. `tests/setup/test_reviewed_mutations.py` covers prepare-without-mutation, disabled apply-without-plan UI state, stored-plan binding, and edit invalidation.
+**Evidence:** `src/mcp_chatgpt_sandbox/setup/step_panels.py` exposes separate `prepare-docker-build` and disabled-by-default `build-docker-image` controls. `src/mcp_chatgpt_sandbox/setup/docker_setup.py` defines `DockerBuildPlan` and `prepare_default_image_build_plan()`. `src/mcp_chatgpt_sandbox/setup/step_actions.py` implements `prepare_docker_build()` as a non-mutating plan builder and `build_docker_image()` as a stored-plan-only apply path. `src/mcp_chatgpt_sandbox/setup/app.py` clears `_pending_docker_build_plan` when Docker controls change. `tests/setup/test_reviewed_mutations.py` covers prepare-without-mutation, disabled apply-without-plan UI state, stored-plan binding, and edit invalidation.
 
 ### Secure MCP Tunnel profile mutation
 
@@ -45,7 +45,7 @@ A checkbox closes only from source, test, documentation, CI, and merge evidence.
 - [x] Add tests proving tunnel apply is bound to the stored reviewed plan or explicitly rejects stale plans.
 - [x] Add tests proving tunnel control edits invalidate pending reviewed tunnel plans.
 
-**Evidence:** `src/dev_workspace_mcp/setup/step_panels.py` exposes separate `tunnel-prepare` and disabled-by-default `tunnel-apply` controls. `src/dev_workspace_mcp/setup/step_actions.py` implements `prepare_tunnel()` as a non-mutating `TunnelProfilePlan` builder and `apply_tunnel()` as a stored-plan-only mutation path. `src/dev_workspace_mcp/setup/app.py` clears `_pending_tunnel_plan` when ChatGPT/tunnel controls change. `tests/setup/test_reviewed_mutations.py` covers prepare-without-mutation, disabled apply-without-plan UI state, stored-plan binding, and edit invalidation.
+**Evidence:** `src/mcp_chatgpt_sandbox/setup/step_panels.py` exposes separate `tunnel-prepare` and disabled-by-default `tunnel-apply` controls. `src/mcp_chatgpt_sandbox/setup/step_actions.py` implements `prepare_tunnel()` as a non-mutating `TunnelProfilePlan` builder and `apply_tunnel()` as a stored-plan-only mutation path. `src/mcp_chatgpt_sandbox/setup/app.py` clears `_pending_tunnel_plan` when ChatGPT/tunnel controls change. `tests/setup/test_reviewed_mutations.py` covers prepare-without-mutation, disabled apply-without-plan UI state, stored-plan binding, and edit invalidation.
 
 ### Static guard
 
@@ -65,11 +65,11 @@ A checkbox closes only from source, test, documentation, CI, and merge evidence.
 - [x] Add tests proving duplicate GitHub identities with distinct IDs and paths are accepted, unless the stricter policy is deliberately retained and documented.
 - [x] Add tests proving edit/remove flows continue to operate by repository ID, not GitHub identity.
 
-**Evidence:** The chosen policy is production-aligned: duplicate `github` identities are allowed when repository IDs and paths are distinct. `src/dev_workspace_mcp/setup/model.py` rejects duplicate IDs and duplicate paths, but no longer rejects duplicate GitHub identities. `src/dev_workspace_mcp/setup/repository_setup.py` continues to enforce ID/path uniqueness for guided CRUD. `tests/setup/test_model.py` and `tests/setup/test_review_remediation_contracts.py` cover duplicate-ID rejection, duplicate-path rejection, duplicate-GitHub acceptance, and ID-based edit/remove behavior.
+**Evidence:** The chosen policy is production-aligned: duplicate `github` identities are allowed when repository IDs and paths are distinct. `src/mcp_chatgpt_sandbox/setup/model.py` rejects duplicate IDs and duplicate paths, but no longer rejects duplicate GitHub identities. `src/mcp_chatgpt_sandbox/setup/repository_setup.py` continues to enforce ID/path uniqueness for guided CRUD. `tests/setup/test_model.py` and `tests/setup/test_review_remediation_contracts.py` cover duplicate-ID rejection, duplicate-path rejection, duplicate-GitHub acceptance, and ID-based edit/remove behavior.
 
 ## SWF-003 — Remove or justify the setup `app.py` E501 ignore
 
-- [x] Remove the broad per-file Ruff `E501` ignore for `src/dev_workspace_mcp/setup/app.py`, or document and narrow an intentional exception.
+- [x] Remove the broad per-file Ruff `E501` ignore for `src/mcp_chatgpt_sandbox/setup/app.py`, or document and narrow an intentional exception.
 - [x] Wrap/refactor remaining long setup `app.py` lines so Ruff passes without the broad exemption.
 - [x] Add a static contract proving setup files do not regain broad per-file style exemptions without explicit justification.
 - [x] Ensure coordinator-growth guards remain active after any formatting/refactor changes.
@@ -85,7 +85,7 @@ A checkbox closes only from source, test, documentation, CI, and merge evidence.
 - [x] Add tests proving explicit runtime overrides take precedence over ambient environment values.
 - [x] Add tests proving failure messages remain secret-safe when tunnel-client fails.
 
-**Evidence:** `src/dev_workspace_mcp/setup/tunnel.py` merges runtime overrides over a copy of `os.environ` only when an explicit override mapping is supplied, while preserving `env=None` inheritance behavior for the default path. `tests/setup/test_tunnel.py` covers ambient preservation, override precedence, and secret-safe tunnel-client failure messages.
+**Evidence:** `src/mcp_chatgpt_sandbox/setup/tunnel.py` merges runtime overrides over a copy of `os.environ` only when an explicit override mapping is supplied, while preserving `env=None` inheritance behavior for the default path. `tests/setup/test_tunnel.py` covers ambient preservation, override precedence, and secret-safe tunnel-client failure messages.
 
 ## SWF-005 — Strengthen secret-value regression coverage without blocking valid path references
 
@@ -97,7 +97,7 @@ A checkbox closes only from source, test, documentation, CI, and merge evidence.
 - [x] Avoid brittle entropy heuristics that would reject normal operator paths, IDs, repository names, or profile names.
 - [x] Verify setup-state load/save errors do not echo supplied raw payloads.
 
-**Evidence:** `src/dev_workspace_mcp/setup/model.py` rejects secret-bearing state key fragments, now including `runtime_key`. `tests/setup/test_model.py` adds negative fixtures for secret-shaped fields and positive fixtures for `/run/secrets/...` credential-file paths plus non-secret tunnel identifiers/profile names. Existing state-load error tests continue to verify raw payloads are not echoed. `tests/setup/test_review_remediation_contracts.py` continues to verify the TUI defines no raw-secret `Input` controls.
+**Evidence:** `src/mcp_chatgpt_sandbox/setup/model.py` rejects secret-bearing state key fragments, now including `runtime_key`. `tests/setup/test_model.py` adds negative fixtures for secret-shaped fields and positive fixtures for `/run/secrets/...` credential-file paths plus non-secret tunnel identifiers/profile names. Existing state-load error tests continue to verify raw payloads are not echoed. `tests/setup/test_review_remediation_contracts.py` continues to verify the TUI defines no raw-secret `Input` controls.
 
 ## SWF-006 — Final audit, evidence, and merge
 

@@ -9,16 +9,16 @@ import docker
 import pytest
 from mcp.server import MCPServer
 
-from dev_workspace_mcp.config.loader import ensure_known_hosts_file_exists
-from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
-from dev_workspace_mcp.db import open_db
-from dev_workspace_mcp.execution.service import ExecutionService
-from dev_workspace_mcp.jobs.store import JobStore
-from dev_workspace_mcp.repositories import RepositoryRegistry
-from dev_workspace_mcp.schema_export import CONTRACT_VERSION
-from dev_workspace_mcp.server import create_server
-from dev_workspace_mcp.tools import workspace as workspace_tools
-from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
+from mcp_chatgpt_sandbox.config.loader import ensure_known_hosts_file_exists
+from mcp_chatgpt_sandbox.config.models import RepositoryConfig, ServerConfig
+from mcp_chatgpt_sandbox.db import open_db
+from mcp_chatgpt_sandbox.execution.service import ExecutionService
+from mcp_chatgpt_sandbox.jobs.store import JobStore
+from mcp_chatgpt_sandbox.repositories import RepositoryRegistry
+from mcp_chatgpt_sandbox.schema_export import CONTRACT_VERSION
+from mcp_chatgpt_sandbox.server import create_server
+from mcp_chatgpt_sandbox.tools import workspace as workspace_tools
+from mcp_chatgpt_sandbox.workspace.manager import DockerWorkspaceManager
 
 
 def _configured(

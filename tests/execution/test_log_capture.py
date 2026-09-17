@@ -4,7 +4,7 @@ import threading
 import time
 from pathlib import Path
 
-from dev_workspace_mcp.execution.log_capture import (
+from mcp_chatgpt_sandbox.execution.log_capture import (
     StreamCapture,
     read_log_bytes,
     read_log_tail,
@@ -271,8 +271,8 @@ def test_rr019_read_log_tail_composed_with_tail_text_at_a_nonzero_backward_offse
     back to the whole file — the file is deliberately large enough
     (~5x the initial chunk) that reaching `read_from == 0` would itself
     indicate the fix failed to converge properly."""
-    from dev_workspace_mcp.execution.log_capture import _TAIL_INITIAL_CHUNK_BYTES
-    from dev_workspace_mcp.execution.service import tail_text
+    from mcp_chatgpt_sandbox.execution.log_capture import _TAIL_INITIAL_CHUNK_BYTES
+    from mcp_chatgpt_sandbox.execution.service import tail_text
 
     max_lines = 200
     line_body = "x" * 327  # chosen so the last _TAIL_INITIAL_CHUNK_BYTES

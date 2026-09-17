@@ -5,11 +5,11 @@ import inspect
 import subprocess
 from pathlib import Path
 
-from dev_workspace_mcp.setup.choices import SetupChoices
-from dev_workspace_mcp.setup.model import SetupRepositoryState
-from dev_workspace_mcp.setup.repository_setup import verify_repository
-from dev_workspace_mcp.setup.step_actions import SetupStepActionsMixin
-from dev_workspace_mcp.setup.step_panels import WizardStepPanels
+from mcp_chatgpt_sandbox.setup.choices import SetupChoices
+from mcp_chatgpt_sandbox.setup.model import SetupRepositoryState
+from mcp_chatgpt_sandbox.setup.repository_setup import verify_repository
+from mcp_chatgpt_sandbox.setup.step_actions import SetupStepActionsMixin
+from mcp_chatgpt_sandbox.setup.step_panels import WizardStepPanels
 
 _SECRET_FIELD_FRAGMENTS = (
     "api_key",

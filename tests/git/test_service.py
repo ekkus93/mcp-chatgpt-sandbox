@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.git.service import (
+from mcp_chatgpt_sandbox.git.service import (
     GitCommandResult,
     InterruptedOperation,
     detect_interrupted_operation,

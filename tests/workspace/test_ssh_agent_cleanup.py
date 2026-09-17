@@ -9,10 +9,10 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.db import open_db
-from dev_workspace_mcp.errors import WorkspaceError
-from dev_workspace_mcp.workspace import ssh_agent as ssh_agent_module
-from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager
+from mcp_chatgpt_sandbox.db import open_db
+from mcp_chatgpt_sandbox.errors import WorkspaceError
+from mcp_chatgpt_sandbox.workspace import ssh_agent as ssh_agent_module
+from mcp_chatgpt_sandbox.workspace.ssh_agent import SSHAgentManager
 
 
 def _seeded_db() -> sqlite3.Connection:

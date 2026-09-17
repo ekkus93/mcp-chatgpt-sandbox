@@ -10,17 +10,17 @@ from pathlib import Path
 import docker
 import pytest
 
-from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
-from dev_workspace_mcp.db import open_db
-from dev_workspace_mcp.errors import ContainerCreateFailedError
-from dev_workspace_mcp.repositories import RepositoryRecord
-from dev_workspace_mcp.server import create_server
-from dev_workspace_mcp.workspace.manager import (
+from mcp_chatgpt_sandbox.config.models import RepositoryConfig, ServerConfig
+from mcp_chatgpt_sandbox.db import open_db
+from mcp_chatgpt_sandbox.errors import ContainerCreateFailedError
+from mcp_chatgpt_sandbox.repositories import RepositoryRecord
+from mcp_chatgpt_sandbox.server import create_server
+from mcp_chatgpt_sandbox.workspace.manager import (
     DockerWorkspaceManager,
     WorkspaceState,
     _state_from_docker_container,
 )
-from dev_workspace_mcp.workspace.naming import (
+from mcp_chatgpt_sandbox.workspace.naming import (
     LABEL_WORKSPACE_ID,
     container_labels,
     container_name,

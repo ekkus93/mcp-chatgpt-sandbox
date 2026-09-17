@@ -5,16 +5,16 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.config import GitPolicyConfig
-from dev_workspace_mcp.setup.git_policy_form import (
+from mcp_chatgpt_sandbox.config import GitPolicyConfig
+from mcp_chatgpt_sandbox.setup.git_policy_form import (
     GIT_POLICY_GUIDED_CONTROLS,
     GIT_POLICY_GUIDED_FIELDS,
     GitPolicyEditorValues,
 )
-from dev_workspace_mcp.setup.git_policy_setup import GIT_POLICY_UI_FIELDS
+from mcp_chatgpt_sandbox.setup.git_policy_setup import GIT_POLICY_UI_FIELDS
 
 _REPO_ROOT = Path(__file__).parents[2]
-_SETUP_ROOT = _REPO_ROOT / "src" / "dev_workspace_mcp" / "setup"
+_SETUP_ROOT = _REPO_ROOT / "src" / "mcp_chatgpt_sandbox" / "setup"
 
 
 def test_swphv_004_manifest_matches_production_and_editor_fields_bidirectionally() -> None:

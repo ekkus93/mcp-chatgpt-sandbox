@@ -529,7 +529,7 @@ Example fields:
   "container_state": "running",
   "mode": "persistent",
   "workspace_path": "/workspace",
-  "image": "mcp-dev-ubuntu:24.04",
+  "image": "mcp-chatgpt-sandbox-ubuntu:24.04",
   "git_dir_mode": "read-write",
   "container_user": "1000:1000",
   "ssh_key_mode": "agent",
@@ -1705,7 +1705,7 @@ daemon uid:
 
 ```yaml
 ssh:
-  keys_dir: /etc/dev-workspace-mcp/keys
+  keys_dir: /etc/mcp-chatgpt-sandbox/keys
 repositories:
   - id: project-gatsby
     path: /home/phil/work/project-gatsby
@@ -1750,7 +1750,7 @@ Properties:
 The private key is bind-mounted read-only into the container:
 
 ```text
-HOST:      /etc/dev-workspace-mcp/keys/project-gatsby.ed25519
+HOST:      /etc/mcp-chatgpt-sandbox/keys/project-gatsby.ed25519
 CONTAINER: $HOME/.ssh/id_mcp     (mode 0600, owned by the container user)
 ```
 
@@ -1829,12 +1829,12 @@ otherwise exposed to any container. If it is absent, the features above degrade 
 ssh:
   mode: agent
   scope: repository
-  keys_dir: /etc/dev-workspace-mcp/keys
-  known_hosts: /etc/dev-workspace-mcp/github_known_hosts
+  keys_dir: /etc/mcp-chatgpt-sandbox/keys
+  known_hosts: /etc/mcp-chatgpt-sandbox/github_known_hosts
 
 github:
   api_auth: token                 # none | token | app
-  api_token_path: /etc/dev-workspace-mcp/github-readonly.token
+  api_token_path: /etc/mcp-chatgpt-sandbox/github-readonly.token
   repositories:
     - ekkus93/chatgpt_ralph_loop_tools
     - ekkus93/project-gatsby
@@ -2597,7 +2597,7 @@ to emit, the server SHALL:
 1. export its complete `tools/list` response — including an `outputSchema` for
    every tool that returns structured content — to `schemas/tools.json` in the
    repository, via a build or CLI command such as
-   `dev-workspace-mcp export-schemas`;
+   `mcp-chatgpt-sandbox export-schemas`;
 2. commit that file, so that every change to a tool's contract appears as a diff
    in review;
 3. fail CI when the exported file differs from the committed one (§71), so that a
@@ -3217,7 +3217,7 @@ A server configuration file MAY resemble:
 ```yaml
 version: 1
 
-state_db_path: /var/lib/dev-workspace-mcp/state.db   # §68 — required, no default
+state_db_path: /var/lib/mcp-chatgpt-sandbox/state.db   # §68 — required, no default
 
 repository_roots:
   - /home/phil/work
@@ -3229,7 +3229,7 @@ repositories:
     ssh_key: chatgpt-ralph-loop-tools.ed25519   # relative to ssh.keys_dir
 
 docker:
-  default_image: mcp-dev-ubuntu:24.04
+  default_image: mcp-chatgpt-sandbox-ubuntu:24.04
   workspace_path: /workspace
 
 workspace:
@@ -3243,12 +3243,12 @@ container:
 ssh:                               # §19
   mode: agent                      # agent | file
   scope: repository                # one deploy key per repository
-  keys_dir: /etc/dev-workspace-mcp/keys
-  known_hosts: /etc/dev-workspace-mcp/github_known_hosts
+  keys_dir: /etc/mcp-chatgpt-sandbox/keys
+  known_hosts: /etc/mcp-chatgpt-sandbox/github_known_hosts
 
 github:
   api_auth: token                  # none | token | app — read-only, §19.5
-  api_token_path: /etc/dev-workspace-mcp/github-readonly.token
+  api_token_path: /etc/mcp-chatgpt-sandbox/github-readonly.token
   repositories:
     - ekkus93/chatgpt_ralph_loop_tools
 
@@ -3281,7 +3281,7 @@ git_policy:                        # structured tools only, §18.9
 
 audit:
   enabled: true
-  path: /var/log/dev-workspace-mcp/audit.jsonl
+  path: /var/log/mcp-chatgpt-sandbox/audit.jsonl
 ```
 
 Configuration SHALL be validated at startup.
@@ -4305,7 +4305,7 @@ cannot disagree.
 Typical startup:
 
 ```bash
-dev-workspace-mcp serve --config /etc/dev-workspace-mcp/config.yml
+mcp-chatgpt-sandbox serve --config /etc/mcp-chatgpt-sandbox/config.yml
 ```
 
 The server:

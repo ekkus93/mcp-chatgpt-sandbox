@@ -9,16 +9,16 @@ from types import ModuleType
 
 import pytest
 
-from dev_workspace_mcp.operations.inventory import (
+from mcp_chatgpt_sandbox.operations.inventory import (
     ByteObservation,
     InventoryResource,
     ResourceInventoryResult,
 )
-from dev_workspace_mcp.operations.prune_candidates import (
+from mcp_chatgpt_sandbox.operations.prune_candidates import (
     PruneCandidate,
     build_prune_candidates,
 )
-from dev_workspace_mcp.operations.resources import (
+from mcp_chatgpt_sandbox.operations.resources import (
     OwnershipProof,
     OwnershipStatus,
     ResourceKind,
@@ -27,7 +27,7 @@ from dev_workspace_mcp.operations.resources import (
 
 
 def _planning_module() -> ModuleType:
-    module_name = "dev_workspace_mcp.operations.prune_plans"
+    module_name = "mcp_chatgpt_sandbox.operations.prune_plans"
     assert importlib.util.find_spec(module_name) is not None, (
         "PMOAT-007 RED: O6 has no immutable/stale-aware prune-plan implementation yet"
     )

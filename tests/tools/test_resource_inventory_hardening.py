@@ -4,22 +4,22 @@ from __future__ import annotations
 
 from typing import Any
 
-from dev_workspace_mcp.config.models import ServerConfig
-from dev_workspace_mcp.operations.inventory import (
+from mcp_chatgpt_sandbox.config.models import ServerConfig
+from mcp_chatgpt_sandbox.operations.inventory import (
     ByteObservation,
     InventoryDiagnostic,
     InventoryResource,
     ResourceInventoryResult,
 )
-from dev_workspace_mcp.operations.resources import (
+from mcp_chatgpt_sandbox.operations.resources import (
     OwnershipProof,
     OwnershipStatus,
     ResourceKind,
     ResourceLifecycleState,
 )
-from dev_workspace_mcp.server import create_server
-from dev_workspace_mcp.tools import operations as operations_tools
-from dev_workspace_mcp.workspace.naming import LABEL_REPOSITORY_ID, LABEL_WORKSPACE_ID
+from mcp_chatgpt_sandbox.server import create_server
+from mcp_chatgpt_sandbox.tools import operations as operations_tools
+from mcp_chatgpt_sandbox.workspace.naming import LABEL_REPOSITORY_ID, LABEL_WORKSPACE_ID
 
 
 def _result(

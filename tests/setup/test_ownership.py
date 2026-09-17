@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from dev_workspace_mcp.config import ServerConfig
-from dev_workspace_mcp.config.models import (
+from mcp_chatgpt_sandbox.config import ServerConfig
+from mcp_chatgpt_sandbox.config.models import (
     AuditConfig,
     ContainerConfig,
     GithubConfig,
     GitPolicyConfig,
 )
-from dev_workspace_mcp.setup.ownership import (
+from mcp_chatgpt_sandbox.setup.ownership import (
     NESTED_FIELD_DISPOSITIONS,
     TOP_LEVEL_FIELD_DISPOSITIONS,
     WIZARD_ADVANCED_TOP_LEVEL_FIELDS,

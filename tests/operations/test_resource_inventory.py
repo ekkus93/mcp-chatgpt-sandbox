@@ -12,14 +12,14 @@ from typing import Any
 import pytest
 from docker.errors import DockerException
 
-from dev_workspace_mcp.db.schema import apply_migrations
-from dev_workspace_mcp.operations.resources import (
+from mcp_chatgpt_sandbox.db.schema import apply_migrations
+from mcp_chatgpt_sandbox.operations.resources import (
     LABEL_RESOURCE_KIND,
     RESOURCE_KIND_CACHE_VOLUME,
     OwnershipStatus,
     ResourceKind,
 )
-from dev_workspace_mcp.workspace.naming import (
+from mcp_chatgpt_sandbox.workspace.naming import (
     LABEL_MANAGED,
     LABEL_REPOSITORY_ID,
     LABEL_WORKSPACE_ID,
@@ -107,7 +107,7 @@ class _Docker:
 
 
 def _inventory_module() -> ModuleType:
-    module_name = "dev_workspace_mcp.operations.inventory"
+    module_name = "mcp_chatgpt_sandbox.operations.inventory"
     assert importlib.util.find_spec(module_name) is not None, (
         "PMOAT-002 RED: O2 has no internal bounded read-only inventory service yet"
     )

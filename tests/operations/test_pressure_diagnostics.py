@@ -9,15 +9,15 @@ from typing import Any
 
 from docker.errors import APIError, DockerException
 
-from dev_workspace_mcp.config.models import ServerConfig
-from dev_workspace_mcp.errors import CommandFailedError
-from dev_workspace_mcp.server import create_server
-from dev_workspace_mcp.tools import operations as operations_tools
+from mcp_chatgpt_sandbox.config.models import ServerConfig
+from mcp_chatgpt_sandbox.errors import CommandFailedError
+from mcp_chatgpt_sandbox.server import create_server
+from mcp_chatgpt_sandbox.tools import operations as operations_tools
 
 
 def _pressure() -> Any:
     """Import inside tests so pre-O4 code reaches each RED assertion."""
-    return importlib.import_module("dev_workspace_mcp.operations.pressure")
+    return importlib.import_module("mcp_chatgpt_sandbox.operations.pressure")
 
 
 def test_o4_state_filesystem_enospc_requires_errno_evidence() -> None:

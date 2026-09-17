@@ -8,7 +8,7 @@ import json
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError as MCPToolError
 
-from dev_workspace_mcp.errors import (
+from mcp_chatgpt_sandbox.errors import (
     CommandFailedError,
     ErrorCode,
     FileConflictError,

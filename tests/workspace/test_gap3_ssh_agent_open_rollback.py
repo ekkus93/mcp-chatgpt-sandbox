@@ -9,16 +9,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
-from dev_workspace_mcp.db import open_db
-from dev_workspace_mcp.errors import (
+from mcp_chatgpt_sandbox.config.models import RepositoryConfig, ServerConfig
+from mcp_chatgpt_sandbox.db import open_db
+from mcp_chatgpt_sandbox.errors import (
     ContainerCreateFailedError,
     SSHCredentialCleanupFailedError,
 )
-from dev_workspace_mcp.jobs.store import JobStore
-from dev_workspace_mcp.repositories import RepositoryRecord, RepositoryRegistry
-from dev_workspace_mcp.tools import workspace as workspace_tools
-from dev_workspace_mcp.workspace.records import WorkspaceRecord, WorkspaceState
+from mcp_chatgpt_sandbox.jobs.store import JobStore
+from mcp_chatgpt_sandbox.repositories import RepositoryRecord, RepositoryRegistry
+from mcp_chatgpt_sandbox.tools import workspace as workspace_tools
+from mcp_chatgpt_sandbox.workspace.records import WorkspaceRecord, WorkspaceState
 
 
 class _RecordingAgentManager:

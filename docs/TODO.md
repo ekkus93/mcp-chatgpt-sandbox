@@ -420,12 +420,12 @@ hardening review found in this task's own work, each now fixed:
 
 **Commit:** `2c6d785`
 
-`src/dev_workspace_mcp/schema_export.py` collects every registered tool's
+`src/mcp_chatgpt_sandbox/schema_export.py` collects every registered tool's
 name/description/input_schema/output_schema (sorted by name for a stable
 diff) and renders them as `{"contract_version": ..., "tools": [...]}` —
 deterministic `json.dumps(..., indent=2, sort_keys=True)` plus a trailing
 newline, so re-exporting an unchanged server is byte-for-byte identical to
-what's committed. `dev-workspace-mcp export-schemas --config <path> [--out
+what's committed. `mcp-chatgpt-sandbox export-schemas --config <path> [--out
 schemas/tools.json]` is the new CLI command; `schemas/tools.json` (all 11
 tools registered through S12) is generated and committed, not hand-written.
 `CONTRACT_VERSION = "0.1.0"` is bumped by hand per §33.2's rules — a
@@ -458,7 +458,7 @@ Acceptance: long builds survive individual MCP request timeouts.
 
 **Commit:** `f4e347c`
 
-`src/dev_workspace_mcp/jobs/store.py`: `JobStore`, backed by the `job` table
+`src/mcp_chatgpt_sandbox/jobs/store.py`: `JobStore`, backed by the `job` table
 S3 already created. `JobRecord` mirrors §15.2/§67's fields exactly.
 Lifecycle transitions are named methods (`mark_starting`, `mark_running`,
 `update_output_counts`, `mark_finished`, `mark_lost`) rather than an open
@@ -470,7 +470,7 @@ rather than on some request handler, it survives an MCP reconnect and
 outlives the request that created it (§23) for free — any later request,
 or even a later daemon process (after a restart), can look it up by id.
 
-`src/dev_workspace_mcp/jobs/reconcile.py`: `reconcile_jobs`, run once at
+`src/mcp_chatgpt_sandbox/jobs/reconcile.py`: `reconcile_jobs`, run once at
 daemon startup (new §73 step 4, inserted before container reconciliation).
 A job left `queued`/`starting` never reached a real process, so it is
 unconditionally `lost`. A job left `running` did reach a real `docker
@@ -510,7 +510,7 @@ database — not mocked, so it covers the CLI's actual wiring.
 - [x] Cancellation: graceful termination, then force after a grace period
 - [x] AT-006: start a long build, disconnect/reconnect, job still queryable
 
-`src/dev_workspace_mcp/execution/service.py` gained `start_and_open_stream`
+`src/mcp_chatgpt_sandbox/execution/service.py` gained `start_and_open_stream`
 / `drain_stream` / `pid_of`, splitting what the synchronous `exec` tool's
 `start`/`consume` do into pieces the async runner needs: docker-py's
 `exec_start(stream=True)` issues its HTTP POST — which is what actually
@@ -521,7 +521,7 @@ handing the stream to a background task to drain, with no race between
 "job is running" and "job has a pid". `consume`/`start`/`kill` (S12) are
 unchanged.
 
-`src/dev_workspace_mcp/execution/async_runner.py`: `AsyncJobRunner`, one
+`src/mcp_chatgpt_sandbox/execution/async_runner.py`: `AsyncJobRunner`, one
 instance per server process. `JobStore` (S14) makes a job's *identity*
 survive an MCP reconnect (§23); `AsyncJobRunner`'s in-memory `LiveJob` per
 job id is this process's only source for a running job's actual output
@@ -615,7 +615,7 @@ against the *current* code, not accepted from the review's summary alone:
 - [x] AT-007: multi-megabyte output stays bounded in responses, retrievable
       incrementally
 
-`src/dev_workspace_mcp/execution/log_capture.py`: `StreamCapture`, one per
+`src/mcp_chatgpt_sandbox/execution/log_capture.py`: `StreamCapture`, one per
 job per stream. Every write is flushed immediately — a job's log must be
 "retrievable incrementally" (§15.5) while still running, from a different
 thread than the one appending to it, and an unflushed write would make a
@@ -642,7 +642,7 @@ to retention), not just its identity (§14) — S14's "no `LiveJob` → output
 gone" framing held only until this task gave the log files themselves
 somewhere to survive to.
 
-`src/dev_workspace_mcp/jobs/retention.py`: `prune_job_logs`, pruning
+`src/mcp_chatgpt_sandbox/jobs/retention.py`: `prune_job_logs`, pruning
 completed jobs' log files (never a running job's, never the `JobStore`
 row) by two independent triggers — age (`job_retention_days`) and total
 on-disk size (`job_log_max_total_bytes`, oldest-finished-first).
@@ -712,7 +712,7 @@ all six filesystem tools already call, so one touch point covers `list_files`
 touch points — polling a job or reading state isn't "using" the
 workspace's resources the way running a command or touching its files is.
 
-`src/dev_workspace_mcp/audit.py`: `write_audit_event`, a deliberately
+`src/mcp_chatgpt_sandbox/audit.py`: `write_audit_event`, a deliberately
 minimal slice of §24 — enough to audit the one event this task needs
 (an append-only JSONL line at `audit.path`, `metadata` passed through
 the existing `redact_secrets` per §24.1), not the full audit surface.
@@ -812,7 +812,7 @@ Acceptance: a client can implement, validate, and commit a change safely.
 - [x] AT-025: a `core.hooksPath` hook inside the working tree does not execute
       during a host-side `git_status`
 
-New `src/dev_workspace_mcp/git/` package. `git/service.py`'s
+New `src/mcp_chatgpt_sandbox/git/` package. `git/service.py`'s
 `run_git_host_side` is the one host-side entry point `git_status`/
 `git_diff`/`git_log` (S20/S21) will call — real `-c core.hooksPath=<a
 fresh empty dir>`, `-c core.fsmonitor=`, `GIT_OPTIONAL_LOCKS=0`, and the
@@ -893,7 +893,7 @@ H36 just applied it uniformly rather than carving out an exception. See
 - [x] Report conflict and interrupted state rather than repairing it
 - [x] AT-020: a merge conflict is reported, not auto-repaired
 
-`src/dev_workspace_mcp/git/status.py`'s `read_git_status` parses a
+`src/mcp_chatgpt_sandbox/git/status.py`'s `read_git_status` parses a
 single `git status --porcelain=v2 --branch --untracked-files=all -z`
 call rather than several separate `git` invocations — branch, head,
 upstream, ahead/behind, and every path's staged/unstaged/untracked/
@@ -956,7 +956,7 @@ needed for H36.
 - [x] Bounded output with explicit truncation and follow-up retrieval
 - [x] Bounded log
 
-`src/dev_workspace_mcp/git/diff.py`'s `read_git_diff` selects its mode
+`src/mcp_chatgpt_sandbox/git/diff.py`'s `read_git_diff` selects its mode
 from which parameters are given, not three code paths: no `base`/`staged`
 → working-tree (`git diff`); `staged=True` → `--cached`; `base` given
 (`head` defaults to `HEAD`) → commit-to-commit. `staged` and `base`/`head`
@@ -967,7 +967,7 @@ follow-up retrieval — the same byte-range shape `exec_output` already
 uses, verified by a test that reassembles a full diff from two bounded
 calls and confirms it matches an unbounded one exactly.
 
-`src/dev_workspace_mcp/git/log.py`'s `read_git_log` uses `git log
+`src/mcp_chatgpt_sandbox/git/log.py`'s `read_git_log` uses `git log
 --pretty=format:` with ASCII field/record separators (`\x1f`/`\x1e`)
 rather than a human-oriented delimiter — a commit subject can contain
 almost anything a human-readable separator (`|`, `,`, tabs) might
@@ -1073,7 +1073,7 @@ from §18.9, both evaluated the same way:
   categorically no "upstream branch" to have been published to (a
   distinct, verified error from "not an ancestor").
 
-`src/dev_workspace_mcp/git/commit.py`: `build_add_argv`, `build_commit_argv`,
+`src/mcp_chatgpt_sandbox/git/commit.py`: `build_add_argv`, `build_commit_argv`,
 `detect_default_branch`, `is_head_published` — the host-side-checkable
 pieces, pure enough to unit-test without touching a container.
 `tools/git.py`'s `git_commit_tool` wires them to `ExecutionService`,
@@ -1169,7 +1169,7 @@ per-workspace `ssh-agent` that loads and serves an already-provisioned
 key. No `administration: write` credential is needed or used anywhere
 here.
 
-New `src/dev_workspace_mcp/workspace/ssh_agent.py` — `SSHAgentManager`,
+New `src/mcp_chatgpt_sandbox/workspace/ssh_agent.py` — `SSHAgentManager`,
 backed by a new `ssh_agent` table (`db/schema.py` migration, deliberately
 **not** foreign-keyed to `workspace`: `workspace_open` has to start the
 real agent process, and persist a record of it so a crash between the
@@ -1396,7 +1396,7 @@ overwritten.
 
 **Commit:** `2c48fe4`
 
-New `src/dev_workspace_mcp/git/remote.py` — `validate_remote_identity`,
+New `src/mcp_chatgpt_sandbox/git/remote.py` — `validate_remote_identity`,
 the §20.2 mechanism `git_pull`/`git_push` (S26/S27) will call as their
 first precondition, the same way `git_commit` already runs its own
 host-side precondition reads (status, interrupted-operation detection)
@@ -1485,7 +1485,7 @@ confirmed still passing.
 
 **Commit:** `4a86a6b`
 
-New `src/dev_workspace_mcp/git/pull.py` (pure argv builders and outcome
+New `src/mcp_chatgpt_sandbox/git/pull.py` (pure argv builders and outcome
 classification, mirroring `git/commit.py`'s own split) plus a `git_pull`
 tool in `tools/git.py`, wired the same way `git_commit` (S22) is: §20.6
 preconditions host-side (interrupted-operation detection,
@@ -1580,7 +1580,7 @@ S25's own correction for `validate_remote_identity`'s move.
 
 **Commit:** `888e729`
 
-New `src/dev_workspace_mcp/git/push.py` (pure refspec/argv construction,
+New `src/mcp_chatgpt_sandbox/git/push.py` (pure refspec/argv construction,
 mirroring `git/pull.py`'s split) plus a `git_push` tool in `tools/git.py`.
 `build_refspec` implements §20.3's table literally — one line per row;
 `force_with_lease` deliberately shares the *default* (unforced) refspec
@@ -1682,7 +1682,7 @@ above): this task is built and fully tested against the no-credential
 (`unverified`) path plus a **real** stand-in for the credentialed path —
 see below — rather than skipped.
 
-New `src/dev_workspace_mcp/github_api.py` — `verify_remote_protection`,
+New `src/mcp_chatgpt_sandbox/github_api.py` — `verify_remote_protection`,
 a real GitHub REST API client (`urllib.request`, stdlib — one GET
 request didn't justify a new HTTP dependency) against `GET
 /repos/{owner}/{repo}/branches/{branch}/protection`, the classic branch-
@@ -1944,7 +1944,7 @@ security-sensitive setting (§30's own "SHALL not silently approximate"
 is about behavior, and there is none to approximate: no devcontainer.json
 support means devcontainer.json is simply not read at all yet).
 
-New `src/dev_workspace_mcp/project_config.py` — `load_project_config`,
+New `src/mcp_chatgpt_sandbox/project_config.py` — `load_project_config`,
 a real YAML parser + pydantic model (`extra: "forbid"`, matching every
 other config model in this codebase) for `.mcp-workspace.yml`/`.yaml`,
 covering §10's full documented shape: `version`, `image`, `workspace`
@@ -1961,7 +1961,7 @@ taxonomy `errors.py`'s own docstring insists on, rather than inventing
 a 25th code the spec's own §31 list doesn't name), matching "Unknown
 mandatory fields SHOULD cause a validation error."
 
-New `src/dev_workspace_mcp/workspace/caches.py` — named Docker volumes
+New `src/mcp_chatgpt_sandbox/workspace/caches.py` — named Docker volumes
 for `caches[]` entries, repository-scoped (`mcp-cache-<repository_id>-
 <cache_name>`): every workspace opened for a repository shares its
 caches, but two repositories never share one. §11's own `workspace` /
@@ -2135,7 +2135,7 @@ as disk exhaustion.
 
 §8.4's operator path (`reset`/`rebuild`/`delete` — "None is exposed as
 an MCP tool in the MVP... reached as operator actions — a CLI
-subcommand on the host") is now real: three new `dev-workspace-mcp`
+subcommand on the host") is now real: three new `mcp-chatgpt-sandbox`
 subcommands (`reset`, `rebuild`, `delete`), thin wrappers over
 `DockerWorkspaceManager`'s own `reset`/`rebuild`/`delete` (already
 implemented since S6/S18 — `rebuild` and `reset` are, as of this task,
@@ -2204,7 +2204,7 @@ already treated the *other* §34.3-deferred tools (`workspace_disk_usage`
 et al., S31) by leaving them unbuilt rather than pretending §34.3 didn't
 apply to them.
 
-No code was written for this task. `src/dev_workspace_mcp/db/schema.py`'s
+No code was written for this task. `src/mcp_chatgpt_sandbox/db/schema.py`'s
 own module docstring already anticipated this ("`WorkspaceLock` is
 deferred to S31 with locking itself" — a stale task-number reference
 from before a since-corrected renumbering, the same kind of drift the

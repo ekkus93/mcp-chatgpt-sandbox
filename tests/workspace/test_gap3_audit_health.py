@@ -4,8 +4,8 @@ from pathlib import Path
 
 import docker
 
-from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
-from dev_workspace_mcp.server import create_server
+from mcp_chatgpt_sandbox.config.models import RepositoryConfig, ServerConfig
+from mcp_chatgpt_sandbox.server import create_server
 
 
 def _configured(

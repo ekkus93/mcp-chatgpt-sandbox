@@ -10,9 +10,9 @@ from pathlib import Path
 
 import docker
 
-from dev_workspace_mcp.config.models import ContainerConfig, SSHConfig
-from dev_workspace_mcp.workspace.container_config import build_workspace_run_kwargs
-from dev_workspace_mcp.workspace.naming import LABEL_MANAGED
+from mcp_chatgpt_sandbox.config.models import ContainerConfig, SSHConfig
+from mcp_chatgpt_sandbox.workspace.container_config import build_workspace_run_kwargs
+from mcp_chatgpt_sandbox.workspace.naming import LABEL_MANAGED
 
 
 def test_at_g3at001_python_startup_state_cannot_bypass_the_privilege_drop(

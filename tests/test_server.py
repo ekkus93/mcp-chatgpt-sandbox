@@ -1,8 +1,8 @@
 """S1/S5/S10/S11/S12: MCP server entrypoint and tool registration."""
 
-from dev_workspace_mcp import __version__
-from dev_workspace_mcp.config.models import ServerConfig
-from dev_workspace_mcp.server import SERVER_NAME, create_server
+from mcp_chatgpt_sandbox import __version__
+from mcp_chatgpt_sandbox.config.models import ServerConfig
+from mcp_chatgpt_sandbox.server import SERVER_NAME, create_server
 
 #: §34.1's tool surface plus explicitly versioned Post-MVP operator tools.
 REGISTERED_TOOLS = {

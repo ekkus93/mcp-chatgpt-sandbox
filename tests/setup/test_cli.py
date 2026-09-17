@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from click.testing import CliRunner
 
-from dev_workspace_mcp.entrypoint import main
+from mcp_chatgpt_sandbox.entrypoint import main
 
 
 def test_wizv_001_installed_cli_composition_preserves_existing_commands() -> None:

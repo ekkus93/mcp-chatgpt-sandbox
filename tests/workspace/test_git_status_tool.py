@@ -18,12 +18,12 @@ import pytest
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
-from dev_workspace_mcp.db import open_db
-from dev_workspace_mcp.repositories import RepositoryRegistry
-from dev_workspace_mcp.server import create_server
-from dev_workspace_mcp.tools import git as git_tools
-from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
+from mcp_chatgpt_sandbox.config.models import RepositoryConfig, ServerConfig
+from mcp_chatgpt_sandbox.db import open_db
+from mcp_chatgpt_sandbox.repositories import RepositoryRegistry
+from mcp_chatgpt_sandbox.server import create_server
+from mcp_chatgpt_sandbox.tools import git as git_tools
+from mcp_chatgpt_sandbox.workspace.manager import DockerWorkspaceManager
 
 
 def _configured(

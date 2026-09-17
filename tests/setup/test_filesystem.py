@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.setup.filesystem import (
+from mcp_chatgpt_sandbox.setup.filesystem import (
     SetupFilesystemError,
     atomic_write_text,
     backup_regular_file,

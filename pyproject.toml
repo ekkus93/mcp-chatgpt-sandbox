@@ -1,5 +1,5 @@
 [project]
-name = "dev-workspace-mcp"
+name = "mcp-chatgpt-sandbox"
 version = "0.1.0"
 description = "Private MCP server providing Docker-backed development workspaces to ChatGPT and other MCP clients"
 readme = "README.md"
@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.scripts]
-dev-workspace-mcp = "dev_workspace_mcp.entrypoint:main"
+mcp-chatgpt-sandbox = "mcp_chatgpt_sandbox.entrypoint:main"
 
 [build-system]
 # `uv-build` is released in lockstep with `uv` itself, so this range has to
@@ -63,7 +63,7 @@ src = ["src"]
 select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
 
 [tool.ruff.lint.per-file-ignores]
-"src/dev_workspace_mcp/setup/step_panels.py" = ["E501"]
+"src/mcp_chatgpt_sandbox/setup/step_panels.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -76,4 +76,4 @@ addopts = "-ra"
 asyncio_mode = "auto"
 
 [tool.coverage.run]
-source = ["src/dev_workspace_mcp"]
+source = ["src/mcp_chatgpt_sandbox"]

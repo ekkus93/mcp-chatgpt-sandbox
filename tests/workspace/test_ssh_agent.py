@@ -12,11 +12,11 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig, SSHConfig
-from dev_workspace_mcp.db import open_db
-from dev_workspace_mcp.errors import SSHKeyProvisionFailedError
-from dev_workspace_mcp.repositories import RepositoryRecord, RepositoryRegistry
-from dev_workspace_mcp.workspace.ssh_agent import (
+from mcp_chatgpt_sandbox.config.models import RepositoryConfig, ServerConfig, SSHConfig
+from mcp_chatgpt_sandbox.db import open_db
+from mcp_chatgpt_sandbox.errors import SSHKeyProvisionFailedError
+from mcp_chatgpt_sandbox.repositories import RepositoryRecord, RepositoryRegistry
+from mcp_chatgpt_sandbox.workspace.ssh_agent import (
     SSHAgentManager,
     agent_socket_path,
     resolve_ssh_key_path,
@@ -150,7 +150,7 @@ def test_at_h031_agent_start_and_terminate_are_logged(
     key_path = _real_keypair(tmp_path)
     manager = SSHAgentManager(db, runtime_dir=tmp_path / "agents")
 
-    with caplog.at_level("INFO", logger="dev_workspace_mcp.workspace.ssh_agent"):
+    with caplog.at_level("INFO", logger="mcp_chatgpt_sandbox.workspace.ssh_agent"):
         record = manager.ensure("ws_test", key_path)
         _cleanup_spawned_agents.append(record.pid)
         manager.terminate("ws_test")
@@ -317,7 +317,7 @@ def test_running_workspace_key_paths_scopes_to_running_persistent_workspaces(
     config = ServerConfig(
         version=1,
         state_db_path=tmp_path / "state.db",
-        docker={"default_image": "mcp-dev-ubuntu:24.04"},
+        docker={"default_image": "mcp-chatgpt-sandbox-ubuntu:24.04"},
         ssh={"keys_dir": str(tmp_path / "keys"), "known_hosts": str(tmp_path / "known_hosts")},
         audit={"path": tmp_path / "audit.jsonl"},
         repositories=[

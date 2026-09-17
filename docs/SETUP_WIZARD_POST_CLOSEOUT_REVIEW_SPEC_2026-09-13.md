@@ -15,7 +15,7 @@ The review found two substantive correctness/safety follow-ups and three lower-r
 
 1. Docker image build and Secure MCP Tunnel profile mutation were labeled/displayed as reviewed actions, but the button handlers could display the exact command and execute the mutation in the same event.
 2. Setup state rejected duplicate GitHub identities, while production `ServerConfig` only requires unique repository IDs. That was stricter than production semantics and could reject legitimate multiple-local-clone setups.
-3. `src/dev_workspace_mcp/setup/app.py` still had a per-file Ruff `E501` ignore even though the remediation introduced coordinator-growth pressure.
+3. `src/mcp_chatgpt_sandbox/setup/app.py` still had a per-file Ruff `E501` ignore even though the remediation introduced coordinator-growth pressure.
 4. `apply_tunnel_profile(runtime_environment=...)` replaced the entire child environment when an explicit runtime mapping was supplied, which could accidentally drop `PATH` and other required ambient process settings.
 5. Secret regression tests scanned secret-bearing field names, but they did not explicitly exercise obvious secret-looking values pasted into allowed non-secret fields.
 
@@ -129,7 +129,7 @@ Add or update tests proving:
 
 ### 6.1 Problem
 
-`pyproject.toml` had a per-file Ruff ignore for `E501` on `src/dev_workspace_mcp/setup/app.py`. That exception is undesirable after WCR split the setup Textual code into separate lifecycle, action, and panel modules.
+`pyproject.toml` had a per-file Ruff ignore for `E501` on `src/mcp_chatgpt_sandbox/setup/app.py`. That exception is undesirable after WCR split the setup Textual code into separate lifecycle, action, and panel modules.
 
 ### 6.2 Required behavior
 

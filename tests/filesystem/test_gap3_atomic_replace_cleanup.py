@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-import dev_workspace_mcp.filesystem.service as filesystem_service
-from dev_workspace_mcp.config.models import FilesystemConfig
-from dev_workspace_mcp.filesystem.security import FilesystemSecurity
-from dev_workspace_mcp.filesystem.service import FilesystemService
+import mcp_chatgpt_sandbox.filesystem.service as filesystem_service
+from mcp_chatgpt_sandbox.config.models import FilesystemConfig
+from mcp_chatgpt_sandbox.filesystem.security import FilesystemSecurity
+from mcp_chatgpt_sandbox.filesystem.service import FilesystemService
 
 
 def _service(root: Path) -> FilesystemService:
@@ -71,7 +71,7 @@ def test_g3at_013_cleanup_failure_preserves_replace_error_and_logs_orphan(
     monkeypatch.setattr(os, "unlink", fail_temp_unlink)
 
     with (
-        caplog.at_level(logging.WARNING, logger="dev_workspace_mcp.filesystem.service"),
+        caplog.at_level(logging.WARNING, logger="mcp_chatgpt_sandbox.filesystem.service"),
         pytest.raises(OSError) as excinfo,
     ):
         service.write_file("existing.txt", "replacement content\n")
@@ -114,7 +114,7 @@ def test_g3at_013_write_failure_survives_temp_close_cleanup_failure(
 
     try:
         with (
-            caplog.at_level(logging.WARNING, logger="dev_workspace_mcp.filesystem.service"),
+            caplog.at_level(logging.WARNING, logger="mcp_chatgpt_sandbox.filesystem.service"),
             pytest.raises(OSError) as excinfo,
         ):
             service.write_file("existing.txt", "replacement content\n")

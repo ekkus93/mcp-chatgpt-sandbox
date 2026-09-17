@@ -7,11 +7,11 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from dev_workspace_mcp.config.models import ServerConfig
-from dev_workspace_mcp.db import open_db
-from dev_workspace_mcp.operations.resources import LABEL_RESOURCE_KIND, RESOURCE_KIND_CACHE_VOLUME
-from dev_workspace_mcp.server import create_server
-from dev_workspace_mcp.workspace.naming import (
+from mcp_chatgpt_sandbox.config.models import ServerConfig
+from mcp_chatgpt_sandbox.db import open_db
+from mcp_chatgpt_sandbox.operations.resources import LABEL_RESOURCE_KIND, RESOURCE_KIND_CACHE_VOLUME
+from mcp_chatgpt_sandbox.server import create_server
+from mcp_chatgpt_sandbox.workspace.naming import (
     LABEL_MANAGED,
     LABEL_REPOSITORY_ID,
     LABEL_WORKSPACE_ID,
@@ -220,7 +220,7 @@ async def test_pmoat_006_plan_through_real_mcp_surface_is_stable_and_non_destruc
 ) -> None:
     mutations = _Mutations()
     docker_client = _docker_fixture(mutations)
-    monkeypatch.setattr("dev_workspace_mcp.server._try_docker_client", lambda: docker_client)
+    monkeypatch.setattr("mcp_chatgpt_sandbox.server._try_docker_client", lambda: docker_client)
     server = create_server(minimal_config)
     db = _seed_retained_state(minimal_config.state_db_path)
     db.close()
@@ -262,7 +262,7 @@ async def test_o7_plan_filters_are_narrow_and_never_expand_default_eligibility(
 ) -> None:
     mutations = _Mutations()
     monkeypatch.setattr(
-        "dev_workspace_mcp.server._try_docker_client",
+        "mcp_chatgpt_sandbox.server._try_docker_client",
         lambda: _docker_fixture(mutations),
     )
     server = create_server(minimal_config)
@@ -299,7 +299,7 @@ async def test_o7_candidate_projection_preserves_bytes_and_safe_preconditions(
 ) -> None:
     mutations = _Mutations()
     monkeypatch.setattr(
-        "dev_workspace_mcp.server._try_docker_client",
+        "mcp_chatgpt_sandbox.server._try_docker_client",
         lambda: _docker_fixture(mutations),
     )
     server = create_server(minimal_config)
@@ -348,7 +348,7 @@ async def test_o7_plan_creation_audit_uses_only_opaque_candidate_identity(
 ) -> None:
     mutations = _Mutations()
     monkeypatch.setattr(
-        "dev_workspace_mcp.server._try_docker_client",
+        "mcp_chatgpt_sandbox.server._try_docker_client",
         lambda: _docker_fixture(mutations),
     )
     server = create_server(minimal_config)

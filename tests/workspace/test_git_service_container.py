@@ -8,13 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
-from dev_workspace_mcp.db import open_db
-from dev_workspace_mcp.errors import CommandFailedError
-from dev_workspace_mcp.execution.service import ExecutionService
-from dev_workspace_mcp.git.service import run_git_in_container
-from dev_workspace_mcp.server import create_server
-from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
+from mcp_chatgpt_sandbox.config.models import RepositoryConfig, ServerConfig
+from mcp_chatgpt_sandbox.db import open_db
+from mcp_chatgpt_sandbox.errors import CommandFailedError
+from mcp_chatgpt_sandbox.execution.service import ExecutionService
+from mcp_chatgpt_sandbox.git.service import run_git_in_container
+from mcp_chatgpt_sandbox.server import create_server
+from mcp_chatgpt_sandbox.workspace.manager import DockerWorkspaceManager
 
 
 def _configured(
@@ -292,7 +292,7 @@ async def test_read_git_status_fails_typed_not_indexerror_on_truncation(
     porcelain-v2 record cut mid-way — not a `WorkspaceError`, so
     `translate_workspace_errors` could not classify it and it reached the
     client as an unstructured crash."""
-    from dev_workspace_mcp.git.status import read_git_status
+    from mcp_chatgpt_sandbox.git.status import read_git_status
 
     repo = tmp_path / "w" / "example"
     config = _tiny_capture(_configured(minimal_config, default_image_tag, repo))
@@ -318,7 +318,7 @@ async def test_read_git_log_fails_typed_not_valueerror_on_truncation(
     """Pre-fix: a trailing record cut before its third field separator
     raised `ValueError: not enough values to unpack`. `max_entries` is
     client-supplied and unbounded, so this was client-reachable."""
-    from dev_workspace_mcp.git.log import read_git_log
+    from mcp_chatgpt_sandbox.git.log import read_git_log
 
     repo = tmp_path / "w" / "example"
     config = _tiny_capture(_configured(minimal_config, default_image_tag, repo))
@@ -350,7 +350,7 @@ async def test_read_git_diff_never_reports_a_truncated_diff_as_complete(
     total_bytes` believed it had the whole diff. §46 requires truncation
     be explicit; the daemon cannot serve what it never captured, so this
     fails closed rather than lying."""
-    from dev_workspace_mcp.git.diff import read_git_diff
+    from mcp_chatgpt_sandbox.git.diff import read_git_diff
 
     repo = tmp_path / "w" / "example"
     config = _tiny_capture(_configured(minimal_config, default_image_tag, repo))
@@ -381,7 +381,7 @@ async def test_read_basic_git_state_degrades_rather_than_raising(
     diagnostic block. It is the one caller that SHALL absorb a truncation
     rather than propagate it: a pathological working tree must not make
     `workspace_info` itself unavailable."""
-    from dev_workspace_mcp.git_state import read_basic_git_state
+    from mcp_chatgpt_sandbox.git_state import read_basic_git_state
 
     repo = tmp_path / "w" / "example"
     config = _tiny_capture(_configured(minimal_config, default_image_tag, repo))

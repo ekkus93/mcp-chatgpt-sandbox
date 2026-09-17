@@ -105,7 +105,7 @@ about consequence, not about X1 being insufficient on its own.
       does not cover it
 
 **Defect (reproduced against the shipped image).**
-`src/dev_workspace_mcp/project_config.py:46` denies six exact names plus
+`src/mcp_chatgpt_sandbox/project_config.py:46` denies six exact names plus
 an `LD_` prefix. An exported bash function is none of them, and a shell
 function **takes precedence over `PATH` lookup**, so `entrypoint.sh:43-44`'s
 hardcoded `PATH` does not help either:

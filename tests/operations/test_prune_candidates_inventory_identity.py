@@ -6,9 +6,9 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from dev_workspace_mcp.db.schema import apply_migrations
-from dev_workspace_mcp.operations.inventory import ResourceInventoryService
-from dev_workspace_mcp.operations.resources import ResourceKind
+from mcp_chatgpt_sandbox.db.schema import apply_migrations
+from mcp_chatgpt_sandbox.operations.inventory import ResourceInventoryService
+from mcp_chatgpt_sandbox.operations.resources import ResourceKind
 
 
 class _EmptyCollection:

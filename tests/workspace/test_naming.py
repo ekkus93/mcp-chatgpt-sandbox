@@ -1,6 +1,6 @@
 """S6: deterministic, collision-safe naming and labels (§50, §51)."""
 
-from dev_workspace_mcp.workspace.naming import (
+from mcp_chatgpt_sandbox.workspace.naming import (
     LABEL_MANAGED,
     LABEL_REPOSITORY_ID,
     LABEL_WORKSPACE_ID,

@@ -28,7 +28,7 @@ This pass must remain a hardening/refinement pass. It must not reopen the wizard
 - Make setup diagnostics use symlink-safe inspection for audit and state database targets.
 - Quote generated tunnel profile commands safely for spaces and shell metacharacters in paths.
 - Resolve the default Docker build context deterministically instead of relying on `Path.cwd()`.
-- Split `src/dev_workspace_mcp/setup/app.py` into smaller, testable modules without behavior drift.
+- Split `src/mcp_chatgpt_sandbox/setup/app.py` into smaller, testable modules without behavior drift.
 - Replace the Git-policy custom JSON editor with guided controls over every current `GitPolicyConfig` field.
 - Add regression tests and acceptance checks for each change.
 - Update documentation where behavior or operator guidance changes.
@@ -124,7 +124,7 @@ The tunnel profile builder constructs one command string using f-string interpol
 
 - The server command written into tunnel profile plans must be generated with a shell-safe quoting mechanism such as `shlex.join()`.
 - The command must preserve the current intended invocation:
-  - `uv run --project <project> dev-workspace-mcp serve --config <config>`
+  - `uv run --project <project> mcp-chatgpt-sandbox serve --config <config>`
 - The generated command must work when the project path and config path contain spaces.
 - The generated command must not include raw runtime secrets.
 - Documentation examples should continue to show the conceptual command without implying that users should hand-copy unquoted generated internals.
@@ -161,7 +161,7 @@ The setup app resolves the default Docker build context from `Path.cwd() / "dock
 
 #### Current problem
 
-`src/dev_workspace_mcp/setup/app.py` is large and owns too many concerns: lifecycle, panel population, widget event handling, state mutation, validation, config review/write, and final diagnostics presentation. The file is covered by tests, but its size increases review and maintenance risk.
+`src/mcp_chatgpt_sandbox/setup/app.py` is large and owns too many concerns: lifecycle, panel population, widget event handling, state mutation, validation, config review/write, and final diagnostics presentation. The file is covered by tests, but its size increases review and maintenance risk.
 
 #### Required behavior
 
@@ -174,13 +174,13 @@ The setup app resolves the default Docker build context from `Path.cwd() / "dock
 Suggested module boundaries:
 
 ```text
-src/dev_workspace_mcp/setup/app.py
-src/dev_workspace_mcp/setup/app_actions.py
-src/dev_workspace_mcp/setup/app_lifecycle.py
-src/dev_workspace_mcp/setup/app_rendering.py
-src/dev_workspace_mcp/setup/app_validation.py
-src/dev_workspace_mcp/setup/app_runtime_forms.py
-src/dev_workspace_mcp/setup/app_git_policy_forms.py
+src/mcp_chatgpt_sandbox/setup/app.py
+src/mcp_chatgpt_sandbox/setup/app_actions.py
+src/mcp_chatgpt_sandbox/setup/app_lifecycle.py
+src/mcp_chatgpt_sandbox/setup/app_rendering.py
+src/mcp_chatgpt_sandbox/setup/app_validation.py
+src/mcp_chatgpt_sandbox/setup/app_runtime_forms.py
+src/mcp_chatgpt_sandbox/setup/app_git_policy_forms.py
 ```
 
 The exact module names may differ, but responsibilities must be clear and tests must continue to exercise the public app behavior.

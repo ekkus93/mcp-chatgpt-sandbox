@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from dev_workspace_mcp.operations import inventory
+from mcp_chatgpt_sandbox.operations import inventory
 
 
 @pytest.mark.parametrize("size", [True, False])

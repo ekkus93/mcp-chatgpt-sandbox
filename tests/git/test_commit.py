@@ -16,7 +16,7 @@ host-side (and its own tests unchanged) rather than migrating.
 import subprocess
 from pathlib import Path
 
-from dev_workspace_mcp.git.commit import (
+from mcp_chatgpt_sandbox.git.commit import (
     IS_HEAD_PUBLISHED_ARGV,
     build_add_argv,
     build_capture_index_argv,

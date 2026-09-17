@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.jobs.retention import prune_job_logs
-from dev_workspace_mcp.jobs.store import JobState, JobStore
+from mcp_chatgpt_sandbox.jobs.retention import prune_job_logs
+from mcp_chatgpt_sandbox.jobs.store import JobState, JobStore
 from tests.jobs.conftest import WORKSPACE_ID
 
 

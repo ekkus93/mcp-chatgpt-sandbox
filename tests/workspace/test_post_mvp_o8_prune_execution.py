@@ -9,14 +9,14 @@ import docker
 import pytest
 from docker.errors import NotFound
 
-from dev_workspace_mcp.config.models import ServerConfig
-from dev_workspace_mcp.operations.resources import (
+from mcp_chatgpt_sandbox.config.models import ServerConfig
+from mcp_chatgpt_sandbox.operations.resources import (
     LABEL_RESOURCE_KIND,
     RESOURCE_KIND_CACHE_VOLUME,
     cache_volume_labels,
 )
-from dev_workspace_mcp.server import create_server
-from dev_workspace_mcp.workspace.naming import (
+from mcp_chatgpt_sandbox.server import create_server
+from mcp_chatgpt_sandbox.workspace.naming import (
     LABEL_MANAGED,
     LABEL_REPOSITORY_ID,
     LABEL_TEST_NAMESPACE,
@@ -98,7 +98,7 @@ async def test_pmoat_009_real_prune_reclaims_only_owned_plan_and_preserves_forei
     foreign_volume_attrs_before = dict(foreign_volume.attrs)
     assert foreign_container.status == "running"
 
-    monkeypatch.setattr("dev_workspace_mcp.server._try_docker_client", lambda: docker_client)
+    monkeypatch.setattr("mcp_chatgpt_sandbox.server._try_docker_client", lambda: docker_client)
     server = create_server(minimal_config)
     plan = (
         await server.call_tool(

@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.audit import write_audit_event
-from dev_workspace_mcp.config.models import AuditConfig
+from mcp_chatgpt_sandbox.audit import write_audit_event
+from mcp_chatgpt_sandbox.config.models import AuditConfig
 
 
 def _read_lines(path: Path) -> list[dict[str, object]]:

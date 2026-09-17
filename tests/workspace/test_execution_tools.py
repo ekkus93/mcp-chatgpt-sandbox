@@ -10,13 +10,13 @@ import pytest
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from dev_workspace_mcp.config.models import ExecutionConfig, RepositoryConfig, ServerConfig
-from dev_workspace_mcp.db import open_db
-from dev_workspace_mcp.execution.service import ExecutionService
-from dev_workspace_mcp.repositories import RepositoryRegistry
-from dev_workspace_mcp.server import create_server
-from dev_workspace_mcp.tools import execution as execution_tools
-from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
+from mcp_chatgpt_sandbox.config.models import ExecutionConfig, RepositoryConfig, ServerConfig
+from mcp_chatgpt_sandbox.db import open_db
+from mcp_chatgpt_sandbox.execution.service import ExecutionService
+from mcp_chatgpt_sandbox.repositories import RepositoryRegistry
+from mcp_chatgpt_sandbox.server import create_server
+from mcp_chatgpt_sandbox.tools import execution as execution_tools
+from mcp_chatgpt_sandbox.workspace.manager import DockerWorkspaceManager
 
 
 def _configured(
@@ -426,7 +426,7 @@ async def test_rr010_exec_status_fails_clearly_when_docker_unreachable(
     own established pattern) is inserted directly into the store —
     `exec_start` itself requires Docker, so it can't be used to create
     one here."""
-    from dev_workspace_mcp.jobs.store import JobStore
+    from mcp_chatgpt_sandbox.jobs.store import JobStore
 
     server = MCPServer(name="t")
     db = open_db(minimal_config.state_db_path)

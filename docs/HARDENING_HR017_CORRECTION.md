@@ -4,7 +4,7 @@ H15 (`docs/HARDENING_TODO.md`) and HAT-014 (`docs/HARDENING_SPEC.md`) originally
 
 Post-MVP Operations O1 / PMOR-001 corrects that ownership assumption. A deterministic name is an address, not proof of provenance. A foreign process can legitimately create a container with the same name, and the daemon has no authority to destroy it merely because the name resembles its own naming scheme.
 
-HAT-014's recovery property therefore remains valid only for **positively owned** orphaned containers: the container carries `dev-workspace-mcp.managed=true`, the expected workspace and repository identity labels, and the current GAP3 Y15 test namespace when a test namespace is active. Such a container can still be adopted on ordinary recovery or removed during an explicitly requested rebuild/reset.
+HAT-014's recovery property therefore remains valid only for **positively owned** orphaned containers: the container carries `mcp-chatgpt-sandbox.managed=true`, the expected workspace and repository identity labels, and the current GAP3 Y15 test namespace when a test namespace is active. Such a container can still be adopted on ordinary recovery or removed during an explicitly requested rebuild/reset.
 
 An exact-name occupant without that positive evidence is now `foreign` or `unknown`, not an owned orphan. `workspace_open` fails closed with a typed container-create error and leaves the occupant untouched for operator reconciliation. PMOAT-001 exercises that case against a real Docker daemon.
 

@@ -9,20 +9,20 @@ from pathlib import Path
 import docker
 import pytest
 
-from dev_workspace_mcp.config.models import ServerConfig
-from dev_workspace_mcp.db import open_db
-from dev_workspace_mcp.jobs.retention import get_job_log_cleanup_debt
-from dev_workspace_mcp.jobs.store import JobStore
-from dev_workspace_mcp.maintenance import MaintenanceScheduler
-from dev_workspace_mcp.operations.ssh_agent_cleanup import (
+from mcp_chatgpt_sandbox.config.models import ServerConfig
+from mcp_chatgpt_sandbox.db import open_db
+from mcp_chatgpt_sandbox.jobs.retention import get_job_log_cleanup_debt
+from mcp_chatgpt_sandbox.jobs.store import JobStore
+from mcp_chatgpt_sandbox.maintenance import MaintenanceScheduler
+from mcp_chatgpt_sandbox.operations.ssh_agent_cleanup import (
     cleanup_socket_path,
     get_ssh_agent_cleanup_debt,
     observe_socket_identity,
 )
-from dev_workspace_mcp.project_config import ProjectCacheEntry
-from dev_workspace_mcp.repositories import RepositoryRecord
-from dev_workspace_mcp.workspace.caches import build_cache_mounts, resolve_caches
-from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager, WorkspaceState
+from mcp_chatgpt_sandbox.project_config import ProjectCacheEntry
+from mcp_chatgpt_sandbox.repositories import RepositoryRecord
+from mcp_chatgpt_sandbox.workspace.caches import build_cache_mounts, resolve_caches
+from mcp_chatgpt_sandbox.workspace.manager import DockerWorkspaceManager, WorkspaceState
 
 
 def _create_job_log_cleanup_debt(

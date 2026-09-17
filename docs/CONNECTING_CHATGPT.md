@@ -9,7 +9,7 @@ server to the public internet.
 The setup wizard contains an **optional** ChatGPT connection step:
 
 ```bash
-uv run dev-workspace-mcp setup
+uv run mcp-chatgpt-sandbox setup
 ```
 
 You may skip it entirely for local MCP clients. The wizard detects
@@ -65,7 +65,7 @@ In the optional **ChatGPT connection** step:
    as a module, for example:
 
    ```text
-   '/path/to/.venv/bin/python' -m dev_workspace_mcp serve --config '/path/to/config.yml'
+   '/path/to/.venv/bin/python' -m mcp_chatgpt_sandbox serve --config '/path/to/config.yml'
    ```
 
    The profile does not depend on the repository checkout or the directory from which
@@ -81,7 +81,7 @@ In the optional **ChatGPT connection** step:
 `--no-browser` guarantees the wizard does not launch documentation URLs:
 
 ```bash
-uv run dev-workspace-mcp setup --no-browser
+uv run mcp-chatgpt-sandbox setup --no-browser
 ```
 
 It prints/shows the current URL for manual opening instead.
@@ -114,7 +114,7 @@ tunnel-client init \
   --sample sample_mcp_stdio_local \
   --profile chatgpt-sandbox \
   --tunnel-id <tunnel-id> \
-  --mcp-command "'/path/to/.venv/bin/python' -m dev_workspace_mcp serve --config '/path/to/config.yml'"
+  --mcp-command "'/path/to/.venv/bin/python' -m mcp_chatgpt_sandbox serve --config '/path/to/config.yml'"
 ```
 
 ### 4. Verify it
@@ -183,7 +183,7 @@ Refresh/Scan/Update UI and review the resulting tool permissions.
 - **Wizard says `tunnel-client` is unavailable.** Install it using OpenAI's
   current Secure MCP Tunnel instructions, or skip the optional step.
 - **`tunnel-client doctor` cannot start the server command.** Run the exact
-  displayed `python -m dev_workspace_mcp serve --config ...` command directly and
+  displayed `python -m mcp_chatgpt_sandbox serve --config ...` command directly and
   fix the local environment/config error first. The wizard intentionally records the
   absolute interpreter path from the environment that ran setup.
 - **ChatGPT cannot see the tunnel.** Reconfirm tunnel ID, Platform organization,

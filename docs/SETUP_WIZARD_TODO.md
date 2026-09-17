@@ -33,8 +33,8 @@ This TODO implements the interactive configuration/setup wizard defined by `docs
 **Goal:** establish the implementation boundary before adding behavior.
 
 - [x] Add Textual as a pinned compatible runtime dependency.
-- [x] Confirm the installed console script remains `dev-workspace-mcp`.
-- [x] Add `src/dev_workspace_mcp/setup/__init__.py`.
+- [x] Confirm the installed console script remains `mcp-chatgpt-sandbox`.
+- [x] Add `src/mcp_chatgpt_sandbox/setup/__init__.py`.
 - [x] Define setup package ownership boundaries: presentation, state, filesystem, writer, diagnostics.
 - [x] Document that production config models remain authoritative.
 - [x] Define wizard-owned config fields explicitly.
@@ -168,7 +168,7 @@ This TODO implements the interactive configuration/setup wizard defined by `docs
 
 ## Phase 3 — TUI shell and lifecycle
 
-### WIZ-006 — Add `dev-workspace-mcp setup` shell
+### WIZ-006 — Add `mcp-chatgpt-sandbox setup` shell
 
 **Goal:** establish the reusable Textual navigation/state shell before domain screens.
 
@@ -401,7 +401,7 @@ This TODO implements the interactive configuration/setup wizard defined by `docs
 - [x] Build/review tunnel-client profile changes.
 - [x] Create/repair profile only after explicit approval.
 - [x] Validate profile with `tunnel-client doctor` or equivalent supported command.
-- [x] Explain the exact `dev-workspace-mcp serve --config ...` command launched by the profile.
+- [x] Explain the exact `mcp-chatgpt-sandbox serve --config ...` command launched by the profile.
 - [x] Guide ChatGPT custom MCP app creation/refresh.
 - [x] Represent ChatGPT UI completion as user-attested when not machine-verifiable.
 - [x] Avoid hardcoded subscription claims that can become stale.
@@ -512,7 +512,7 @@ This TODO implements the interactive configuration/setup wizard defined by `docs
 
 ### WIZ-019 — Documentation refresh
 
-- [x] Make `dev-workspace-mcp setup` the recommended README first-run path.
+- [x] Make `mcp-chatgpt-sandbox setup` the recommended README first-run path.
 - [x] Update `docs/QUICKSTART.md` to wizard-first flow.
 - [x] Preserve manual setup as fallback/recovery path.
 - [x] Update `docs/DEVELOPMENT.md` with setup/TUI test instructions.

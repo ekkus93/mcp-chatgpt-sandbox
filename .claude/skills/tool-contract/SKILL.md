@@ -16,7 +16,7 @@ registered schema byte-identical — but verify that with Step 1 rather than ass
 ## Step 1: regenerate the exported schema
 
 ```bash
-uv run dev-workspace-mcp export-schemas --config <path> --out schemas/tools.json
+uv run mcp-chatgpt-sandbox export-schemas --config <path> --out schemas/tools.json
 ```
 
 CI diffs the generator's output against the committed file byte-for-byte, so the file must be

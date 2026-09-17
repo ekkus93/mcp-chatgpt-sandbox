@@ -42,8 +42,8 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.errors import GitRemoteNotAllowedError
-from dev_workspace_mcp.git.remote import (
+from mcp_chatgpt_sandbox.errors import GitRemoteNotAllowedError
+from mcp_chatgpt_sandbox.git.remote import (
     ValidatedPushRemote,
     _validate_url_identity,
     classify_url_scheme,

@@ -3,9 +3,9 @@ needed — `docker.types.Mount` just builds a plain dict."""
 
 import pytest
 
-from dev_workspace_mcp.errors import ContainerCreateFailedError
-from dev_workspace_mcp.project_config import ProjectCacheEntry
-from dev_workspace_mcp.workspace.caches import (
+from mcp_chatgpt_sandbox.errors import ContainerCreateFailedError
+from mcp_chatgpt_sandbox.project_config import ProjectCacheEntry
+from mcp_chatgpt_sandbox.workspace.caches import (
     build_cache_mounts,
     cache_volume_name,
     resolve_caches,

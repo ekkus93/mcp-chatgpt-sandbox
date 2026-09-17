@@ -12,10 +12,10 @@ from unittest.mock import patch
 import yaml
 from click.testing import CliRunner
 
-from dev_workspace_mcp.cli import main
-from dev_workspace_mcp.db import open_db
-from dev_workspace_mcp.jobs.store import JobStore
-from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager
+from mcp_chatgpt_sandbox.cli import main
+from mcp_chatgpt_sandbox.db import open_db
+from mcp_chatgpt_sandbox.jobs.store import JobStore
+from mcp_chatgpt_sandbox.workspace.ssh_agent import SSHAgentManager
 
 
 def _write_config(path: Path, data: dict[str, Any]) -> Path:
@@ -51,8 +51,8 @@ def test_serve_warns_but_continues_when_docker_unavailable(
 ) -> None:
     config_path = _write_config(tmp_path, minimal_config_dict)
     with (
-        patch("dev_workspace_mcp.cli.docker_available", return_value=False),
-        patch("dev_workspace_mcp.cli.run_server") as mock_run,
+        patch("mcp_chatgpt_sandbox.cli.docker_available", return_value=False),
+        patch("mcp_chatgpt_sandbox.cli.run_server") as mock_run,
     ):
         result = CliRunner().invoke(main, ["serve", "--config", str(config_path)])
     assert result.exit_code == 0
@@ -65,8 +65,8 @@ def test_serve_starts_transport_on_valid_config(
 ) -> None:
     config_path = _write_config(tmp_path, minimal_config_dict)
     with (
-        patch("dev_workspace_mcp.cli.docker_available", return_value=True),
-        patch("dev_workspace_mcp.cli.run_server") as mock_run,
+        patch("mcp_chatgpt_sandbox.cli.docker_available", return_value=True),
+        patch("mcp_chatgpt_sandbox.cli.run_server") as mock_run,
     ):
         result = CliRunner().invoke(
             main, ["serve", "--config", str(config_path), "--transport", "stdio"]
@@ -110,8 +110,8 @@ def test_serve_reconciles_non_terminal_jobs_and_warns(
     db.close()
 
     with (
-        patch("dev_workspace_mcp.cli.docker_available", return_value=True),
-        patch("dev_workspace_mcp.cli.run_server") as mock_run,
+        patch("mcp_chatgpt_sandbox.cli.docker_available", return_value=True),
+        patch("mcp_chatgpt_sandbox.cli.run_server") as mock_run,
     ):
         result = CliRunner().invoke(main, ["serve", "--config", str(config_path)])
 
@@ -159,8 +159,8 @@ def test_serve_warns_to_check_by_hand_when_a_lost_jobs_pid_was_never_recorded(
     db.close()  # left `queued` — no `mark_running` call, so no pid ever recorded
 
     with (
-        patch("dev_workspace_mcp.cli.docker_available", return_value=True),
-        patch("dev_workspace_mcp.cli.run_server") as mock_run,
+        patch("mcp_chatgpt_sandbox.cli.docker_available", return_value=True),
+        patch("mcp_chatgpt_sandbox.cli.run_server") as mock_run,
     ):
         result = CliRunner().invoke(main, ["serve", "--config", str(config_path)])
 
@@ -205,8 +205,8 @@ def test_serve_terminates_an_orphaned_ssh_agent_for_a_no_longer_running_workspac
 
     try:
         with (
-            patch("dev_workspace_mcp.cli.docker_available", return_value=True),
-            patch("dev_workspace_mcp.cli.run_server") as mock_run,
+            patch("mcp_chatgpt_sandbox.cli.docker_available", return_value=True),
+            patch("mcp_chatgpt_sandbox.cli.run_server") as mock_run,
         ):
             result = CliRunner().invoke(main, ["serve", "--config", str(config_path)])
 
@@ -233,4 +233,4 @@ def test_serve_terminates_an_orphaned_ssh_agent_for_a_no_longer_running_workspac
 def test_version_flag() -> None:
     result = CliRunner().invoke(main, ["--version"])
     assert result.exit_code == 0
-    assert "dev-workspace-mcp" in result.output
+    assert "mcp-chatgpt-sandbox" in result.output

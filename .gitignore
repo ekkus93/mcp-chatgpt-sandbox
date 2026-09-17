@@ -30,7 +30,7 @@ htmlcov/
 *.sqlite
 *.sqlite3
 # Anchored to the repo root: a top-level runtime state/log directory, not
-# src/dev_workspace_mcp/jobs/ (the job store module) or tests/jobs/.
+# src/mcp_chatgpt_sandbox/jobs/ (the job store module) or tests/jobs/.
 /state/
 /jobs/
 

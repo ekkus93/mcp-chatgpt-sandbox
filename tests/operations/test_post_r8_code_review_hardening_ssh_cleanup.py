@@ -3,9 +3,9 @@
 import json
 from dataclasses import asdict
 
-from dev_workspace_mcp.config.models import ServerConfig
-from dev_workspace_mcp.db.connection import open_db
-from dev_workspace_mcp.operations.ssh_agent_cleanup import (
+from mcp_chatgpt_sandbox.config.models import ServerConfig
+from mcp_chatgpt_sandbox.db.connection import open_db
+from mcp_chatgpt_sandbox.operations.ssh_agent_cleanup import (
     get_ssh_agent_cleanup_debt,
     list_ssh_agent_cleanup_debt,
 )

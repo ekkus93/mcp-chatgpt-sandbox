@@ -1,6 +1,6 @@
 """R6 acceptance coverage for obsolete SSH cleanup helper removal."""
 
-from dev_workspace_mcp.operations import ssh_agent_cleanup
+from mcp_chatgpt_sandbox.operations import ssh_agent_cleanup
 
 
 # Covers: PMORRAT-006

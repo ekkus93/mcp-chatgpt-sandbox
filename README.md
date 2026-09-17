@@ -111,7 +111,7 @@ YAML by hand:
 ```bash
 uv sync --group dev
 git config core.hooksPath .githooks
-uv run dev-workspace-mcp setup
+uv run mcp-chatgpt-sandbox setup
 ```
 
 The Textual wizard guides host paths, Docker, repositories, SSH/GitHub
@@ -127,21 +127,21 @@ reports **ACTION REQUIRED** without invoking Docker.
 The default config path is:
 
 ```text
-~/.config/dev-workspace-mcp/config.yml
+~/.config/mcp-chatgpt-sandbox/config.yml
 ```
 
 After setup, rerun the same diagnostics headlessly whenever needed:
 
 ```bash
-uv run dev-workspace-mcp doctor --config ~/.config/dev-workspace-mcp/config.yml
+uv run mcp-chatgpt-sandbox doctor --config ~/.config/mcp-chatgpt-sandbox/config.yml
 # equivalent:
-uv run dev-workspace-mcp setup --check --config ~/.config/dev-workspace-mcp/config.yml
+uv run mcp-chatgpt-sandbox setup --check --config ~/.config/mcp-chatgpt-sandbox/config.yml
 ```
 
 Then start the MCP server:
 
 ```bash
-uv run dev-workspace-mcp serve --config ~/.config/dev-workspace-mcp/config.yml
+uv run mcp-chatgpt-sandbox serve --config ~/.config/mcp-chatgpt-sandbox/config.yml
 ```
 
 For the condensed end-to-end walkthrough, including deploy-key setup and the
@@ -193,13 +193,13 @@ full warning and troubleshooting notes.
 ## Configuration
 
 Configuration is YAML and is validated before the server starts. The enforced
-schema lives in `src/dev_workspace_mcp/config/models.py`; the primary
+schema lives in `src/mcp_chatgpt_sandbox/config/models.py`; the primary
 configuration guide is [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md).
 
 The recommended way to create or edit it is:
 
 ```bash
-uv run dev-workspace-mcp setup --config /path/to/config.yml
+uv run mcp-chatgpt-sandbox setup --config /path/to/config.yml
 ```
 
 The wizard preserves valid settings it did not review, persists only non-secret
@@ -243,7 +243,7 @@ end-to-end deploy-key and repository-registration flow.
 The main first-run command is:
 
 ```bash
-uv run dev-workspace-mcp setup [--config PATH]
+uv run mcp-chatgpt-sandbox setup [--config PATH]
 ```
 
 Useful modes:
@@ -268,13 +268,13 @@ unavailable, the action stays **ACTION REQUIRED** and no Docker build is run.
 For manual setup, build it yourself from a source checkout:
 
 ```bash
-docker build -t mcp-dev-ubuntu:24.04 docker/default/
+docker build -t mcp-chatgpt-sandbox-ubuntu:24.04 docker/default/
 ```
 
 Start the daemon:
 
 ```bash
-uv run dev-workspace-mcp serve --config ~/.config/dev-workspace-mcp/config.yml
+uv run mcp-chatgpt-sandbox serve --config ~/.config/mcp-chatgpt-sandbox/config.yml
 ```
 
 From an MCP client, open a configured repository:

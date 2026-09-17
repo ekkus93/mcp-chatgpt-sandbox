@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.config.models import ServerConfig
-from dev_workspace_mcp.db.connection import open_db
-from dev_workspace_mcp.server import create_server
+from mcp_chatgpt_sandbox.config.models import ServerConfig
+from mcp_chatgpt_sandbox.db.connection import open_db
+from mcp_chatgpt_sandbox.server import create_server
 
 
 async def test_pmoat_010_partial_secondary_cleanup_is_durable_accounted_and_retryable(
@@ -55,7 +55,7 @@ async def test_pmoat_010_partial_secondary_cleanup_is_durable_accounted_and_retr
     )
     db.commit()
 
-    monkeypatch.setattr("dev_workspace_mcp.server._try_docker_client", lambda: None)
+    monkeypatch.setattr("mcp_chatgpt_sandbox.server._try_docker_client", lambda: None)
     server = create_server(minimal_config)
     plan = (
         await server.call_tool(
@@ -255,7 +255,7 @@ async def test_o9_cleanup_retry_refuses_replaced_socket_identity(
     replacement_path.rename(socket_path)
     assert socket_path.read_bytes() == b"foreign-replacement-sentinel"
 
-    monkeypatch.setattr("dev_workspace_mcp.server._try_docker_client", lambda: None)
+    monkeypatch.setattr("mcp_chatgpt_sandbox.server._try_docker_client", lambda: None)
     server = create_server(minimal_config)
     plan = (
         await server.call_tool(

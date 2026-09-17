@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.errors import InvalidArgumentError
-from dev_workspace_mcp.filesystem.search import search_files
-from dev_workspace_mcp.filesystem.security import FilesystemSecurity
+from mcp_chatgpt_sandbox.errors import InvalidArgumentError
+from mcp_chatgpt_sandbox.filesystem.search import search_files
+from mcp_chatgpt_sandbox.filesystem.security import FilesystemSecurity
 
 
 def _security(root: Path) -> FilesystemSecurity:

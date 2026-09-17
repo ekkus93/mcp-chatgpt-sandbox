@@ -24,13 +24,13 @@ Details: [`docs/DEVELOPMENT.md`](DEVELOPMENT.md).
 ## 2. Run the setup wizard
 
 ```bash
-uv run dev-workspace-mcp setup
+uv run mcp-chatgpt-sandbox setup
 ```
 
 The default target is:
 
 ```text
-~/.config/dev-workspace-mcp/config.yml
+~/.config/mcp-chatgpt-sandbox/config.yml
 ```
 
 Use another location with `--config /absolute/path/config.yml`.
@@ -62,9 +62,9 @@ were not reviewed, and replacements receive timestamped backups.
 Useful setup modes:
 
 ```bash
-uv run dev-workspace-mcp setup --resume
-uv run dev-workspace-mcp setup --no-browser
-uv run dev-workspace-mcp setup --advanced
+uv run mcp-chatgpt-sandbox setup --resume
+uv run mcp-chatgpt-sandbox setup --no-browser
+uv run mcp-chatgpt-sandbox setup --advanced
 ```
 
 ## 3. Install a repository deploy key when push access is needed
@@ -74,9 +74,9 @@ silently install a GitHub deploy key. Generate a dedicated key under the
 `ssh.keys_dir` you selected:
 
 ```bash
-ssh-keygen -t ed25519 -f ~/.config/dev-workspace-mcp/keys/my-repo.ed25519 \
-  -C "dev-workspace-mcp: my-repo" -N ""
-chmod 600 ~/.config/dev-workspace-mcp/keys/my-repo.ed25519
+ssh-keygen -t ed25519 -f ~/.config/mcp-chatgpt-sandbox/keys/my-repo.ed25519 \
+  -C "mcp-chatgpt-sandbox: my-repo" -N ""
+chmod 600 ~/.config/mcp-chatgpt-sandbox/keys/my-repo.ed25519
 ```
 
 On GitHub, open the repository's **Settings → Deploy keys → Add deploy key**,
@@ -97,12 +97,12 @@ Full repository credential walkthrough:
 The final wizard screen and these commands use the same diagnostics engine:
 
 ```bash
-uv run dev-workspace-mcp doctor \
-  --config ~/.config/dev-workspace-mcp/config.yml
+uv run mcp-chatgpt-sandbox doctor \
+  --config ~/.config/mcp-chatgpt-sandbox/config.yml
 
 # equivalent
-uv run dev-workspace-mcp setup --check \
-  --config ~/.config/dev-workspace-mcp/config.yml
+uv run mcp-chatgpt-sandbox setup --check \
+  --config ~/.config/mcp-chatgpt-sandbox/config.yml
 ```
 
 Exit codes are:
@@ -117,8 +117,8 @@ server fail diagnostics.
 ## 5. Run the server
 
 ```bash
-uv run dev-workspace-mcp serve \
-  --config ~/.config/dev-workspace-mcp/config.yml
+uv run mcp-chatgpt-sandbox serve \
+  --config ~/.config/mcp-chatgpt-sandbox/config.yml
 ```
 
 This starts MCP over `stdio`, suitable for a local MCP client or for OpenAI

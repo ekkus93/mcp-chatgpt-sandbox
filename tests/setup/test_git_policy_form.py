@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from dev_workspace_mcp.config import GitPolicyConfig
-from dev_workspace_mcp.setup.git_policy_form import (
+from mcp_chatgpt_sandbox.config import GitPolicyConfig
+from mcp_chatgpt_sandbox.setup.git_policy_form import (
     GIT_POLICY_GUIDED_FIELDS,
     GitPolicyEditorValues,
     SetupGitPolicyFormError,

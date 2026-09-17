@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
-from dev_workspace_mcp.server import create_server
+from mcp_chatgpt_sandbox.config.models import RepositoryConfig, ServerConfig
+from mcp_chatgpt_sandbox.server import create_server
 
 
 async def test_repository_list_returns_configured_repositories(

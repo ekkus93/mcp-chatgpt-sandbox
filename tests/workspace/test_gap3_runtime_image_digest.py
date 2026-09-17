@@ -15,14 +15,14 @@ from unittest.mock import MagicMock
 import docker
 import pytest
 
-from dev_workspace_mcp.cli import _recreated_run_kwargs
-from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
-from dev_workspace_mcp.db import open_db
-from dev_workspace_mcp.errors import ContainerRuntimeFailedError
-from dev_workspace_mcp.repositories import RepositoryRegistry
-from dev_workspace_mcp.server import create_server
-from dev_workspace_mcp.tools import workspace as workspace_tools
-from dev_workspace_mcp.workspace.manager import (
+from mcp_chatgpt_sandbox.cli import _recreated_run_kwargs
+from mcp_chatgpt_sandbox.config.models import RepositoryConfig, ServerConfig
+from mcp_chatgpt_sandbox.db import open_db
+from mcp_chatgpt_sandbox.errors import ContainerRuntimeFailedError
+from mcp_chatgpt_sandbox.repositories import RepositoryRegistry
+from mcp_chatgpt_sandbox.server import create_server
+from mcp_chatgpt_sandbox.tools import workspace as workspace_tools
+from mcp_chatgpt_sandbox.workspace.manager import (
     DockerWorkspaceManager,
     WorkspaceRecord,
     WorkspaceState,

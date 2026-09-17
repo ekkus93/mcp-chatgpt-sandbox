@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.git.transport import is_auth_failure, is_network_failure
+from mcp_chatgpt_sandbox.git.transport import is_auth_failure, is_network_failure
 
 # --- marker-string classification -----------------------------------------------
 

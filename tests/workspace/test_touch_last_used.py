@@ -2,8 +2,8 @@
 
 import sqlite3
 
-from dev_workspace_mcp.db import open_db
-from dev_workspace_mcp.workspace.manager import touch_last_used
+from mcp_chatgpt_sandbox.db import open_db
+from mcp_chatgpt_sandbox.workspace.manager import touch_last_used
 
 
 def _seeded_db() -> sqlite3.Connection:

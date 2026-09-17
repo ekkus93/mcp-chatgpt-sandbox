@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dev_workspace_mcp.setup.choices import SetupChoices
-from dev_workspace_mcp.setup.model import (
+from mcp_chatgpt_sandbox.setup.choices import SetupChoices
+from mcp_chatgpt_sandbox.setup.model import (
     SetupState,
     SetupStep,
     SetupStepStatus,

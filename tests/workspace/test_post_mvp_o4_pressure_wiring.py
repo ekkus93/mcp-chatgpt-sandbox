@@ -8,9 +8,9 @@ from pathlib import Path
 import docker
 from docker.errors import APIError
 
-from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
-from dev_workspace_mcp.errors import ContainerCreateFailedError, to_tool_error
-from dev_workspace_mcp.server import create_server
+from mcp_chatgpt_sandbox.config.models import RepositoryConfig, ServerConfig
+from mcp_chatgpt_sandbox.errors import ContainerCreateFailedError, to_tool_error
+from mcp_chatgpt_sandbox.server import create_server
 
 
 def _configured(

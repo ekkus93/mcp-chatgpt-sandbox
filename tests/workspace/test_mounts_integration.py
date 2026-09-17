@@ -8,9 +8,9 @@ from pathlib import Path
 import docker
 import pytest
 
-from dev_workspace_mcp.config.models import ContainerConfig, SSHConfig
-from dev_workspace_mcp.workspace.container_config import build_workspace_run_kwargs
-from dev_workspace_mcp.workspace.mounts import GitDirMode, build_workspace_mounts
+from mcp_chatgpt_sandbox.config.models import ContainerConfig, SSHConfig
+from mcp_chatgpt_sandbox.workspace.container_config import build_workspace_run_kwargs
+from mcp_chatgpt_sandbox.workspace.mounts import GitDirMode, build_workspace_mounts
 
 
 def _real_git_repo(path: Path) -> Path:
@@ -48,7 +48,7 @@ def _run(
         remove=True,
         stderr=True,
         mounts=mounts,
-        labels={"dev-workspace-mcp.managed": "true"},
+        labels={"mcp-chatgpt-sandbox.managed": "true"},
         **run_kwargs,
     )
     return bytes(result)

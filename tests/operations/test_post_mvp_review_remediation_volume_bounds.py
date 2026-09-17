@@ -6,14 +6,14 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from dev_workspace_mcp.db.schema import apply_migrations
-from dev_workspace_mcp.operations import inventory
-from dev_workspace_mcp.operations.resources import (
+from mcp_chatgpt_sandbox.db.schema import apply_migrations
+from mcp_chatgpt_sandbox.operations import inventory
+from mcp_chatgpt_sandbox.operations.resources import (
     LABEL_RESOURCE_KIND,
     RESOURCE_KIND_CACHE_VOLUME,
     ResourceKind,
 )
-from dev_workspace_mcp.workspace.naming import LABEL_MANAGED, LABEL_REPOSITORY_ID
+from mcp_chatgpt_sandbox.workspace.naming import LABEL_MANAGED, LABEL_REPOSITORY_ID
 
 
 class _Volume:

@@ -6,10 +6,10 @@ from typing import Any
 import pytest
 from textual.widgets import Button, Input, Static
 
-from dev_workspace_mcp.setup.app import STEPS, SetupWizardApp
-from dev_workspace_mcp.setup.docker_setup import prepare_default_image_build_plan
-from dev_workspace_mcp.setup.model import SetupStep
-from dev_workspace_mcp.setup.tunnel import build_tunnel_profile_plan
+from mcp_chatgpt_sandbox.setup.app import STEPS, SetupWizardApp
+from mcp_chatgpt_sandbox.setup.docker_setup import prepare_default_image_build_plan
+from mcp_chatgpt_sandbox.setup.model import SetupStep
+from mcp_chatgpt_sandbox.setup.tunnel import build_tunnel_profile_plan
 
 
 def _go_to(app: SetupWizardApp, step: SetupStep) -> None:
@@ -32,7 +32,7 @@ async def test_swf_001_docker_prepare_displays_plan_without_mutation(
         raise AssertionError("prepare must not build Docker images")
 
     monkeypatch.setattr(
-        "dev_workspace_mcp.setup.step_actions_docker.build_default_image", fail_build
+        "mcp_chatgpt_sandbox.setup.step_actions_docker.build_default_image", fail_build
     )
     app = SetupWizardApp(config_path=tmp_path / "config.yml", state_path=tmp_path / "state.json")
     async with app.run_test() as pilot:
@@ -81,9 +81,9 @@ async def test_swf_001_docker_apply_uses_stored_plan(
         assert approved
         built.append(image)
 
-    monkeypatch.setattr("dev_workspace_mcp.setup.step_actions_docker.docker.from_env", FakeClient)
+    monkeypatch.setattr("mcp_chatgpt_sandbox.setup.step_actions_docker.docker.from_env", FakeClient)
     monkeypatch.setattr(
-        "dev_workspace_mcp.setup.step_actions_docker.build_default_image", fake_build
+        "mcp_chatgpt_sandbox.setup.step_actions_docker.build_default_image", fake_build
     )
     app = SetupWizardApp(config_path=tmp_path / "config.yml", state_path=tmp_path / "state.json")
     async with app.run_test() as pilot:
@@ -125,7 +125,7 @@ async def test_swf_001_tunnel_prepare_displays_plan_without_mutation(
     def fail_apply(*_args: Any, **_kwargs: Any) -> None:
         raise AssertionError("prepare must not mutate tunnel-client profiles")
 
-    monkeypatch.setattr("dev_workspace_mcp.setup.step_actions.apply_tunnel_profile", fail_apply)
+    monkeypatch.setattr("mcp_chatgpt_sandbox.setup.step_actions.apply_tunnel_profile", fail_apply)
     app = SetupWizardApp(config_path=tmp_path / "config.yml", state_path=tmp_path / "state.json")
     async with app.run_test() as pilot:
         _go_to(app, SetupStep.CHATGPT)
@@ -163,7 +163,7 @@ async def test_swf_001_tunnel_apply_uses_stored_plan(
         assert approved
         applied.append(plan.tunnel_id)
 
-    monkeypatch.setattr("dev_workspace_mcp.setup.step_actions.apply_tunnel_profile", fake_apply)
+    monkeypatch.setattr("mcp_chatgpt_sandbox.setup.step_actions.apply_tunnel_profile", fake_apply)
     app = SetupWizardApp(config_path=tmp_path / "config.yml", state_path=tmp_path / "state.json")
     async with app.run_test() as pilot:
         _go_to(app, SetupStep.CHATGPT)

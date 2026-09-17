@@ -17,9 +17,9 @@ import docker
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 
-from dev_workspace_mcp.config.models import ExecutionConfig, RepositoryConfig, ServerConfig
-from dev_workspace_mcp.server import create_server
-from dev_workspace_mcp.workspace.naming import container_name
+from mcp_chatgpt_sandbox.config.models import ExecutionConfig, RepositoryConfig, ServerConfig
+from mcp_chatgpt_sandbox.server import create_server
+from mcp_chatgpt_sandbox.workspace.naming import container_name
 
 
 def _configured(
@@ -233,7 +233,7 @@ async def test_at_hat017_failed_termination_is_reported_and_not_marked_canceled(
     uid this daemon cannot signal) this sandbox has no way to set up
     without root — `os.killpg` is monkeypatched to raise it instead, the
     same failure it would genuinely raise under that condition."""
-    import dev_workspace_mcp.execution.service as service_module
+    import mcp_chatgpt_sandbox.execution.service as service_module
 
     def _raise_permission_error(pgid: int, sig: int) -> None:
         raise PermissionError(1, "Operation not permitted")
@@ -451,9 +451,9 @@ async def test_exec_start_fails_clearly_when_docker_unreachable(
 ) -> None:
     from mcp.server import MCPServer
 
-    from dev_workspace_mcp.db import open_db
-    from dev_workspace_mcp.repositories import RepositoryRegistry
-    from dev_workspace_mcp.tools import execution as execution_tools
+    from mcp_chatgpt_sandbox.db import open_db
+    from mcp_chatgpt_sandbox.repositories import RepositoryRegistry
+    from mcp_chatgpt_sandbox.tools import execution as execution_tools
 
     server = MCPServer(name="t")
     db = open_db(minimal_config.state_db_path)

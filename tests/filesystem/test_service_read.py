@@ -18,10 +18,10 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.config.models import FilesystemConfig
-from dev_workspace_mcp.errors import InvalidArgumentError
-from dev_workspace_mcp.filesystem.security import FilesystemSecurity
-from dev_workspace_mcp.filesystem.service import FilesystemService, sha256_of
+from mcp_chatgpt_sandbox.config.models import FilesystemConfig
+from mcp_chatgpt_sandbox.errors import InvalidArgumentError
+from mcp_chatgpt_sandbox.filesystem.security import FilesystemSecurity
+from mcp_chatgpt_sandbox.filesystem.service import FilesystemService, sha256_of
 
 
 def _service(root: Path, *, config: FilesystemConfig | None = None) -> FilesystemService:
@@ -154,7 +154,7 @@ def test_at_h029_full_sha_and_size_are_correct_for_a_multi_megabyte_file(
     to exercise the streaming loop at all) is what actually proves the
     multi-chunk path computes the same `sha256`/`size` a full read
     would."""
-    from dev_workspace_mcp.filesystem.service import _READ_FILE_HASH_CHUNK_BYTES
+    from mcp_chatgpt_sandbox.filesystem.service import _READ_FILE_HASH_CHUNK_BYTES
 
     root = _repo(tmp_path)
     # A few chunks' worth, so the streaming loop actually iterates more
@@ -178,7 +178,7 @@ def test_at_h029_a_byte_range_deep_in_a_large_file_still_works(tmp_path: Path) -
     confirmed still correct, including `sha256`/`size` for the whole
     file (computed via the same streamed hash pass the no-range path
     uses), for a file larger than the streaming chunk size."""
-    from dev_workspace_mcp.filesystem.service import _READ_FILE_HASH_CHUNK_BYTES
+    from mcp_chatgpt_sandbox.filesystem.service import _READ_FILE_HASH_CHUNK_BYTES
 
     root = _repo(tmp_path)
     full = "0123456789" * (_READ_FILE_HASH_CHUNK_BYTES // 5)
@@ -328,7 +328,7 @@ def test_read_file_directory_raises(tmp_path: Path) -> None:
 def test_read_file_git_metadata_raises(tmp_path: Path) -> None:
     root = _repo(tmp_path)
     svc = _service(root)
-    from dev_workspace_mcp.errors import PathGitMetadataError
+    from mcp_chatgpt_sandbox.errors import PathGitMetadataError
 
     with pytest.raises(PathGitMetadataError):
         svc.read_file(".git/config")
@@ -344,7 +344,7 @@ def test_rr006_hash_pread_loops_across_multiple_chunks(tmp_path: Path) -> None:
     fixture. `chunk_size` lets this test force the same multi-call path
     with an ordinary small file instead: the looped, chunked result must
     equal a plain whole-file hash."""
-    from dev_workspace_mcp.filesystem.service import _hash_pread
+    from mcp_chatgpt_sandbox.filesystem.service import _hash_pread
 
     content = os.urandom(10_000)
     path = tmp_path / "data.bin"

@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 from textual.widgets import Button, Checkbox, Select
 
-from dev_workspace_mcp.setup.app import STEPS, SetupWizardApp
-from dev_workspace_mcp.setup.model import SetupStep
+from mcp_chatgpt_sandbox.setup.app import STEPS, SetupWizardApp
+from mcp_chatgpt_sandbox.setup.model import SetupStep
 
 
 @pytest.mark.asyncio

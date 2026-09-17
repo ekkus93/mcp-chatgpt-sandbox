@@ -8,16 +8,16 @@ from typing import Any
 
 import pytest
 
-from dev_workspace_mcp.config.models import ServerConfig
-from dev_workspace_mcp.db.connection import open_db
-from dev_workspace_mcp.operations.prune_execution import (
+from mcp_chatgpt_sandbox.config.models import ServerConfig
+from mcp_chatgpt_sandbox.db.connection import open_db
+from mcp_chatgpt_sandbox.operations.prune_execution import (
     PruneExecutionAggregateStatus,
     PruneExecutionOutcome,
     PruneExecutionResult,
     PruneExecutionService,
     PruneExecutionStatus,
 )
-from dev_workspace_mcp.server import create_server
+from mcp_chatgpt_sandbox.server import create_server
 
 
 def _audit_records(path: Path) -> list[dict[str, Any]]:
@@ -43,7 +43,7 @@ async def test_pmoat_012_mixed_reclamation_audit_is_complete_and_redacted(
     )
     db.commit()
 
-    monkeypatch.setattr("dev_workspace_mcp.server._try_docker_client", lambda: None)
+    monkeypatch.setattr("mcp_chatgpt_sandbox.server._try_docker_client", lambda: None)
     server = create_server(minimal_config)
     plan = (
         await server.call_tool(

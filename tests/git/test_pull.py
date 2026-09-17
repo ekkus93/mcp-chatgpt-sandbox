@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.git.pull import (
+from mcp_chatgpt_sandbox.git.pull import (
     NON_FAST_FORWARD_MARKER,
     build_fetch_argv,
     build_integrate_argv,

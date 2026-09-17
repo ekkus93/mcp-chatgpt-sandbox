@@ -17,9 +17,9 @@ import docker
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 
-from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
-from dev_workspace_mcp.server import create_server
-from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager
+from mcp_chatgpt_sandbox.config.models import RepositoryConfig, ServerConfig
+from mcp_chatgpt_sandbox.server import create_server
+from mcp_chatgpt_sandbox.workspace.ssh_agent import SSHAgentManager
 
 
 class _FakeGitHubHandler(BaseHTTPRequestHandler):
@@ -110,7 +110,7 @@ def _forbid_key_provision(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _assert_no_workspace_container(docker_client: docker.DockerClient) -> None:
     containers = docker_client.containers.list(
-        all=True, filters={"label": "dev-workspace-mcp.repository-id=example"}
+        all=True, filters={"label": "mcp-chatgpt-sandbox.repository-id=example"}
     )
     assert containers == []
 

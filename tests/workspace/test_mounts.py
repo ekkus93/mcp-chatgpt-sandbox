@@ -7,10 +7,10 @@ from typing import Any
 
 import pytest
 
-from dev_workspace_mcp.config.models import ServerConfig
-from dev_workspace_mcp.errors import PathOutsideRepositoryError
-from dev_workspace_mcp.workspace.container_config import SSH_KNOWN_HOSTS_CONTAINER_PATH
-from dev_workspace_mcp.workspace.mounts import (
+from mcp_chatgpt_sandbox.config.models import ServerConfig
+from mcp_chatgpt_sandbox.errors import PathOutsideRepositoryError
+from mcp_chatgpt_sandbox.workspace.container_config import SSH_KNOWN_HOSTS_CONTAINER_PATH
+from mcp_chatgpt_sandbox.workspace.mounts import (
     build_known_hosts_mount,
     build_workspace_mounts,
     resolve_git_dir,

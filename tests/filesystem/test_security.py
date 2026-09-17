@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.errors import (
+from mcp_chatgpt_sandbox.errors import (
     InvalidArgumentError,
     PathGitMetadataError,
     PathOutsideRepositoryError,
 )
-from dev_workspace_mcp.filesystem.security import FilesystemSecurity
+from mcp_chatgpt_sandbox.filesystem.security import FilesystemSecurity
 
 
 def _repo(tmp_path: Path) -> Path:

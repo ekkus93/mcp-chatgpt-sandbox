@@ -20,15 +20,15 @@ code defect:
 
 ```bash
 docker info >/dev/null 2>&1 && echo "docker: ok" || echo "docker: UNREACHABLE"
-docker image inspect mcp-dev-test-s7:24.04 >/dev/null 2>&1 \
+docker image inspect mcp-chatgpt-sandbox-test-s7:24.04 >/dev/null 2>&1 \
   && echo "test image: ok" || echo "test image: MISSING"
 ```
 
 - Docker unreachable → the suite cannot pass. Say so; do not run it.
-- Test image missing → build it: `docker build -t mcp-dev-test-s7:24.04 docker/default/`.
+- Test image missing → build it: `docker build -t mcp-chatgpt-sandbox-test-s7:24.04 docker/default/`.
   The tag must match `DEFAULT_IMAGE_TEST_TAG` in `tests/workspace/conftest.py`.
 - Check nothing else is already driving Docker with this repo's IDs — another copy of the
-  suite or a live `dev-workspace-mcp serve`. Workspace names are deterministic, so two
+  suite or a live `mcp-chatgpt-sandbox serve`. Workspace names are deterministic, so two
   processes adopt the same container and produce lifecycle-shaped failures. If
   `docker ps` shows this project's containers running and you did not start them, stop and
   report it rather than racing them.

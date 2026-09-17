@@ -31,11 +31,11 @@ import docker
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 
-from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
-from dev_workspace_mcp.db import open_db
-from dev_workspace_mcp.execution.service import ExecResult, ExecutionService
-from dev_workspace_mcp.server import create_server
-from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager
+from mcp_chatgpt_sandbox.config.models import RepositoryConfig, ServerConfig
+from mcp_chatgpt_sandbox.db import open_db
+from mcp_chatgpt_sandbox.execution.service import ExecResult, ExecutionService
+from mcp_chatgpt_sandbox.server import create_server
+from mcp_chatgpt_sandbox.workspace.ssh_agent import SSHAgentManager
 
 #: GitHub's own tiny, effectively-permanent demo repository — a real,
 #: resolvable `github.com` identity so remote validation (§20.2) and the

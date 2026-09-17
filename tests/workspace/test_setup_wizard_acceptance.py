@@ -7,13 +7,13 @@ from pathlib import Path
 import docker
 import pytest
 
-from dev_workspace_mcp.config import load_config
-from dev_workspace_mcp.server import create_server
-from dev_workspace_mcp.setup.choices import SetupChoices
-from dev_workspace_mcp.setup.config_writer import commit_config_update, prepare_config_update
-from dev_workspace_mcp.setup.host import StorageChoices, prepare_storage_directories
-from dev_workspace_mcp.setup.materialize import materialize_setup
-from dev_workspace_mcp.setup.model import SetupRepositoryState, SetupState
+from mcp_chatgpt_sandbox.config import load_config
+from mcp_chatgpt_sandbox.server import create_server
+from mcp_chatgpt_sandbox.setup.choices import SetupChoices
+from mcp_chatgpt_sandbox.setup.config_writer import commit_config_update, prepare_config_update
+from mcp_chatgpt_sandbox.setup.host import StorageChoices, prepare_storage_directories
+from mcp_chatgpt_sandbox.setup.materialize import materialize_setup
+from mcp_chatgpt_sandbox.setup.model import SetupRepositoryState, SetupState
 
 
 def _init_repository(path: Path) -> SetupRepositoryState:

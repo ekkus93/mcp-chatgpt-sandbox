@@ -5,11 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.jobs import retention
-from dev_workspace_mcp.jobs.retention import prune_job_logs
-from dev_workspace_mcp.jobs.store import JobState, JobStore
-from dev_workspace_mcp.repositories import RepositoryRecord
-from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
+from mcp_chatgpt_sandbox.jobs import retention
+from mcp_chatgpt_sandbox.jobs.retention import prune_job_logs
+from mcp_chatgpt_sandbox.jobs.store import JobState, JobStore
+from mcp_chatgpt_sandbox.repositories import RepositoryRecord
+from mcp_chatgpt_sandbox.workspace.manager import DockerWorkspaceManager
 from tests.workspace.conftest import KEEP_ALIVE_RUN_KWARGS, TEST_IMAGE
 
 

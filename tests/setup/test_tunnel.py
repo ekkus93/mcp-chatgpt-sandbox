@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.setup.tunnel import (
+from mcp_chatgpt_sandbox.setup.tunnel import (
     SetupTunnelError,
     apply_tunnel_profile,
     build_tunnel_profile_plan,
@@ -29,7 +29,7 @@ def test_swf_004_runtime_environment_preserves_ambient_values(
     monkeypatch.setenv("PATH", "/ambient/bin")
     monkeypatch.setenv("AMBIENT_ONLY", "keep-me")
     monkeypatch.setattr(
-        "dev_workspace_mcp.setup.tunnel.tunnel_client_path", lambda: "tunnel-client"
+        "mcp_chatgpt_sandbox.setup.tunnel.tunnel_client_path", lambda: "tunnel-client"
     )
 
     def fake_run(
@@ -47,7 +47,7 @@ def test_swf_004_runtime_environment_preserves_ambient_values(
         captured.update(env)
         return subprocess.CompletedProcess(argv, 0)
 
-    monkeypatch.setattr("dev_workspace_mcp.setup.tunnel.subprocess.run", fake_run)
+    monkeypatch.setattr("mcp_chatgpt_sandbox.setup.tunnel.subprocess.run", fake_run)
 
     apply_tunnel_profile(
         _plan(tmp_path),
@@ -67,7 +67,7 @@ def test_swf_004_runtime_environment_overrides_ambient_values(
     captured: dict[str, str] = {}
     monkeypatch.setenv("PATH", "/ambient/bin")
     monkeypatch.setattr(
-        "dev_workspace_mcp.setup.tunnel.tunnel_client_path", lambda: "tunnel-client"
+        "mcp_chatgpt_sandbox.setup.tunnel.tunnel_client_path", lambda: "tunnel-client"
     )
 
     def fake_run(
@@ -84,7 +84,7 @@ def test_swf_004_runtime_environment_overrides_ambient_values(
         captured.update(env)
         return subprocess.CompletedProcess(argv, 0)
 
-    monkeypatch.setattr("dev_workspace_mcp.setup.tunnel.subprocess.run", fake_run)
+    monkeypatch.setattr("mcp_chatgpt_sandbox.setup.tunnel.subprocess.run", fake_run)
 
     apply_tunnel_profile(
         _plan(tmp_path),
@@ -100,7 +100,7 @@ def test_swf_004_tunnel_failure_message_does_not_echo_runtime_environment(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(
-        "dev_workspace_mcp.setup.tunnel.tunnel_client_path", lambda: "tunnel-client"
+        "mcp_chatgpt_sandbox.setup.tunnel.tunnel_client_path", lambda: "tunnel-client"
     )
 
     def fake_run(
@@ -115,7 +115,7 @@ def test_swf_004_tunnel_failure_message_does_not_echo_runtime_environment(
         del check, capture_output, text, timeout, env
         return subprocess.CompletedProcess(argv, 1, stderr="runtime-secret-value")
 
-    monkeypatch.setattr("dev_workspace_mcp.setup.tunnel.subprocess.run", fake_run)
+    monkeypatch.setattr("mcp_chatgpt_sandbox.setup.tunnel.subprocess.run", fake_run)
 
     with pytest.raises(SetupTunnelError) as exc_info:
         apply_tunnel_profile(

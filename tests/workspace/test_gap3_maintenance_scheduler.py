@@ -10,13 +10,13 @@ from pathlib import Path
 import docker
 import pytest
 
-from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
-from dev_workspace_mcp.db import open_db
-from dev_workspace_mcp.errors import ContainerRuntimeFailedError
-from dev_workspace_mcp.jobs.retention import get_job_log_cleanup_debt
-from dev_workspace_mcp.jobs.store import JobState, JobStore
-from dev_workspace_mcp.server import create_server
-from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager, WorkspaceState
+from mcp_chatgpt_sandbox.config.models import RepositoryConfig, ServerConfig
+from mcp_chatgpt_sandbox.db import open_db
+from mcp_chatgpt_sandbox.errors import ContainerRuntimeFailedError
+from mcp_chatgpt_sandbox.jobs.retention import get_job_log_cleanup_debt
+from mcp_chatgpt_sandbox.jobs.store import JobState, JobStore
+from mcp_chatgpt_sandbox.server import create_server
+from mcp_chatgpt_sandbox.workspace.manager import DockerWorkspaceManager, WorkspaceState
 
 
 async def _wait_until(predicate: Callable[[], bool], *, timeout: float = 15.0) -> None:

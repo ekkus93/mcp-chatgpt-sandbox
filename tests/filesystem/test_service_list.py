@@ -18,10 +18,10 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.config.models import FilesystemConfig
-from dev_workspace_mcp.errors import InvalidArgumentError
-from dev_workspace_mcp.filesystem.security import FilesystemSecurity
-from dev_workspace_mcp.filesystem.service import FilesystemService
+from mcp_chatgpt_sandbox.config.models import FilesystemConfig
+from mcp_chatgpt_sandbox.errors import InvalidArgumentError
+from mcp_chatgpt_sandbox.filesystem.security import FilesystemSecurity
+from mcp_chatgpt_sandbox.filesystem.service import FilesystemService
 
 
 def _service(root: Path, *, config: FilesystemConfig | None = None) -> FilesystemService:
@@ -126,7 +126,7 @@ def test_at_hat010_search_files_skips_an_escaping_symlink_without_crashing(
     symlink used to abort the entire search. Unlike `list_files`, a
     search has no reason to read through the symlink into host content,
     so it's skipped rather than reported."""
-    from dev_workspace_mcp.filesystem.search import search_files
+    from mcp_chatgpt_sandbox.filesystem.search import search_files
 
     root = _repo(tmp_path)
     outside = tmp_path / "outside.txt"

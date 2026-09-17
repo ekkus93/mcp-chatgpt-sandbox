@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 import yaml
 
-from dev_workspace_mcp.config.loader import (
+from mcp_chatgpt_sandbox.config.loader import (
     GITHUB_SSH_HOST_KEYS,
     ConfigError,
     docker_available,
@@ -26,7 +26,7 @@ def _write_config(path: Path, data: dict[str, Any]) -> Path:
 def test_load_config_happy_path(tmp_path: Path, minimal_config_dict: dict[str, Any]) -> None:
     config_path = _write_config(tmp_path, minimal_config_dict)
     config = load_config(config_path, home=tmp_path / "home")
-    assert config.docker.default_image == "mcp-dev-ubuntu:24.04"
+    assert config.docker.default_image == "mcp-chatgpt-sandbox-ubuntu:24.04"
 
 
 def test_load_config_missing_file_raises_config_error(tmp_path: Path) -> None:
@@ -160,7 +160,7 @@ def test_every_ssh_config_key_bearing_field_is_checked() -> None:
     or `RepositoryConfig` without a corresponding decision recorded in
     the two sets below (and, for a key-bearing field, a matching check
     added to `_check_ssh_key_not_under_host_ssh`)."""
-    from dev_workspace_mcp.config.models import RepositoryConfig, SSHConfig
+    from mcp_chatgpt_sandbox.config.models import RepositoryConfig, SSHConfig
 
     checked_ssh_fields = {"keys_dir", "shared_key"}
     known_non_key_bearing_ssh_fields = {"mode", "scope", "known_hosts"}

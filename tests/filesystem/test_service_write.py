@@ -17,10 +17,10 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.config.models import FilesystemConfig
-from dev_workspace_mcp.errors import FileConflictError, InvalidArgumentError
-from dev_workspace_mcp.filesystem.security import FilesystemSecurity
-from dev_workspace_mcp.filesystem.service import FilesystemService, sha256_of
+from mcp_chatgpt_sandbox.config.models import FilesystemConfig
+from mcp_chatgpt_sandbox.errors import FileConflictError, InvalidArgumentError
+from mcp_chatgpt_sandbox.filesystem.security import FilesystemSecurity
+from mcp_chatgpt_sandbox.filesystem.service import FilesystemService, sha256_of
 
 
 def _service(root: Path, *, config: FilesystemConfig | None = None) -> FilesystemService:
@@ -173,7 +173,7 @@ def test_write_file_exceeding_limit_raises(tmp_path: Path) -> None:
 def test_write_file_git_metadata_raises(tmp_path: Path) -> None:
     root = _repo(tmp_path)
     svc = _service(root)
-    from dev_workspace_mcp.errors import PathGitMetadataError
+    from mcp_chatgpt_sandbox.errors import PathGitMetadataError
 
     with pytest.raises(PathGitMetadataError):
         svc.write_file(".git/hooks/pre-commit", "#!/bin/sh\n")

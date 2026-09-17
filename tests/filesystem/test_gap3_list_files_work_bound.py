@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.config.models import FilesystemConfig
-from dev_workspace_mcp.errors import InvalidArgumentError
-from dev_workspace_mcp.filesystem.security import FilesystemSecurity
-from dev_workspace_mcp.filesystem.service import FilesystemService
+from mcp_chatgpt_sandbox.config.models import FilesystemConfig
+from mcp_chatgpt_sandbox.errors import InvalidArgumentError
+from mcp_chatgpt_sandbox.filesystem.security import FilesystemSecurity
+from mcp_chatgpt_sandbox.filesystem.service import FilesystemService
 
 
 def _service(root: Path, *, config: FilesystemConfig | None = None) -> FilesystemService:

@@ -2,8 +2,8 @@
 
 import pytest
 
-from dev_workspace_mcp.errors import JobNotFoundError
-from dev_workspace_mcp.jobs.store import JobState, JobStore
+from mcp_chatgpt_sandbox.errors import JobNotFoundError
+from mcp_chatgpt_sandbox.jobs.store import JobState, JobStore
 from tests.jobs.conftest import WORKSPACE_ID
 
 

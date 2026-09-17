@@ -44,7 +44,7 @@ The issues in this specification are therefore not failures to run the existing 
 The tunnel command itself is shell-quoted correctly, but the TUI supplies `Path.cwd()` as the `--project` path when it builds the profile plan. Running the installed CLI from an unrelated directory can therefore produce a safely quoted but semantically wrong command such as:
 
 ```text
-uv run --project /tmp dev-workspace-mcp serve --config ...
+uv run --project /tmp mcp-chatgpt-sandbox serve --config ...
 ```
 
 The generated profile must not depend on where the operator happened to invoke the wizard.

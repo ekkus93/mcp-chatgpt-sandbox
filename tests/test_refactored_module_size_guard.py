@@ -5,10 +5,10 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).parents[1]
 _MAX_LINES_EXCLUSIVE = 800
 _REFACTORED_MODULES = (
-    "src/dev_workspace_mcp/tools/workspace.py",
-    "src/dev_workspace_mcp/setup/step_actions.py",
-    "src/dev_workspace_mcp/tools/execution.py",
-    "src/dev_workspace_mcp/setup/app.py",
+    "src/mcp_chatgpt_sandbox/tools/workspace.py",
+    "src/mcp_chatgpt_sandbox/setup/step_actions.py",
+    "src/mcp_chatgpt_sandbox/tools/execution.py",
+    "src/mcp_chatgpt_sandbox/setup/app.py",
 )
 
 

@@ -11,12 +11,12 @@ from pathlib import Path
 import docker
 import pytest
 
-from dev_workspace_mcp.errors import ContainerRuntimeFailedError
-from dev_workspace_mcp.execution.async_runner import AsyncJobRunner
-from dev_workspace_mcp.execution.service import ExecutionService
-from dev_workspace_mcp.jobs.store import JobState, JobStore
-from dev_workspace_mcp.repositories import RepositoryRecord
-from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
+from mcp_chatgpt_sandbox.errors import ContainerRuntimeFailedError
+from mcp_chatgpt_sandbox.execution.async_runner import AsyncJobRunner
+from mcp_chatgpt_sandbox.execution.service import ExecutionService
+from mcp_chatgpt_sandbox.jobs.store import JobState, JobStore
+from mcp_chatgpt_sandbox.repositories import RepositoryRecord
+from mcp_chatgpt_sandbox.workspace.manager import DockerWorkspaceManager
 from tests.workspace.conftest import KEEP_ALIVE_RUN_KWARGS, TEST_IMAGE
 
 #: RR-022's own empirical setup (`docs/REMEDIATION_TODO.md`'s R16
@@ -170,7 +170,7 @@ async def test_at_h031_an_unexpected_drain_failure_is_logged_not_silent(
 
     runner._execution.drain_stream = _boom  # type: ignore[method-assign]
 
-    with caplog.at_level("ERROR", logger="dev_workspace_mcp.execution.async_runner"):
+    with caplog.at_level("ERROR", logger="mcp_chatgpt_sandbox.execution.async_runner"):
         await runner.start_job(
             "job_1",
             container_id=workspace.container_id,

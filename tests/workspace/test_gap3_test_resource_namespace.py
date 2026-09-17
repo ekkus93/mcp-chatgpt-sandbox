@@ -14,11 +14,11 @@ from typing import Any
 import docker
 import pytest
 
-from dev_workspace_mcp.project_config import ProjectCacheEntry
-from dev_workspace_mcp.workspace.caches import resolve_caches
+from mcp_chatgpt_sandbox.project_config import ProjectCacheEntry
+from mcp_chatgpt_sandbox.workspace.caches import resolve_caches
 
-_TEST_NAMESPACE_ENV = "DEV_WORKSPACE_MCP_TEST_RESOURCE_NAMESPACE"
-_TEST_NAMESPACE_LABEL = "dev-workspace-mcp.test-namespace"
+_TEST_NAMESPACE_ENV = "MCP_CHATGPT_SANDBOX_TEST_RESOURCE_NAMESPACE"
+_TEST_NAMESPACE_LABEL = "mcp-chatgpt-sandbox.test-namespace"
 
 _CHILD = r"""
 import json
@@ -28,9 +28,9 @@ from pathlib import Path
 
 import docker
 
-from dev_workspace_mcp.db import open_db
-from dev_workspace_mcp.repositories import RepositoryRecord
-from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
+from mcp_chatgpt_sandbox.db import open_db
+from mcp_chatgpt_sandbox.repositories import RepositoryRecord
+from mcp_chatgpt_sandbox.workspace.manager import DockerWorkspaceManager
 
 
 db_path, repo_path, result_path, release_path = map(Path, sys.argv[1:])

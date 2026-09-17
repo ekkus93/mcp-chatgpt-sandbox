@@ -133,7 +133,7 @@ This TODO tracks the focused follow-up issues found during review of the complet
 **PCRF-003 evidence:**
 
 - Rationale-restoration implementation commit: `b2ec299e912c5c8f80acf9a4854ead380618dcc9`.
-- Updated file: `src/dev_workspace_mcp/errors.py`.
+- Updated file: `src/mcp_chatgpt_sandbox/errors.py`.
 - Restored comments explain that only expected `WorkspaceError` domain failures are translated into structured MCP tool errors, while unexpected exceptions intentionally propagate to the MCP SDK crash/logging path.
 - Restored comments explain `redact_secrets()` as defense-in-depth for tool-error details, error messages, and audit metadata, while more sensitive operation paths still use explicit allowlisted classifications.
 - Restored comments explain nested secret-key hint propagation, JSON-safe handling of sets and bytes/bytearray, fail-closed handling for unsupported values, and false-positive guards for public identifiers.
@@ -163,7 +163,7 @@ This TODO tracks the focused follow-up issues found during review of the complet
 - Final pre-merge branch CI: run `34711835372`, job `103601873339`, workflow `CI`, event `pull_request`, head `dd7a7b9b1863f04b550586073e4f8e30d7640cf8`, result `success`.
 - Final pre-merge branch gates passed: Docker image build, Ruff format, Ruff lint, mypy, MCP contract check, `contract_version` bump check, `docs/TOOLS.md` drift check, and pytest.
 - Final pre-merge test result: `1241 passed`, `4 warnings` in `614.89s`; coverage `92%`, TOTAL `6540` statements / `519` misses.
-- Runtime source changes in this workstream are limited to `src/dev_workspace_mcp/audit.py` and `src/dev_workspace_mcp/errors.py`, plus focused audit tests and documentation. No prune-plan, prune-candidate, prune-execution, Docker cleanup, path deletion, or broad destructive-safety runtime file changed.
+- Runtime source changes in this workstream are limited to `src/mcp_chatgpt_sandbox/audit.py` and `src/mcp_chatgpt_sandbox/errors.py`, plus focused audit tests and documentation. No prune-plan, prune-candidate, prune-execution, Docker cleanup, path deletion, or broad destructive-safety runtime file changed.
 - The final exact-head guarded merge and post-merge `master` CI verification are performed after this repository-local TODO closure commit. Their terminal evidence is recorded in the assistant's final workstream report to avoid a recursive docs-only closure cycle.
 
 ## Definition of done

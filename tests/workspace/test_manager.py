@@ -12,15 +12,15 @@ from pathlib import Path
 import docker
 import pytest
 
-from dev_workspace_mcp.errors import (
+from mcp_chatgpt_sandbox.errors import (
     ContainerCreateFailedError,
     ContainerRuntimeFailedError,
     WorkspaceNotFoundError,
 )
-from dev_workspace_mcp.jobs.store import JobStore
-from dev_workspace_mcp.repositories import RepositoryRecord
-from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager, WorkspaceState
-from dev_workspace_mcp.workspace.naming import (
+from mcp_chatgpt_sandbox.jobs.store import JobStore
+from mcp_chatgpt_sandbox.repositories import RepositoryRecord
+from mcp_chatgpt_sandbox.workspace.manager import DockerWorkspaceManager, WorkspaceState
+from mcp_chatgpt_sandbox.workspace.naming import (
     LABEL_REPOSITORY_ID,
     LABEL_WORKSPACE_ID,
     container_labels,
@@ -64,7 +64,7 @@ def test_at_h031_container_lifecycle_transitions_are_logged(
     # `manager_lifecycle.py`, both real children of this package. A
     # sibling name here (e.g. `.manager`) would set an unrelated
     # logger's level and never see either module's records.
-    with caplog.at_level("INFO", logger="dev_workspace_mcp.workspace"):
+    with caplog.at_level("INFO", logger="mcp_chatgpt_sandbox.workspace"):
         record = manager.ensure_workspace(
             repository=repository, image=TEST_IMAGE, run_kwargs=KEEP_ALIVE_RUN_KWARGS
         )
@@ -178,7 +178,7 @@ def test_rr012_delete_succeeds_and_leaves_no_row_when_volume_removal_fails(
     volume-removal failure only logged."""
     from docker.types import Mount
 
-    from dev_workspace_mcp.workspace.caches import cache_volume_name
+    from mcp_chatgpt_sandbox.workspace.caches import cache_volume_name
 
     volume_name = cache_volume_name(repository_id=repository.id, cache_name="cargo")
     mounts = [Mount(target="/root/.cargo", source=volume_name, type="volume", read_only=False)]
@@ -221,7 +221,7 @@ def test_rr012_delete_succeeds_when_ssh_agent_termination_fails(
     the reason (`SSHAgentManager.terminate`'s own docstring only claims
     the *signal itself* is best-effort, not every step around it), a
     real failure there SHALL NOT prevent `delete` from completing."""
-    from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager
+    from mcp_chatgpt_sandbox.workspace.ssh_agent import SSHAgentManager
 
     class _AlwaysFailsTermination(SSHAgentManager):
         def terminate(self, workspace_id: str) -> None:
@@ -255,7 +255,7 @@ def test_at_hr009_delete_reclaims_cache_volumes(
     inherit the old one's cache volumes."""
     from docker.types import Mount
 
-    from dev_workspace_mcp.workspace.caches import cache_volume_name
+    from mcp_chatgpt_sandbox.workspace.caches import cache_volume_name
 
     volume_name = cache_volume_name(repository_id=repository.id, cache_name="cargo")
     mounts = [Mount(target="/root/.cargo", source=volume_name, type="volume", read_only=False)]
@@ -279,7 +279,7 @@ def test_at_hr009_delete_tolerates_a_cache_volume_that_was_never_created(
     """A declared-but-never-actually-mounted cache (or one whose name
     changed since the workspace was last opened) has no volume to
     remove — not an error."""
-    from dev_workspace_mcp.workspace.caches import cache_volume_name
+    from mcp_chatgpt_sandbox.workspace.caches import cache_volume_name
 
     never_created = cache_volume_name(repository_id=repository.id, cache_name="never-used")
     record = manager.ensure_workspace(
@@ -639,10 +639,10 @@ async def test_at_g2r016_a_setup_step_kill_failure_is_a_typed_error(
     running container — its own docstring says it is written to support
     exactly that, module-level rather than a `register()` closure, for
     unit-testing without a whole running server."""
-    import dev_workspace_mcp.tools.workspace as workspace_module
-    from dev_workspace_mcp.config.models import ContainerConfig, ExecutionConfig
-    from dev_workspace_mcp.execution.service import ExecutionService
-    from dev_workspace_mcp.tools.workspace import run_setup_steps
+    import mcp_chatgpt_sandbox.tools.workspace as workspace_module
+    from mcp_chatgpt_sandbox.config.models import ContainerConfig, ExecutionConfig
+    from mcp_chatgpt_sandbox.execution.service import ExecutionService
+    from mcp_chatgpt_sandbox.tools.workspace import run_setup_steps
 
     # A tiny timeout, not the real 600s default — `_SETUP_STEP_TIMEOUT_
     # SECONDS` is a module constant with "no config knob for a single

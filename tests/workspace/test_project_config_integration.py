@@ -19,13 +19,13 @@ import pytest
 import yaml
 from mcp.server.mcpserver.exceptions import ToolError
 
-from dev_workspace_mcp.config.models import RepositoryConfig, ServerConfig
-from dev_workspace_mcp.db import open_db
-from dev_workspace_mcp.server import create_server
-from dev_workspace_mcp.workspace.caches import cache_volume_name
-from dev_workspace_mcp.workspace.manager import DockerWorkspaceManager
-from dev_workspace_mcp.workspace.naming import persistent_workspace_id
-from dev_workspace_mcp.workspace.ssh_agent import SSHAgentManager
+from mcp_chatgpt_sandbox.config.models import RepositoryConfig, ServerConfig
+from mcp_chatgpt_sandbox.db import open_db
+from mcp_chatgpt_sandbox.server import create_server
+from mcp_chatgpt_sandbox.workspace.caches import cache_volume_name
+from mcp_chatgpt_sandbox.workspace.manager import DockerWorkspaceManager
+from mcp_chatgpt_sandbox.workspace.naming import persistent_workspace_id
+from mcp_chatgpt_sandbox.workspace.ssh_agent import SSHAgentManager
 from tests.workspace.conftest import TEST_IMAGE
 
 

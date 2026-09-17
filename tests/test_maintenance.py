@@ -7,8 +7,8 @@ import threading
 
 import pytest
 
-from dev_workspace_mcp.config.models import ServerConfig
-from dev_workspace_mcp.maintenance import MaintenanceScheduler
+from mcp_chatgpt_sandbox.config.models import ServerConfig
+from mcp_chatgpt_sandbox.maintenance import MaintenanceScheduler
 
 
 def test_g3at_014_maintenance_health_redacts_persisted_failure_text(

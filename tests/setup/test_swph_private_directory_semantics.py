@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.setup.filesystem import (
+from mcp_chatgpt_sandbox.setup.filesystem import (
     SetupFilesystemError,
     ensure_private_directory,
     is_owner_only_directory,
     is_owner_only_file,
 )
-from dev_workspace_mcp.setup.host import StorageChoices, prepare_storage_directories
-from dev_workspace_mcp.setup.model import SetupState, save_setup_state
+from mcp_chatgpt_sandbox.setup.host import StorageChoices, prepare_storage_directories
+from mcp_chatgpt_sandbox.setup.model import SetupState, save_setup_state
 
 
 def _mode(path: Path) -> int:

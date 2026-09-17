@@ -120,7 +120,7 @@ and UX follow-ups.
 **Goal:** make generated tunnel profiles robust when paths contain spaces or shell-sensitive characters.
 
 - [x] Replace f-string command assembly in tunnel profile generation with `shlex.join()`.
-- [x] Preserve the intended argv shape: `uv run --project <project> dev-workspace-mcp serve --config <config>`.
+- [x] Preserve the intended argv shape: `uv run --project <project> mcp-chatgpt-sandbox serve --config <config>`.
 - [x] Ensure project paths with spaces are represented safely.
 - [x] Ensure config paths with spaces are represented safely.
 - [x] Ensure generated profile plans do not include raw runtime secrets.
@@ -165,7 +165,7 @@ and UX follow-ups.
 
 **Goal:** reduce review risk by separating Textual app concerns without changing operator behavior.
 
-- [x] Audit responsibilities currently concentrated in `src/dev_workspace_mcp/setup/app.py`.
+- [x] Audit responsibilities currently concentrated in `src/mcp_chatgpt_sandbox/setup/app.py`.
 - [x] Define module boundaries for lifecycle, rendering, validation, actions, runtime forms, and Git-policy forms.
 - [x] Move code in small reviewable slices.
 - [x] Preserve public CLI behavior and existing internal imports unless explicitly migrated.
@@ -179,8 +179,8 @@ and UX follow-ups.
 - [x] Existing Textual pilot tests pass without weakening assertions.
 - [x] Existing setup lifecycle tests pass.
 - [x] Existing review/write and diagnostics tests pass.
-- [x] `src/dev_workspace_mcp/setup/app.py` is materially smaller and primarily composes behavior.
-- [x] `src/dev_workspace_mcp/setup/step_panels.py` remains under its static architecture guard after extracting `git_policy_panel.py`.
+- [x] `src/mcp_chatgpt_sandbox/setup/app.py` is materially smaller and primarily composes behavior.
+- [x] `src/mcp_chatgpt_sandbox/setup/step_panels.py` remains under its static architecture guard after extracting `git_policy_panel.py`.
 - [x] Ruff, strict mypy, and full pytest pass.
 - [x] MCP contract remains unchanged.
 

@@ -5,13 +5,13 @@ from pathlib import Path
 import pytest
 from textual.widgets import Button, Checkbox, Select
 
-from dev_workspace_mcp.config import GitPolicyConfig
-from dev_workspace_mcp.setup.app import SetupWizardApp
-from dev_workspace_mcp.setup.git_policy_form import (
+from mcp_chatgpt_sandbox.config import GitPolicyConfig
+from mcp_chatgpt_sandbox.setup.app import SetupWizardApp
+from mcp_chatgpt_sandbox.setup.git_policy_form import (
     GitPolicyEditorValues,
     SetupGitPolicyFormError,
 )
-from dev_workspace_mcp.setup.model import (
+from mcp_chatgpt_sandbox.setup.model import (
     SetupState,
     SetupStep,
     SetupStepStatus,

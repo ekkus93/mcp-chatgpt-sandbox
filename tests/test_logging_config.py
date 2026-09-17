@@ -2,7 +2,7 @@
 
 import logging
 
-from dev_workspace_mcp.logging_config import configure_logging, redacted_extra
+from mcp_chatgpt_sandbox.logging_config import configure_logging, redacted_extra
 
 
 def test_configure_logging_sets_the_root_level(monkeypatch) -> None:

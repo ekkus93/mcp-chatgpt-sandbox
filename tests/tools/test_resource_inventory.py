@@ -7,11 +7,11 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from dev_workspace_mcp.config.models import ServerConfig
-from dev_workspace_mcp.db import open_db
-from dev_workspace_mcp.operations.resources import LABEL_RESOURCE_KIND, RESOURCE_KIND_CACHE_VOLUME
-from dev_workspace_mcp.server import create_server
-from dev_workspace_mcp.workspace.naming import (
+from mcp_chatgpt_sandbox.config.models import ServerConfig
+from mcp_chatgpt_sandbox.db import open_db
+from mcp_chatgpt_sandbox.operations.resources import LABEL_RESOURCE_KIND, RESOURCE_KIND_CACHE_VOLUME
+from mcp_chatgpt_sandbox.server import create_server
+from mcp_chatgpt_sandbox.workspace.naming import (
     LABEL_MANAGED,
     LABEL_REPOSITORY_ID,
     LABEL_TEST_NAMESPACE,
@@ -220,7 +220,7 @@ async def test_pmoat_001_to_003_inventory_through_real_mcp_surface_is_scoped_and
             _Volume("cache-beta", _volume_labels("beta"), mutations),
         ],
     )
-    monkeypatch.setattr("dev_workspace_mcp.server._try_docker_client", lambda: docker_client)
+    monkeypatch.setattr("mcp_chatgpt_sandbox.server._try_docker_client", lambda: docker_client)
     server = create_server(minimal_config)
     state_db = _seed_state(minimal_config.state_db_path)
     state_db.close()
@@ -263,7 +263,7 @@ async def test_o3_workspace_scope_does_not_guess_repository_scoped_cache_into_wo
         ],
         volumes=[_Volume("cache-alpha", _volume_labels("alpha"), mutations)],
     )
-    monkeypatch.setattr("dev_workspace_mcp.server._try_docker_client", lambda: docker_client)
+    monkeypatch.setattr("mcp_chatgpt_sandbox.server._try_docker_client", lambda: docker_client)
     server = create_server(minimal_config)
     state_db = _seed_state(minimal_config.state_db_path)
     state_db.close()
@@ -283,8 +283,8 @@ async def test_o3_docker_unavailable_is_explicitly_degraded_not_fabricated_zero(
     def unavailable_statvfs(_path: object) -> object:
         raise OSError(errno.EIO, "host detail must not leak")
 
-    monkeypatch.setattr("dev_workspace_mcp.server._try_docker_client", lambda: None)
-    monkeypatch.setattr("dev_workspace_mcp.operations.inventory.os.statvfs", unavailable_statvfs)
+    monkeypatch.setattr("mcp_chatgpt_sandbox.server._try_docker_client", lambda: None)
+    monkeypatch.setattr("mcp_chatgpt_sandbox.operations.inventory.os.statvfs", unavailable_statvfs)
     server = create_server(minimal_config)
 
     result = await server.call_tool("resource_inventory", {})

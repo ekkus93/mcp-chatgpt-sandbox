@@ -12,9 +12,9 @@ import pytest
 import yaml
 from click.testing import CliRunner
 
-from dev_workspace_mcp.cli import main
-from dev_workspace_mcp.config import load_config
-from dev_workspace_mcp.server import create_server
+from mcp_chatgpt_sandbox.cli import main
+from mcp_chatgpt_sandbox.config import load_config
+from mcp_chatgpt_sandbox.server import create_server
 
 
 def _write_config(path: Path, data: dict[str, Any]) -> Path:
@@ -264,7 +264,7 @@ async def test_at_h032_reset_restores_project_environment_and_cache_mounts(
     mounts, both of which `resolve_caches`/`cache_volume_name` compute
     the same way `workspace_open` itself would, with no live state to
     "duplicate"."""
-    from dev_workspace_mcp.workspace.caches import cache_volume_name
+    from mcp_chatgpt_sandbox.workspace.caches import cache_volume_name
 
     repo_path = tmp_path / "work" / "example"
     _configured_repo(minimal_config_dict, default_image_tag, repo_path)
@@ -334,7 +334,7 @@ async def test_at_hr009_delete_reclaims_cache_volumes(
     `.mcp-workspace.yml` and reclaims them — otherwise a repository id
     later reused for a different project would silently inherit the old
     project's cache volumes."""
-    from dev_workspace_mcp.workspace.caches import cache_volume_name
+    from mcp_chatgpt_sandbox.workspace.caches import cache_volume_name
 
     repo_path = tmp_path / "work" / "example"
     _configured_repo(minimal_config_dict, default_image_tag, repo_path)

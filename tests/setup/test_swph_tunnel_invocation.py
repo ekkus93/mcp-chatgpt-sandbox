@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 from textual.widgets import Button, Input
 
-from dev_workspace_mcp.setup.app import STEPS, SetupWizardApp
-from dev_workspace_mcp.setup.model import SetupStep
-from dev_workspace_mcp.setup.tunnel import build_tunnel_profile_plan
+from mcp_chatgpt_sandbox.setup.app import STEPS, SetupWizardApp
+from mcp_chatgpt_sandbox.setup.model import SetupStep
+from mcp_chatgpt_sandbox.setup.tunnel import build_tunnel_profile_plan
 
 
 def _go_to(app: SetupWizardApp, step: SetupStep) -> None:
@@ -43,7 +43,7 @@ async def test_swphv_001_tunnel_prepare_is_independent_of_caller_cwd(
         assert list(plan.server_argv) == [
             str(Path(sys.executable).expanduser()),
             "-m",
-            "dev_workspace_mcp",
+            "mcp_chatgpt_sandbox",
             "serve",
             "--config",
             str(config_path.resolve(strict=False)),
@@ -55,7 +55,7 @@ def test_swphv_001_module_entrypoint_runs_from_unrelated_cwd(tmp_path: Path) -> 
     unrelated = tmp_path / "module cwd"
     unrelated.mkdir()
     result = subprocess.run(
-        [sys.executable, "-m", "dev_workspace_mcp", "--help"],
+        [sys.executable, "-m", "mcp_chatgpt_sandbox", "--help"],
         cwd=unrelated,
         check=False,
         capture_output=True,
@@ -73,7 +73,7 @@ async def test_swphv_001_unusable_python_is_action_required_and_not_persisted(
     tmp_path: Path,
 ) -> None:
     missing_python = tmp_path / "missing python"
-    monkeypatch.setattr("dev_workspace_mcp.setup.tunnel.sys.executable", str(missing_python))
+    monkeypatch.setattr("mcp_chatgpt_sandbox.setup.tunnel.sys.executable", str(missing_python))
     app = SetupWizardApp(config_path=tmp_path / "config.yml", state_path=tmp_path / "state.json")
     async with app.run_test() as pilot:
         _go_to(app, SetupStep.CHATGPT)

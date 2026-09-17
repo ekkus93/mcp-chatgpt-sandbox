@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from dev_workspace_mcp.setup.model import (
+from mcp_chatgpt_sandbox.setup.model import (
     SETUP_STATE_VERSION,
     SetupRepositoryState,
     SetupState,
