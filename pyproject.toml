@@ -21,7 +21,13 @@ dependencies = [
 dev-workspace-mcp = "dev_workspace_mcp.entrypoint:main"
 
 [build-system]
-requires = ["uv_build>=0.11.0,<0.12.0"]
+# `uv-build` is released in lockstep with `uv` itself, so this range has to
+# track uv's current minor or every build prints
+# `build_system.requires ... does not contain the current uv version`, and uv
+# falls back to resolving the backend instead of using its bundled one. That
+# warning surfaced on every `uv run` rebuild and inside `.githooks/pre-commit`'s
+# temporary worktree build. Bump the bounds when adopting a new uv minor.
+requires = ["uv_build>=0.12.0,<0.13.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
