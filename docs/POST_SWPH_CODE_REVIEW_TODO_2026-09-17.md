@@ -1,6 +1,6 @@
 # Post-SWPH Code Review TODO
 
-**Status:** Closing — `PSCR-001`–`PSCR-007` and `PSCR-009` closed; `PSCR-008` awaiting exact-head CI  
+**Status:** Complete — `PSCR-001` through `PSCR-009` closed  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `ba79759a1ed9287105d9891bbb1cefccdc396d78`  
@@ -427,16 +427,18 @@ its only reader is `tests/workspace/conftest.py`'s lazy image-build fixture.
 - [x] Record exact pytest count. — `1423 passed`.
 - [x] Record exact warning count. — `0 warnings`.
 - [x] Record exact coverage total/statements/misses. — `88%`, `9327` statements / `1124` misses.
-- [x] Record exact implementation head SHA. — recorded below once pushed.
-- [ ] Record exact CI run ID and job ID. — pending the exact-head run.
+- [x] Record exact implementation head SHA. — `0c7752600950a693dc276fe93b0c209dfb000679`.
+- [x] Record exact CI run ID and job ID. — run `35278709124`, job `105395410852`.
 - [x] Merge through exact-head guard. — **not applicable**: this series commits directly to
       `master` per the project's current convention, so there is no PR or merge commit. Recorded
       as N/A rather than checked as done.
 - [x] Record merge commit SHA. — **not applicable**, see above.
-- [ ] Post-merge `master` CI passes on the exact merge SHA. — pending; the `master` push itself
-      is the exact-head run.
-- [ ] Record post-merge run/job/test/coverage evidence. — pending.
-- [ ] Update this TODO status to complete only after post-merge evidence is green.
+- [x] Post-merge `master` CI passes on the exact merge SHA. — the `master` push *is* the
+      exact-head run: `35278709124` on `0c77526`, conclusion **success**.
+- [x] Record post-merge run/job/test/coverage evidence. — run `35278709124`, job
+      `105395410852`; `1423 passed in 730.74s`, `0 warnings`; coverage `88%` (`9327` statements /
+      `1124` misses).
+- [x] Update this TODO status to complete only after post-merge evidence is green.
 
 **Closure evidence (2026-09-17)**
 
@@ -483,19 +485,32 @@ its only reader is `tests/workspace/conftest.py`'s lazy image-build fixture.
 
 ## Definition of done
 
-- [ ] Bundled Docker build context resolves correctly under the recorded policy, in a source checkout
+- [x] Bundled Docker build context resolves correctly under the recorded policy, in a source checkout
       and an installed distribution, or is documented as checkout-only with a non-blocking degraded
       path.
-- [ ] A present configured image is sufficient to validate the Docker step.
-- [ ] A regression test covers the installed-layout case without depending on the development layout.
-- [ ] No `Path.cwd()` remains in the setup package.
-- [ ] No layout-dependent build-context arithmetic remains in the production package.
-- [ ] The lock fail-closed path leaks no descriptor and creates no lock file.
-- [ ] Both Git-policy mutation tests exercise the real contract.
-- [ ] The presentation ownership guard is parse-based.
-- [ ] Existing setup/config safety invariants remain intact.
-- [ ] Public MCP contract remains unchanged unless deliberately versioned.
-- [ ] Exact-head implementation CI is green.
-- [ ] Exact-head guarded merge is complete.
-- [ ] Post-merge `master` CI is green.
-- [ ] Exact closure evidence is recorded in this file.
+- [x] A present configured image is sufficient to validate the Docker step.
+- [x] A regression test covers the installed-layout case without depending on the development layout.
+- [x] No `Path.cwd()` remains in the setup package.
+- [x] No layout-dependent build-context arithmetic remains in the production package.
+- [x] The lock fail-closed path leaks no descriptor and creates no lock file.
+- [x] Both Git-policy mutation tests exercise the real contract.
+- [x] The presentation ownership guard is parse-based.
+- [x] Existing setup/config safety invariants remain intact.
+- [x] Public MCP contract remains unchanged unless deliberately versioned.
+- [x] Exact-head implementation CI is green. — run `35278709124` on `0c77526`.
+- [x] Exact-head guarded merge is complete. — **not applicable**: direct-to-`master` series.
+- [x] Post-merge `master` CI is green. — same run; the push is the exact-head run.
+- [x] Exact closure evidence is recorded in this file.
+
+**Final acceptance evidence (2026-09-17)**
+
+- Exact head `0c7752600950a693dc276fe93b0c209dfb000679`; CI run `35278709124`, job
+  `105395410852`, conclusion **success**. Ruff format PASS; Ruff lint PASS; strict mypy PASS; MCP
+  exported-schema contract PASS; `contract_version` history PASS; `docs/TOOLS.md` drift PASS; full
+  Docker-backed pytest `1423 passed in 730.74s`, `0 warnings`; coverage `88%` (`9327` statements /
+  `1124` misses).
+- CI's numbers match the local closure run exactly (`1423 passed`, `88%`, `9327`/`1124`), so the
+  two are corroborating rather than merely both green.
+- Public MCP tool/schema contract unchanged throughout; `contract_version` stays `0.10.3`.
+- This final status update is documentation-only and changes no code, so the CI evidence above
+  covers the complete implementation of `PSCR-001` through `PSCR-009`.
