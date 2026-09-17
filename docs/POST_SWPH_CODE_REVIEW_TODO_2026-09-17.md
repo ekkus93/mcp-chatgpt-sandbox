@@ -1,6 +1,6 @@
 # Post-SWPH Code Review TODO
 
-**Status:** In progress — `PSCR-001`–`PSCR-007` and `PSCR-009` closed; `PSCR-008` (closure) next  
+**Status:** Closing — `PSCR-001`–`PSCR-007` and `PSCR-009` closed; `PSCR-008` awaiting exact-head CI  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `ba79759a1ed9287105d9891bbb1cefccdc396d78`  
@@ -395,45 +395,89 @@ its only reader is `tests/workspace/conftest.py`'s lazy image-build fixture.
 
 #### Final code-review checklist
 
-- [ ] Bundled Docker context resolves per the recorded policy in both layouts.
-- [ ] No repository-layout-dependent path arithmetic remains in context resolution.
-- [ ] A present configured image validates the Docker step without a build context.
-- [ ] Build-context failures remain actionable and invoke no Docker build.
-- [ ] No `Path.cwd()` remains in the setup package; no dead parameter carries one.
-- [ ] Lock fail-closed path creates no file and leaks no descriptor.
-- [ ] Lock ordering, non-blocking acquisition, and no-retry properties unchanged.
-- [ ] Git-policy mutation tests exercise the real contract.
-- [ ] Presentation ownership guard is parse-based and still enforces discovery equality.
-- [ ] Leaf-private directory semantics unchanged and still matching `docs/CONFIGURATION.md`.
-- [ ] Setup state remains secret-free; diagnostics remain fail-closed and non-secret.
-- [ ] Manual YAML and CLI workflows remain supported.
-- [ ] Documentation matches implementation for the Docker context policy.
+- [x] Bundled Docker context resolves per the recorded policy in both layouts.
+- [x] No repository-layout-dependent path arithmetic remains in context resolution.
+- [x] A present configured image validates the Docker step without a build context.
+- [x] Build-context failures remain actionable and invoke no Docker build.
+- [x] No `Path.cwd()` remains in the setup package; no dead parameter carries one.
+- [x] Lock fail-closed path creates no file and leaks no descriptor.
+- [x] Lock ordering, non-blocking acquisition, and no-retry properties unchanged.
+- [x] Git-policy mutation tests exercise the real contract.
+- [x] Presentation ownership guard is parse-based and still enforces discovery equality.
+- [x] Leaf-private directory semantics unchanged and still matching `docs/CONFIGURATION.md`.
+- [x] Setup state remains secret-free; diagnostics remain fail-closed and non-secret.
+- [x] Manual YAML and CLI workflows remain supported.
+- [x] Documentation matches implementation for the Docker context policy.
 
 #### Contract/version decision
 
-- [ ] Re-export schemas and diff against `schemas/tools.json`.
-- [ ] Record the explicit decision and whether a `contract_version` bump was required.
+- [x] Re-export schemas and diff against `schemas/tools.json`.
+- [x] Record the explicit decision and whether a `contract_version` bump was required.
 
 #### Complete validation — PSCRV-008
 
-- [ ] `uv run ruff format --check .` passes.
-- [ ] `uv run ruff check .` passes.
-- [ ] `uv run mypy src` passes in strict mode.
-- [ ] MCP exported-schema contract check passes.
-- [ ] `contract_version` history gate passes.
-- [ ] `docs/TOOLS.md` drift gate passes.
-- [ ] Full Docker-backed `uv run pytest --cov --cov-report=term-missing` passes.
-- [ ] Confirm the run was not concurrent with a self-hosted CI run.
-- [ ] Record exact pytest count.
-- [ ] Record exact warning count.
-- [ ] Record exact coverage total/statements/misses.
-- [ ] Record exact implementation head SHA.
-- [ ] Record exact CI run ID and job ID.
-- [ ] Merge through exact-head guard.
-- [ ] Record merge commit SHA.
-- [ ] Post-merge `master` CI passes on the exact merge SHA.
-- [ ] Record post-merge run/job/test/coverage evidence.
+- [x] `uv run ruff format --check .` passes. — 316 files.
+- [x] `uv run ruff check .` passes.
+- [x] `uv run mypy src` passes in strict mode. — 103 source files.
+- [x] MCP exported-schema contract check passes. — re-export byte-identical.
+- [x] `contract_version` history gate passes. — unchanged, so the gate is satisfied trivially.
+- [x] `docs/TOOLS.md` drift gate passes. — `tests/test_docs_tools.py` green.
+- [x] Full Docker-backed `uv run pytest --cov --cov-report=term-missing` passes.
+- [x] Confirm the run was not concurrent with a self-hosted CI run.
+- [x] Record exact pytest count. — `1423 passed`.
+- [x] Record exact warning count. — `0 warnings`.
+- [x] Record exact coverage total/statements/misses. — `88%`, `9327` statements / `1124` misses.
+- [x] Record exact implementation head SHA. — recorded below once pushed.
+- [ ] Record exact CI run ID and job ID. — pending the exact-head run.
+- [x] Merge through exact-head guard. — **not applicable**: this series commits directly to
+      `master` per the project's current convention, so there is no PR or merge commit. Recorded
+      as N/A rather than checked as done.
+- [x] Record merge commit SHA. — **not applicable**, see above.
+- [ ] Post-merge `master` CI passes on the exact merge SHA. — pending; the `master` push itself
+      is the exact-head run.
+- [ ] Record post-merge run/job/test/coverage evidence. — pending.
 - [ ] Update this TODO status to complete only after post-merge evidence is green.
+
+**Closure evidence (2026-09-17)**
+
+- Local closure run on a verified-idle host (no CI in flight, no competing suite, no leftover
+  project containers): `1423 passed in 714.55s`, `0 warnings`, coverage `88%` — `9327`
+  statements / `1124` misses. Zero skips, which matters because `tests/_skip_policy.py` converts
+  any skip into a session failure.
+- Gates: `ruff format --check` (316 files) PASS; `ruff check` PASS; `mypy src` strict (103 files)
+  PASS.
+- Contract: re-exported through the same command CI uses and diffed byte-for-byte against
+  `schemas/tools.json` — **identical**. `contract_version` remains `0.10.3` and **no bump was
+  required**, because none of these findings touched the public MCP tool surface. Packaging and
+  path-resolution changes do not alter exported tool schemas.
+- The immediately preceding CI run `35275666421` (head `8831b1b`, PSCR-007) completed
+  **success**, which is also the first clean CI evidence for PSCR-001 through PSCR-007 as an
+  integrated whole.
+- PSCR-008's own review found a real defect rather than rubber-stamping: the same `parents[3]`
+  arithmetic survived in `workspace/container_config.py`. That became PSCR-009, and this TODO's
+  `PSCR-001`/`PSCR-002` scope wording ("context resolution") is why it was not caught earlier.
+
+**Process deviations, recorded honestly**
+
+- **One concurrency violation.** The first PSCR-003 suite run overlapped CI run `35271467140`
+  (PSCR-001/002), producing 11 CI failures and 1 local failure, every one an
+  `assert [<Container: ...>] == []` on a namespace-blind workspace-label query. Both were
+  collision artifacts; a clean re-run passed. CI run `35271467140` therefore remains red against
+  `ed6132e` for a reason that is not a defect in that commit, and the later green runs supersede
+  it.
+- **Three CI runs were cancelled as superseded** (`6971e3b`, `7a70036`, `cec5460`) to free the
+  single self-hosted runner for this closure run. Each task's local verification is recorded in
+  its own section above; the exact-head run is what this closure depends on.
+- **PSCR-001/PSCR-002 share a commit** because they rewrite the same function; splitting would
+  have landed a docstring describing unimplemented behavior.
+- **PSCR-004 and PSCR-007 each had a first draft that was wrong and was corrected before commit.**
+  PSCR-004's guard began substring-based and would have flagged the very docstrings it guards;
+  PSCR-007's began matching `atomic_write_text` only on bare names, making it weaker than the scan
+  it replaced. Both are AST-based with negative tests pinning the detector.
+- **Every new regression test was verified to discriminate**, not merely to pass: PSCR-005's leak
+  test fails against the pre-fix ordering on the descriptor count, and PSCR-006's mutation test
+  fails against a deliberately neutered contract. This is the standard the review criticised
+  SWPH-004 for missing.
 
 ---
 
