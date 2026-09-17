@@ -1,5 +1,4 @@
 from mcp_chatgpt_sandbox.workspace.container_config import (
-    DEFAULT_IMAGE_BUILD_CONTEXT,
     DEFAULT_IMAGE_TAG,
     build_workspace_run_kwargs,
     userns_remap_active,
@@ -25,7 +24,6 @@ from mcp_chatgpt_sandbox.workspace.naming import (
 )
 
 __all__ = [
-    "DEFAULT_IMAGE_BUILD_CONTEXT",
     "DEFAULT_IMAGE_TAG",
     "LABEL_MANAGED",
     "LABEL_REPOSITORY_ID",

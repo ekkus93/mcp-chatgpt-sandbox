@@ -10,7 +10,6 @@ before exec'ing the real command via `setpriv`.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import Any
 
 import docker
@@ -22,9 +21,6 @@ from mcp_chatgpt_sandbox.errors import ContainerCreateFailedError
 _NANO_CPUS_PER_CPU = 1_000_000_000
 
 DEFAULT_IMAGE_TAG = "mcp-chatgpt-sandbox-ubuntu:24.04"
-
-#: `src/mcp_chatgpt_sandbox/workspace/container_config.py` -> repo root -> `docker/default`.
-DEFAULT_IMAGE_BUILD_CONTEXT = Path(__file__).resolve().parents[3] / "docker" / "default"
 
 #: §19.3: where the pinned GitHub host-key file is mounted inside every
 #: workspace container — fixed, outside the working tree, never inside

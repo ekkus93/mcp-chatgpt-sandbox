@@ -4,7 +4,7 @@
 **Date:** 2026-09-17  
 **Reviewed baseline:** `ba79759a1ed9287105d9891bbb1cefccdc396d78`  
 **Source review:** line-by-line code review of `docs/SETUP_WIZARD_POST_HARDENING_REVIEW_TODO_2026-09-14.md` against the merged implementation  
-**Task series:** `PSCR-001` through `PSCR-008`  
+**Task series:** `PSCR-001` through `PSCR-009`  
 **Validation series:** `PSCRV-*`
 
 ## 1. Purpose
@@ -210,6 +210,26 @@ rather than asserting set inequality on locally built values.
 Base the check on parsed source (AST imports and attribute/call targets) rather than raw substring
 matching, so comments cannot trip it and aliasing cannot bypass it.
 
+### PSCR-009 — Remove the second layout-dependent build-context site
+
+Found by PSCR-008's own final review, which is what it exists for.
+`workspace/container_config.py` defines:
+
+```python
+DEFAULT_IMAGE_BUILD_CONTEXT = Path(__file__).resolve().parents[3] / "docker" / "default"
+```
+
+This is the same defect as 3.1 in a module PSCR-002 did not scope: correct only for the `src/`
+layout, resolving outside the package root for an installed distribution. It is **not** an
+operator-facing defect — the constant has no production consumer; its only reader is
+`tests/workspace/conftest.py`'s lazy image-build fixture — but it is a live instance of the defect
+class PSCR-002 removed, exported from `workspace/__init__.py` as though it were public.
+
+The fix is to move it to its only consumer rather than to make the arithmetic cleverer. A
+test-only constant in production code, exported publicly, computing a path that is wrong outside
+a checkout, is three problems that all dissolve together; tests may legitimately assume a
+checkout, and `Path(__file__).parents[2]` is already the established idiom for that in this suite.
+
 ### PSCR-008 — Final regression, contract, and closure
 
 Re-verify every touched boundary, confirm the public MCP contract is unchanged, and close only on
@@ -252,6 +272,7 @@ files does not alter the tool contract.
   degraded path.
 - A present configured image is sufficient to validate the Docker step.
 - No `Path.cwd()` remains in the setup package, and no dead parameter carries it.
+- No layout-dependent build-context arithmetic remains in the production package.
 - The lock fail-closed path leaks no descriptor.
 - Both Git-policy mutation tests exercise the real contract.
 - The presentation ownership guard is parse-based.

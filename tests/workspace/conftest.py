@@ -44,7 +44,6 @@ import pytest
 from mcp_chatgpt_sandbox.config.models import SSHConfig
 from mcp_chatgpt_sandbox.db import open_db
 from mcp_chatgpt_sandbox.repositories import RepositoryRecord
-from mcp_chatgpt_sandbox.workspace.container_config import DEFAULT_IMAGE_BUILD_CONTEXT
 from mcp_chatgpt_sandbox.workspace.manager import DockerWorkspaceManager
 from mcp_chatgpt_sandbox.workspace.naming import TEST_RESOURCE_NAMESPACE_ENV
 
@@ -56,6 +55,15 @@ KEEP_ALIVE_RUN_KWARGS = {"command": ["sleep", "3600"]}
 #: Distinct from DEFAULT_IMAGE_TAG so a test build never overwrites
 #: whatever an operator has actually deployed under that name.
 DEFAULT_IMAGE_TEST_TAG = "mcp-chatgpt-sandbox-test-s7:24.04"
+
+#: PSCR-009 (`docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`): defined here, not in
+#: `workspace/container_config.py`. It lived in the production package, was exported from
+#: `workspace/__init__.py`, and computed `parents[3] / "docker" / "default"` — correct only
+#: for the `src/` layout and resolving outside the package root once installed, the same
+#: defect PSCR-002 removed from the setup wizard. It never had a production consumer; this
+#: fixture is its only reader. A test may legitimately assume a checkout, so the repo-root
+#: idiom already used across this suite is the honest place for it.
+DEFAULT_IMAGE_BUILD_CONTEXT = Path(__file__).resolve().parents[2] / "docker" / "default"
 
 #: Populated by the process-global class-method interceptors installed by
 #: `_track_created_docker_resources` and drained by `docker_client` teardown.

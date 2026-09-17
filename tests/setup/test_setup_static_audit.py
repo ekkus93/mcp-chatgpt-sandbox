@@ -139,6 +139,34 @@ def test_wcr_013_setup_has_no_retry_or_sleep_framework() -> None:
         assert "backoff" not in text
 
 
+def test_pscrv_009_production_has_no_layout_dependent_build_context() -> None:
+    """PSCR-009: no production module may derive a path by parent-index arithmetic.
+
+    `setup/docker_setup.py` resolved `parents[3] / "docker" / "default"` and
+    `workspace/container_config.py` did the same; both were correct only for this
+    repository's `src/` layout and resolved outside the package root once
+    installed. Scoped to the whole production package rather than to the two
+    known sites, so a third one cannot appear unnoticed.
+    """
+
+    production_root = _REPO_ROOT / "src" / "mcp_chatgpt_sandbox"
+    offenders: list[str] = []
+    for path in sorted(production_root.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.Subscript):
+                continue
+            value = node.value
+            if not (isinstance(value, ast.Attribute) and value.attr == "parents"):
+                continue
+            index = node.slice
+            if isinstance(index, ast.Constant) and isinstance(index.value, int):
+                offenders.append(f"{path.relative_to(production_root)}:{node.lineno}")
+
+    assert offenders == [], (
+        f"production modules must not index `.parents[...]` for a repository path: {offenders}"
+    )
+
+
 def test_pscrv_004_setup_never_reads_the_process_working_directory() -> None:
     """PSCR-004: the setup package must not consult the caller's cwd.
 

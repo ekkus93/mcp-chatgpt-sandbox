@@ -1,10 +1,10 @@
 # Post-SWPH Code Review TODO
 
-**Status:** In progress — `PSCR-001`–`PSCR-007` closed; `PSCR-008` (closure) next  
+**Status:** In progress — `PSCR-001`–`PSCR-007` and `PSCR-009` closed; `PSCR-008` (closure) next  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `ba79759a1ed9287105d9891bbb1cefccdc396d78`  
-**Task series:** `PSCR-001` through `PSCR-008`  
+**Task series:** `PSCR-001` through `PSCR-009`  
 **Validation series:** `PSCRV-*`
 
 This TODO implements `docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`. It addresses one functional
@@ -343,6 +343,48 @@ repository layout.
   consumer still enforces it.
 - `tests/setup/test_setup_static_audit.py`: `14 passed`.
 
+### PSCR-009 — Remove the second layout-dependent build-context site
+
+**Goal:** the defect class PSCR-002 removed must not survive anywhere in the production package.
+
+Found by PSCR-008's final review. `workspace/container_config.py` carries the same
+`parents[3]` arithmetic, exported from `workspace/__init__.py`, with no production consumer —
+its only reader is `tests/workspace/conftest.py`'s lazy image-build fixture.
+
+- [x] Confirm `DEFAULT_IMAGE_BUILD_CONTEXT` has no production consumer.
+- [x] Move the constant to its only consumer rather than re-deriving it in production.
+- [x] Remove it from `workspace/__init__.py`'s imports and `__all__`.
+- [x] Use the established test repo-root idiom, not parent-index arithmetic from the package.
+- [x] Leave `DEFAULT_IMAGE_TAG` in production, where it is genuinely used.
+
+**Validation — PSCRV-009**
+
+- [x] Static test: no `parents[3]`-style build-context arithmetic remains in `src/`.
+- [x] Existing Docker-backed default-image tests still build and use the test image.
+- [x] `tests/workspace/conftest.py` resolves the same context path as before the move.
+
+**Closure evidence (2026-09-17)**
+
+- Confirmed no production consumer: the only reader was `tests/workspace/conftest.py`'s lazy
+  image-build fixture. The constant was nonetheless defined in `workspace/container_config.py`
+  and re-exported from `workspace/__init__.py`'s `__all__`, so it read as public API.
+- Moved to `tests/workspace/conftest.py` using `Path(__file__).resolve().parents[2]`, the
+  repo-root idiom already used by `test_setup_static_audit.py`,
+  `test_swph_git_policy_exhaustiveness.py`, and others. Moving it rather than re-deriving it in
+  production dissolves three problems at once: layout-dependent arithmetic, a test-only constant
+  living in production, and a misleading public export.
+- Verified the relocated constant resolves the **same** absolute path as before
+  (`/home/phil/work/mcp-chatgpt-sandbox/docker/default`, `is_dir()` true), so the fixture builds
+  from an identical context.
+- `DEFAULT_IMAGE_TAG` deliberately stays in `container_config.py`, where production genuinely
+  uses it.
+- `test_pscrv_009_production_has_no_layout_dependent_build_context` added. It is scoped to the
+  whole production package rather than the two known sites, and flags any `.parents[<int>]`
+  subscript, so a third instance cannot appear unnoticed. It reports zero offenders.
+- Verification: Ruff format (316 files) PASS; Ruff lint PASS; strict mypy (103 files) PASS;
+  Docker-free suite `668 passed`. The now-unused `pathlib.Path` import was removed from
+  `container_config.py`.
+
 ---
 
 ## Phase 4 — Final acceptance and closure
@@ -403,6 +445,7 @@ repository layout.
 - [ ] A present configured image is sufficient to validate the Docker step.
 - [ ] A regression test covers the installed-layout case without depending on the development layout.
 - [ ] No `Path.cwd()` remains in the setup package.
+- [ ] No layout-dependent build-context arithmetic remains in the production package.
 - [ ] The lock fail-closed path leaks no descriptor and creates no lock file.
 - [ ] Both Git-policy mutation tests exercise the real contract.
 - [ ] The presentation ownership guard is parse-based.
