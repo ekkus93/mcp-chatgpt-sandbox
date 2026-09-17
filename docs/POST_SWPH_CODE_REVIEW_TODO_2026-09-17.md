@@ -1,6 +1,6 @@
 # Post-SWPH Code Review TODO
 
-**Status:** In progress — `PSCR-001`–`PSCR-005` closed; `PSCR-006` next  
+**Status:** In progress — `PSCR-001`–`PSCR-006` closed; `PSCR-007` next  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `ba79759a1ed9287105d9891bbb1cefccdc396d78`  
@@ -270,18 +270,40 @@ repository layout.
 
 **Goal:** the mutation proofs must exercise the real contract.
 
-- [ ] Replace the future-production-field test so it runs the real exhaustiveness check against a
+- [x] Replace the future-production-field test so it runs the real exhaustiveness check against a
       mutated model rather than asserting local set inequality.
-- [ ] Replace the stale-guided-field test on the same basis.
-- [ ] Keep the existing bidirectional production/editor/UI/manifest equality assertions.
-- [ ] Keep `GIT_POLICY_GUIDED_CONTROLS` independent of `GitPolicyConfig.model_fields`.
+- [x] Replace the stale-guided-field test on the same basis.
+- [x] Keep the existing bidirectional production/editor/UI/manifest equality assertions.
+- [x] Keep `GIT_POLICY_GUIDED_CONTROLS` independent of `GitPolicyConfig.model_fields`.
 
 **Validation — PSCRV-006**
 
-- [ ] Test: the replacement fails when a field is added to the model under test and no control exists.
-- [ ] Test: the replacement fails for a manifest entry absent from the model under test.
-- [ ] Demonstrate the replacement is strictly stronger than what it replaces.
-- [ ] Existing guided-control pilots, round-trip, and preset tests remain green.
+- [x] Test: the replacement fails when a field is added to the model under test and no control exists.
+- [x] Test: the replacement fails for a manifest entry absent from the model under test.
+- [x] Demonstrate the replacement is strictly stronger than what it replaces.
+- [x] Existing guided-control pilots, round-trip, and preset tests remain green.
+
+**Closure evidence (2026-09-17)**
+
+- The contract is now `_check_guided_manifest(policy_model=..., guided_controls=..., ui_fields=...)`,
+  and all three tests call it. The production test passes the real values; the mutation tests pass a
+  `GitPolicyConfig` subclass carrying an unsupported field, and a manifest carrying an entry with no
+  production field.
+- The future-field test additionally re-runs the same call against the *unmutated* model and
+  asserts it passes, so its `pytest.raises` is attributable to the added field rather than to a
+  broken helper.
+- **Strict strengthening demonstrated empirically.** Temporarily removing
+  `assert production_fields == guided_fields` from the contract makes
+  `test_swphv_004_future_production_field_fails_guided_exhaustiveness_contract` fail, because
+  `pytest.raises` then sees no `AssertionError`. The replaced version would have passed against
+  that same neutered contract, since it never invoked the contract at all — it asserted only
+  `frozenset(A | {x}) != frozenset(A)`. The new test is therefore coupled to the real check and
+  the old one was coupled to nothing.
+- Noted honestly: the stale-manifest test trips on the `editor_fields` comparison rather than the
+  production one, because it also widens `ui_fields` to isolate the manifest discrepancy. It is
+  still coupled to the real contract, just to a different assertion within it.
+- `tests/setup/test_swph_git_policy_exhaustiveness.py`: `4 passed`. `GIT_POLICY_GUIDED_CONTROLS`
+  remains an explicit literal independent of `GitPolicyConfig.model_fields`.
 
 ### PSCR-007 — Strengthen the presentation persistence-ownership guard
 
