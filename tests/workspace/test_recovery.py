@@ -26,7 +26,7 @@ from mcp_chatgpt_sandbox.workspace.naming import (
     container_name,
     persistent_workspace_id,
 )
-from tests.workspace.conftest import KEEP_ALIVE_RUN_KWARGS, TEST_IMAGE
+from tests.workspace.conftest import KEEP_ALIVE_RUN_KWARGS, TEST_IMAGE, containers_in_this_context
 
 # --- _state_from_docker_container (§44.2): pure classification logic --------------
 #
@@ -289,8 +289,8 @@ async def test_at_017_changes_survive_a_container_crash_and_restart(
     # not the exec/stop tools. "Restart" is simulated by a fresh
     # DockerWorkspaceManager over the same on-disk state DB, the way a
     # fresh daemon process restarting would see it.
-    (container,) = docker_client.containers.list(
-        all=True, filters={"label": f"{LABEL_WORKSPACE_ID}={workspace_id}"}
+    (container,) = containers_in_this_context(
+        docker_client, label=LABEL_WORKSPACE_ID, value=workspace_id
     )
     container.kill()
 

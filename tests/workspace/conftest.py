@@ -40,12 +40,16 @@ import docker
 import docker.models.containers
 import docker.models.volumes
 import pytest
+from docker.models.containers import Container
 
 from mcp_chatgpt_sandbox.config.models import SSHConfig
 from mcp_chatgpt_sandbox.db import open_db
 from mcp_chatgpt_sandbox.repositories import RepositoryRecord
 from mcp_chatgpt_sandbox.workspace.manager import DockerWorkspaceManager
-from mcp_chatgpt_sandbox.workspace.naming import TEST_RESOURCE_NAMESPACE_ENV
+from mcp_chatgpt_sandbox.workspace.naming import (
+    TEST_RESOURCE_NAMESPACE_ENV,
+    container_matches_test_namespace,
+)
 
 #: Small, always-fast, already present on this host (verified in S6's
 #: development). Needs a foreground command or it exits immediately.
@@ -185,6 +189,35 @@ def remove_tracked_docker_resources(client: docker.DockerClient) -> None:
     for volume_name in volume_names:
         with contextlib.suppress(docker.errors.NotFound):
             client.volumes.get(volume_name).remove(force=True)
+
+
+def containers_in_this_context(
+    client: docker.DockerClient, *, label: str, value: str
+) -> list[Container]:
+    """Containers matching ``label=value`` that belong to *this* test context.
+
+    PSCR-010 (`docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`). G3R-015 already
+    gives every Docker-using pytest context its own physical namespace, but the
+    ownership labels a query filters on — `workspace-id`, `repository-id` — carry
+    the *logical* id, which is identical across namespaces. So a bare label query
+    matches a concurrent run's container, and no test in this suite applied
+    `container_matches_test_namespace` to exclude it.
+
+    That is not hypothetical: it produced 11 CI failures and 1 local failure in
+    one overlapping run, every one an `assert [<Container: ...>] == []`. Only
+    absence and exact-count assertions are affected; an inclusion assertion on a
+    hash-derived namespaced name is already safe, because a foreign run cannot
+    produce that name.
+
+    With no namespace active — the production shape — this filters nothing out,
+    matching only containers that likewise carry no namespace label.
+    """
+
+    return [
+        container
+        for container in client.containers.list(all=True, filters={"label": f"{label}={value}"})
+        if container_matches_test_namespace(container.labels)
+    ]
 
 
 @pytest.fixture

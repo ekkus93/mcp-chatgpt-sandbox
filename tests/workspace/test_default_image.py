@@ -23,6 +23,7 @@ from mcp_chatgpt_sandbox.repositories import RepositoryRecord
 from mcp_chatgpt_sandbox.workspace.container_config import build_workspace_run_kwargs
 from mcp_chatgpt_sandbox.workspace.manager import DockerWorkspaceManager
 from mcp_chatgpt_sandbox.workspace.naming import LABEL_MANAGED, LABEL_WORKSPACE_ID
+from tests.workspace.conftest import containers_in_this_context
 
 
 def _run_oneshot(
@@ -541,8 +542,8 @@ def test_at_016_root_mode_without_userns_remap_creates_no_container(
         )
 
     # No container was created under any label for this repository.
-    labeled = docker_client.containers.list(
-        all=True, filters={"label": f"{LABEL_WORKSPACE_ID}=ws_{repository.id}"}
+    labeled = containers_in_this_context(
+        docker_client, label=LABEL_WORKSPACE_ID, value=f"ws_{repository.id}"
     )
     assert labeled == []
 

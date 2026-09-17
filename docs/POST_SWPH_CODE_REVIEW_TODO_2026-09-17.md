@@ -1,10 +1,10 @@
 # Post-SWPH Code Review TODO
 
-**Status:** Complete — `PSCR-001` through `PSCR-009` closed  
+**Status:** Complete — `PSCR-001` through `PSCR-010` closed  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `ba79759a1ed9287105d9891bbb1cefccdc396d78`  
-**Task series:** `PSCR-001` through `PSCR-009`  
+**Task series:** `PSCR-001` through `PSCR-010`  
 **Validation series:** `PSCRV-*`
 
 This TODO implements `docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`. It addresses one functional
@@ -385,6 +385,57 @@ its only reader is `tests/workspace/conftest.py`'s lazy image-build fixture.
   Docker-free suite `668 passed`. The now-unused `pathlib.Path` import was removed from
   `container_config.py`.
 
+### PSCR-010 — Make workspace test assertions namespace-aware
+
+**Goal:** the G3R-015 isolation the suite already builds must actually protect its assertions.
+
+Root cause of the collision recorded under PSCR-003. No test applies
+`container_matches_test_namespace`, so absence and exact-count assertions see concurrent runs'
+containers through their logical-id labels.
+
+- [x] Enumerate every `containers.list` / `volumes.list` assertion in `tests/workspace`.
+- [x] Classify each as absence, exact-count, or inclusion; only the first two are affected.
+- [x] Add one shared helper that scopes a label query to the running context's namespace.
+- [x] Convert the affected assertions to it, including the `name`-substring filters.
+- [x] Leave inclusion assertions alone and record why.
+- [x] Do not weaken any assertion: absence must stay absence, exact counts stay exact.
+
+**Validation — PSCRV-010**
+
+- [x] Test: the helper excludes a container carrying a foreign namespace label.
+- [x] Test: the helper includes a container carrying this context's namespace label.
+- [x] Test: the helper excludes nothing when no namespace is active (production shape).
+- [x] Full Docker-backed suite passes on an idle host.
+
+**Closure evidence (2026-09-17)**
+
+- `containers_in_this_context()` added to `tests/workspace/conftest.py`, beside the
+  `docker_client` fixture that establishes the namespace, and applied at seven sites:
+  `test_project_config_integration.py` (3), `test_resources.py` (2), `test_default_image.py` (1),
+  `test_recovery.py` (1), `test_remote_protection.py` (1).
+- The three `test_project_config_integration.py` sites were the subtlest: they filtered on
+  `{"name": "mcp-chatgpt-sandbox-ws-example"}`, and Docker's `name` filter is a **substring**
+  match, so a concurrent run's `...-ws-example-t<namespace>-<digest>` satisfied it. They are now
+  label-scoped like the rest.
+- `test_project_config_integration.py`'s cache-volume assertion is deliberately **not** converted.
+  It is an *inclusion* check against a hash-derived namespaced name that a foreign run cannot
+  produce, so it was never vulnerable; converting it for uniformity would have added noise without
+  adding protection.
+- No assertion was weakened: absence assertions remain `== []`, exact-count assertions remain
+  exact, and `test_recovery.py`'s single-container unpack remains an unpack.
+- `tests/workspace/test_pscr_namespace_scoped_assertions.py`: 3/3 PASS, using a fake client so
+  they need no Docker daemon. The first test demonstrates the defect shape directly — the
+  unfiltered query returns two containers while the helper returns one — so the filter is pinned
+  independently of whether a converted assertion would notice a regression.
+- Full Docker-backed suite on an idle host (CI run `35279966298` confirmed complete first):
+  `1426 passed in 662.09s`, zero failures, zero skips. Ruff format (316 files) PASS; Ruff lint
+  PASS; strict mypy (103 files) PASS.
+- Implementation note: the first pass at adding imports used a line heuristic and inserted them
+  mid-file, breaking five modules' syntax; Ruff caught it immediately. Redone by locating the true
+  top-level import block with `ast`, and the "already imported?" test was itself corrected to
+  check for a real `ImportFrom` binding rather than a substring, which the converted call sites
+  had been satisfying spuriously.
+
 ---
 
 ## Phase 4 — Final acceptance and closure
@@ -492,6 +543,7 @@ its only reader is `tests/workspace/conftest.py`'s lazy image-build fixture.
 - [x] A regression test covers the installed-layout case without depending on the development layout.
 - [x] No `Path.cwd()` remains in the setup package.
 - [x] No layout-dependent build-context arithmetic remains in the production package.
+- [x] Workspace absence/count assertions are scoped to the running context's namespace.
 - [x] The lock fail-closed path leaks no descriptor and creates no lock file.
 - [x] Both Git-policy mutation tests exercise the real contract.
 - [x] The presentation ownership guard is parse-based.

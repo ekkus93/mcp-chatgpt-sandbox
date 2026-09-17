@@ -4,7 +4,7 @@
 **Date:** 2026-09-17  
 **Reviewed baseline:** `ba79759a1ed9287105d9891bbb1cefccdc396d78`  
 **Source review:** line-by-line code review of `docs/SETUP_WIZARD_POST_HARDENING_REVIEW_TODO_2026-09-14.md` against the merged implementation  
-**Task series:** `PSCR-001` through `PSCR-009`  
+**Task series:** `PSCR-001` through `PSCR-010`  
 **Validation series:** `PSCRV-*`
 
 ## 1. Purpose
@@ -230,6 +230,28 @@ test-only constant in production code, exported publicly, computing a path that 
 a checkout, is three problems that all dissolve together; tests may legitimately assume a
 checkout, and `Path(__file__).parents[2]` is already the established idiom for that in this suite.
 
+### PSCR-010 — Make workspace test assertions namespace-aware
+
+G3R-015 gives every Docker-using pytest context a distinct physical namespace: the
+`docker_client` fixture sets `MCP_CHATGPT_SANDBOX_TEST_RESOURCE_NAMESPACE` to a fresh UUID, and
+`naming.container_name()` folds it into both the container name and the `test-namespace` label.
+Its own comment states the intended guarantee — *"local+CI and reviewer+reviewer runs cannot adopt
+or tear down each other's same-logical-id resources"*.
+
+A set of `tests/workspace` assertions bypasses that guarantee. They query Docker by
+`LABEL_WORKSPACE_ID` / `LABEL_REPOSITORY_ID`, or by a `name` substring filter, and **never apply
+`container_matches_test_namespace`** — no test in the suite does. Those labels carry the *logical*
+id, which is identical across namespaces, so a concurrent run's container satisfies the filter.
+
+Only **absence** and **exact-count** assertions are affected. An inclusion assertion such as
+`test_project_config_integration.py`'s cache-volume check is inherently safe, because it looks for
+a specific hash-derived namespaced name that a foreign run cannot produce.
+
+This is the root cause of the collision recorded under PSCR-003: 11 CI failures and 1 local
+failure, every one an `assert [<Container: ...>] == []`. It is not a hypothetical — it is why two
+suites cannot share this host, and why the project has to rely on the operational rule in
+`docs/DEVELOPMENT.md` instead of the isolation mechanism it already built.
+
 ### PSCR-008 — Final regression, contract, and closure
 
 Re-verify every touched boundary, confirm the public MCP contract is unchanged, and close only on
@@ -273,6 +295,7 @@ files does not alter the tool contract.
 - A present configured image is sufficient to validate the Docker step.
 - No `Path.cwd()` remains in the setup package, and no dead parameter carries it.
 - No layout-dependent build-context arithmetic remains in the production package.
+- Workspace absence/count assertions are scoped to the running context's namespace.
 - The lock fail-closed path leaks no descriptor.
 - Both Git-policy mutation tests exercise the real contract.
 - The presentation ownership guard is parse-based.

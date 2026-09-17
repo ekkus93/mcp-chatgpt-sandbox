@@ -24,9 +24,9 @@ from mcp_chatgpt_sandbox.db import open_db
 from mcp_chatgpt_sandbox.server import create_server
 from mcp_chatgpt_sandbox.workspace.caches import cache_volume_name
 from mcp_chatgpt_sandbox.workspace.manager import DockerWorkspaceManager
-from mcp_chatgpt_sandbox.workspace.naming import persistent_workspace_id
+from mcp_chatgpt_sandbox.workspace.naming import LABEL_WORKSPACE_ID, persistent_workspace_id
 from mcp_chatgpt_sandbox.workspace.ssh_agent import SSHAgentManager
-from tests.workspace.conftest import TEST_IMAGE
+from tests.workspace.conftest import TEST_IMAGE, containers_in_this_context
 
 
 def _init_repo(
@@ -204,8 +204,10 @@ async def test_at_hat005_project_environment_cannot_run_the_container_as_root(
         await _open(server)
 
     # no container was created at all for this attempt.
+    # PSCR-010: a `name` filter is a substring match, so it matched a concurrent
+    # run's `...-ws-example-t<namespace>-<digest>` too. Scoped by label + namespace.
     assert (
-        docker_client.containers.list(all=True, filters={"name": "mcp-chatgpt-sandbox-ws-example"})
+        containers_in_this_context(docker_client, label=LABEL_WORKSPACE_ID, value="ws_example")
         == []
     )
 
@@ -238,8 +240,10 @@ async def test_at_g2r001_project_environment_cannot_set_an_exported_shell_functi
         await _open(server)
 
     # no container was created at all for this attempt.
+    # PSCR-010: a `name` filter is a substring match, so it matched a concurrent
+    # run's `...-ws-example-t<namespace>-<digest>` too. Scoped by label + namespace.
     assert (
-        docker_client.containers.list(all=True, filters={"name": "mcp-chatgpt-sandbox-ws-example"})
+        containers_in_this_context(docker_client, label=LABEL_WORKSPACE_ID, value="ws_example")
         == []
     )
 
@@ -267,8 +271,10 @@ async def test_at_g2r002_project_environment_cannot_redirect_gits_configuration(
     with pytest.raises(ToolError, match="interpreter or command resolution"):
         await _open(server)
 
+    # PSCR-010: a `name` filter is a substring match, so it matched a concurrent
+    # run's `...-ws-example-t<namespace>-<digest>` too. Scoped by label + namespace.
     assert (
-        docker_client.containers.list(all=True, filters={"name": "mcp-chatgpt-sandbox-ws-example"})
+        containers_in_this_context(docker_client, label=LABEL_WORKSPACE_ID, value="ws_example")
         == []
     )
 

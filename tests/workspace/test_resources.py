@@ -13,6 +13,8 @@ import docker
 
 from mcp_chatgpt_sandbox.config.models import RepositoryConfig, ServerConfig
 from mcp_chatgpt_sandbox.server import create_server
+from mcp_chatgpt_sandbox.workspace.naming import LABEL_WORKSPACE_ID
+from tests.workspace.conftest import containers_in_this_context
 
 
 def _configured(
@@ -45,8 +47,8 @@ async def test_no_resources_config_means_no_limits(
     opened = await _open(server)
     workspace_id = opened.structured_content["workspace_id"]
 
-    containers = docker_client.containers.list(
-        all=True, filters={"label": f"mcp-chatgpt-sandbox.workspace-id={workspace_id}"}
+    containers = containers_in_this_context(
+        docker_client, label=LABEL_WORKSPACE_ID, value=workspace_id
     )
     assert len(containers) == 1
     host_config = containers[0].attrs["HostConfig"]
@@ -73,8 +75,8 @@ async def test_cpus_memory_and_pids_limit_are_applied_to_the_real_container(
     opened = await _open(server)
     workspace_id = opened.structured_content["workspace_id"]
 
-    containers = docker_client.containers.list(
-        all=True, filters={"label": f"mcp-chatgpt-sandbox.workspace-id={workspace_id}"}
+    containers = containers_in_this_context(
+        docker_client, label=LABEL_WORKSPACE_ID, value=workspace_id
     )
     assert len(containers) == 1
     host_config = containers[0].attrs["HostConfig"]
