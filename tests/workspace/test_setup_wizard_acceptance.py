@@ -8,12 +8,14 @@ import docker
 import pytest
 
 from mcp_chatgpt_sandbox.config import load_config
+from mcp_chatgpt_sandbox.db import open_db
 from mcp_chatgpt_sandbox.server import create_server
 from mcp_chatgpt_sandbox.setup.choices import SetupChoices
 from mcp_chatgpt_sandbox.setup.config_writer import commit_config_update, prepare_config_update
 from mcp_chatgpt_sandbox.setup.host import StorageChoices, prepare_storage_directories
 from mcp_chatgpt_sandbox.setup.materialize import materialize_setup
 from mcp_chatgpt_sandbox.setup.model import SetupRepositoryState, SetupState
+from mcp_chatgpt_sandbox.workspace.ssh_agent import SSHAgentManager
 
 
 def _init_repository(path: Path) -> SetupRepositoryState:
@@ -115,12 +117,38 @@ async def test_wizv_016_generated_config_opens_workspace_through_mcp_harness(
     config = load_config(result.path)
 
     server = create_server(config)
-    opened = await server.call_tool("workspace_open", {"repository_id": "example"})
-    assert opened.structured_content["container_state"] == "running"
-    assert opened.structured_content["repository_id"] == "example"
-    assert opened.structured_content["workspace_id"] == "ws_example"
+    try:
+        opened = await server.call_tool("workspace_open", {"repository_id": "example"})
+        assert opened.structured_content["container_state"] == "running"
+        assert opened.structured_content["repository_id"] == "example"
+        assert opened.structured_content["workspace_id"] == "ws_example"
 
-    persisted = result.path.read_text() + json.dumps(state.to_dict())
-    if storage.audit_path.exists():
-        persisted += storage.audit_path.read_text()
-    assert sensitive_sentinel not in persisted
+        persisted = result.path.read_text() + json.dumps(state.to_dict())
+        if storage.audit_path.exists():
+            persisted += storage.audit_path.read_text()
+        assert sensitive_sentinel not in persisted
+    finally:
+        # This is the only test that reaches the real ssh-agent provisioning
+        # path: it generates an actual ed25519 key and opens the workspace
+        # through the production server, so `workspace_open` starts a host
+        # `ssh-agent` for `ws_example`. `conftest.py`'s session tracker reaps
+        # the container and volumes it created but knows nothing about host
+        # processes, and an agent is deliberately long-lived in production (one
+        # per running workspace, torn down on delete/maintenance/startup
+        # reconciliation) — so nothing else here would ever stop it, and each
+        # run of this test left another agent behind.
+        #
+        # Terminating through the production `SSHAgentManager` rather than
+        # pattern-matching the process list is the point: `terminate()`
+        # verifies boot id, process start time and cmdline signature against
+        # the recorded row before it signals anything, so it cannot kill a PID
+        # the kernel has since reassigned. Reaping by name or socket-path glob
+        # is exactly the shortcut `conftest.py` already refuses for Docker
+        # resources, for the same reason.
+        db = open_db(config.state_db_path)
+        try:
+            SSHAgentManager(db, runtime_dir=config.state_db_path.parent / "ssh-agents").terminate(
+                "ws_example"
+            )
+        finally:
+            db.close()
