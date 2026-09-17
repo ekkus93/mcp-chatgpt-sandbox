@@ -122,7 +122,10 @@ config, reloads the result through the production config loader, and finishes
 with machine-verifiable diagnostics. Docker image builds are separately
 reviewed/apply actions: the wizard resolves the bundled default build context
 independently of the caller's current directory and, if that context is missing,
-reports **ACTION REQUIRED** without invoking Docker.
+reports **ACTION REQUIRED** without invoking Docker. That context ships only in a
+source checkout, so an installed distribution cannot build the default image from
+the wizard; build it once with the `docker build` command above and select the
+resulting tag.
 
 The default config path is:
 

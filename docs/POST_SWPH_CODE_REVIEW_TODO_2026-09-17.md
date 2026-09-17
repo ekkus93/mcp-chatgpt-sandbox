@@ -1,6 +1,6 @@
 # Post-SWPH Code Review TODO
 
-**Status:** Open — `PSCR-001` through `PSCR-008` not started  
+**Status:** In progress — `PSCR-001`/`PSCR-002` closed; `PSCR-003` next  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `ba79759a1ed9287105d9891bbb1cefccdc396d78`  
@@ -39,42 +39,85 @@ implementation. All ten SWPH tasks were confirmed substantively implemented; the
 **Goal:** the Docker build-context contract must be an explicit recorded decision, not an accident of
 repository layout.
 
-- [ ] Confirm the defect on the current baseline: build a wheel and show `docker/default/` is absent.
-- [ ] Confirm `parents[3]` resolves outside the package root for an installed layout.
-- [ ] Confirm the development install is editable and therefore masks the condition.
-- [ ] Choose Option A (support installed Docker builds) or Option B (declare them checkout-only).
-- [ ] Record the chosen option and its rationale in this file.
-- [ ] Record the choice in `setup/docker_setup.py` where the context is resolved.
-- [ ] If Option B, remove the docstring claim that the context comes from an "installed source tree".
-- [ ] Confirm the choice does not alter Docker-unavailable degraded behavior.
+- [x] Confirm the defect on the current baseline: build a wheel and show `docker/default/` is absent.
+- [x] Confirm `parents[3]` resolves outside the package root for an installed layout.
+- [x] Confirm the development install is editable and therefore masks the condition.
+- [x] Choose Option A (support installed Docker builds) or Option B (declare them checkout-only).
+- [x] Record the chosen option and its rationale in this file.
+- [x] Record the choice in `setup/docker_setup.py` where the context is resolved.
+- [x] If Option B, remove the docstring claim that the context comes from an "installed source tree".
+- [x] Confirm the choice does not alter Docker-unavailable degraded behavior.
 
 **Validation — PSCRV-001**
 
-- [ ] Test or recorded evidence: the packaging outcome matches the chosen option.
-- [ ] Documentation states the chosen option in operator-facing terms.
+- [x] Test or recorded evidence: the packaging outcome matches the chosen option.
+- [x] Documentation states the chosen option in operator-facing terms.
+
+**Decision and evidence (2026-09-17)**
+
+- **Option B selected — the bundled Docker build context is a source-checkout asset.**
+  Rationale: the benefit of Option A exists only for a deployment mode this project does not
+  have (no PyPI publication; `README.md` and `docs/QUICKSTART.md` both drive the wizard with
+  `uv run ... setup` from a checkout), while its cost includes touching the two-step reviewed
+  plan/apply boundary that SWPH-002/SWPH-003 were written to establish: `client.images.build`
+  needs a real directory, `importlib.resources.as_file()` guarantees one only inside its
+  context manager, and the reviewed plan stores `build_context` for a *later* handler
+  invocation. Option A remains the migration path if the package is ever published.
+- Defect confirmed on baseline `ba79759a1ed9287105d9891bbb1cefccdc396d78`: a wheel built from
+  that tree contains 120 entries with no `Dockerfile` and no `entrypoint.sh`, and
+  `pyproject.toml` declares no data/force-include configuration.
+- `parents[3]` confirmed to resolve `<venv>/lib/pythonX.Y/docker/default` for an installed
+  layout versus `<repo>/docker/default` for the checkout.
+- Development install confirmed editable (`mcp_chatgpt_sandbox.pth`, no real package directory
+  in `site-packages`), which is why `__file__` always pointed into `src/` and neither CI nor
+  the local suite could observe the defect.
+- Docker-unavailable degraded behavior unchanged: the `DockerException`/`SetupDockerError`
+  handler in `validate_docker()` is untouched by this task.
+- Policy recorded in `setup/docker_setup.py` (`_source_checkout_root`), `README.md`, and
+  `docs/DEVELOPMENT.md`'s troubleshooting entry.
 
 ### PSCR-002 — Make bundled build-context resolution correct for the selected policy
 
 **Goal:** resolution must not depend on repository layout.
 
-- [ ] Remove `Path(__file__).resolve().parents[3]` arithmetic from context resolution.
-- [ ] If Option A, package `docker/default/` into the distribution and resolve via
-      `importlib.resources`.
-- [ ] If Option B, resolve from an explicitly checkout-scoped location and fail with a distinct,
+- [x] Remove `Path(__file__).resolve().parents[3]` arithmetic from context resolution.
+- [x] If Option A, package `docker/default/` into the distribution and resolve via
+      `importlib.resources`. — not applicable; Option B selected.
+- [x] If Option B, resolve from an explicitly checkout-scoped location and fail with a distinct,
       actionable error when absent.
-- [ ] Keep `validate_default_image_build_context()` as the single normalization/refusal point.
-- [ ] Keep the resolved context identical between preview and execution.
-- [ ] Ensure the failure message names the operator remedy and contains no secrets.
+- [x] Keep `validate_default_image_build_context()` as the single normalization/refusal point.
+- [x] Keep the resolved context identical between preview and execution.
+- [x] Ensure the failure message names the operator remedy and contains no secrets.
 
 **Validation — PSCRV-002**
 
-- [ ] Regression test proves resolution succeeds from a source checkout.
-- [ ] Regression test proves the installed-layout outcome **without** depending on the development
+- [x] Regression test proves resolution succeeds from a source checkout.
+- [x] Regression test proves the installed-layout outcome **without** depending on the development
       layout (for example by resolving against a constructed package root, not the real one).
-- [ ] Test: preview argv and executed argv still resolve the same context.
-- [ ] Existing `tests/setup/test_guided_domain.py` bundled-context test remains green or is replaced
+- [x] Test: preview argv and executed argv still resolve the same context.
+- [x] Existing `tests/setup/test_guided_domain.py` bundled-context test remains green or is replaced
       by a strictly stronger one.
-- [ ] Existing SWPH Docker boundary regressions remain green unmodified.
+- [x] Existing SWPH Docker boundary regressions remain green unmodified.
+
+**Closure evidence (2026-09-17)**
+
+- `_source_checkout_root()` replaces the parent-index arithmetic with an upward search for a
+  directory holding **both** `pyproject.toml` and `docker/default/`. The search is
+  self-validating: it cannot report a root that does not actually carry the context, so the
+  installed case fails at the single point of resolution instead of returning a path that does
+  not exist.
+- A non-editable install into an in-repo virtualenv still resolves the enclosing checkout. That
+  is intended and documented — the checkout is genuinely present and its context is usable.
+- `tests/setup/test_pscr_docker_context_policy.py`: 4/4 PASS. The installed-layout tests
+  synthesize the module location via `monkeypatch.setattr(docker_setup, "__file__", ...)` rather
+  than trusting this process's layout, which is what makes them able to observe the defect at
+  all. One test also proves a `pyproject.toml` *alone* does not satisfy the search, so an
+  installed distribution sitting under an unrelated project root cannot resurrect the defect in
+  a new disguise.
+- Full Docker-backed suite on the implementation tree: `1415 passed` in `677.05s`, zero skips.
+  Ruff format (315 files) PASS; Ruff lint PASS; strict mypy (103 files) PASS.
+- Existing SWPH Docker boundary regressions and `tests/setup/test_guided_domain.py` remained
+  green unmodified.
 
 ### PSCR-003 — Decouple Docker step validation from build-context availability
 

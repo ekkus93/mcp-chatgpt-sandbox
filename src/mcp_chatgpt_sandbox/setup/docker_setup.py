@@ -81,16 +81,54 @@ def validate_default_image_build_context(build_context: Path) -> Path:
     return resolved
 
 
-def bundled_default_image_build_context() -> Path:
-    """Resolve the repository-bundled default Docker build context.
+def _source_checkout_root() -> Path | None:
+    """Locate the source checkout that ships the default Docker build context.
 
-    The setup wizard may be launched from any current working directory. The
-    bundled Docker context is therefore resolved from this module's installed
-    source tree, not from ``Path.cwd()``.
+    PSCR-001 (`docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`) records the
+    policy this implements: the bundled context is a **source-checkout asset,
+    not a packaged one**. `docker/default/` lives outside the `src/` module root
+    that `uv_build` packages, so no wheel carries it — verified by building one
+    and inspecting it (120 entries, no `Dockerfile`).
+
+    This replaces `Path(__file__).resolve().parents[3]`, which was correct only
+    for this repository's `src/` layout and silently resolved to
+    `<venv>/lib/pythonX.Y/docker/default` for an installed distribution. That
+    was not merely wrong, it was undetectable: the development install is
+    editable, so `__file__` always points into `src/` and both CI and the local
+    suite always took the checkout branch. Searching upward for a directory that
+    actually contains both markers is self-validating — it cannot report a root
+    that does not hold the context — so the installed case fails loudly at the
+    one place that resolves it instead of being discovered by an operator.
+
+    A non-editable install into an in-repo virtualenv (`<repo>/.venv/...`) still
+    finds `<repo>`. That is intended: the checkout genuinely is present, and the
+    context it names is genuinely usable.
     """
 
-    context = Path(__file__).resolve().parents[3] / "docker" / "default"
-    return validate_default_image_build_context(context)
+    for candidate in Path(__file__).resolve().parents:
+        if (candidate / "pyproject.toml").is_file() and (candidate / "docker" / "default").is_dir():
+            return candidate
+    return None
+
+
+def bundled_default_image_build_context() -> Path:
+    """Resolve the source-checkout default Docker build context.
+
+    The setup wizard may be launched from any current working directory, so this
+    never consults `Path.cwd()`. Per PSCR-001 the context is checkout-only; an
+    installed distribution raises an actionable error rather than returning a
+    path that does not exist.
+    """
+
+    root = _source_checkout_root()
+    if root is None:
+        raise SetupDockerError(
+            "The bundled Docker build context ships only in a source checkout. "
+            "Build the workspace image manually with "
+            "'docker build -t <image> docker/default/' from a checkout, or select "
+            "an image that already exists on this host."
+        )
+    return validate_default_image_build_context(root / "docker" / "default")
 
 
 def default_image_build_command(

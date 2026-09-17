@@ -243,8 +243,12 @@ Manual configuration remains supported. See
 - **Docker is unavailable.** Configuration may continue, but final diagnostics
   remain ACTION REQUIRED for Docker-dependent checks.
 - **The bundled Docker build context is unavailable.** The Docker step remains
-  ACTION REQUIRED and the wizard does not invoke a build. Repair/reinstall the
-  package/source checkout or build an appropriate image manually.
+  ACTION REQUIRED and the wizard does not invoke a build. `docker/default/` is a
+  source-checkout asset and is deliberately not packaged into the distribution
+  (PSCR-001, `docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`), so this is the
+  expected state outside a checkout. Build the image manually with
+  `docker build -t <image> docker/default/` from a checkout, or select an image
+  that already exists on the host.
 - **A setup-state file is corrupt.** Use Repair or Start fresh. Start fresh resets
   wizard progress; it does not delete the production config, repositories,
   credentials, database contents, Docker volumes, or workspaces.
