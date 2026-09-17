@@ -566,3 +566,19 @@ containers through their logical-id labels.
 - Public MCP tool/schema contract unchanged throughout; `contract_version` stays `0.10.3`.
 - This final status update is documentation-only and changes no code, so the CI evidence above
   covers the complete implementation of `PSCR-001` through `PSCR-009`.
+
+**PSCR-010 acceptance evidence (2026-09-17)**
+
+- PSCR-010 was added after that closure, on request, to fix the namespace-blind assertions this
+  series had only *recorded* as a future task. Exact head
+  `ec3600c`; CI run `35282113953`, job `105406174784`, conclusion **success**: all gates plus the
+  full Docker-backed suite, `1426 passed in 719.03s`, coverage `88%` (`9327` statements / `1121`
+  misses).
+- Local run on an idle host agreed: `1426 passed in 662.09s`, zero failures, zero skips.
+- **Known limitation of this evidence.** Both runs were *serial*. PSCR-010's actual claim is that
+  concurrent runs no longer collide, and that has not been demonstrated empirically — only
+  inferred from the filter's unit tests plus a green serial suite. The decisive check is to run
+  `tests/workspace` locally while a CI run is in flight, which is precisely the scenario that
+  produced 11 CI failures and 1 local failure before this task. That check is deliberately
+  deferred rather than claimed: it risks a red run on `master` if the fix is incomplete, which is
+  an operator decision, not a test-author one.
