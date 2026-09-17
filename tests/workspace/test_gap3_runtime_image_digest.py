@@ -61,7 +61,7 @@ def test_g3at_006_runtime_identity_failure_never_falls_back_to_a_tag_or_stale_di
         repository_id="example",
         mode="persistent",
         container_id="container-id",
-        container_name="mcp-dev-ws-example",
+        container_name="mcp-chatgpt-sandbox-ws-example",
         image="mutable:latest",
         workspace_path="/workspace",
         state=WorkspaceState.RUNNING,

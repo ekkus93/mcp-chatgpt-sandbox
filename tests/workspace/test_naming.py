@@ -36,8 +36,8 @@ def test_container_name_differs_for_different_workspace_ids() -> None:
 
 def test_container_name_has_the_expected_shape() -> None:
     name = container_name("ws_example")
-    assert name.startswith("mcp-dev-ws-example-")
-    suffix = name.removeprefix("mcp-dev-ws-example-")
+    assert name.startswith("mcp-chatgpt-sandbox-ws-example-")
+    suffix = name.removeprefix("mcp-chatgpt-sandbox-ws-example-")
     assert len(suffix) == 8
     assert all(c in "0123456789abcdef" for c in suffix)
 

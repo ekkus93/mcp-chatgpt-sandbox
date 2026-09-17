@@ -132,7 +132,7 @@ itself tracked creating) — that half is fixed as a direct consequence of this
 change. But the *collision* half is untouched: every test hard-codes
 repository/workspace id `"example"`, so `container_name()`'s deterministic
 naming means two pytest processes racing to `containers.run(name=
-"mcp-dev-ws-example-<hash>", ...)` still hit a real `409 Conflict` — this fix
+"mcp-chatgpt-sandbox-ws-example-<hash>", ...)` still hit a real `409 Conflict` — this fix
 makes concurrent runs non-destructive to each other, not collision-free.
 Making workspace ids unique per test run would touch dozens of test files
 that assert on the deterministic name and is out of scope for a teardown fix;
@@ -1113,7 +1113,7 @@ pass again. Broader relevant suite (`tests/workspace/`, `tests/filesystem/`,
 **Two genuinely self-inflicted false starts along the way, neither a code
 defect:** running the new test file directly while a background full-suite
 run was still active produced real 409 container-name conflicts (this
-project's deterministic `mcp-dev-ws-<repository_id>-<hash>` naming makes any
+project's deterministic `mcp-chatgpt-sandbox-ws-<repository_id>-<hash>` naming makes any
 two concurrent processes sharing a `repository_id` collide) — resolved by
 never running Docker-touching commands concurrently with each other for the
 rest of this task, and by cleaning up an unrelated container left behind by
@@ -1170,7 +1170,7 @@ failure wedges the workspace permanently, even after Docker recovers.
    whether that deterministic name (§51) was already taken — `docker system
    prune` leaving an orphan, a DB reset that lost the row while the
    container survived, or literally this session's own repeatedly-hit
-   `mcp-dev-ws-<repository_id>-<hash>` collisions from concurrent/interrupted
+   `mcp-chatgpt-sandbox-ws-<repository_id>-<hash>` collisions from concurrent/interrupted
    test runs all produce the identical 409, and since the name is
    deterministic it collides again on every retry — permanently wedged, not
    merely a bad first attempt. New `_adopt_or_remove_by_name`, called before
@@ -3448,7 +3448,7 @@ passed, 0 failed. `ruff check`, `ruff format --check`, `mypy` clean on every
 changed file (one pre-existing, unrelated `unused-ignore` mypy note in
 `tests/workspace/test_mounts.py`, confirmed present before this task's edits
 too via `git stash`). No Docker leftovers (`docker ps -a --filter
-"name=mcp-dev-"` and `docker volume ls` both empty of test artifacts) after
+"name=mcp-chatgpt-sandbox-"` and `docker volume ls` both empty of test artifacts) after
 either run. Full unscoped `tests/` background run: **974 passed, 0 failed**
 (970 before this task's 4 new tests).
 

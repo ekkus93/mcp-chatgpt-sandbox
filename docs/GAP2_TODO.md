@@ -968,7 +968,7 @@ time) — only the example consequence in the table above.
 - [x] Not satisfied by a retry — explicitly stated why
 
 **Defect.** Workspace container names are deterministic
-(`mcp-dev-ws-<repo>-<hash>`). Two concurrent runs of `tests/workspace/`,
+(`mcp-chatgpt-sandbox-ws-<repo>-<hash>`). Two concurrent runs of `tests/workspace/`,
 or one run alongside a live daemon serving a repository of the same id,
 collide: the second run's fixture finds a container already at its name
 and takes `manager_lifecycle.py:246-260`'s adoption early-return, so

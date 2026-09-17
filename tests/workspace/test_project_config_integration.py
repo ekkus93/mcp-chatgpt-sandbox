@@ -204,7 +204,10 @@ async def test_at_hat005_project_environment_cannot_run_the_container_as_root(
         await _open(server)
 
     # no container was created at all for this attempt.
-    assert docker_client.containers.list(all=True, filters={"name": "mcp-dev-ws-example"}) == []
+    assert (
+        docker_client.containers.list(all=True, filters={"name": "mcp-chatgpt-sandbox-ws-example"})
+        == []
+    )
 
 
 async def test_at_g2r001_project_environment_cannot_set_an_exported_shell_function(
@@ -235,7 +238,10 @@ async def test_at_g2r001_project_environment_cannot_set_an_exported_shell_functi
         await _open(server)
 
     # no container was created at all for this attempt.
-    assert docker_client.containers.list(all=True, filters={"name": "mcp-dev-ws-example"}) == []
+    assert (
+        docker_client.containers.list(all=True, filters={"name": "mcp-chatgpt-sandbox-ws-example"})
+        == []
+    )
 
 
 async def test_at_g2r002_project_environment_cannot_redirect_gits_configuration(
@@ -261,7 +267,10 @@ async def test_at_g2r002_project_environment_cannot_redirect_gits_configuration(
     with pytest.raises(ToolError, match="interpreter or command resolution"):
         await _open(server)
 
-    assert docker_client.containers.list(all=True, filters={"name": "mcp-dev-ws-example"}) == []
+    assert (
+        docker_client.containers.list(all=True, filters={"name": "mcp-chatgpt-sandbox-ws-example"})
+        == []
+    )
 
 
 async def test_no_project_config_falls_back_to_the_default_image(

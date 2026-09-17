@@ -65,7 +65,7 @@ async def test_pmoat_009_real_prune_reclaims_only_owned_plan_and_preserves_forei
         TEST_IMAGE,
         ["sh", "-c", "exit 0"],
         detach=True,
-        name=f"mcp-dev-o8-owned-{suffix}",
+        name=f"mcp-chatgpt-sandbox-o8-owned-{suffix}",
         labels=container_labels(workspace_id=owned_workspace, repository_id=owned_repo),
     )
     wait_result = owned_container.wait(timeout=15)
@@ -81,7 +81,7 @@ async def test_pmoat_009_real_prune_reclaims_only_owned_plan_and_preserves_forei
     foreign_container = docker_client.containers.run(
         TEST_IMAGE,
         detach=True,
-        name=f"mcp-dev-o8-foreign-{suffix}",
+        name=f"mcp-chatgpt-sandbox-o8-foreign-{suffix}",
         labels=_foreign_container_labels(
             workspace_id=f"o8-foreign-ws-{suffix}",
             repository_id=f"o8-foreign-{suffix}",

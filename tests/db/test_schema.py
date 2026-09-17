@@ -138,7 +138,7 @@ def test_full_row_round_trip_across_all_four_tables() -> None:
         INSERT INTO workspace
             (id, repository_id, mode, container_id, container_name, image,
              workspace_path, state, created_at, last_used_at)
-        VALUES ('ws_example', 'example', 'persistent', 'c0ffee', 'mcp-dev-example',
+        VALUES ('ws_example', 'example', 'persistent', 'c0ffee', 'mcp-chatgpt-sandbox-example',
                 'mcp-chatgpt-sandbox-ubuntu:24.04', '/workspace', 'running',
                 '2026-08-26T00:00:00Z', '2026-08-26T00:00:00Z')
         """

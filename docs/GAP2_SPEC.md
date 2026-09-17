@@ -736,7 +736,7 @@ for the reason actually verified this time.
 
 ### G2R-022 — Concurrent suite runs SHALL NOT silently collide
 
-Workspace container names are deterministic (`mcp-dev-ws-<repo>-<hash>`).
+Workspace container names are deterministic (`mcp-chatgpt-sandbox-ws-<repo>-<hash>`).
 Two concurrent runs of `tests/workspace/`, or one run alongside a live
 daemon serving a repository of the same id, collide: the second run's
 fixture finds a container already at its name and takes

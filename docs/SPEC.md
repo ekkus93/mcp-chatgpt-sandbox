@@ -3203,7 +3203,7 @@ Container names SHOULD be deterministic and collision-safe.
 Example:
 
 ```text
-mcp-dev-project-gatsby-6f3a9c
+mcp-chatgpt-sandbox-project-gatsby-6f3a9c
 ```
 
 Cache volume names SHOULD likewise include repository/workspace identity.

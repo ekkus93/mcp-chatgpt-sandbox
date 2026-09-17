@@ -125,7 +125,7 @@ again.
 
 **Suites.** `tests/workspace/test_git_commit_tool.py tests/git/`: 211
 passed. Full unscoped `tests/`: 981 passed, 0 failed, 532.66s. No Docker
-leftovers (`docker ps -a --filter name=mcp-dev-` empty after the run).
+leftovers (`docker ps -a --filter name=mcp-chatgpt-sandbox-` empty after the run).
 Lint/format clean on the three changed `src`/test files; `mypy src`: no
 issues in 53 files (the test file's pre-existing, out-of-CI-gate
 `InputRequiredResult`/`structured_content` `union-attr` noise — 21 errors

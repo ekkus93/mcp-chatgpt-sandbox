@@ -61,7 +61,22 @@ def ephemeral_workspace_id(repository_id: str, *, suffix: str) -> str:
 
 
 def container_name(workspace_id: str) -> str:
-    """§51 deterministic naming, physically isolated for test contexts."""
+    """§51 deterministic naming, physically isolated for test contexts.
+
+    Renaming this prefix does not orphan containers created under the old
+    (`mcp-dev-`) scheme, and deliberately so: the generated name is
+    persisted on the workspace row at creation, and every lookup that
+    could resolve a pre-existing container uses either that stored
+    `record.container_name` or a `LABEL_WORKSPACE_ID` filter — never a
+    freshly recomputed name. So old and new containers coexist, each
+    found by what was recorded for it.
+
+    This is the opposite of `caches.cache_volume_name`, whose docstring
+    documents a scheme change as genuinely orphaning; the asymmetry is
+    the persistence, not the naming, so do not assume the two behave
+    alike. A change here that also made name resolution recompute the
+    name would reintroduce exactly that orphaning.
+    """
     namespace = current_test_resource_namespace()
     if namespace is None:
         digest = hashlib.sha256(workspace_id.encode()).hexdigest()[:8]
@@ -69,8 +84,8 @@ def container_name(workspace_id: str) -> str:
         digest = hashlib.sha256(f"{workspace_id}\x00{namespace}".encode()).hexdigest()[:8]
     slug = _SLUG_RUN_RE.sub("-", workspace_id.lower()).strip("-")
     if namespace is None:
-        return f"mcp-dev-{slug}-{digest}"
-    return f"mcp-dev-{slug}-t{namespace}-{digest}"
+        return f"mcp-chatgpt-sandbox-{slug}-{digest}"
+    return f"mcp-chatgpt-sandbox-{slug}-t{namespace}-{digest}"
 
 
 def container_labels(*, workspace_id: str, repository_id: str) -> dict[str, str]:

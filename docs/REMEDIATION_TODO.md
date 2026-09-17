@@ -277,7 +277,7 @@ code, matching the reproduction above. Restored the fix; all 4 pass again.
 
 **Full relevant suite.** `tests/workspace/ tests/git/`: 502 passed.
 Full unscoped suite: 886 passed. No Docker leftovers
-(`docker ps -a --filter "name=mcp-dev-"` empty before and after).
+(`docker ps -a --filter "name=mcp-chatgpt-sandbox-"` empty before and after).
 
 **New tests.** `tests/workspace/test_git_commit_tool.py`:
 `test_rr004_an_empty_or_root_normalizing_path_is_rejected_before_staging`
@@ -1852,7 +1852,7 @@ and its content both gone, exactly as described.
   of them (git/audit/tool tests) never create a real Docker volume at all
   and are unrelated to this defect, and container/workspace naming is
   derived from the same id (`naming.container_name` — a real, currently
-  running leftover container named `mcp-dev-ws-example-<hash>` was observed
+  running leftover container named `mcp-chatgpt-sandbox-ws-example-<hash>` was observed
   during this same session), so renaming it broadly risks far more
   collateral test breakage than the now-closed gap justifies. The new
   adversarial test below exercises the exact `"example"`/`"cargo"` identity
