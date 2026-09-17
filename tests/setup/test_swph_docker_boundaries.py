@@ -33,22 +33,62 @@ async def test_swph_002_missing_context_during_validation_stays_inside_handler(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """SWPH-002 containment, under the contract PSCR-003 superseded it with.
+
+    This test originally asserted `docker_calls == 0` — that Docker is never
+    touched once context resolution fails during validation. That was true only
+    incidentally: the build context used to be resolved as a *precondition* of
+    validation, so its failure returned early before Docker was reached.
+
+    PSCR-003 (`docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`) deliberately
+    changes that, because the old ordering meant an installed deployment could
+    not validate this step even with the configured image already present —
+    `docker/default/` ships only in a source checkout (PSCR-001) — and the
+    `#docker-defer-image` deferral was unreachable because the checkbox was read
+    only after plan construction succeeded. Learning whether the image is
+    present necessarily means asking Docker, so no version of PSCR-003 can keep
+    the original assertion.
+
+    What SWPH-002 actually exists to protect is unchanged and still asserted
+    here: an expected missing-context condition must not escape the Textual
+    event boundary, and no build may be invoked. This version additionally
+    pins the new contract — Docker is consulted exactly once, the preview
+    reports its own unavailability rather than failing the step, and the step
+    outcome follows image presence — so it asserts strictly more than the
+    version it replaces.
+    """
+
     docker_calls = 0
+    build_calls = 0
 
     def missing_context() -> Path:
         raise SetupDockerError("Docker build context is unavailable")
 
-    def fail_docker() -> Any:
+    class Images:
+        def get(self, _image: str) -> object:
+            return object()
+
+        def build(self, **_: object) -> None:
+            nonlocal build_calls
+            build_calls += 1
+
+    class Client:
+        images = Images()
+
+        def close(self) -> None:
+            return None
+
+    def present_docker() -> Any:
         nonlocal docker_calls
         docker_calls += 1
-        raise AssertionError("Docker must not be touched after context resolution fails")
+        return Client()
 
     monkeypatch.setattr(
         "mcp_chatgpt_sandbox.setup.docker_setup.bundled_default_image_build_context",
         missing_context,
     )
     monkeypatch.setattr(
-        "mcp_chatgpt_sandbox.setup.step_actions_docker.docker.from_env", fail_docker
+        "mcp_chatgpt_sandbox.setup.step_actions_docker.docker.from_env", present_docker
     )
 
     app = SetupWizardApp(config_path=tmp_path / "config.yml", state_path=tmp_path / "state.json")
@@ -58,10 +98,15 @@ async def test_swph_002_missing_context_during_validation_stays_inside_handler(
         app.validate_docker()
         await pilot.pause()
 
-        assert app._validation[SetupStep.DOCKER] is False
-        assert "context is unavailable" in app._validation_messages[SetupStep.DOCKER]
+        # Nothing escaped the handler, and the present image validates the step
+        # despite the context being unavailable — the PSCR-003 property.
+        assert app._validation[SetupStep.DOCKER] is True
+        assert "image is present" in app._validation_messages[SetupStep.DOCKER]
+        assert "Build command unavailable" in _static_text(app, "#docker-build-command")
+        assert "context is unavailable" in _static_text(app, "#docker-build-command")
 
-    assert docker_calls == 0
+    assert docker_calls == 1
+    assert build_calls == 0
 
 
 @pytest.mark.asyncio

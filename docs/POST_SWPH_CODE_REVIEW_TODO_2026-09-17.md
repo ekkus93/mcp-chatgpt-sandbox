@@ -1,6 +1,6 @@
 # Post-SWPH Code Review TODO
 
-**Status:** In progress — `PSCR-001`/`PSCR-002` closed; `PSCR-003` next  
+**Status:** In progress — `PSCR-001`–`PSCR-003` closed; `PSCR-004` next  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `ba79759a1ed9287105d9891bbb1cefccdc396d78`  
@@ -123,22 +123,63 @@ repository layout.
 
 **Goal:** a present configured image must be sufficient to validate the Docker step.
 
-- [ ] Audit `validate_docker()` ordering: plan construction currently precedes `image_exists()`.
-- [ ] Resolve image presence before requiring a build context.
-- [ ] Make the build command preview best-effort in the validation path, not a precondition.
-- [ ] Keep build-context failure actionable in `prepare_docker_build()` and `build_docker_image()`,
+- [x] Audit `validate_docker()` ordering: plan construction currently precedes `image_exists()`.
+- [x] Resolve image presence before requiring a build context.
+- [x] Make the build command preview best-effort in the validation path, not a precondition.
+- [x] Keep build-context failure actionable in `prepare_docker_build()` and `build_docker_image()`,
       where a context is genuinely required.
-- [ ] Ensure the `#docker-defer-image` deferral remains reachable when the image is missing.
-- [ ] Ensure no Docker client or build call occurs after a context resolution failure.
-- [ ] Preserve mutation-free screen rendering and explicit approval before build.
+- [x] Ensure the `#docker-defer-image` deferral remains reachable when the image is missing.
+- [x] Ensure no Docker client or build call occurs after a context resolution failure.
+- [x] Preserve mutation-free screen rendering and explicit approval before build.
 
 **Validation — PSCRV-003**
 
-- [ ] Test: image present + build context unavailable ⇒ Docker step validates.
-- [ ] Test: image missing + context unavailable ⇒ actionable, deferral still reachable.
-- [ ] Test: build path with unavailable context remains action-required and invokes no build.
-- [ ] Test: wizard is not blocked from advancing in the image-present/context-absent case.
-- [ ] Existing Docker-unavailable degraded-behavior tests remain green.
+- [x] Test: image present + build context unavailable ⇒ Docker step validates.
+- [x] Test: image missing + context unavailable ⇒ actionable, deferral still reachable.
+- [x] Test: build path with unavailable context remains action-required and invokes no build.
+- [x] Test: wizard is not blocked from advancing in the image-present/context-absent case.
+- [x] Existing Docker-unavailable degraded-behavior tests remain green.
+
+**Closure evidence (2026-09-17)**
+
+- `validate_docker()` now reads `#docker-defer-image` and validates widget values first, resolves
+  image presence second, and resolves the build context **last**, purely to render a preview. A
+  failed context yields `Build command unavailable: ...` instead of failing the step. Because the
+  context is resolved after the Docker call, no Docker client or build call can follow a context
+  resolution failure — the subtask is satisfied by ordering, not by a guard.
+- Catching `SetupDockerError` narrowly around plan construction is sound because
+  `choices.config_fragments()` has already validated the image name through the same
+  `DockerConfig` the plan builder uses; a rejected image name therefore fails earlier, and the
+  only error reachable at that point is an unavailable context.
+- `tests/setup/test_pscr_docker_validation_ordering.py`: 3/3 PASS, asserting a present image
+  validates the step **and leaves `#next` enabled** (a green message alone would not prove the
+  wizard is unblocked), that the deferral is reachable when the image is missing, and that the
+  build path still refuses an unavailable context without reaching Docker.
+
+**Superseded SWPH-002 guard**
+
+- `test_swph_002_missing_context_during_validation_stays_inside_handler` previously asserted
+  `docker_calls == 0`. That held only incidentally: the build context used to be a precondition
+  of validation, so its failure returned before Docker was reached. Learning whether the image
+  is present necessarily means asking Docker, so no form of PSCR-003 can preserve that
+  assertion. The test was rewritten, with the reasoning recorded in its own docstring, to assert
+  strictly more: nothing escapes the Textual boundary, no build is invoked, Docker is consulted
+  exactly once, the preview reports its own unavailability, and the step outcome follows image
+  presence. SWPH-002's actual goal — expected missing-context conditions never escaping the
+  event handler — is unchanged and still covered.
+
+**Concurrency incident (recorded per the global rules)**
+
+- The first full-suite run for this task was started while CI run `35271467140` was in flight for
+  the PSCR-001/002 push, violating this file's own rule against concurrent suite runs. Both runs
+  failed with the documented collision signature: 11 failures in CI and 1 locally, every one an
+  `assert [<Container: ...>] == []` on a namespace-blind workspace-label query seeing the other
+  run's container. A clean re-run on a verified-idle host passed `1418 passed` in `687.07s` with
+  zero failures, including every test that had failed in either run.
+- Related observation for a future task, deliberately not fixed here: several `tests/workspace`
+  assertions query Docker by `LABEL_WORKSPACE_ID` **without** the `container_matches_test_namespace`
+  filter that `workspace/manager_core.py` applies, so the `MCP_CHATGPT_SANDBOX_TEST_RESOURCE_NAMESPACE`
+  isolation mechanism does not protect them. That is why two suites on one host cannot coexist.
 
 ---
 

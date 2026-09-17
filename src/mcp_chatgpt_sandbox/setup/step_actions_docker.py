@@ -35,12 +35,26 @@ class DockerStepActionsMixin(_BaseSetupStepActionsMixin):
         try:
             choices = self._docker_from_widgets()
             choices.config_fragments()
-            plan = prepare_default_image_build_plan(image=choices.default_image)
             defer_image = host.query_one("#docker-defer-image", Checkbox).value
         except (ValueError, SetupDockerError) as exc:
             host.set_step_validation(SetupStep.DOCKER, valid=False, message=str(exc))
             return
 
+        # PSCR-003 (`docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`): a build
+        # context is required only by the build path, so resolving one must not
+        # gate validation. It used to: plan construction sat in the block above,
+        # and `docker/default/` ships only in a source checkout (PSCR-001), so an
+        # installed deployment could not validate this step even with the
+        # configured image already present on the host — and the deferral below
+        # was unreachable, because `#docker-defer-image` was only read after plan
+        # construction had already succeeded.
+        #
+        # Catching `SetupDockerError` narrowly here is safe rather than sloppy:
+        # `config_fragments()` above has already validated the image name through
+        # the same `DockerConfig` the plan builder uses, so a rejected image has
+        # failed before this point and the only remaining error is an unavailable
+        # context. The preview is therefore best-effort, and its absence is
+        # reported as such instead of being reported as invalid Docker values.
         try:
             client = docker.from_env()
             try:
@@ -70,9 +84,14 @@ class DockerStepActionsMixin(_BaseSetupStepActionsMixin):
                 else "Docker workspace values are valid; missing image explicitly deferred."
             )
 
-        host.query_one("#docker-build-command", Static).update(
-            "Build command: " + _command_preview(plan.argv)
-        )
+        try:
+            plan = prepare_default_image_build_plan(image=choices.default_image)
+        except SetupDockerError as exc:
+            build_preview = f"Build command unavailable: {exc}"
+        else:
+            build_preview = "Build command: " + _command_preview(plan.argv)
+
+        host.query_one("#docker-build-command", Static).update(build_preview)
         candidate = clone_setup_state(host.state)
         candidate.choices.docker_image = choices.default_image
         candidate.choices.workspace_path = choices.workspace_path
