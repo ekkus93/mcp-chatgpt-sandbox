@@ -1,6 +1,6 @@
 # Post-SWPH Code Review TODO
 
-**Status:** In progress — `PSCR-001`–`PSCR-004` closed; `PSCR-005` next  
+**Status:** In progress — `PSCR-001`–`PSCR-005` closed; `PSCR-006` next  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `ba79759a1ed9287105d9891bbb1cefccdc396d78`  
@@ -230,16 +230,37 @@ repository layout.
 
 **Goal:** the unsupported-platform path must leak nothing.
 
-- [ ] Resolve `_fcntl_module()` before opening the lock file.
-- [ ] Ensure no lock file is created on a platform that cannot lock it.
-- [ ] Preserve the existing fail-closed error and its message.
-- [ ] Preserve all other lock ordering and semantics unchanged.
+- [x] Resolve `_fcntl_module()` before opening the lock file.
+- [x] Ensure no lock file is created on a platform that cannot lock it.
+- [x] Preserve the existing fail-closed error and its message.
+- [x] Preserve all other lock ordering and semantics unchanged.
 
 **Validation — PSCRV-005**
 
-- [ ] Test: simulated missing `fcntl` raises the fail-closed error, creates no lock file, and leaks
+- [x] Test: simulated missing `fcntl` raises the fail-closed error, creates no lock file, and leaks
       no descriptor.
-- [ ] Existing `tests/setup/test_swph_config_commit_lock.py` remains green unmodified.
+- [x] Existing `tests/setup/test_swph_config_commit_lock.py` remains green unmodified.
+
+**Closure evidence (2026-09-17)**
+
+- `fcntl = _fcntl_module()` moved above `_commit_lock_path()`/`os.open()`. It previously sat
+  between the open and the `try/finally` that closes the descriptor, so an unsupported platform
+  failed closed correctly while leaking the descriptor and leaving a lock file it could never
+  lock. Failing before anything is created keeps "cannot serialize" from mutating the filesystem.
+- SWPH-006's lock semantics are untouched: single non-blocking `LOCK_EX|LOCK_NB` attempt,
+  persistent lock inode, owner-only mode, regular-file check, no retry or sleep, and source
+  revalidation plus backup/atomic replacement/byte verification/production reload still inside
+  the critical section.
+- `test_pscrv_005_unlockable_platform_creates_no_lock_file_and_leaks_no_descriptor` added to the
+  existing SWPH-006 lock file. It asserts the fail-closed error, an unchanged
+  `/proc/self/fd` count, no lock file on disk, and an unmodified config.
+- **The test was verified to discriminate**, not merely to pass: re-applying the pre-PSCR-005
+  ordering makes it fail on the descriptor count (13 open descriptors where 12 were expected),
+  and restoring the fix makes it pass. A regression test for a leak that passes against the
+  leaking code would be worthless, which is the same defect PSCR-006 removes from the
+  Git-policy mutation tests.
+- Verification: Ruff format PASS; Ruff lint PASS; strict mypy PASS;
+  `tests/setup/test_swph_config_commit_lock.py` `7 passed`.
 
 ---
 

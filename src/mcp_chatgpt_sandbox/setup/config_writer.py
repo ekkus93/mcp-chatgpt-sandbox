@@ -315,6 +315,14 @@ def _config_commit_lock(path: Path) -> Iterator[Path]:
     except SetupFilesystemError as exc:
         raise SetupConfigError("Could not prepare the configuration commit lock directory") from exc
 
+    # PSCR-005 (`docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`): resolved before
+    # the lock file is opened, not after. This call used to sit between `os.open`
+    # below and the `try/finally` that closes the descriptor, so on a platform
+    # without `fcntl` the fail-closed error was correct but it leaked the
+    # descriptor and left behind a lock file it could never lock. Failing before
+    # anything is created keeps "cannot serialize" from mutating the filesystem.
+    fcntl = _fcntl_module()
+
     lock_path = _commit_lock_path(expanded)
     try:
         reject_unsafe_sensitive_target(lock_path)
@@ -323,7 +331,6 @@ def _config_commit_lock(path: Path) -> Iterator[Path]:
     except (OSError, SetupFilesystemError) as exc:
         raise SetupConfigError("Could not open the configuration commit lock") from exc
 
-    fcntl = _fcntl_module()
     acquired = False
     try:
         try:

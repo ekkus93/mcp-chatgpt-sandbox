@@ -138,3 +138,37 @@ def test_swphv_006_persistent_lock_file_has_no_secret_payload(tmp_path: Path) ->
 
     lock_path = target.with_name(f".{target.name}.setup.lock")
     assert lock_path.read_bytes() == b""
+
+
+def test_pscrv_005_unlockable_platform_creates_no_lock_file_and_leaks_no_descriptor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PSCR-005: the fail-closed path must not mutate the filesystem or leak an fd.
+
+    `_fcntl_module()` used to be called after the lock file had already been
+    opened and before the `try/finally` that closes it, so a platform without
+    `fcntl` failed closed — correctly — while leaving behind a descriptor and a
+    lock file it could never lock. Unreachable on Linux, which is the only
+    supported platform, so this test simulates the import failure rather than
+    the platform.
+    """
+
+    target, before, plan = _existing_plan(tmp_path)
+    lock_path = tmp_path / ".config.yml.setup.lock"
+    assert not lock_path.exists()
+
+    def unavailable() -> object:
+        raise SetupConfigError(
+            "Safe serialized configuration replacement is unavailable on this platform"
+        )
+
+    monkeypatch.setattr(config_writer, "_fcntl_module", unavailable)
+
+    open_fds = len(os.listdir("/proc/self/fd"))
+
+    with pytest.raises(SetupConfigError, match="unavailable on this platform"):
+        commit_config_update(target, plan)
+
+    assert len(os.listdir("/proc/self/fd")) == open_fds
+    assert not lock_path.exists()
+    assert target.read_bytes() == before
