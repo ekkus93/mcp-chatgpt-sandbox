@@ -182,21 +182,124 @@ def test_swphv_007_presentation_manifest_matches_discovery_rule() -> None:
     assert {path.name for path in _presentation_files()} == set(_PRESENTATION_MODULE_LIMITS)
 
 
-def test_wcr_002_presentation_does_not_own_yaml_or_atomic_config_writes() -> None:
-    forbidden = (
-        "import yaml",
-        "from yaml",
-        "atomic_write_text",
-        'open("config',
-        "write_text(",
-        "write_bytes(",
+_PERSISTENCE_MODULES = frozenset({"yaml"})
+_PERSISTENCE_NAMES = frozenset({"atomic_write_text"})
+_WRITE_METHODS = frozenset({"write_text", "write_bytes"})
+_MODE_CHARACTERS = set("rwxabt+")
+
+
+def _looks_like_write_mode(node: ast.expr) -> bool:
+    """Whether `node` is a file-mode string constant that opens for writing."""
+
+    if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+        return False
+    mode = node.value
+    if not mode or len(mode) > 3 or not set(mode) <= _MODE_CHARACTERS:
+        return False
+    return any(character in mode for character in "wax+")
+
+
+def _opens_for_writing(call: ast.Call) -> bool:
+    """Whether `call` is an `open(...)` that writes.
+
+    Both shapes have to be recognized: the builtin puts the mode second
+    (`open(path, "w")`) while `Path.open` puts it first (`path.open("w")`), so
+    every positional argument and the `mode=` keyword are examined rather than
+    one fixed position.
+    """
+
+    if any(_looks_like_write_mode(argument) for argument in call.args):
+        return True
+    return any(
+        keyword.arg == "mode" and _looks_like_write_mode(keyword.value) for keyword in call.keywords
     )
-    for path in _presentation_files():
-        source = path.read_text(encoding="utf-8")
-        for token in forbidden:
-            assert token not in source, (
-                f"presentation module {path.name} owns config persistence token {token!r}"
+
+
+def _persistence_violations(source: str) -> list[str]:
+    """Config-persistence primitives used by `source`, located by parsing.
+
+    PSCR-007 (`docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`) replaced a raw
+    substring scan for tokens such as `write_text(` and `import yaml`. That scan
+    tripped on a comment that merely mentioned a token and could be walked past
+    with an aliased import or a `Path.open("w")`, so it was weaker than the
+    property it claimed to enforce.
+    """
+
+    violations: list[str] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".")[0] in _PERSISTENCE_MODULES:
+                    violations.append(f"import {alias.name}")
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module.split(".")[0] in _PERSISTENCE_MODULES:
+                violations.append(f"from {module} import ...")
+            violations.extend(
+                f"from {module} import {alias.name}"
+                for alias in node.names
+                if alias.name in _PERSISTENCE_NAMES
             )
+        elif isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Attribute):
+                # `_PERSISTENCE_NAMES` is checked here as well as on bare names:
+                # a module-qualified `filesystem.atomic_write_text(...)` is the
+                # same violation, and omitting it would make this guard weaker
+                # than the substring scan it replaced rather than stronger.
+                if func.attr in _WRITE_METHODS or func.attr in _PERSISTENCE_NAMES:
+                    violations.append(f"{func.attr}() call")
+                elif func.attr == "open" and _opens_for_writing(node):
+                    violations.append("open() for writing")
+            elif isinstance(func, ast.Name):
+                if func.id in _PERSISTENCE_NAMES:
+                    violations.append(f"{func.id}() call")
+                elif func.id == "open" and _opens_for_writing(node):
+                    violations.append("open() for writing")
+    return violations
+
+
+def test_wcr_002_presentation_does_not_own_yaml_or_atomic_config_writes() -> None:
+    for path in _presentation_files():
+        violations = _persistence_violations(path.read_text(encoding="utf-8"))
+        assert violations == [], (
+            f"presentation module {path.name} owns config persistence: {violations}"
+        )
+
+
+def test_pscrv_007_persistence_guard_catches_what_substring_matching_missed() -> None:
+    """Pin the detector, including the cases the previous scan got wrong.
+
+    A guard that silently matched nothing would pass for the wrong reason, and
+    the two bypasses below are exactly why substring matching was replaced.
+    """
+
+    # Previously a false positive: prose is not persistence.
+    assert _persistence_violations('"""Never calls write_text() here."""\n') == []
+    assert _persistence_violations("# import yaml is deliberately avoided\nx = 1\n") == []
+
+    # Previously bypassable: aliases defeat a literal token search.
+    assert _persistence_violations("import yaml as y\n") == ["import yaml"]
+    assert _persistence_violations("from yaml import safe_dump\n") == ["from yaml import ..."]
+    assert _persistence_violations(
+        "from mcp_chatgpt_sandbox.setup.filesystem import atomic_write_text as aw\n"
+    ) == ["from mcp_chatgpt_sandbox.setup.filesystem import atomic_write_text"]
+
+    # Previously invisible: a direct file handle is still persistence.
+    assert _persistence_violations('p.open("w").write("x")\n') == ["open() for writing"]
+    assert _persistence_violations('open(path, "w")\n') == ["open() for writing"]
+    assert _persistence_violations('open(path, mode="a")\n') == ["open() for writing"]
+
+    # A module-qualified call is the same violation as a bare one. The substring
+    # scan caught this shape; an AST guard that only matched bare names would be
+    # a regression in strength, not an improvement.
+    assert _persistence_violations("filesystem.atomic_write_text(p, t)\n") == [
+        "atomic_write_text() call"
+    ]
+
+    # Reading is not persistence, and must not be flagged.
+    assert _persistence_violations('p.open("r")\n') == []
+    assert _persistence_violations("p.read_text()\n") == []
 
 
 def test_wcr_002_coordinator_growth_requires_explicit_architecture_change() -> None:

@@ -1,6 +1,6 @@
 # Post-SWPH Code Review TODO
 
-**Status:** In progress — `PSCR-001`–`PSCR-006` closed; `PSCR-007` next  
+**Status:** In progress — `PSCR-001`–`PSCR-007` closed; `PSCR-008` (closure) next  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `ba79759a1ed9287105d9891bbb1cefccdc396d78`  
@@ -309,18 +309,39 @@ repository layout.
 
 **Goal:** the guard must not be defeatable by aliasing or trippable by a comment.
 
-- [ ] Replace raw substring matching with parsed-source analysis (AST imports and call targets).
-- [ ] Ensure a comment mentioning a forbidden token no longer fails the guard.
-- [ ] Ensure an aliased YAML or atomic-write import is still caught.
-- [ ] Ensure `Path.open("w")`-style persistence in a presentation module is caught.
-- [ ] Keep the discovery-versus-manifest equality check unchanged.
+- [x] Replace raw substring matching with parsed-source analysis (AST imports and call targets).
+- [x] Ensure a comment mentioning a forbidden token no longer fails the guard.
+- [x] Ensure an aliased YAML or atomic-write import is still caught.
+- [x] Ensure `Path.open("w")`-style persistence in a presentation module is caught.
+- [x] Keep the discovery-versus-manifest equality check unchanged.
 
 **Validation — PSCRV-007**
 
-- [ ] Test: benign comment mentioning a forbidden token passes.
-- [ ] Test: aliased import of a config-write primitive fails.
-- [ ] Test: direct file-write call in a presentation module fails.
-- [ ] Existing setup static-audit suite remains green.
+- [x] Test: benign comment mentioning a forbidden token passes.
+- [x] Test: aliased import of a config-write primitive fails.
+- [x] Test: direct file-write call in a presentation module fails.
+- [x] Existing setup static-audit suite remains green.
+
+**Closure evidence (2026-09-17)**
+
+- `_persistence_violations()` parses each presentation module and reports forbidden imports
+  (including aliased ones), `write_text`/`write_bytes` calls, `atomic_write_text` calls whether
+  bare or module-qualified, and `open(...)` in a writing mode. `_opens_for_writing()` examines
+  every positional argument and the `mode=` keyword rather than one fixed position, because the
+  builtin puts the mode second (`open(path, "w")`) while `Path.open` puts it first
+  (`path.open("w")`).
+- `test_pscrv_007_persistence_guard_catches_what_substring_matching_missed` pins the detector on
+  both directions: the two former false positives (a docstring and a comment mentioning a token)
+  now pass, and the three former bypasses (`import yaml as y`, `atomic_write_text as aw`,
+  `p.open("w")`) are caught. Reads (`p.open("r")`, `p.read_text()`) are not flagged.
+- One gap was found and closed during implementation: the first version checked
+  `_PERSISTENCE_NAMES` only on bare `Name` calls, so a module-qualified
+  `filesystem.atomic_write_text(...)` would have passed even though the substring scan caught it.
+  That would have made this guard weaker rather than strictly stronger, so the `Attribute` branch
+  now checks the same set and a regression test pins the shape.
+- The discovery-versus-manifest equality inside `_presentation_files()` is untouched, so every
+  consumer still enforces it.
+- `tests/setup/test_setup_static_audit.py`: `14 passed`.
 
 ---
 
