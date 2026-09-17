@@ -74,17 +74,19 @@ def build_tunnel_profile_plan(
     profile: str,
     tunnel_id: str,
     config_path: Path,
-    project_root: Path | None = None,
     python_executable: Path | None = None,
 ) -> TunnelProfilePlan:
     """Build the exact profile command an operator must review before mutation.
 
-    ``project_root`` is retained only for source compatibility with callers from
-    before SWPH-001. It is intentionally ignored: persistent tunnel profiles are
-    bound to the active Python environment, never to the caller's working directory.
+    PSCR-004 (`docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`) removed a
+    ``project_root`` parameter that SWPH-001 had already reduced to a discarded
+    argument. Keeping a dead parameter that one caller still fed ``Path.cwd()``
+    made a `Path.cwd()` search of this package read as though SWPH-001 were
+    unfixed, and left nothing stopping a future caller from believing the value
+    was honored. Persistent tunnel profiles are bound to the active Python
+    environment, never to the caller's working directory.
     """
 
-    del project_root
     profile = profile.strip()
     tunnel_id = tunnel_id.strip()
     if not profile or any(character.isspace() for character in profile):

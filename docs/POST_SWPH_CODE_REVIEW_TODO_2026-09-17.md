@@ -1,6 +1,6 @@
 # Post-SWPH Code Review TODO
 
-**Status:** In progress — `PSCR-001`–`PSCR-003` closed; `PSCR-004` next  
+**Status:** In progress — `PSCR-001`–`PSCR-004` closed; `PSCR-005` next  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `ba79759a1ed9287105d9891bbb1cefccdc396d78`  
@@ -189,17 +189,42 @@ repository layout.
 
 **Goal:** no dead parameter, and no `Path.cwd()` anywhere in the setup package.
 
-- [ ] Remove `project_root` from `build_tunnel_profile_plan()`.
-- [ ] Remove the `Path.cwd()` call site in `setup/step_actions.py`.
-- [ ] Remove the now-obsolete "source compatibility" docstring paragraph.
-- [ ] Confirm no remaining caller passes a project root.
-- [ ] Keep the persistent profile bound to the active Python environment.
+- [x] Remove `project_root` from `build_tunnel_profile_plan()`.
+- [x] Remove the `Path.cwd()` call site in `setup/step_actions.py`.
+- [x] Remove the now-obsolete "source compatibility" docstring paragraph.
+- [x] Confirm no remaining caller passes a project root.
+- [x] Keep the persistent profile bound to the active Python environment.
 
 **Validation — PSCRV-004**
 
-- [ ] Static or unit test: no `Path.cwd()` / `os.getcwd` in `src/mcp_chatgpt_sandbox/setup/`.
-- [ ] Existing `tests/setup/test_swph_tunnel_invocation.py` remains green after signature change.
-- [ ] Test: profile plan still resolves the interpreter and stays secret-free.
+- [x] Static or unit test: no `Path.cwd()` / `os.getcwd` in `src/mcp_chatgpt_sandbox/setup/`.
+- [x] Existing `tests/setup/test_swph_tunnel_invocation.py` remains green after signature change.
+- [x] Test: profile plan still resolves the interpreter and stays secret-free.
+
+**Closure evidence (2026-09-17)**
+
+- `project_root` removed from `build_tunnel_profile_plan()` along with its `del project_root`
+  and the "source compatibility" paragraph; the `Path.cwd()` call site and the then-unused
+  `from pathlib import Path` import removed from `setup/step_actions.py`. Three test call sites
+  updated (`test_tunnel.py`, `test_reviewed_mutations.py`, `test_swph_tunnel_invocation.py`).
+- No coverage was lost by dropping the parameter. SWPH-001's shell-safety test asserted that a
+  deliberately-ignored project root did not leak into the command, which is vacuous once the
+  parameter is gone; cwd-independence is proven independently by
+  `test_swphv_001_tunnel_prepare_is_independent_of_caller_cwd`, which uses `monkeypatch.chdir`.
+- `test_pscrv_004_setup_never_reads_the_process_working_directory` added to
+  `tests/setup/test_setup_static_audit.py`. It is **AST-based, not substring-based**: the first
+  draft grepped for `"Path.cwd()"` and would have failed on `docker_setup.py`'s and `tunnel.py`'s
+  own docstrings, which now document that they never consult the working directory — the same
+  fragility PSCR-007 exists to remove from the persistence-ownership guard.
+- `test_pscrv_004_working_directory_guard_detects_a_violation` pins the detector itself, proving
+  it catches `Path.cwd()`, `os.getcwd()`, and an aliased `P.cwd()` while ignoring prose mentions.
+  A guard whose detection silently matched nothing would otherwise pass for the wrong reason,
+  which is precisely the defect PSCR-006 addresses.
+- Verification: Ruff format (316 files) PASS; Ruff lint PASS; strict mypy (103 files) PASS;
+  Docker-free suite `614 passed`; `tests/setup/test_setup_static_audit.py` `13 passed`.
+- The full Docker-backed suite was deliberately **not** run for this task: CI run `35274522322`
+  was in flight for PSCR-003, and this task changes only `setup/` code whose tests are all
+  Docker-free. The full suite is run once at PSCR-008 on an idle host.
 
 ### PSCR-005 — Fix the `fcntl` fail-closed descriptor leak
 

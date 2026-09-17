@@ -8,8 +8,6 @@ final diagnostics.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from textual import on
 from textual.widgets import Button, Checkbox, Input, Static
 
@@ -44,7 +42,6 @@ class SetupStepActionsMixin(CoreStepActionsMixin):
             profile=host.query_one("#tunnel-profile", Input).value,
             tunnel_id=host.query_one("#tunnel-id", Input).value,
             config_path=host.config_path,
-            project_root=Path.cwd(),
         )
 
     @on(Button.Pressed, "#tunnel-open-docs")

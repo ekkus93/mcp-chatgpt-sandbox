@@ -171,7 +171,6 @@ async def test_swf_001_tunnel_apply_uses_stored_plan(
             profile="stored-profile",
             tunnel_id="tun_stored",
             config_path=tmp_path / "config.yml",
-            project_root=tmp_path,
         )
         app.query_one("#tunnel-id", Input).value = "tun_changed"
         app.apply_tunnel()

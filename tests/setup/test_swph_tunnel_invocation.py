@@ -96,18 +96,15 @@ def test_swphv_001_shell_sensitive_paths_round_trip_and_plan_is_secret_free(
     python_path.write_text("#!/bin/sh\nexit 0\n")
     python_path.chmod(0o700)
     config_path = tmp_path / "config $dir" / "config 'quoted'.yml"
-    ignored_project_root = tmp_path / "wrong project root"
     plan = build_tunnel_profile_plan(
         profile="chatgpt-sandbox",
         tunnel_id="tun_shellsafe",
         config_path=config_path,
-        project_root=ignored_project_root,
         python_executable=python_path,
     )
 
     assert shlex.split(plan.server_command) == list(plan.server_argv)
     assert plan.server_argv[0] == str(python_path)
     assert plan.server_argv[-1] == str(config_path.resolve(strict=False))
-    assert str(ignored_project_root) not in plan.server_command
     serialized = "\n".join((*plan.server_argv, *plan.argv)).casefold()
     assert "secret" not in serialized

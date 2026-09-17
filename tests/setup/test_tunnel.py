@@ -17,7 +17,6 @@ def _plan(tmp_path: Path):
         profile="chatgpt-sandbox",
         tunnel_id="tun_example",
         config_path=tmp_path / "config.yml",
-        project_root=tmp_path,
     )
 
 

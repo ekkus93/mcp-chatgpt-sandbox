@@ -56,6 +56,29 @@ def _python_sources() -> list[Path]:
     return sorted(_SETUP_ROOT.rglob("*.py"))
 
 
+def _working_directory_reads(source: str) -> list[int]:
+    """Line numbers of calls in `source` that read the process working directory.
+
+    Parsed rather than grepped: matching call nodes means an alias such as
+    `from pathlib import Path as P` cannot slip past, and a docstring that
+    merely mentions `Path.cwd()` is not a violation.
+    """
+
+    found: list[int] = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr in {"cwd", "getcwd", "getcwdb"}
+            or isinstance(func, ast.Name)
+            and func.id in {"getcwd", "getcwdb"}
+        ):
+            found.append(func.lineno)
+    return found
+
+
 def _line_has_boundary_rationale(path: Path, lineno: int) -> bool:
     lines = path.read_text(encoding="utf-8").splitlines()
     start = max(0, lineno - 6)
@@ -114,6 +137,43 @@ def test_wcr_013_setup_has_no_retry_or_sleep_framework() -> None:
         text = path.read_text(encoding="utf-8")
         assert "tenacity" not in text
         assert "backoff" not in text
+
+
+def test_pscrv_004_setup_never_reads_the_process_working_directory() -> None:
+    """PSCR-004: the setup package must not consult the caller's cwd.
+
+    SWPH-001 stopped the tunnel profile from *depending* on `Path.cwd()` but
+    left the call itself in place, feeding a parameter the plan builder
+    discarded. This guard is what makes the property greppable and durable
+    rather than a fact about one call site.
+    """
+
+    offenders = [
+        f"{path.name}:{lineno}"
+        for path in _python_sources()
+        for lineno in _working_directory_reads(path.read_text(encoding="utf-8"))
+    ]
+
+    assert offenders == [], (
+        f"setup package must not read the process working directory: {offenders}"
+    )
+
+
+def test_pscrv_004_working_directory_guard_detects_a_violation() -> None:
+    """Prove the guard above can actually fail.
+
+    A static guard whose detection never matches anything passes for the wrong
+    reason, which is the same defect PSCR-006 exists to remove from the
+    Git-policy mutation tests. These cases pin the detector itself instead of
+    trusting that an empty result means a clean package.
+    """
+
+    assert _working_directory_reads("from pathlib import Path\nx = Path.cwd()\n") == [2]
+    assert _working_directory_reads("import os\nx = os.getcwd()\n") == [2]
+    assert _working_directory_reads("from pathlib import Path as P\nx = P.cwd()\n") == [2]
+    # A prose mention must not count; two setup modules now document that they
+    # never consult the working directory, and a substring check would flag them.
+    assert _working_directory_reads('x = "never consults Path.cwd() here"\n') == []
 
 
 def test_swphv_007_presentation_manifest_matches_discovery_rule() -> None:
