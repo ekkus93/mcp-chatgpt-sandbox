@@ -1,6 +1,8 @@
 # Setup Wizard Post-Closeout Review Fixes TODO
 
-**Status:** Integrated implementation candidate green; guarded merge pending  
+**Status:** Complete — SWF-001 through SWF-006 closed; merged as
+`c1c1c8f1c0074499bf06eebd6ab51a9e776037fa` with green post-merge CI (bookkeeping completed
+2026-09-17)  
 **Original baseline:** `master` at `53f9518ba206efa2aae537983601f196da3374c4`  
 **Integrated baseline:** `master` at `ce0b291c316dc6b654916cd49f463bae4f60c2c5` after setup hardening PR #64  
 **Spec:** `docs/SETUP_WIZARD_POST_CLOSEOUT_REVIEW_SPEC_2026-09-13.md`  
@@ -114,12 +116,31 @@ A checkbox closes only from source, test, documentation, CI, and merge evidence.
 - [x] Confirm setup unit/Textual/integration tests green on the implementation candidate.
 - [x] Confirm full Docker-backed pytest green on the implementation candidate.
 - [x] Confirm MCP/schema/contract/docs drift gates green on the implementation candidate.
-- [ ] Merge only through the guarded policy-approved PR path.
-- [ ] Record exact merged `master` SHA.
-- [ ] Record fresh exact merged-`master` CI run.
-- [ ] Mark the Definition of Done only after post-merge CI is green.
+- [x] Merge only through the guarded policy-approved PR path.
+- [x] Record exact merged `master` SHA.
+- [x] Record fresh exact merged-`master` CI run.
+- [x] Mark the Definition of Done only after post-merge CI is green.
 
 **Evidence:** Integrated source/test candidate `33dc4939aebc1c82b34173de27477d27f9f1c4e8` passed GitHub Actions CI run `34815513099`. That run passed Ruff format, Ruff lint, strict mypy, MCP contract check, `contract_version` history check, `docs/TOOLS.md` drift check, and full Docker-backed pytest.
+
+**Merge and post-merge evidence (recorded 2026-09-17)**
+
+- Guarded merge: PR #66, `ralph/setup-wizard-post-closeout-review-v2`, merged to `master` as
+  `c1c1c8f1c0074499bf06eebd6ab51a9e776037fa` on 2026-09-14.
+- Post-merge `master` CI: run `34820373732`, job `103900367908` — conclusion **success**.
+- **The merge landed and has been in `master` since.** Verified independently of the run record:
+  the candidate SHA is an ancestor of `master`, and both guards this series added —
+  `test_swf_001_reviewed_mutation_handlers_are_two_step` and
+  `test_swf_003_setup_app_has_no_broad_e501_per_file_exemption` — are present in
+  `tests/setup/test_setup_static_audit.py` and pass in the current suite. The merge SHA also
+  became the inspected baseline of the next series
+  (`docs/SETUP_WIZARD_POST_HARDENING_REVIEW_TODO_2026-09-14.md`, SWPH-001).
+- **Limitation:** this run's logs have since expired, so the exact pytest count, warning count, and
+  coverage figures could not be recovered and are deliberately not recorded here. The run
+  identifier, job identifier and `success` conclusion are what GitHub still reports, and are what
+  this entry claims — nothing is reconstructed from memory.
+- This bookkeeping was completed on 2026-09-17, three days after the merge: the work closed but the
+  file did not, leaving it reading as unfinished. The delay is recorded rather than backdated.
 
 ## Definition of Done
 
@@ -132,5 +153,5 @@ A checkbox closes only from source, test, documentation, CI, and merge evidence.
 - [x] Secret lifecycle tests cover field-name and value-shape regression risks without blocking legitimate credential path references.
 - [x] Unsafe-fallback/silent-failure audit remains green.
 - [x] Exact integrated source/test candidate CI is green.
-- [ ] Guarded merge is complete.
-- [ ] Exact merged-`master` CI is green.
+- [x] Guarded merge is complete. — PR #66 as `c1c1c8f1c0074499bf06eebd6ab51a9e776037fa`.
+- [x] Exact merged-`master` CI is green. — run `34820373732`, job `103900367908`, **success**.
