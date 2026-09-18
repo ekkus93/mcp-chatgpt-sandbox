@@ -1,5 +1,13 @@
 # Remediation TODO
 
+**Status:** Complete per this file's own Definition of done — RR-001..RR-033 closed. Four
+checkboxes remain **intentionally unticked under VR-000b** (`docs/REVIEW_SPEC.md`: a tick describes
+work done, never work considered and declined), so they are dispositions rather than outstanding
+work: two audit-record assertions blocked by a reproduced in-container remote-resolution defect
+(explicitly deferred with its reproduction below), one per-run unique repository id weighed and
+deliberately not done, and `tools/repository.py` extraction assessed as not worth touching. Status
+line added 2026-09-17; it was the only TODO in `docs/` without one, which made these four
+dispositions read as open tasks.
 **Spec:** `docs/REMEDIATION_SPEC.md` (RR-001..RR-033, RAT-001..RAT-020)
 **Source:** code review of `docs/HARDENING_TODO.md` H1–H35, 2026-08-28
 
