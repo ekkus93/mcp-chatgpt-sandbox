@@ -1,6 +1,6 @@
 # Post-PSCR2 Code Review TODO
 
-**Status:** In progress — `PSCR3-001`–`PSCR3-005` closed; `PSCR3-006` next  
+**Status:** In progress — `PSCR3-001`–`PSCR3-006` closed; `PSCR3-008` next  
 **Date:** 2026-09-18  
 **Spec:** `docs/POST_PSCR2_CODE_REVIEW_SPEC_2026-09-18.md`  
 **Reviewed baseline:** `a5a35a1f1f049582f9596fc1bd9ffd7bf7ad65a1`  
@@ -230,17 +230,39 @@ changes what the software does, with one recorded exception — PSCR3-009, if it
 
 **Goal:** CI, not server startup, is where a lost `reconcile()` override would be found.
 
-- [ ] Add a Docker-free test: a `DockerWorkspaceManager` with one workspace row and a fake Docker
+- [x] Add a Docker-free test: a `DockerWorkspaceManager` with one workspace row and a fake Docker
       client runs `reconcile_all()`.
-- [ ] Assert the concrete `reconcile()` ran for that workspace.
-- [ ] Assert the `_CoreMixin` declaration was never reached (no `NotImplementedError`).
-- [ ] Record that `reconcile_all()` catches only `ContainerRuntimeFailedError`, so the failure mode
+- [x] Assert the concrete `reconcile()` ran for that workspace.
+- [x] Assert the `_CoreMixin` declaration was never reached (no `NotImplementedError`).
+- [x] Record that `reconcile_all()` catches only `ContainerRuntimeFailedError`, so the failure mode
       without the override is loud, not a silently skipped workspace.
 
 **Validation — PSCR3V-006**
 
-- [ ] Discrimination: with the override removed from `DockerWorkspaceManager`, the test fails.
-- [ ] `tests/workspace/test_pscr2_reconcile_declaration.py` remains green.
+- [x] Discrimination: with the override removed from `DockerWorkspaceManager`, the test fails.
+- [x] `tests/workspace/test_pscr2_reconcile_declaration.py` remains green.
+
+**Closure evidence (2026-09-18)**
+
+- Two Docker-free tests added to `tests/workspace/test_pscr2_reconcile_declaration.py`, sharing a
+  helper that builds a real `DockerWorkspaceManager` over an in-memory database with one workspace
+  row and a fake Docker client that finds nothing and records each `containers.list()` call.
+- `test_pscr3v_006_reconcile_all_dispatches_to_the_concrete_override` asserts the sweep returns the
+  workspace — impossible had the declaration been reached, since it raises — **and** that the
+  recorded Docker query filtered on `workspace-id=ws_example`, which shows *which* body ran: only the
+  concrete `reconcile()` lists containers by workspace label.
+- `test_pscr3v_006_a_lost_override_fails_the_sweep_loudly` removes the override with
+  `monkeypatch.delattr` and asserts `reconcile_all()` raises `NotImplementedError`. This pins the
+  claim the task was asked to record: `reconcile_all()` catches only `ContainerRuntimeFailedError`,
+  so a lost override is a loud startup failure, not a silently "skipped" workspace. Were the sweep
+  ever to catch more broadly, this test fails.
+- **Discrimination verified.** With the override renamed away in `workspace/manager.py`, the dispatch
+  test fails. (In that same run the lost-override test also fails, but only because its own
+  `delattr` then has nothing to remove — an artifact of the experiment, recorded so it is not
+  mistaken for a second proof.) `manager.py` was restored byte-identical to `HEAD`.
+- Test-only change. Strict mypy PASS; Docker-free suite plus guards `696 passed` (this figure was first
+  written as 705 before the run finished, and corrected from the actual output). The full
+  Docker-backed suite runs at closure.
 
 ### PSCR3-008 — Test `_installed_version()` itself
 
