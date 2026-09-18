@@ -1,6 +1,6 @@
 # Post-PSCR Code Review TODO
 
-**Status:** In progress — `PSCR2-001` closed; `PSCR2-002` next  
+**Status:** In progress — `PSCR2-001`–`PSCR2-002` closed; `PSCR2-003` next  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `134795429eae988f927e43ec97cc04c5f98b867a`  
@@ -100,25 +100,68 @@ every declined fix is recorded as declined, and no document claims more than the
 
 **Goal:** the package version and the checkout version cannot silently disagree.
 
-- [ ] Choose Option A (document only), B (detect and fail closed), or C (refuse the case).
-- [ ] Record the chosen option and its rationale in this file.
-- [ ] If Option B: after PSCR2-001 finds the root, compare `mcp_chatgpt_sandbox.__version__` against
-      the found `pyproject.toml`'s `[project] version`; on mismatch raise `SetupDockerError` naming
-      both versions and the remedy.
-- [ ] If Option B: confirm an editable install cannot trigger the check (same source, same version by
-      construction) and say so in the docstring.
-- [ ] Reword the PSCR-002 docstring sentence "the context it names is genuinely usable" to state what
+- [x] Choose Option A (document only), B (detect and fail closed), or C (refuse the case).
+- [x] Record the chosen option and its rationale in this file.
+- [x] If Option B: compare the package version against the found `pyproject.toml`'s
+      `[project] version`; on mismatch raise `SetupDockerError` naming both versions and the
+      remedy. — implemented against the **installed distribution's** version, not
+      `mcp_chatgpt_sandbox.__version__`; see the deviation below.
+- [x] If Option B: confirm an editable install cannot trigger the check and say so in the docstring.
+- [x] Reword the PSCR-002 docstring sentence "the context it names is genuinely usable" to state what
       is actually guaranteed under the chosen option.
-- [ ] Leave the same-version-dirty-checkout case (ordinary Dockerfile development) untouched.
-- [ ] Update `docs/DEVELOPMENT.md`'s troubleshooting entry to describe the chosen behavior.
+- [x] Leave the same-version-dirty-checkout case (ordinary Dockerfile development) untouched.
+- [x] Update `docs/DEVELOPMENT.md`'s troubleshooting entry to describe the chosen behavior.
 
 **Validation — PSCR2V-002**
 
-- [ ] Test: matching versions resolve normally.
-- [ ] Test (if B): mismatched versions fail closed with both versions in the message.
-- [ ] Test (if B): the message names the remedy and contains no secrets.
-- [ ] Test: the current real checkout (editable install) passes the check.
-- [ ] Discrimination (if B): the mismatch test fails against the pre-PSCR2-002 code.
+- [x] Test: matching versions resolve normally.
+- [x] Test (if B): mismatched versions fail closed with both versions in the message.
+- [x] Test (if B): the message names the remedy and contains no secrets.
+- [x] Test: the current real checkout (editable install) passes the check.
+- [x] Discrimination (if B): the mismatch test fails against the pre-PSCR2-002 code.
+
+**Decision and evidence (2026-09-18)**
+
+- **Option B selected — detect and fail closed.** It converts a silent mismatch into an actionable
+  error for the one case that can actually skew, and leaves ordinary Dockerfile development alone.
+- **Deviation from this TODO's own wording, because the spec was wrong.** The spec proposed
+  comparing `mcp_chatgpt_sandbox.__version__` and asserted that "an editable install always matches
+  by construction". Implementation showed that claim false: `__version__` is a hard-coded literal in
+  `__init__.py`, maintained separately from `[project] version`. A half-done version bump would
+  have failed the Docker step of an *editable* install over bookkeeping unrelated to Docker. The
+  property that genuinely holds by construction is locational, so the check is built on it:
+  - if `docker_setup.py` resolves under the found root's `src/` (`_running_from`), code and context
+    are one tree, and the check is skipped;
+  - otherwise the **installed distribution's** version (`importlib.metadata`, the wheel actually
+    running) is compared with the checkout's `pyproject.toml`.
+  Option B's intent is preserved exactly; only the mechanism changed, and the spec's stated
+  invariant is now true instead of asserted.
+- A mismatch, or an installed version that cannot be determined, fails closed. The message names
+  both versions and the remedy ("Reinstall the package from this checkout, or build the image
+  manually and select it") and contains no secrets.
+- The PSCR-002 docstring now says what is and is not guaranteed: finding the enclosing checkout from
+  an in-repo venv does *not* guarantee the context matches the running code, and names the function
+  that closes that gap.
+- `docs/DEVELOPMENT.md` gained a troubleshooting entry describing the check, the remedy, why the
+  editable install never trips it, and why a same-version dirty checkout passes deliberately.
+- Five tests added to `tests/setup/test_pscr_docker_context_policy.py`: matching versions resolve;
+  mismatched versions fail closed naming both and the remedy; an undeterminable installed version
+  fails closed; an **in-tree module with version drift is not tripped** (the exact case the spec's
+  original design would have broken); and the real editable checkout resolves.
+- An autouse fixture pins the installed version for the module, so tests relocated outside a `src/`
+  tree no longer pass only because the real version happens to equal the fixture default.
+- **Discrimination — one invalid run caught and redone.** The first run against pre-PSCR2-002 code
+  reported nothing: every test *errored* in fixture setup, because the fixture patched a function
+  that did not yet exist, and the result filter matched only `passed|failed`. The fixture now uses
+  `raising=False` (documented in its docstring so it is not "tidied" away). The valid run: the
+  mismatch and undeterminable-version tests **fail** against the pre-fix code on behavior; the
+  real-editable-checkout test also fails, but only because `_running_from` does not exist yet — a
+  reference failure, recorded as such and not counted as behavioral proof. The in-tree-drift and
+  matching-version tests pass against both, which is correct: they guard against over-reach.
+- Full Docker-backed suite: `1436 passed in 645.65s`, zero failures, zero skips. Ruff format PASS;
+  Ruff lint PASS; strict mypy (103 files) PASS.
+- **Overlap recorded as corroboration.** Started 02:27:48Z during CI `35298161437` (`dbd120b`),
+  which completed **success** at 02:31:33Z; the remainder overlapped CI `35299275538` (`7f13beb`).
 
 ---
 

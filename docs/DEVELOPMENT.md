@@ -252,6 +252,17 @@ Manual configuration remains supported. See
 - **A setup-state file is corrupt.** Use Repair or Start fresh. Start fresh resets
   wizard progress; it does not delete the production config, repositories,
   credentials, database contents, Docker volumes, or workspaces.
+- **The installed package does not match the source checkout.** A non-editable
+  install of `mcp-chatgpt-sandbox` that finds an enclosing checkout (for example
+  a wheel installed into `<repo>/.venv`) compares its own installed version with
+  the checkout's `pyproject.toml` before building from `docker/default/`, and
+  refuses on a mismatch or an undeterminable version (PSCR2-002,
+  `docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md`). Otherwise an older wheel in a
+  newer checkout would build from a Dockerfile it was never written against.
+  Reinstall from the checkout, or build the image manually and select it. The
+  editable development install never trips this: its code *is* the checkout's
+  `src/` tree, and a same-version checkout with uncommitted `Dockerfile` edits
+  passes deliberately.
 - **Tool schemas changed.** Regenerate `schemas/tools.json` with
   `mcp-chatgpt-sandbox export-schemas` and make the required `contract_version`
   decision; the setup TUI itself does not alter the public MCP tool surface.

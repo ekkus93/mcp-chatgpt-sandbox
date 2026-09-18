@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -134,7 +135,10 @@ def _source_checkout_root() -> Path | None:
     right-layout, wrong-name candidate is skipped so the search keeps climbing.
 
     A non-editable install into an in-repo virtualenv (`<repo>/.venv/...`) still
-    finds `<repo>`, because the checkout genuinely is present.
+    finds `<repo>`, because the checkout genuinely is present. That does *not*
+    guarantee the context matches the code that is running — an older wheel in
+    a newer checkout would build from a Dockerfile it was never written against.
+    `bundled_default_image_build_context()` closes that gap (PSCR2-002).
     """
 
     for candidate in Path(__file__).resolve().parents:
@@ -145,6 +149,59 @@ def _source_checkout_root() -> Path | None:
         if project is not None and project.get("name") == _PROJECT_NAME:
             return candidate
     return None
+
+
+def _installed_version() -> str | None:
+    """Version of the installed `mcp-chatgpt-sandbox` distribution, if any."""
+
+    try:
+        return importlib.metadata.version(_PROJECT_NAME)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def _running_from(root: Path) -> bool:
+    """Whether this module is the source tree under `root`, not an installed copy."""
+
+    return Path(__file__).resolve().is_relative_to((root / "src").resolve())
+
+
+def _check_context_matches_installed_version(root: Path) -> None:
+    """Fail closed when an installed package would build from another version's context.
+
+    PSCR2-002 (`docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md`), Option B.
+
+    When this module *is* the checkout's own `src/` tree — the editable install
+    used for development — code and context come from one tree by construction,
+    so there is nothing to compare and the check is skipped. The spec originally
+    proposed comparing `mcp_chatgpt_sandbox.__version__` instead, on the belief
+    that an editable install matches by construction. It does not:
+    `__version__` is a hard-coded literal maintained separately from
+    `[project] version`, so a half-done version bump would have failed the
+    Docker step of an editable install over bookkeeping unrelated to Docker.
+    Asking "is the running code in the same tree?" is the property that
+    actually holds by construction.
+
+    Otherwise the installed distribution's own metadata — the wheel actually
+    running — is compared with the checkout's `pyproject.toml`. A mismatch, or a
+    version that cannot be determined, fails closed. A same-version checkout
+    with uncommitted `Dockerfile` edits passes deliberately: that is ordinary
+    Dockerfile development, not skew.
+    """
+
+    if _running_from(root):
+        return
+    project = _declared_project(root / "pyproject.toml")
+    checkout_version = None if project is None else project.get("version")
+    installed = _installed_version()
+    if installed is None or checkout_version is None or installed != checkout_version:
+        raise SetupDockerError(
+            "The installed mcp-chatgpt-sandbox package "
+            f"({installed or 'unknown version'}) does not match the source checkout "
+            f"it would build the workspace image from ({checkout_version or 'unknown version'}). "
+            "Reinstall the package from this checkout, or build the image manually "
+            "and select it."
+        )
 
 
 def bundled_default_image_build_context() -> Path:
@@ -164,6 +221,7 @@ def bundled_default_image_build_context() -> Path:
             "'docker build -t <image> docker/default/' from a checkout, or select "
             "an image that already exists on this host."
         )
+    _check_context_matches_installed_version(root)
     return validate_default_image_build_context(root / "docker" / "default")
 
 

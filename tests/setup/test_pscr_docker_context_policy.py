@@ -24,6 +24,29 @@ from mcp_chatgpt_sandbox.setup.docker_setup import (
     prepare_default_image_build_plan,
 )
 
+_PINNED_INSTALLED_VERSION = "0.1.0"
+
+
+@pytest.fixture(autouse=True)
+def _pin_installed_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the PSCR2-002 version check deterministic across this module.
+
+    Several tests relocate the module *outside* a checkout's `src/` tree, which
+    routes them through the installed-version comparison. Without this pin they
+    would pass only because the real installed version happens to equal the
+    fixture default, and would break on the next version bump for reasons that
+    have nothing to do with what they test.
+
+    `raising=False` is deliberate: it lets this module run against the code as
+    it was *before* PSCR2-002, which is how these tests were shown to
+    discriminate. With the default it errored in setup instead, so every test
+    "failed" without reaching an assertion.
+    """
+
+    monkeypatch.setattr(
+        docker_setup, "_installed_version", lambda: _PINNED_INSTALLED_VERSION, raising=False
+    )
+
 
 def _write_pyproject(root: Path, *, name: str, version: str = "0.1.0") -> None:
     root.mkdir(parents=True, exist_ok=True)
@@ -182,3 +205,94 @@ def test_pscr2v_001_a_malformed_pyproject_is_skipped_not_raised(
     )
 
     assert bundled_default_image_build_context() == real_context.resolve()
+
+
+def _installed_into_repo_venv(root: Path) -> Path:
+    """Module path for a *non-editable* install inside the checkout's own venv."""
+
+    return (
+        root
+        / ".venv"
+        / "lib"
+        / "python3.12"
+        / "site-packages"
+        / "mcp_chatgpt_sandbox"
+        / "setup"
+        / "docker_setup.py"
+    )
+
+
+def test_pscr2v_002_matching_versions_resolve_normally(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "checkout"
+    _write_pyproject(root, name="mcp-chatgpt-sandbox", version=_PINNED_INSTALLED_VERSION)
+    context = _write_context(root)
+    _relocate_module(monkeypatch, _installed_into_repo_venv(root))
+
+    assert bundled_default_image_build_context() == context.resolve()
+
+
+def test_pscr2v_002_mismatched_versions_fail_closed_naming_both(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An older wheel in a newer checkout must not build from the newer Dockerfile."""
+
+    root = tmp_path / "checkout"
+    _write_pyproject(root, name="mcp-chatgpt-sandbox", version="0.2.0")
+    _write_context(root)
+    _relocate_module(monkeypatch, _installed_into_repo_venv(root))
+
+    with pytest.raises(SetupDockerError) as excinfo:
+        bundled_default_image_build_context()
+
+    message = str(excinfo.value)
+    assert _PINNED_INSTALLED_VERSION in message
+    assert "0.2.0" in message
+    assert "Reinstall" in message  # names the remedy
+
+
+def test_pscr2v_002_undeterminable_installed_version_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Option B fails closed: an unknown version cannot be shown to match."""
+
+    root = tmp_path / "checkout"
+    _write_pyproject(root, name="mcp-chatgpt-sandbox")
+    _write_context(root)
+    _relocate_module(monkeypatch, _installed_into_repo_venv(root))
+    monkeypatch.setattr(docker_setup, "_installed_version", lambda: None, raising=False)
+
+    with pytest.raises(SetupDockerError, match="unknown version"):
+        bundled_default_image_build_context()
+
+
+def test_pscr2v_002_an_in_tree_module_skips_the_check_despite_version_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The editable-install guarantee the spec wanted, held by the right property.
+
+    The module lives in the checkout's own `src/` tree, so code and context are
+    one tree by construction. The checkout declares a version the "installed"
+    metadata disagrees with — precisely a half-done version bump. Comparing
+    `__version__` against `pyproject.toml`, as the spec first proposed, would
+    have failed the Docker step here over bookkeeping unrelated to Docker.
+    """
+
+    root = tmp_path / "checkout"
+    _write_pyproject(root, name="mcp-chatgpt-sandbox", version="0.2.0")
+    context = _write_context(root)
+    _relocate_module(
+        monkeypatch, root / "src" / "mcp_chatgpt_sandbox" / "setup" / "docker_setup.py"
+    )
+
+    assert bundled_default_image_build_context() == context.resolve()
+
+
+def test_pscr2v_002_the_real_editable_checkout_passes() -> None:
+    """The development install this suite runs from is in-tree, so it resolves."""
+
+    root = docker_setup._source_checkout_root()
+    assert root is not None
+    assert docker_setup._running_from(root)
+    assert (bundled_default_image_build_context() / "Dockerfile").is_file()
