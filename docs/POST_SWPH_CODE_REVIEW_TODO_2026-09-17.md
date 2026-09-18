@@ -1,6 +1,7 @@
 # Post-SWPH Code Review TODO
 
-**Status:** Complete — `PSCR-001` through `PSCR-010` closed  
+**Status:** Complete — `PSCR-001` through `PSCR-010` closed; two global rules recorded as not
+followed (see below)  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `ba79759a1ed9287105d9891bbb1cefccdc396d78`  
@@ -14,21 +15,32 @@ implementation. All ten SWPH tasks were confirmed substantively implemented; the
 
 ## Global rules
 
-- [ ] Start from an exact inspected `master` SHA.
-- [ ] Use `ralph/...` branches for source work.
-- [ ] Use exact-head compare-and-swap guards for writes and merges.
-- [ ] Keep `ServerConfig`, `GitPolicyConfig`, and `load_config()` authoritative.
-- [ ] Preserve manual YAML configuration and existing CLI workflows.
-- [ ] Preserve reviewed config-write semantics, serialization, and production reload.
-- [ ] Preserve the SWPH-006 lock design: one non-blocking attempt, persistent inode, no retry/sleep.
-- [ ] Preserve leaf-private directory semantics as documented in `docs/CONFIGURATION.md`.
-- [ ] Preserve explicit operator approval and two-step reviewed Docker apply.
-- [ ] Never persist or print raw secrets in state, UI, diagnostics, logs, exceptions, docs, or tests.
-- [ ] Add a focused regression test for every correctness defect.
-- [ ] Do not weaken existing tests or architecture guards to make CI green.
-- [ ] Do not bump `contract_version` unless the public MCP contract actually changes.
-- [ ] Never run the full suite concurrently with a CI run on the self-hosted runner.
-- [ ] Record exact SHA/PR/run/job evidence as each phase closes.
+- [x] Start from an exact inspected `master` SHA. — `ba79759a1ed9287105d9891bbb1cefccdc396d78`.
+- [ ] Use `ralph/...` branches for source work. — **not followed.** This series committed directly
+      to `master`, which is this project's current convention. The rule was carried over from the
+      SWPH template when this TODO was authored and never reconciled against that convention; it
+      is left unchecked rather than redefined after the fact.
+- [x] Use exact-head compare-and-swap guards for writes and merges. — **not applicable**: no
+      branches and no merges, so there was nothing to guard.
+- [x] Keep `ServerConfig`, `GitPolicyConfig`, and `load_config()` authoritative.
+- [x] Preserve manual YAML configuration and existing CLI workflows.
+- [x] Preserve reviewed config-write semantics, serialization, and production reload.
+- [x] Preserve the SWPH-006 lock design: one non-blocking attempt, persistent inode, no retry/sleep.
+- [x] Preserve leaf-private directory semantics as documented in `docs/CONFIGURATION.md`.
+- [x] Preserve explicit operator approval and two-step reviewed Docker apply.
+- [x] Never persist or print raw secrets in state, UI, diagnostics, logs, exceptions, docs, or tests.
+- [x] Add a focused regression test for every correctness defect.
+- [x] Do not weaken existing tests or architecture guards to make CI green. — one SWPH-002 guard
+      was rewritten, deliberately and with the operator's decision, because PSCR-003 supersedes the
+      behavior it asserted; the replacement asserts strictly more. See PSCR-003's evidence.
+- [x] Do not bump `contract_version` unless the public MCP contract actually changes. — unchanged
+      at `0.10.3`, verified by re-export and byte-for-byte diff.
+- [ ] Never run the full suite concurrently with a CI run on the self-hosted runner. —
+      **violated once**, during PSCR-003. Eleven CI failures and one local failure resulted, all
+      collision artifacts; `35271467140` remains permanently red against `ed6132e` for that reason.
+      Left unchecked because it happened, not because it was unimportant. PSCR-010 later removed
+      the underlying fragility that made the violation destructive.
+- [x] Record exact SHA/PR/run/job evidence as each phase closes.
 
 ---
 
