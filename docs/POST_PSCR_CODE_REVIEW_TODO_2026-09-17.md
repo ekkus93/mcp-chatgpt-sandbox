@@ -1,6 +1,6 @@
 # Post-PSCR Code Review TODO
 
-**Status:** In progress — `PSCR2-001`–`PSCR2-003` closed; `PSCR2-004` next  
+**Status:** In progress — `PSCR2-001`–`PSCR2-004` closed; `PSCR2-005` next  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `134795429eae988f927e43ec97cc04c5f98b867a`  
@@ -198,19 +198,42 @@ every declined fix is recorded as declined, and no document claims more than the
 
 **Goal:** the working-directory guard sees a passed `os.getcwd`, without flagging a field named `cwd`.
 
-- [ ] Extend `_working_directory_reads()` to flag an `ast.Attribute` whose value is the name `os` and
+- [x] Extend `_working_directory_reads()` to flag an `ast.Attribute` whose value is the name `os` and
       whose attr is `getcwd` or `getcwdb`, whether or not it is called.
-- [ ] Do **not** extend to bare `.cwd` attribute references; keep those call-only.
-- [ ] Keep the existing call-node detection unchanged.
+- [x] Do **not** extend to bare `.cwd` attribute references; keep those call-only.
+- [x] Keep the existing call-node detection unchanged.
 
 **Validation — PSCR2V-004**
 
-- [ ] Test: an uncalled `os.getcwd` reference (e.g. passed as an argument) is flagged.
-- [ ] Test: an uncalled `record.cwd` attribute reference is **not** flagged.
-- [ ] Test: the existing positive cases (`Path.cwd()`, `os.getcwd()`, aliased `P.cwd()`) still flag.
-- [ ] Test: the existing negative case (prose mention) still passes.
-- [ ] Discrimination: the uncalled-reference test fails against the pre-PSCR2-004 detector.
-- [ ] `tests/setup/test_setup_static_audit.py` remains green.
+- [x] Test: an uncalled `os.getcwd` reference (e.g. passed as an argument) is flagged.
+- [x] Test: an uncalled `record.cwd` attribute reference is **not** flagged.
+- [x] Test: the existing positive cases (`Path.cwd()`, `os.getcwd()`, aliased `P.cwd()`) still flag.
+- [x] Test: the existing negative case (prose mention) still passes.
+- [x] Discrimination: the uncalled-reference test fails against the pre-PSCR2-004 detector.
+- [x] `tests/setup/test_setup_static_audit.py` remains green.
+
+**Closure evidence (2026-09-18)**
+
+- A second pass flags an `ast.Attribute` whose value is the name `os` and whose attr is `getcwd` or
+  `getcwdb`, called or not. The call-node pass is unchanged.
+- **A double-count trap avoided.** `ast.walk` visits the `os.getcwd` attribute node *inside* every
+  `os.getcwd()` call, so a naive extension would have reported `os.getcwd()` twice and broken the
+  existing `== [2]` assertion. Attribute nodes already counted as a call's target are recorded by
+  identity and skipped; results are returned sorted so the order stays deterministic.
+- The extension is limited to `os.getcwd`/`os.getcwdb` on purpose. A bare `.cwd` attribute is left
+  call-only, because `record.cwd` is an ordinary data field and not a working-directory read.
+- `test_pscr2v_004_uncalled_os_getcwd_is_flagged_but_a_cwd_field_is_not` covers both uncalled
+  forms, the `record.cwd` boundary, and single counting of `os.getcwd()`.
+- **Discrimination verified.** The detector lives in the same module as its tests, so the new
+  assertions were run directly against the `HEAD` version of `_working_directory_reads`: both
+  uncalled-reference cases **fail** (`got=[]`), while the `record.cwd` boundary and the
+  single-count case pass against both versions — confirming the extension closes the gap without
+  over-reaching or double-counting.
+- Verification: Ruff format (319 files) PASS; Ruff lint PASS; strict mypy PASS; Docker-free suite
+  plus the acceptance audit `690 passed`; `tests/setup/test_setup_static_audit.py` `16 passed`.
+- The full Docker-backed suite was deliberately **not** run for this task: it changes only a
+  detector inside a test module, so a Docker run would show only that unrelated tests are
+  unaffected by a test file. It runs once at `PSCR2-008`.
 
 ### PSCR2-005 — State the `.parents[<int>]` guard's policy
 

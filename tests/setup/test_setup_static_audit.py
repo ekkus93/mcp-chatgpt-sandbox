@@ -62,10 +62,21 @@ def _working_directory_reads(source: str) -> list[int]:
     Parsed rather than grepped: matching call nodes means an alias such as
     `from pathlib import Path as P` cannot slip past, and a docstring that
     merely mentions `Path.cwd()` is not a violation.
+
+    PSCR2-004 (`docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md`) added the
+    *uncalled* module-qualified reference — `os.getcwd` passed as a callback or
+    default reads the working directory just as surely as calling it. It is
+    deliberately limited to `os.getcwd`/`os.getcwdb`: extending it to any bare
+    `.cwd` attribute would flag an ordinary data field such as `record.cwd`,
+    turning the guard into a false-positive generator. Attribute nodes that are
+    the target of a call already counted above are skipped, so `os.getcwd()`
+    still reports one line rather than two.
     """
 
+    tree = ast.parse(source)
     found: list[int] = []
-    for node in ast.walk(ast.parse(source)):
+    counted: set[int] = set()
+    for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         func = node.func
@@ -76,7 +87,17 @@ def _working_directory_reads(source: str) -> list[int]:
             and func.id in {"getcwd", "getcwdb"}
         ):
             found.append(func.lineno)
-    return found
+            counted.add(id(func))
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "os"
+            and node.attr in {"getcwd", "getcwdb"}
+            and id(node) not in counted
+        ):
+            found.append(node.lineno)
+    return sorted(found)
 
 
 def _line_has_boundary_rationale(path: Path, lineno: int) -> bool:
@@ -202,6 +223,19 @@ def test_pscrv_004_working_directory_guard_detects_a_violation() -> None:
     # A prose mention must not count; two setup modules now document that they
     # never consult the working directory, and a substring check would flag them.
     assert _working_directory_reads('x = "never consults Path.cwd() here"\n') == []
+
+
+def test_pscr2v_004_uncalled_os_getcwd_is_flagged_but_a_cwd_field_is_not() -> None:
+    """PSCR2-004: a passed `os.getcwd` reads the cwd; a `record.cwd` field does not."""
+
+    # Uncalled references, which the call-only detector missed.
+    assert _working_directory_reads("import os\nf = os.getcwd\n") == [2]
+    assert _working_directory_reads("import os\nrun(callback=os.getcwdb)\n") == [2]
+    # The deliberate boundary: an ordinary field named `cwd` is not a read.
+    assert _working_directory_reads("x = record.cwd\n") == []
+    # A call is still counted exactly once, not once as a call and again as an
+    # attribute reference.
+    assert _working_directory_reads("import os\nx = os.getcwd()\n") == [2]
 
 
 def test_swphv_007_presentation_manifest_matches_discovery_rule() -> None:
