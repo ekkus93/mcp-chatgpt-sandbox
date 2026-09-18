@@ -350,6 +350,9 @@ its behaviour in a later push (recorded under JPO-002).
 - [x] Set this file's Status line to Complete; set the spec's Status to Implemented.
 - [x] Note any deviation from the spec, and any slip made during the series, in the task evidence.
 
+**Evidence — JPO-010.** Closure commit `f12f330`; its exact-head CI run `35376222496`, job
+`105701413477`: success, 1484 passed, coverage 88% (9518/1109).
+
 ---
 
 ## Definition of done
