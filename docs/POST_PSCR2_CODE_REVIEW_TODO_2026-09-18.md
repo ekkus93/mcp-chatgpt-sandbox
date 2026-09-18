@@ -1,6 +1,6 @@
 # Post-PSCR2 Code Review TODO
 
-**Status:** In progress — `PSCR3-001`–`PSCR3-006` closed; `PSCR3-008` next  
+**Status:** In progress — `PSCR3-001`–`PSCR3-006`, `PSCR3-008` closed; `PSCR3-009` next  
 **Date:** 2026-09-18  
 **Spec:** `docs/POST_PSCR2_CODE_REVIEW_SPEC_2026-09-18.md`  
 **Reviewed baseline:** `a5a35a1f1f049582f9596fc1bd9ffd7bf7ad65a1`  
@@ -270,16 +270,35 @@ changes what the software does, with one recorded exception — PSCR3-009, if it
 
 Added after a second review pass measured its coverage at zero.
 
-- [ ] Add a test that bypasses the autouse pin and asserts the real function returns the version
+- [x] Add a test that bypasses the autouse pin and asserts the real function returns the version
       `importlib.metadata` reports for this distribution.
-- [ ] Add a test that makes the lookup raise `PackageNotFoundError` and asserts `None`.
-- [ ] Keep the bypass explicit and local; the pin stays autouse for every other test.
-- [ ] Do not weaken PSCR3-004's rename assertion.
+- [x] Add a test that makes the lookup raise `PackageNotFoundError` and asserts `None`.
+- [x] Keep the bypass explicit and local; the pin stays autouse for every other test.
+- [x] Do not weaken PSCR3-004's rename assertion.
 
 **Validation — PSCR3V-008**
 
-- [ ] A recorded coverage run shows `_installed_version()` fully covered, up from zero.
-- [ ] The rest of `tests/setup/test_pscr_docker_context_policy.py` remains green.
+- [x] A recorded coverage run shows `_installed_version()` fully covered, up from zero.
+- [x] The rest of `tests/setup/test_pscr_docker_context_policy.py` remains green.
+
+**Closure evidence (2026-09-18)**
+
+- `tests/setup/test_pscr_docker_context_policy.py` captures the real function at import —
+  `_REAL_INSTALLED_VERSION = getattr(docker_setup, "_installed_version", None)` — before the autouse
+  pin replaces the module attribute. The bypass is explicit and local; the pin stays autouse for
+  every other test.
+- Two tests call the captured function: one asserts it equals
+  `importlib.metadata.version("mcp-chatgpt-sandbox")`; one makes that lookup raise
+  `PackageNotFoundError` and asserts `None`.
+- **Coverage, from a recorded run.** `--cov-branch` over this module alone: before this task
+  `_installed_version()`'s lines `157-160` were listed as missing; after it they are absent from the
+  missing list. The function went from zero to complete on both branches.
+- **PSCR3-004 not weakened.** The rename simulation now gives `14 errors` — every test, including
+  the two new ones, fails in fixture setup. `getattr` rather than attribute access is what keeps the
+  module importable against pre-PSCR2-002 source, where the function does not exist: that run gives
+  `5 failed, 9 passed` with **zero errors** (the two new tests fail there on `is not None`, which is
+  correct — there is no function to test).
+- Test-only change. Ruff lint PASS; module `14 passed`.
 
 ### PSCR3-009 — Dispose of exact project-name matching
 

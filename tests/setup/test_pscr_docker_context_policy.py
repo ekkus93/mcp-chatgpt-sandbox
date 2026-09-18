@@ -13,6 +13,7 @@ one this process happens to have.
 
 from __future__ import annotations
 
+import importlib.metadata
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,13 @@ from mcp_chatgpt_sandbox.setup.docker_setup import (
 )
 
 _PINNED_INSTALLED_VERSION = "0.1.0"
+
+#: The real function, captured at import — before the autouse pin below replaces
+#: the module attribute for every test. PSCR3-008 uses it to test the function
+#: itself, which the pin otherwise makes unreachable. `getattr` rather than
+#: attribute access so this module still imports against pre-PSCR2-002 code, where
+#: the function does not exist (see the fixture's docstring).
+_REAL_INSTALLED_VERSION = getattr(docker_setup, "_installed_version", None)
 
 
 @pytest.fixture(autouse=True)
@@ -307,3 +315,31 @@ def test_pscr2v_002_the_real_editable_checkout_passes() -> None:
     assert root is not None
     assert docker_setup._running_from(root)
     assert (bundled_default_image_build_context() / "Dockerfile").is_file()
+
+
+def test_pscr3v_008_the_real_installed_version_reports_this_distribution() -> None:
+    """PSCR3-008 (`docs/POST_PSCR2_CODE_REVIEW_SPEC_2026-09-18.md`): run the real lookup.
+
+    The autouse pin replaces `_installed_version` in every other test here, and the
+    one test that uses the real checkout is in-tree, so it skips the version check
+    before reaching the lookup. Branch coverage of the function was therefore zero,
+    although PSCR2-002's whole skew check reads the running version through it. If
+    `_PROJECT_NAME` ever stopped matching the distribution's metadata name this
+    would return None, and every non-editable install beside a checkout would be
+    refused with "unknown version" without any test noticing.
+    """
+
+    assert _REAL_INSTALLED_VERSION is not None
+    assert _REAL_INSTALLED_VERSION() == importlib.metadata.version("mcp-chatgpt-sandbox")
+
+
+def test_pscr3v_008_a_missing_distribution_reports_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The other branch: no installed distribution means "unknown", not an exception."""
+
+    def missing(_name: str) -> str:
+        raise importlib.metadata.PackageNotFoundError("mcp-chatgpt-sandbox")
+
+    monkeypatch.setattr(importlib.metadata, "version", missing)
+
+    assert _REAL_INSTALLED_VERSION is not None
+    assert _REAL_INSTALLED_VERSION() is None
