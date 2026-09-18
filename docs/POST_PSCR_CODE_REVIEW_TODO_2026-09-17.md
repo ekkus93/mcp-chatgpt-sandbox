@@ -1,6 +1,6 @@
 # Post-PSCR Code Review TODO
 
-**Status:** In progress — `PSCR2-001`–`PSCR2-004` closed; `PSCR2-005` next  
+**Status:** In progress — `PSCR2-001`–`PSCR2-005` closed; `PSCR2-006` next  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `134795429eae988f927e43ec97cc04c5f98b867a`  
@@ -239,17 +239,31 @@ every declined fix is recorded as declined, and no document claims more than the
 
 **Goal:** a reader who trips the guard learns the policy from the guard.
 
-- [ ] Rewrite `test_pscrv_009_production_has_no_layout_dependent_build_context`'s docstring to state
+- [x] Rewrite `test_pscrv_009_production_has_no_layout_dependent_build_context`'s docstring to state
       it forbids **every** integer subscript of `.parents` in production as a standing policy.
-- [ ] State why: two such sites were each silently wrong for an installed layout.
-- [ ] State the alternative: compute ancestor paths from an explicit, documented anchor and record
+- [x] State why: two such sites were each silently wrong for an installed layout.
+- [x] State the alternative: compute ancestor paths from an explicit, documented anchor and record
       the decision.
-- [ ] No code change.
+- [x] No code change.
 
 **Validation — PSCR2V-005**
 
-- [ ] The guard still reports zero offenders.
-- [ ] Docstring review confirms it names the policy, the reason, and the alternative.
+- [x] The guard still reports zero offenders.
+- [x] Docstring review confirms it names the policy, the reason, and the alternative.
+
+**Closure evidence (2026-09-18)**
+
+- The docstring now opens by declaring the check a **standing policy, not only a regression guard**,
+  and compares its deliberate breadth to the presentation-module manifest, which likewise fails on
+  any unclassified new module to force an explicit decision.
+- **Reason** stated: the two sites were each correct only for the `src/` layout, each resolved
+  outside the package root once installed, and neither was observable from the editable install —
+  a class of defect tests cannot see, hence a ban rather than case-by-case review.
+- **Alternative** stated for a future author who trips it: compute the path from an explicit,
+  documented anchor — a configured path, a self-validating marker search such as
+  `docker_setup._source_checkout_root()`, or `.parent` on a path already held — and record the
+  decision in the relevant spec.
+- No code change. The guard still reports zero offenders; Ruff lint PASS.
 
 ### PSCR2-006 — Record the write-mode heuristic's boundary
 

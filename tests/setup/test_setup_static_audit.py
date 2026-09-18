@@ -163,11 +163,26 @@ def test_wcr_013_setup_has_no_retry_or_sleep_framework() -> None:
 def test_pscrv_009_production_has_no_layout_dependent_build_context() -> None:
     """PSCR-009: no production module may derive a path by parent-index arithmetic.
 
-    `setup/docker_setup.py` resolved `parents[3] / "docker" / "default"` and
-    `workspace/container_config.py` did the same; both were correct only for this
-    repository's `src/` layout and resolved outside the package root once
-    installed. Scoped to the whole production package rather than to the two
-    known sites, so a third one cannot appear unnoticed.
+    **This is a standing policy, not only a regression guard** (made explicit by
+    PSCR2-005, `docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md`). It forbids
+    *every* integer subscript of `.parents` anywhere in the production package —
+    including a future one on a path that has nothing to do with the repository
+    layout. That breadth is deliberate, in the same way the presentation-module
+    manifest deliberately fails on any unclassified new module: it forces an
+    explicit decision instead of letting the next instance slip in unnoticed.
+
+    Why: `setup/docker_setup.py` resolved `parents[3] / "docker" / "default"` and
+    `workspace/container_config.py` did the same. Both were correct only for this
+    repository's `src/` layout, both resolved outside the package root once
+    installed, and neither failure was observable from the editable development
+    install — so a parent index into the repository is a defect that tests cannot
+    see, which is why it is banned outright rather than reviewed case by case.
+
+    If you trip this: do not index `.parents`. Compute the path from an explicit,
+    documented anchor that is correct in every layout — a configured path, a
+    marker found by a self-validating search such as
+    `docker_setup._source_checkout_root()`, or `.parent` on a path you already
+    hold — and record the decision in the relevant spec.
     """
 
     production_root = _REPO_ROOT / "src" / "mcp_chatgpt_sandbox"
