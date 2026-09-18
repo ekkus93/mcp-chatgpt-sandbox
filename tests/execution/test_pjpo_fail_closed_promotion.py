@@ -7,10 +7,22 @@ disk-full case, without needing a full disk. The earlier tool-level test
 monkeypatched `StreamCapture.attach` to raise before it touched anything,
 which is precisely why it could not see the defect: the defect *was* what
 `attach` had already done by the time it failed.
+
+`/dev/full` is Linux-only (PJPO2-003, `docs/POST_PJPO_CODE_REVIEW_SPEC_2026-09-18.md`
+§2.3). That matches what the suite already requires — a Docker daemon and
+a self-hosted Linux CI runner — and these tests are deliberately not
+guarded with a skip: `tests/_skip_policy.py` turns any skip into a session
+failure, so a guard would only move the failure somewhere less clear.
+
+These tests assert behaviour, not private attributes (PJPO2-003, QD2-A):
+"still deferred" is observed as buffered output that keeps growing and a
+capture that can still be attached; "no file object left open" as no
+descriptor on the path in `/proc/self/fd`.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -25,6 +37,22 @@ from mcp_chatgpt_sandbox.tools.execution_promotion import _fail_half_created_job
 _DISK_FULL = Path("/dev/full")
 
 
+def _open_descriptors_to(path: Path) -> list[str]:
+    """This process's file descriptors open on `path`. Duplicated from
+    `test_pjpo2_promote_atomicity.py` rather than shared, matching the
+    suite's convention for small per-file test helpers."""
+    target = str(path.resolve())
+    fd_dir = Path("/proc/self/fd")
+    found = []
+    for fd in os.listdir(fd_dir):
+        try:
+            if os.readlink(fd_dir / fd) == target:
+                found.append(fd)
+        except OSError:
+            continue  # closed between listdir and readlink
+    return found
+
+
 def test_pjpov001_a_failed_attach_leaves_the_capture_deferred_and_intact() -> None:
     capture = StreamCapture(None, max_output_bytes=1024, tail_keep_bytes=64)
     capture.write(b"produced before promotion\n")
@@ -32,11 +60,13 @@ def test_pjpov001_a_failed_attach_leaves_the_capture_deferred_and_intact() -> No
     with pytest.raises(OSError, match="No space left on device"):
         capture.attach(_DISK_FULL)
 
-    # G2: still deferred — not half-attached.
-    assert capture._path is None
-    assert capture._file is None
+    # G2: still deferred — not half-attached. Observed from outside: no
+    # descriptor was left open on the failed target, and a later write
+    # lands in the buffer (an attached capture's buffer never grows).
+    assert _open_descriptors_to(_DISK_FULL) == []
     assert capture.buffered_head() == b"produced before promotion\n"
     capture.write(b"and after\n")  # a later drain-thread write does not raise
+    assert capture.buffered_head() == b"produced before promotion\nand after\n"
     capture.finish()  # nor does finishing it
     assert capture.total_bytes == len(b"produced before promotion\nand after\n")
 

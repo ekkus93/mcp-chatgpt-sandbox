@@ -1,6 +1,6 @@
 # Post-PJPO Code Review TODO
 
-**Status:** In progress — `PJPO2-001`–`PJPO2-002` closed  
+**Status:** In progress — `PJPO2-001`–`PJPO2-003` closed  
 **Date:** 2026-09-18  
 **Spec:** `docs/POST_PJPO_CODE_REVIEW_SPEC_2026-09-18.md`  
 **Reviewed baseline:** `c6bb465`  
@@ -130,19 +130,29 @@ PJPO2-002 cited). Test- and doc-only: non-Docker suite 1032 passed.
 
 **Finding:** F3 (spec §2.3). **Decision:** QD2.
 
-- [ ] Record QD2. Recommended: A — behavioural assertions, at most one white-box with a reason.
-- [ ] In `tests/execution/test_pjpo_fail_closed_promotion.py`'s module docstring (and wherever
+- [x] Record QD2. — **A, behavioural assertions**, chosen by the user.
+- [x] In `tests/execution/test_pjpo_fail_closed_promotion.py`'s module docstring (and wherever
       PJPO2-001/002 add `/dev/full` tests): state that `/dev/full` is Linux-only, that this matches
       the suite's existing requirements (Docker, self-hosted Linux CI), and that it is deliberately
       not guarded with a skip because `tests/_skip_policy.py` turns any skip into a failure.
-- [ ] Per QD2: replace `capture._path is None` / `capture._file is None` with behavioural checks
+- [x] Per QD2: replace `capture._path is None` / `capture._file is None` with behavioural checks
       where an equivalent exists; keep a white-box assertion only where none does, with a comment.
-- [ ] Do not weaken what the test proves: run it against the pre-PJPO-001 `attach` again and record
+- [x] Do not weaken what the test proves: run it against the pre-PJPO-001 `attach` again and record
       that it still fails.
 
 **Validation**
 
-- [ ] That test file passes; discrimination re-proven; ruff clean.
+- [x] That test file passes; discrimination re-proven; ruff clean.
+
+**Evidence — PJPO2-003.** `tests/execution/test_pjpo_fail_closed_promotion.py`'s module docstring
+now states the Linux-only `/dev/full` dependency and why there is no skip guard;
+`test_pjpo2_promote_atomicity.py` (PJPO2-001) already said so. `capture._path is None` /
+`capture._file is None` replaced by observable behaviour: no descriptor open on the failed target
+(`/proc/self/fd`), and the buffer still growing on a later `write`. No white-box assertion was
+needed — `grep '\._path\|\._file'` over both PJPO test files finds none. Not weakened: against
+the pre-PJPO-001 `attach` (`git show 08073af:…`) the test still fails, now on
+`assert ['11'] == []` — the old code left the `/dev/full` descriptor open. Restored byte-identical
+(`cmp`). Test-only: that file 7 passed; non-Docker suite 1032 passed; ruff clean.
 
 ---
 
