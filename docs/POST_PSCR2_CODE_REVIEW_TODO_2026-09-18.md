@@ -1,6 +1,6 @@
 # Post-PSCR2 Code Review TODO
 
-**Status:** Closing — `PSCR3-001`–`PSCR3-009` implemented; awaiting CI on the closure commit  
+**Status:** Complete — `PSCR3-001` through `PSCR3-009` closed  
 **Date:** 2026-09-18  
 **Spec:** `docs/POST_PSCR2_CODE_REVIEW_SPEC_2026-09-18.md`  
 **Reviewed baseline:** `a5a35a1f1f049582f9596fc1bd9ffd7bf7ad65a1`  
@@ -382,8 +382,9 @@ Added after a second review pass.
       `9348` statements / `1104` misses.
 - [x] Record exact implementation head SHA. — `65a03f3`.
 - [x] Record exact CI run ID and job ID. — run `35327544137`, job `105544027363`.
-- [ ] Post-push `master` CI passes on the exact head SHA.
-- [ ] Update this TODO status to complete only after post-push evidence is green.
+- [x] Post-push `master` CI passes on the exact head SHA. — run `35330475384`, job `105553422421`
+      on `ae2021c`, **success**: `1455 passed`, `88%` (`9348` / `1104`).
+- [x] Update this TODO status to complete only after post-push evidence is green.
 
 ---
 
