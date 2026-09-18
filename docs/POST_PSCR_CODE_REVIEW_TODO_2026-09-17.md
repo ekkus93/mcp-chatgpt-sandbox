@@ -1,6 +1,6 @@
 # Post-PSCR Code Review TODO
 
-**Status:** In progress — `PSCR2-001`–`PSCR2-002` closed; `PSCR2-003` next  
+**Status:** In progress — `PSCR2-001`–`PSCR2-003` closed; `PSCR2-004` next  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `134795429eae988f927e43ec97cc04c5f98b867a`  
@@ -171,15 +171,28 @@ every declined fix is recorded as declined, and no document claims more than the
 
 **Goal:** `containers_in_this_context()` cannot break at a distance from a `sparse=True` change.
 
-- [ ] Pass `sparse=False` explicitly in the helper's `containers.list(...)` call.
-- [ ] State in the docstring that the namespace filter reads `.labels`, which docker-py refuses on
+- [x] Pass `sparse=False` explicitly in the helper's `containers.list(...)` call.
+- [x] State in the docstring that the namespace filter reads `.labels`, which docker-py refuses on
       sparse objects, and that this is why the argument is explicit.
 
 **Validation — PSCR2V-003**
 
-- [ ] Test: the helper's `list` call carries `sparse=False` (assert on the recorded call kwargs in
+- [x] Test: the helper's `list` call carries `sparse=False` (assert on the recorded call kwargs in
       the existing fake client).
-- [ ] Existing `tests/workspace/test_pscr_namespace_scoped_assertions.py` remains green.
+- [x] Existing `tests/workspace/test_pscr_namespace_scoped_assertions.py` remains green.
+
+**Closure evidence (2026-09-18)**
+
+- `containers_in_this_context()` now calls `containers.list(all=True, sparse=False, filters=...)`.
+  Its docstring records why: the namespace filter reads `container.labels`, which docker-py refuses
+  on sparse objects, so the library default it silently relied on is now stated and pinned.
+- `test_pscr2v_003_helper_requests_non_sparse_containers` asserts the recorded call carries
+  `sparse=False`. **Discrimination verified:** against the pre-PSCR2-003 `conftest.py` it fails and
+  the three existing tests pass; restored, all four pass. (That filter matched `ERROR` lines as well
+  as `FAILED`, having learned from PSCR2-002's invalid first run.)
+- Full Docker-backed suite: `1437 passed in 654.28s`, zero failures, zero skips. This change sits in
+  the helper every converted workspace assertion routes through, so the Docker-backed run is the
+  meaningful one.
 
 ### PSCR2-004 — Close the uncalled `os.getcwd` reference gap
 

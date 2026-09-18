@@ -117,3 +117,25 @@ def test_pscrv_010_helper_filters_nothing_in_the_production_shape(
     )
 
     assert [c.name for c in found] == ["production"]
+
+
+def test_pscr2v_003_helper_requests_non_sparse_containers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PSCR2-003: the helper must ask for full objects, because it reads `.labels`.
+
+    docker-py raises on `.labels` for sparse objects, so this pins the argument
+    rather than leaving it to the library default.
+    """
+
+    monkeypatch.setenv(TEST_RESOURCE_NAMESPACE_ENV, "this-context")
+    client = _client(("mine", current_test_resource_namespace()))
+
+    containers_in_this_context(
+        client,  # type: ignore[arg-type]
+        label=LABEL_WORKSPACE_ID,
+        value="ws_example",
+    )
+
+    (call,) = client.containers.list_calls
+    assert call.get("sparse") is False

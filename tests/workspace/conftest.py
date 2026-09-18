@@ -211,11 +211,20 @@ def containers_in_this_context(
 
     With no namespace active — the production shape — this filters nothing out,
     matching only containers that likewise carry no namespace label.
+
+    `sparse=False` is explicit (PSCR2-003) because the namespace filter reads
+    `container.labels`, which docker-py *refuses* on sparse objects ("Label data
+    is not available for sparse objects"). It is docker-py's default, so the
+    helper worked without saying so — but a later `sparse=True`, a natural
+    optimisation for a query that looks like it only needs names, would have
+    broken every assertion routed through here, at a distance from the change.
     """
 
     return [
         container
-        for container in client.containers.list(all=True, filters={"label": f"{label}={value}"})
+        for container in client.containers.list(
+            all=True, sparse=False, filters={"label": f"{label}={value}"}
+        )
         if container_matches_test_namespace(container.labels)
     ]
 
