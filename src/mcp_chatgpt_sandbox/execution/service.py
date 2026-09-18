@@ -22,10 +22,14 @@ because it runs inside the container's namespace and the number means
 nothing there.
 
 Job promotion on overrun (§14.4 — `promoted_to_job: true`) is not
-implemented here: it needs the job store, which does not exist until S14.
-Until then, exceeding the timeout fails the call with `CommandTimeoutError`
-rather than silently hanging or claiming to promote a job that was never
-created.
+implemented. It was originally deferred because it needs the job store, which
+did not exist until S14; that store has since landed, so promotion is unblocked
+and simply not built (rationale corrected by PSCR3-010). §14.4 makes it optional
+— the server MAY convert an overrunning command to a job — so exceeding the
+timeout fails the call with `CommandTimeoutError` rather than silently hanging
+or claiming to promote a job that was never created. Building it changes
+`exec`'s public `outputSchema`, so it needs its own spec and a
+`contract_version` bump.
 
 `start_and_open_stream` / `drain_stream` (S15) split what `start` /
 `consume` do into a version the async job runner can use: docker-py's

@@ -1,10 +1,10 @@
 # Post-PSCR2 Code Review TODO
 
-**Status:** Complete — `PSCR3-001` through `PSCR3-009` closed  
+**Status:** Closing — `PSCR3-001`–`PSCR3-010` implemented; `PSCR3-010` awaiting exact-head CI  
 **Date:** 2026-09-18  
 **Spec:** `docs/POST_PSCR2_CODE_REVIEW_SPEC_2026-09-18.md`  
 **Reviewed baseline:** `a5a35a1f1f049582f9596fc1bd9ffd7bf7ad65a1`  
-**Task series:** `PSCR3-001` through `PSCR3-009`  
+**Task series:** `PSCR3-001` through `PSCR3-010`  
 **Validation series:** `PSCR3V-*`
 
 This TODO implements `docs/POST_PSCR2_CODE_REVIEW_SPEC_2026-09-18.md`. A re-read of the merged
@@ -341,6 +341,45 @@ Added after a second review pass.
   lint, and strict mypy PASS. A non-coverage run, started while **six** CI runs were active on the
   shared runner, with no collision — further corroboration of PSCR-010, recorded per the global
   rules.
+
+### PSCR3-010 — Reconcile three stale checkboxes in older TODOs
+
+**Goal:** no unticked box in `docs/` carries a reason later work has overtaken.
+
+Added after closure, on request.
+
+- [x] Verify each of the three boxes against the code before touching it.
+- [x] Tick `HARDENING_TODO.md`'s collision-half box, crediting both G3R-015 and PSCR-010.
+- [x] Tick `TODO.md`'s disk-usage/prune box, crediting O2–O8, and record the container-size gap.
+- [x] Leave `TODO.md`'s job-promotion box unticked; correct its stale rationale.
+- [x] Correct the same stale rationale in `execution/service.py`'s docstring.
+- [x] Leave original wording and the explanatory paragraphs beneath each entry as written.
+
+**Validation — PSCR3V-010**
+
+- [x] Every cited task id and commit was looked up, not recalled.
+- [x] Guards and gates stay green; no behavior change.
+- [ ] Exact-head CI green. — recorded at closure.
+
+**Closure evidence (2026-09-18)**
+
+- **Verified before annotating, and the verification changed one answer.** Reading
+  `HARDENING_TODO.md`'s own "Not fixed" paragraph showed its "collision half" is the `409 Conflict`
+  from two processes racing on the deterministic container *name*. That was removed by G3R-015's
+  namespaced `container_name()`, not by PSCR-010, which fixed a different layer (label-only
+  assertions). The first draft of this task credited PSCR-010 alone.
+- `promoted_to_job` was confirmed absent: zero matches in `schemas/tools.json`, and its only match
+  in `src/` is the docstring saying it is not implemented. `docs/SPEC.md` §14.4 was read to confirm
+  promotion is a MAY.
+- Prune and inventory were confirmed from the exported contract (`resource_inventory`,
+  `resource_prune_plan`, `resource_prune_execute`), and the container-size gap from
+  `operations/inventory.py`'s `ByteObservation.unavailable("container size not measured by O2")`.
+- Cited ids were looked up: O2/O3/O4/O5–O8 from `docs/POST_MVP_OPERATIONS_TODO.md`'s headings, and
+  PSCR-010's commit `ec3600c` from `git log`.
+- Each annotation is dated, names PSCR3-010, and says whether the box was ticked because the work
+  was done elsewhere or left unticked because it was not. No original wording was changed.
+- One `src/` file touched, docstring only: `execution/service.py`. Ruff format, Ruff lint, strict
+  mypy PASS.
 
 ---
 

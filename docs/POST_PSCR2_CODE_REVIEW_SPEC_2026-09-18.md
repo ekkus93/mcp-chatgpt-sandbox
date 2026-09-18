@@ -4,7 +4,7 @@
 **Date:** 2026-09-18  
 **Reviewed baseline:** `a5a35a1f1f049582f9596fc1bd9ffd7bf7ad65a1`  
 **Source review:** adversarial re-read of the merged `PSCR2-001`–`PSCR2-011` implementation against `docs/POST_PSCR_CODE_REVIEW_TODO_2026-09-17.md`  
-**Task series:** `PSCR3-001` through `PSCR3-009`  
+**Task series:** `PSCR3-001` through `PSCR3-010`  
 **Validation series:** `PSCR3V-*`
 
 ## 1. Purpose
@@ -270,6 +270,30 @@ Added after the second review pass. Choose exactly one and record it:
 Option A is recommended: the normalisation rule is standard, a dozen characters of code, and removes
 a cliff whose symptom points away from its cause. Option B is the honest fallback if no production
 change at all is wanted in this series.
+
+### PSCR3-010 — Reconcile three stale checkboxes in older TODOs
+
+Added after closure, on request. A survey of every TODO in `docs/` found three unticked boxes whose
+stated reasons later work had overtaken. Each was checked against the code before being touched,
+and they turned out to need three different dispositions:
+
+- **`docs/HARDENING_TODO.md`, "the collision half is not [fixed]".** Satisfied by later work — and
+  by *two* tasks, not one. The `409 Conflict` on the deterministic container name that the entry
+  describes was removed by G3R-015, which folds a per-context namespace into `container_name()`.
+  PSCR-010 closed a second layer G3R-015 did not reach: assertions filtering on logical-id labels.
+  Crediting PSCR-010 alone, as a first reading suggested, would have been wrong.
+- **`docs/TODO.md`, "Disk usage reporting and prune operations — not implemented".** Superseded by
+  the post-MVP operations workstream: prune by O5–O8, disk reporting by O2/O3 and O4. One gap
+  remains and is deliberate — container sizes are reported as unavailable.
+- **`docs/TODO.md`, "on overrun promote to a job — deferred: … job store … does not exist until
+  S14".** *Not* done: `promoted_to_job` appears nowhere in the code or the exported contract. But its
+  rationale is stale — S14 landed — and `execution/service.py`'s docstring repeats it. §14.4 makes
+  promotion a MAY, so the current `COMMAND_TIMEOUT` behavior is compliant.
+
+Tick the first two, each with a visible note naming the task that did the work. Leave the third
+unticked, under VR-000b, and correct its rationale in both places. Original wording and the
+explanatory paragraphs beneath each entry are left as written; they were accurate when written.
+The `service.py` change is a docstring only.
 
 ### PSCR3-007 — Final regression, contract, and closure
 

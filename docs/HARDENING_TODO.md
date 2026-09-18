@@ -64,8 +64,18 @@ Phases 8–9 are cleanup and can trail.
       Docker daemon is touched"
 - [x] Add a sentinel container and sentinel volume, both carrying production
       identifiers, and assert a full suite run leaves them intact
-- [ ] Make concurrent suite runs non-destructive to each other — **only the
+- [x] Make concurrent suite runs non-destructive to each other — **only the
       destructive half is fixed; the collision half is not** (see below)
+      — *ticked by PSCR3-010 (`docs/POST_PSCR2_CODE_REVIEW_SPEC_2026-09-18.md`), 2026-09-18:
+      the collision half was closed by later work, not by this task. The
+      `409 Conflict` on the deterministic container name described below was
+      removed by G3R-015 (`docs/GAP3_SPEC.md`), which folds a per-context test
+      namespace into `container_name()`. A second collision layer it did not
+      cover — absence/count assertions filtering only on logical-id labels —
+      was closed by PSCR-010 (`ec3600c`). Both are demonstrated, not inferred:
+      two concurrent `tests/workspace` sessions each passed 438 tests, and
+      the pre-PSCR-010 tree failed 6 under identical contention. The "Not
+      fixed" paragraph below is left as written; it was accurate when written.*
 
 **Why first:** `tests/workspace/conftest.py:61–70`. This is the one finding
 that makes the act of verifying the others dangerous.

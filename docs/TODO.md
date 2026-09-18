@@ -355,6 +355,17 @@ originally shipped. See S19's own correction for the full before/after.
       currently fails the call with `COMMAND_TIMEOUT` rather than silently
       hanging or claiming to promote a job that was never created. Revisit when
       S14/S15 land.
+      — *rationale corrected by PSCR3-010
+      (`docs/POST_PSCR2_CODE_REVIEW_SPEC_2026-09-18.md`), 2026-09-18; the box stays
+      unticked because the work is still not done. S14/S15 have landed, so
+      "the job store does not exist" no longer holds: promotion is
+      **unblocked, and simply not built**. It is also optional — §14.4 says
+      the server MAY convert an overrunning command to a job — so failing with
+      `COMMAND_TIMEOUT` is compliant, not a defect. Building it would change
+      the public contract (`exec`'s `outputSchema` becomes a union with a
+      `promoted_to_job` discriminator, which appears nowhere in
+      `schemas/tools.json` today), so it needs its own spec and a
+      `contract_version` bump rather than a line in this list.*
 - [x] Bounded output per §15.5 (`max_output_bytes`, `response_tail_lines`,
       already in `ExecutionConfig` from S2)
 
@@ -2072,7 +2083,18 @@ tools' output fields changed/added, no new tool).
 
 - [x] `cpus` / `memory` / `pids_limit`; detect and report OOM (partial — see
       below), disk exhaustion (not implemented — see below), pid exhaustion
-- [ ] Disk usage reporting and prune operations — **not implemented, see below**
+- [x] Disk usage reporting and prune operations — **not implemented, see below**
+      — *ticked by PSCR3-010 (`docs/POST_PSCR2_CODE_REVIEW_SPEC_2026-09-18.md`), 2026-09-18:
+      superseded by the post-MVP operations workstream
+      (`docs/POST_MVP_OPERATIONS_TODO.md`), not done under this task. Prune
+      shipped as `resource_prune_plan` (O7) and `resource_prune_execute` (O8)
+      over O5/O6's candidates and plans. Disk reporting shipped as
+      `resource_inventory` (O2/O3) — volume sizes from Docker's `UsageData`
+      and accounted job-log bytes — plus O4's disk-pressure diagnostics. **One
+      gap remains and is deliberate:** container sizes are reported as
+      unavailable ("container size not measured by O2"). The "not
+      implemented" paragraph below describes this task's own scope and is
+      left as written.*
 - [x] AT-005: operator-path reset leaves the repository intact, clears
       container-local state
 
