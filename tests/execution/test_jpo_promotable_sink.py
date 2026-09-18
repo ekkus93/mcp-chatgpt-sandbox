@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 import pytest
 
@@ -101,12 +101,19 @@ def test_jpov002_a_chunk_arriving_during_promotion_waits_for_it(
     until `promote` returns; without it (proved by deleting the `with
     self._lock` in `on_stdout`) it completes mid-switch, which is the
     window in which a chunk lands in a buffer that has already been
-    flushed and is about to be thrown away."""
+    flushed and is about to be thrown away.
+
+    PJPO2-001: the writer is started from `prepare_attach`, not `attach`.
+    `promote` now prepares both captures and then commits both, so it no
+    longer calls `attach` at all, and a hook there never fired (the test
+    errored "cannot join thread before it is started"). `attach` itself
+    also goes through `prepare_attach`, so this hook fires on either
+    implementation of the switch."""
     sink = _sink()
     sink.on_stdout(b"first\n")
     wrote = threading.Event()
     observed: dict[str, bool] = {}
-    real_attach = sink.stdout_capture.attach
+    real_prepare = sink.stdout_capture.prepare_attach
 
     def writer() -> None:
         sink.on_stdout(b"second\n")
@@ -114,12 +121,12 @@ def test_jpov002_a_chunk_arriving_during_promotion_waits_for_it(
 
     thread = threading.Thread(target=writer)
 
-    def attach_with_a_concurrent_writer(path: Path) -> None:
+    def prepare_with_a_concurrent_writer(path: Path) -> IO[bytes] | None:
         thread.start()
         observed["wrote_during_switch"] = wrote.wait(timeout=0.5)
-        real_attach(path)
+        return real_prepare(path)
 
-    monkeypatch.setattr(sink.stdout_capture, "attach", attach_with_a_concurrent_writer)
+    monkeypatch.setattr(sink.stdout_capture, "prepare_attach", prepare_with_a_concurrent_writer)
     out, _err = _promote(sink, tmp_path)
     thread.join(timeout=5)
 

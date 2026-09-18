@@ -1,0 +1,90 @@
+"""PJPO2-001 (`docs/POST_PJPO_CODE_REVIEW_SPEC_2026-09-18.md` §2.1, H1;
+PJPO2V-001): `PromotableSink.promote` switches both streams or neither,
+under a *real* I/O failure on either one.
+
+`/dev/full` is Linux-only: `open` succeeds, every `write` fails with
+ENOSPC. That matches the suite's existing requirements (Docker, a
+self-hosted Linux CI runner), and these tests are deliberately not guarded
+with a skip — `tests/_skip_policy.py` turns any skip into a session
+failure, so a skip would only move the failure somewhere less clear.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+
+from mcp_chatgpt_sandbox.execution.promotable_sink import PromotableSink
+
+_DISK_FULL = Path("/dev/full")
+
+
+def _sink_with_output() -> PromotableSink:
+    sink = PromotableSink(max_output_bytes=1024, tail_keep_bytes=64)
+    sink.on_stdout(b"out-1\n")
+    sink.on_stderr(b"err-1\n")
+    return sink
+
+
+def _open_descriptors_to(path: Path) -> list[str]:
+    """This process's file descriptors currently open on `path` — how a
+    test observes "no file object was left open" without reaching into
+    the capture's private attributes."""
+    target = str(path.resolve())
+    fd_dir = Path("/proc/self/fd")
+    found = []
+    for fd in os.listdir(fd_dir):
+        try:
+            if os.readlink(fd_dir / fd) == target:
+                found.append(fd)
+        except OSError:
+            continue  # closed between listdir and readlink
+    return found
+
+
+def test_pjpo2v001_a_stderr_failure_leaves_both_streams_buffered_and_promote_retryable(
+    tmp_path: Path,
+) -> None:
+    sink = _sink_with_output()
+    first_stdout = tmp_path / "attempt-1" / "stdout.log"
+
+    with pytest.raises(OSError, match="No space left on device"):
+        sink.promote(stdout_log_path=first_stdout, stderr_log_path=_DISK_FULL)
+
+    # Neither stream switched: both still hold their buffered output ...
+    assert sink.stdout_capture.buffered_head() == b"out-1\n"
+    assert sink.stderr_capture.buffered_head() == b"err-1\n"
+    # ... the stdout file prepared for the failed attempt is not held open ...
+    assert _open_descriptors_to(first_stdout) == []
+    # ... and later output still goes to the buffers, not to that file.
+    sink.on_stdout(b"out-2\n")
+    sink.on_stderr(b"err-2\n")
+    assert first_stdout.read_bytes() == b"out-1\n"
+
+    # The switch can be made again, and nothing produced so far is lost.
+    out, err = tmp_path / "attempt-2" / "stdout.log", tmp_path / "attempt-2" / "stderr.log"
+    sink.promote(stdout_log_path=out, stderr_log_path=err)
+    sink.on_stdout(b"out-3\n")
+    sink.on_stderr(b"err-3\n")
+    sink.stdout_capture.finish()
+    sink.stderr_capture.finish()
+
+    assert out.read_bytes() == b"out-1\nout-2\nout-3\n"
+    assert err.read_bytes() == b"err-1\nerr-2\nerr-3\n"
+
+
+def test_pjpo2v001_a_stdout_failure_never_touches_stderr(tmp_path: Path) -> None:
+    """The mirror case. It held before PJPO2-001 too (stdout is prepared
+    first and its failure raises before stderr is reached); pinned so a
+    reordering cannot quietly break it."""
+    sink = _sink_with_output()
+    err = tmp_path / "job" / "stderr.log"
+
+    with pytest.raises(OSError, match="No space left on device"):
+        sink.promote(stdout_log_path=_DISK_FULL, stderr_log_path=err)
+
+    assert not err.exists()
+    assert sink.stdout_capture.buffered_head() == b"out-1\n"
+    assert sink.stderr_capture.buffered_head() == b"err-1\n"

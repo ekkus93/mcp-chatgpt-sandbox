@@ -97,22 +97,49 @@ class StreamCapture:
         with a path, an open file and unflushed bytes in that file's
         buffer: a state no other code expects, in which `finish()` raised
         the same ENOSPC again while closing, and later `write`s from the
-        drain thread raised too. The partial file object is closed here
-        with that second error suppressed — it is the error already being
-        reported, and closing still releases the descriptor."""
+        drain thread raised too.
+
+        PJPO2-001 (`docs/POST_PJPO_CODE_REVIEW_SPEC_2026-09-18.md` §2.1):
+        now `prepare_attach` followed by `commit_attach`, so that a caller
+        switching *two* captures (`PromotableSink.promote`) can do all the
+        I/O for both before changing either."""
+        self.commit_attach(path, self.prepare_attach(path))
+
+    def prepare_attach(self, path: Path) -> IO[bytes] | None:
+        """Every fallible step of `attach`, and nothing else: creates the
+        directory, opens `path` and writes and flushes the deferred head
+        into it, returning that file object *without* adopting it — or
+        `None` if nothing is buffered, in which case no file is created
+        until the first later `write` (a silent stream never gets a log).
+        On failure the partial file object is closed, with the repeated
+        error from closing it suppressed (it is the error already being
+        raised, and closing still releases the descriptor), and the
+        capture is untouched.
+
+        No `write` may reach this capture between this call and
+        `commit_attach`: the head is released at commit, so a chunk added
+        to it in between would be lost. `PromotableSink` guarantees that
+        by holding its lock across both."""
         if self._path is not None:
             raise RuntimeError(f"capture is already attached to {self._path}")
-        if self._deferred_head:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            file = path.open("wb")
-            try:
-                file.write(bytes(self._deferred_head))
-                file.flush()
-            except BaseException:
-                with contextlib.suppress(OSError):
-                    file.close()
-                raise
-            self._file = file
+        if not self._deferred_head:
+            return None
+        path.parent.mkdir(parents=True, exist_ok=True)
+        file = path.open("wb")
+        try:
+            file.write(bytes(self._deferred_head))
+            file.flush()
+        except BaseException:
+            with contextlib.suppress(OSError):
+                file.close()
+            raise
+        return file
+
+    def commit_attach(self, path: Path, prepared: IO[bytes] | None) -> None:
+        """Adopts what `prepare_attach(path)` returned. Performs no I/O
+        and cannot fail, which is the whole point: once every capture in
+        a switch has been prepared, committing them all is certain."""
+        self._file = prepared
         self._path = path
         self._deferred_head = bytearray()
 

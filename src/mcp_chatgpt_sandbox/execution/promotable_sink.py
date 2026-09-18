@@ -27,6 +27,7 @@ counters.
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from pathlib import Path
 
@@ -60,11 +61,39 @@ class PromotableSink:
     def promote(self, *, stdout_log_path: Path, stderr_log_path: Path) -> None:
         """Flushes everything buffered so far to the job's log files and
         routes every later chunk straight to them. Both streams switch
-        under one lock acquisition: there is no moment at which one
-        stream is a job log and the other still a buffer."""
+        under one lock acquisition, and both or neither: there is no
+        moment — on success or on failure — at which one stream is a job
+        log and the other still a buffer. If this raises, both captures
+        are still deferred with their buffers intact, and `promote` can
+        be called again.
+
+        PJPO2-001 (`docs/POST_PJPO_CODE_REVIEW_SPEC_2026-09-18.md` §2.1,
+        H1): the first version called `attach` on each capture in turn.
+        Each was all-or-nothing, but the pair was not: with stderr's log
+        on a full disk, stdout was left attached and stderr still a
+        buffer — the state this docstring already said could not exist —
+        and a second `promote` raised "already attached". Hence prepare
+        both (all the I/O), then commit both (none of it).
+
+        A log file already written for the stream whose sibling then
+        failed is closed and left on disk rather than unlinked. It is at
+        the log path of a job whose record the caller fails closed
+        (`_fail_half_created_job`), so log retention
+        (`jobs/retention.py`) prunes it as that terminal job's log, like
+        any other; deleting it here would be a second failure path inside
+        the handling of the first, for no gain.
+        """
         with self._lock:
-            self.stdout_capture.attach(stdout_log_path)
-            self.stderr_capture.attach(stderr_log_path)
+            prepared_stdout = self.stdout_capture.prepare_attach(stdout_log_path)
+            try:
+                prepared_stderr = self.stderr_capture.prepare_attach(stderr_log_path)
+            except BaseException:
+                if prepared_stdout is not None:
+                    with contextlib.suppress(OSError):
+                        prepared_stdout.close()
+                raise
+            self.stdout_capture.commit_attach(stdout_log_path, prepared_stdout)
+            self.stderr_capture.commit_attach(stderr_log_path, prepared_stderr)
 
     def result(self, exit_code: int, *, response_tail_lines: int) -> ExecResult:
         """The same `ExecResult` `consume` builds for the same bytes —

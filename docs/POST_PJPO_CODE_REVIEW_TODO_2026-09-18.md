@@ -1,6 +1,6 @@
 # Post-PJPO Code Review TODO
 
-**Status:** Not started — `PJPO2-001` through `PJPO2-005` open  
+**Status:** In progress — `PJPO2-001` closed  
 **Date:** 2026-09-18  
 **Spec:** `docs/POST_PJPO_CODE_REVIEW_SPEC_2026-09-18.md`  
 **Reviewed baseline:** `c6bb465`  
@@ -15,11 +15,12 @@ forward the one verification only the user can perform. No task here changes a t
 
 ## Global rules
 
-- [ ] Start from an exact inspected `master` SHA and record it here.
+- [x] Start from an exact inspected `master` SHA and record it here. —
+      `d17a5e8e7cf9d29d0a4e4db36f67ad57093264c2`.
 - [ ] Follow the project's commit convention: direct conventional commits to `master`, no branch or
       PR, one task per commit, task ID in the subject.
-- [ ] Record QD1–QD2 (spec §3) — option, who chose it, why — before the task that depends on each.
-      Ask the user; do not default silently.
+- [x] Record QD1–QD2 (spec §3) — option, who chose it, why — before the task that depends on each.
+      Ask the user; do not default silently. — Both asked of the user before PJPO2-001 started.
 - [ ] Add a regression test for every behavioural claim and prove it discriminates (restore the
       pre-fix code, run, record the failure, restore, confirm byte-identical with `cmp`).
 - [ ] Prefer a real failure (`/dev/full`, a path that is a file, a path that is a directory) to a
@@ -41,33 +42,57 @@ forward the one verification only the user can perform. No task here changes a t
 
 **Finding:** F1 (spec §2.1). **Decision:** QD1.
 
-- [ ] Record QD1. Recommended: A — make the pair atomic.
-- [ ] If QD1-A: split `StreamCapture.attach` into a *prepare* step (mkdir, open, write and flush the
+- [x] Record QD1. — **A, make the pair atomic**, chosen by the user: the docstring then holds
+      without qualification and `promote` becomes retryable.
+- [x] If QD1-A: split `StreamCapture.attach` into a *prepare* step (mkdir, open, write and flush the
       deferred head into a file object not yet adopted; on failure close it and re-raise, capture
       untouched) and a *commit* step (adopt the file, set the path, release the head — no I/O).
       `attach` remains, as prepare-then-commit. Keep PJPO-001's narrative in the docstrings.
-- [ ] If QD1-A: `promote` prepares both captures, then commits both. If the second prepare fails,
+- [x] If QD1-A: `promote` prepares both captures, then commits both. If the second prepare fails,
       close the first's prepared file object and leave both captures deferred. Still one lock
       acquisition over the whole switch.
-- [ ] If QD1-A: docstring — the guarantee now holds on failure too (H1), `promote` is retryable, and
+- [x] If QD1-A: docstring — the guarantee now holds on failure too (H1), `promote` is retryable, and
       a log file already written for the stream that succeeded is left on disk (it belongs to a
       `failed` job's directory; retention removes it) — say why there is no unlink.
 - [ ] If QD1-B: rewrite the docstring only — the guarantee holds on success; on failure stdout may
       be attached while stderr is still a buffer, `promote` cannot be retried, and the sole caller
-      fails closed regardless. Cite PJPO2-001.
-- [ ] Narrative comment citing PJPO2-001 and how the previous version behaved (the probe output in
+      fails closed regardless. Cite PJPO2-001. — *Not applicable: QD1-A chosen.*
+- [x] Narrative comment citing PJPO2-001 and how the previous version behaved (the probe output in
       spec §2.1).
 
 **Validation — PJPO2V-001**
 
-- [ ] (QD1-A) Test: stdout → real file, stderr → `/dev/full`: `promote` raises; both captures still
+- [x] (QD1-A) Test: stdout → real file, stderr → `/dev/full`: `promote` raises; both captures still
       deferred, heads intact; a second `promote` to good paths succeeds and both logs hold their
       full output in order. Prove it fails against the pre-fix `promote`.
-- [ ] (QD1-A) Test: the mirror case — stdout → `/dev/full`, stderr → real file: nothing is attached
+- [x] (QD1-A) Test: the mirror case — stdout → `/dev/full`, stderr → real file: nothing is attached
       and no stderr file object is left open.
-- [ ] (QD1-B) Test pinning the documented failure state, so the docstring cannot drift again.
-- [ ] Every existing `test_jpo_promotable_sink`, `test_pjpo_fail_closed_promotion`,
+- [ ] (QD1-B) Test pinning the documented failure state, so the docstring cannot drift again. —
+      *Not applicable: QD1-A chosen.*
+- [x] Every existing `test_jpo_promotable_sink`, `test_pjpo_fail_closed_promotion`,
       `test_log_capture` and `test_jpo_exec_promotion` test passes unchanged (H3). Full suite green.
+      — *Deviation: one did not pass unchanged* — see the evidence.
+
+**Evidence — PJPO2-001.** `StreamCapture.attach` is now `commit_attach(path, prepare_attach(path))`:
+`prepare_attach` does every fallible step (mkdir, open, write, flush) into a file object it does not
+adopt, closing it on failure; `commit_attach` adopts it and does no I/O. `PromotableSink.promote`
+prepares stdout, then stderr (closing stdout's prepared file if stderr's fails), then commits both —
+still one lock acquisition. Docstrings state H1, retryability, and why a file already written for the
+succeeding stream is left for retention rather than unlinked (checked: `jobs/retention.py` prunes a
+terminal job's logs via `_delete_log(stdout_log_path)`). Tests: `tests/execution/test_pjpo2_promote_atomicity.py`
+(2): stderr → `/dev/full` leaves both buffers intact, no descriptor open on the prepared stdout file
+(checked through `/proc/self/fd`, not private attributes), later output still buffered, and a second
+`promote` succeeds with every byte in order; the mirror case creates no stderr file. Discrimination:
+with both `src` files restored to `d17a5e8`, the first fails (`assert b'' == b'out-1\n'` — stdout had
+already switched) and the mirror passes, as the spec predicted (it held before too). Restored
+byte-identical (`cmp`).
+
+Deviation from H3 "passes unchanged": `test_jpov002_a_chunk_arriving_during_promotion_waits_for_it`
+hooked `stdout_capture.attach` to start its concurrent writer; `promote` no longer calls `attach`, so
+the hook never fired and the test errored (`cannot join thread before it is started`). It now hooks
+`prepare_attach`, which `attach` also goes through, so it fires on either implementation; the
+property tested is unchanged, and it still fails with the lock removed from `on_stdout` (restored,
+`cmp`). Full suite, foreground chunks: 1029 + 145 + 198 + 118 = 1490 = `--collect-only`, all passed.
 
 ### PJPO2-002 — Pin the `attach` properties PJPO-007 claimed
 
