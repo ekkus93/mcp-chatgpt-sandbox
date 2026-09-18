@@ -146,7 +146,8 @@ set the flag.
 
 - **A. One flat object with a `oneOf` (recommended)** — §2.5 row 3.
   `promoted_to_job: bool` is added and required. The eight existing fields stay
-  in `required` and become nullable (as `pressure` already is); `job_id`,
+  in `required`, and ~~become nullable~~ the seven that were not already nullable
+  become so (as `pressure` already is) *(count corrected by PJPO-003)*; `job_id`,
   `state`, `started_at` are added, required and nullable. The `oneOf` has two
   branches keyed on `promoted_to_job` `const false` / `const true`, each pinning
   the non-null types of its own fields and `null` for the other branch's.
@@ -161,7 +162,8 @@ allow `null` on a branch only opted-in callers reach is not.
 ### D3 — `contract_version`
 
 Under D1-A + D2-A the change is: one new optional input field (patch), four new
-output fields (patch), and a type widening of eight output fields that is
+output fields (patch), and a type widening of ~~eight~~ seven output fields
+*(count corrected by PJPO-003; `pressure` was already nullable)* that is
 unobservable without opting in. §33.2 has no row for the last. **Recommended:
 `0.11.0`** — a second response shape is a larger event than a patch even though
 no tool was added; it is not major because no existing caller's observable

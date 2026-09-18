@@ -74,8 +74,10 @@ from mcp.server import MCPServer
 #: `server_info` were reconciled with their implemented operations behavior;
 #: no input/output shape changed and no new tools were added.
 #: 0.11.0 (Job Promotion JPO-001, D3): minor bump — `exec`'s output gained
-#: `promoted_to_job` plus `job_id`/`state`/`started_at`, its eight existing
-#: fields became nullable, and a two-branch `oneOf` expresses §14.4's union.
+#: `promoted_to_job` plus `job_id`/`state`/`started_at`, seven of its eight
+#: existing fields became nullable (`pressure` already was; this said "its
+#: eight existing fields" until PJPO-003 corrected the count), and a
+#: two-branch `oneOf` expresses §14.4's union.
 #: §33.2 has no row for this: the added fields alone are a patch, but a second
 #: response shape is a larger event than a patch, and it is not major because
 #: every field stays `required` and only a caller that opts into promotion can

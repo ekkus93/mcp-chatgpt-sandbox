@@ -124,18 +124,25 @@ suite 1027 passed; a fresh `export-schemas` leaves `schemas/tools.json` unchange
 
 **Finding:** F3 (spec §2.3).
 
-- [ ] `src/mcp_chatgpt_sandbox/schema_export.py`, the `0.11.0` comment: "eight existing fields
+- [x] `src/mcp_chatgpt_sandbox/schema_export.py`, the `0.11.0` comment: "eight existing fields
       became nullable" → seven, noting `pressure` already was. Comment only — `CONTRACT_VERSION`
       unchanged.
-- [ ] `docs/JOB_PROMOTION_SPEC_2026-09-18.md` D2-A and D3: correct "eight" to "seven" visibly
+- [x] `docs/JOB_PROMOTION_SPEC_2026-09-18.md` D2-A and D3: correct "eight" to "seven" visibly
       (original kept, marked, PJPO-003 cited). Leave the correct "eight properties" statement in
       §2.4 alone.
-- [ ] Re-derive the number by command (the schema diff between `c7cc1b7` and `d9f4f24`) and record
+- [x] Re-derive the number by command (the schema diff between `c7cc1b7` and `d9f4f24`) and record
       the command's output as evidence.
 
 **Validation**
 
-- [ ] A fresh `export-schemas` leaves `schemas/tools.json` unchanged (G4); non-Docker suite green.
+- [x] A fresh `export-schemas` leaves `schemas/tools.json` unchanged (G4); non-Docker suite green.
+
+**Evidence — PJPO-003.** Re-derived by script (the `exec` output schema at `c7cc1b7` vs `d9f4f24`):
+`existing: 8; became nullable: 7 [exit_code, stderr_tail, stderr_total_bytes, stderr_truncated,
+stdout_tail, stdout_total_bytes, stdout_truncated]; already nullable: [pressure]`. Corrected in the
+`schema_export.py` `0.11.0` comment (noting the old wording) and visibly in the JPO spec's D2-A and
+D3 (struck through, PJPO-003 cited). `CONTRACT_VERSION` untouched; a fresh `export-schemas` leaves
+`schemas/tools.json` unchanged; ruff, mypy clean; non-Docker suite 1027 passed.
 
 ### PJPO-004 — Correct the `execution_support.py` docstring
 
