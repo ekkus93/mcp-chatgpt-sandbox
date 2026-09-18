@@ -1,6 +1,6 @@
 # Post-PSCR2 Code Review TODO
 
-**Status:** In progress — `PSCR3-001`–`PSCR3-006`, `PSCR3-008`–`PSCR3-009` closed; `PSCR3-007` (closure) next  
+**Status:** Closing — `PSCR3-001`–`PSCR3-009` implemented; awaiting CI on the closure commit  
 **Date:** 2026-09-18  
 **Spec:** `docs/POST_PSCR2_CODE_REVIEW_SPEC_2026-09-18.md`  
 **Reviewed baseline:** `a5a35a1f1f049582f9596fc1bd9ffd7bf7ad65a1`  
@@ -17,19 +17,19 @@ changes what the software does, with one recorded exception — PSCR3-009, if it
 
 ## Global rules
 
-- [ ] Start from an exact inspected `master` SHA.
-- [ ] Follow the project's commit convention: direct conventional commits to `master`, no branch or PR.
-- [ ] Make no production behavior change, except PSCR3-009 Option A if chosen (accepts equivalent
+- [x] Start from an exact inspected `master` SHA. — `a5a35a1f1f049582f9596fc1bd9ffd7bf7ad65a1`.
+- [x] Follow the project's commit convention: direct conventional commits to `master`, no branch or PR.
+- [x] Make no production behavior change, except PSCR3-009 Option A if chosen (accepts equivalent
       spellings of this project's own name, and nothing else).
-- [ ] Preserve every PSCR and PSCR2 outcome.
-- [ ] Correct the historical record visibly, never silently.
-- [ ] Cite code by symbol; qualify any line number with the commit it was verified at, and verify it
+- [x] Preserve every PSCR and PSCR2 outcome.
+- [x] Correct the historical record visibly, never silently.
+- [x] Cite code by symbol; qualify any line number with the commit it was verified at, and verify it
       with a command, not from memory.
-- [ ] Word every checkbox for what was done, never for what was considered and declined (VR-000b).
-- [ ] Add a regression test for every behavioral claim, and prove it discriminates.
-- [ ] Do not weaken existing tests or guards. Do not bump `contract_version`.
-- [ ] Run `--cov` suites on an idle host; non-coverage runs may overlap CI.
-- [ ] Record exact SHA/run/job evidence as each phase closes.
+- [x] Word every checkbox for what was done, never for what was considered and declined (VR-000b).
+- [x] Add a regression test for every behavioral claim, and prove it discriminates.
+- [x] Do not weaken existing tests or guards. Do not bump `contract_version`.
+- [x] Run `--cov` suites on an idle host; non-coverage runs may overlap CI.
+- [x] Record exact SHA/run/job evidence as each phase closes.
 
 ---
 
@@ -352,52 +352,88 @@ Added after a second review pass.
 
 #### Final code-review checklist
 
-- [ ] The PSCR2 specification describes the implemented PSCR2-002 mechanism, visibly corrected.
-- [ ] The PSCR2 specification says three locations for PSCR2-009.
-- [ ] The three line citations name symbols and carry verified, commit-qualified numbers.
-- [ ] The `sparse=False` guard's boundaries are recorded and pinned.
-- [ ] A rename of `_installed_version` fails the fixture; pre-fix runs still work.
-- [ ] The live-server test documents its production-labelled container.
-- [ ] `reconcile_all()` is shown to dispatch to the override.
-- [ ] The PSCR2 TODO's frame reflects PSCR2-009→011.
-- [ ] `_installed_version()` is covered on both branches.
-- [ ] Project-name matching has its recorded disposition.
-- [ ] No production code path changed, other than PSCR3-009 Option A if chosen.
+- [x] The PSCR2 specification describes the implemented PSCR2-002 mechanism, visibly corrected.
+- [x] The PSCR2 specification says three locations for PSCR2-009.
+- [x] The three line citations name symbols and carry verified, commit-qualified numbers.
+- [x] The `sparse=False` guard's boundaries are recorded and pinned.
+- [x] A rename of `_installed_version` fails the fixture; pre-fix runs still work.
+- [x] The live-server test documents its production-labelled container.
+- [x] `reconcile_all()` is shown to dispatch to the override.
+- [x] The PSCR2 TODO's frame reflects PSCR2-009→011.
+- [x] `_installed_version()` is covered on both branches.
+- [x] Project-name matching has its recorded disposition.
+- [x] No production code path changed, other than PSCR3-009 Option A if chosen.
 
 #### Contract/version decision
 
-- [ ] Re-export schemas and diff against `schemas/tools.json`.
-- [ ] Record the explicit decision and whether a `contract_version` bump was required.
+- [x] Re-export schemas and diff against `schemas/tools.json`.
+- [x] Record the explicit decision and whether a `contract_version` bump was required.
 
 #### Complete validation — PSCR3V-007
 
-- [ ] `uv run ruff format --check .` passes.
-- [ ] `uv run ruff check .` passes.
-- [ ] `uv run mypy src` passes in strict mode.
-- [ ] MCP exported-schema contract check passes.
-- [ ] `docs/TOOLS.md` drift gate and acceptance-coverage audit pass.
-- [ ] Full Docker-backed suite passes; record whether it was a `--cov` run and whether the host was idle.
-- [ ] Record exact pytest count and coverage total/statements/misses.
-- [ ] Record exact implementation head SHA.
-- [ ] Record exact CI run ID and job ID.
+- [x] `uv run ruff format --check .` passes.
+- [x] `uv run ruff check .` passes.
+- [x] `uv run mypy src` passes in strict mode.
+- [x] MCP exported-schema contract check passes.
+- [x] `docs/TOOLS.md` drift gate and acceptance-coverage audit pass.
+- [x] Full Docker-backed suite passes; record whether it was a `--cov` run and whether the host was idle. —
+      a `--cov` run, on a verified-idle host.
+- [x] Record exact pytest count and coverage total/statements/misses. — `1455 passed`; `88%`,
+      `9348` statements / `1104` misses.
+- [x] Record exact implementation head SHA. — `65a03f3`.
+- [x] Record exact CI run ID and job ID. — run `35327544137`, job `105544027363`.
 - [ ] Post-push `master` CI passes on the exact head SHA.
 - [ ] Update this TODO status to complete only after post-push evidence is green.
 
 ---
 
+**Closure evidence (2026-09-18)**
+
+- Gates on `65a03f3`: Ruff format (324 files) PASS; Ruff lint PASS; strict mypy (103 files) PASS.
+  Acceptance-coverage audit, `docs/TOOLS.md` drift guard, and schema-export guard: `27 passed`.
+- Contract re-exported through CI's own command and diffed byte-for-byte against
+  `schemas/tools.json`: **identical**. `contract_version` stays `0.10.3`; no bump was required.
+- **One production file changed in the whole series**: `setup/docker_setup.py`, `+24/-2`, all of it
+  PSCR3-009's name normalisation — the single exception the specification recorded.
+  (`git diff --stat b3a9430 HEAD -- src/`.)
+- Closure suite, `pytest --cov --cov-report=term-missing`, on a verified-idle host (CI drained at
+  09:24:56Z, no runner process, 23 GiB available): `1455 passed in 668.96s`, coverage `88%` —
+  `9348` statements / `1104` misses. Zero skips. Completed first time; the two earlier coverage
+  kills in PSCR2-008 both overlapped CI's own coverage run, so this is consistent with — though not
+  proof of — the idle-host guidance.
+- Exact-head CI for the code: run `35327544137`, job `105544027363` on `65a03f3`, **success**, with
+  the identical `1455 passed` and `9348`/`1104`/`88%`. `65a03f3` contains every change in this
+  series; what follows it is this evidence.
+- Six CI runs (`4e293d0`, `8fe2296`, `14d8017`, `50d6a2d`, `d1f72fb`, `df7081f`) were cancelled as
+  superseded, on the operator's decision, to reach an idle host in ~25 minutes rather than ~95. Each
+  of those tasks' local verification is recorded in its own entry. `01b1222` (PSCR3-001) ran and
+  passed.
+
+**Slips made and caught during this series, recorded rather than smoothed over**
+
+- PSCR3-002: while correcting citations written from memory, a class name was written from memory.
+  It was right, but was then verified by AST and cited to the method.
+- PSCR3-004: the first rename simulation used a plain `sed`, which also renamed
+  `_check_context_matches_installed_version` (it contains the substring) and so disabled the very
+  assertion under test. Redone with a word-boundary pattern.
+- PSCR3-006: a pass count (`705`) was written into evidence before the run finished. The real count
+  was `696`; corrected from the output before commit.
+
+---
+
 ## Definition of done
 
-- [ ] The PSCR2 specification describes the mechanism PSCR2-002 built and says three locations for
+- [x] The PSCR2 specification describes the mechanism PSCR2-002 built and says three locations for
       PSCR2-009, both visibly corrected.
-- [ ] The three line citations name their symbols and carry verified, commit-qualified numbers.
-- [ ] The `sparse=False` guard's boundaries are recorded in its docstring and pinned by assertions.
-- [ ] A rename of `_installed_version` fails the version-pin fixture loudly, and the module still
+- [x] The three line citations name their symbols and carry verified, commit-qualified numbers.
+- [x] The `sparse=False` guard's boundaries are recorded in its docstring and pinned by assertions.
+- [x] A rename of `_installed_version` fails the version-pin fixture loudly, and the module still
       runs against pre-PSCR2-002 code.
-- [ ] The live-server test documents its production-labelled container and why it is safe.
-- [ ] A test shows `reconcile_all()` dispatches to the concrete override, and fails without it.
-- [ ] The PSCR2 TODO's introduction and Definition of done reflect PSCR2-009→011.
-- [ ] `_installed_version()` is executed by tests on both branches, shown by coverage.
-- [ ] Exact project-name matching has a recorded disposition, implemented per the chosen option.
-- [ ] Public MCP contract confirmed unchanged by re-export and diff.
-- [ ] Exact-head CI is green.
-- [ ] Exact closure evidence is recorded in this file.
+- [x] The live-server test documents its production-labelled container and why it is safe.
+- [x] A test shows `reconcile_all()` dispatches to the concrete override, and fails without it.
+- [x] The PSCR2 TODO's introduction and Definition of done reflect PSCR2-009→011.
+- [x] `_installed_version()` is executed by tests on both branches, shown by coverage.
+- [x] Exact project-name matching has a recorded disposition, implemented per the chosen option.
+- [x] Public MCP contract confirmed unchanged by re-export and diff.
+- [x] Exact-head CI is green.
+- [x] Exact closure evidence is recorded in this file.
