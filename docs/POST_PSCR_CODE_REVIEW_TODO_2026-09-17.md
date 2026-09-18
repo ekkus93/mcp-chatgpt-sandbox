@@ -1,6 +1,6 @@
 # Post-PSCR Code Review TODO
 
-**Status:** Closing — `PSCR2-001`–`PSCR2-011` implemented; awaiting exact-head CI  
+**Status:** Complete — `PSCR2-001` through `PSCR2-011` closed  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `134795429eae988f927e43ec97cc04c5f98b867a`  
@@ -376,7 +376,7 @@ Added after closure, on request.
 - [x] Discrimination: with the live namespace boundary neutered, the exclusion assertions fail. —
       see below: the first attempt targeted dead code.
 - [x] Full Docker-backed suite passes.
-- [ ] Exact-head CI green. — recorded at closure.
+- [x] Exact-head CI green. — run `35323036386` on `68a37fd`, **success** (see below).
 
 **Closure evidence (2026-09-18)**
 
@@ -627,3 +627,16 @@ Found by PSCR2-009; added on request.
 - Public MCP tool/schema contract unchanged throughout; `contract_version` stays `0.10.3`.
 - This status update is documentation-only and changes no code, so the evidence above covers the
   complete implementation of `PSCR2-001` through `PSCR2-008`.
+
+**Post-closure additions — acceptance evidence (2026-09-18)**
+
+- `PSCR2-009`–`PSCR2-011` were added after the original closure, on request. Exact head `68a37fd` —
+  CI run `35323036386`, job `105529628610`, conclusion **success**: `1444 passed in 697.88s`,
+  coverage `88%` (`9342` statements / `1108` misses), matching the local `1444 passed`.
+- The statement count fell by 16 from `9358` because PSCR2-011 removed the shadowed reconcile body;
+  misses fell by 17, since that body was never executed and so was never covered.
+- The CI re-run of `35271467140` (`ed6132e`) passed on its second attempt, `1415 passed`, job
+  `105516949482`, confirming its original 11 failures were collision artifacts. Attempt 1 remains in
+  the run history.
+- Public MCP contract unchanged; `contract_version` stays `0.10.3`.
+- This status update is documentation-only; the CI evidence above covers the complete implementation.
