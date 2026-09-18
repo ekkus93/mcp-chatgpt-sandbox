@@ -41,7 +41,7 @@ _logger = logging.getLogger(__name__)
 #: Between TERM and KILL, whether canceling (`exec_cancel`) or timing out
 #: (`exec_start`'s `timeout_seconds`) — §15.3's "graceful termination
 #: first, then force after a grace period". Same value as the synchronous
-#: `exec` tool's `KILL_GRACE_PERIOD_SECONDS` (tools/execution.py); kept as
+#: `exec` tool's `KILL_GRACE_PERIOD_SECONDS` (tools/execution_support.py); kept as
 #: a separate constant rather than imported from there so this module has
 #: no dependency on the tools layer.
 KILL_GRACE_PERIOD_SECONDS = 2.0

@@ -107,7 +107,7 @@ def _configured_with_key(
 ) -> ServerConfig:
     """Like `_configured`, but the repository also resolves a real ssh
     key under the default `ssh.mode: agent` — the precondition
-    `_audit_ssh_auth_if_applicable` (`tools/execution.py`) checks."""
+    `audit_ssh_auth_if_applicable` (`tools/execution_support.py`) checks."""
     config = _configured(minimal_config, default_image_tag, repo_path, github="owner/example")
     return config.model_copy(
         update={

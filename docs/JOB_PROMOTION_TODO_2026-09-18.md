@@ -1,6 +1,6 @@
 # Job Promotion on Overrun TODO
 
-**Status:** In progress — `JPO-001`–`JPO-004` closed  
+**Status:** In progress — `JPO-001`–`JPO-005` closed  
 **Date:** 2026-09-18  
 **Spec:** `docs/JOB_PROMOTION_SPEC_2026-09-18.md`  
 **Baseline:** `13e44bd`  
@@ -158,14 +158,26 @@ does. Full suite: 1474 passed in 648s (non-`--cov`).
 
 **Goal:** spec §2.6. The coordinator is 797 lines against a `< 800` guard.
 
-- [ ] Create `tools/execution_promotion.py` for the opted-in path.
-- [ ] If wiring still does not fit, move a cohesive existing helper group out of
+- [ ] Create `tools/execution_promotion.py` for the opted-in path. — arrives with JPO-006, its only
+      content; an empty module here would have been a placeholder, not work done.
+- [x] Move a cohesive existing helper group out of
       `tools/execution.py` in a **behaviour-free** commit of its own (pure move, imports updated).
-- [ ] Record the before/after line counts by command.
+- [x] Record the before/after line counts by command.
 
 **Validation**
 
-- [ ] `tests/test_refactored_module_size_guard.py` passes; full suite green on the pure move.
+- [x] `tests/test_refactored_module_size_guard.py` passes; full suite green on the pure move.
+
+**Evidence — JPO-005.** The move was made up front rather than "if wiring does not fit": three lines
+of headroom could not hold any wiring, and the promotion module needs `kill_after_timeout` without
+importing `tools/execution.py` (which imports it — a cycle). Moved verbatim to the new
+`tools/execution_support.py`: `KILL_GRACE_PERIOD_SECONDS`, `kill_after_timeout`, and the two audit
+helpers (now `audit_command_started` / `audit_ssh_auth_if_applicable`, public because they cross a
+module boundary). `tools/workspace.py` imports `kill_after_timeout` from the new module — strict mypy
+rejects an implicit re-export. Pure-move check by script: every line removed from
+`tools/execution.py` reappears in one of the two files except the two renamed `def`s, their four
+call sites, and two import names. `wc -l`: `tools/execution.py` 797 → 680; `execution_support.py`
+146. Full suite: 1474 passed in 663s (unchanged count; non-`--cov`).
 
 ---
 

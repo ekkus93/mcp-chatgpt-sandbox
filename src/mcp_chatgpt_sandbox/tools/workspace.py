@@ -52,7 +52,7 @@ from mcp_chatgpt_sandbox.project_config import (
     load_project_config,
 )
 from mcp_chatgpt_sandbox.repositories import RepositoryRegistry
-from mcp_chatgpt_sandbox.tools.execution import kill_after_timeout
+from mcp_chatgpt_sandbox.tools.execution_support import kill_after_timeout
 from mcp_chatgpt_sandbox.tools.workspace_models import (
     GitStateOutput,
     ServerInfoOutput,
@@ -87,7 +87,7 @@ DEFAULT_WORKSPACE_PATH = "/workspace"
 #: generous budget rather than a new config knob for a single call site.
 _SETUP_STEP_TIMEOUT_SECONDS = 600.0
 #: G2R-016 (`docs/GAP2_SPEC.md`): a real cross-import of
-#: `tools/execution.py`'s `KILL_GRACE_PERIOD_SECONDS` now, not a second,
+#: `tools/execution_support.py`'s `KILL_GRACE_PERIOD_SECONDS` now, not a second,
 #: separately hand-kept constant — the previous comment here claimed the
 #: two tool modules were "otherwise independent of each other" as the
 #: reason to duplicate rather than import, but that was the exact
