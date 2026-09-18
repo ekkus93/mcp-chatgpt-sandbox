@@ -22,7 +22,23 @@ _PRODUCTION_ROOT = Path(__file__).parents[1] / "src" / "mcp_chatgpt_sandbox"
 
 
 def _unpinned_container_lists(source: str) -> list[int]:
-    """Lines of `<x>.containers.list(...)` calls that do not pass `sparse=False`."""
+    """Lines of `<x>.containers.list(...)` calls that do not pass `sparse=False`.
+
+    **Known boundaries — recorded, not fixed** (PSCR3-003,
+    `docs/POST_PSCR2_CODE_REVIEW_SPEC_2026-09-18.md`). The detector matches only
+    the literal shape `<expr>.containers.list(...)` with a literal `sparse=False`:
+
+    - *Evasion.* An aliased collection — `cs = client.containers; cs.list(...)`
+      — is not flagged. Seeing through the alias needs data-flow analysis an AST
+      walk does not have.
+    - *False positives.* `containers.list(**opts)` and `sparse=<variable>` are
+      flagged even if they resolve to `sparse=False` at runtime. Treating either
+      as pinned would be unsound, since the guard exists to make the pin visible
+      at the call site.
+
+    Neither shape exists in the production package today. If one appears, write
+    the call in the literal shape rather than loosening this check.
+    """
 
     found: list[int] = []
     for node in ast.walk(ast.parse(source)):
@@ -67,6 +83,13 @@ def test_pscr2v_010_guard_detects_an_unpinned_call() -> None:
     assert _unpinned_container_lists("c.containers.list(all=True, sparse=True)\n") == [1]
     assert _unpinned_container_lists("self._docker.containers.list()\n") == [1]
     assert _unpinned_container_lists("c.containers.list(all=True, sparse=False)\n") == []
+    # PSCR3-003: the known boundaries, pinned so a change to the detector cannot
+    # move them unnoticed. These describe current behavior; they pass before and
+    # after this task by design, and are not evidence of discrimination.
+    aliased = "cs = client.containers\ncs.list(all=True)\n"
+    assert _unpinned_container_lists(aliased) == []  # evasion: not seen
+    assert _unpinned_container_lists("c.containers.list(**opts)\n") == [1]  # false positive
+    assert _unpinned_container_lists("c.containers.list(sparse=flag)\n") == [1]  # false positive
     # Other `.list` calls are not in scope; volumes have no sparse mode.
     assert _unpinned_container_lists("c.volumes.list(filters={})\n") == []
     assert _unpinned_container_lists("registry.list()\n") == []

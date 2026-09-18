@@ -1,6 +1,6 @@
 # Post-PSCR2 Code Review TODO
 
-**Status:** In progress — `PSCR3-001`–`PSCR3-002` closed; `PSCR3-003` next  
+**Status:** In progress — `PSCR3-001`–`PSCR3-003` closed; `PSCR3-004` next  
 **Date:** 2026-09-18  
 **Spec:** `docs/POST_PSCR2_CODE_REVIEW_SPEC_2026-09-18.md`  
 **Reviewed baseline:** `a5a35a1f1f049582f9596fc1bd9ffd7bf7ad65a1`  
@@ -126,20 +126,35 @@ changes what the software does, with one recorded exception — PSCR3-009, if it
 
 **Goal:** the guard's limits are documented and pinned, not left to be rediscovered.
 
-- [ ] Record in `_unpinned_container_lists()`'s docstring the evasion: an aliased collection
+- [x] Record in `_unpinned_container_lists()`'s docstring the evasion: an aliased collection
       (`cs = x.containers; cs.list(...)`) is not flagged.
-- [ ] Record the false-positive class: `**opts` and `sparse=<variable>` are flagged even when pinned.
-- [ ] State that neither shape exists in the production package today.
-- [ ] State why neither is fixed: data-flow analysis is out of an AST walk's reach, and treating
+- [x] Record the false-positive class: `**opts` and `sparse=<variable>` are flagged even when pinned.
+- [x] State that neither shape exists in the production package today.
+- [x] State why neither is fixed: data-flow analysis is out of an AST walk's reach, and treating
       `**opts` as pinned would be unsound.
-- [ ] Add assertions to the negative test pinning both boundaries as known behavior.
-- [ ] No detector change. (Worded under VR-000b for the recording; closing the evasion is declined.)
+- [x] Add assertions to the negative test pinning both boundaries as known behavior.
+- [x] No detector change. (Worded under VR-000b for the recording; closing the evasion is declined.)
 
 **Validation — PSCR3V-003**
 
-- [ ] `tests/test_docker_list_sparse_guard.py` remains green with the added assertions.
-- [ ] Recorded honestly: these assertions pin current behavior, so they pass before and after by
+- [x] `tests/test_docker_list_sparse_guard.py` remains green with the added assertions.
+- [x] Recorded honestly: these assertions pin current behavior, so they pass before and after by
       design and are not presented as discrimination.
+
+**Closure evidence (2026-09-18)**
+
+- `_unpinned_container_lists()`'s docstring records both boundaries as **recorded, not fixed**: the
+  aliased-collection evasion, and the `**opts` / `sparse=<variable>` false positives. It says why
+  neither is fixed (data-flow analysis is out of an AST walk's reach; treating an opaque argument as
+  pinned would defeat a guard whose point is a *visible* pin), that neither shape exists in
+  production today, and what to do if one appears: write the call in the literal shape.
+- The negative test gained three assertions pinning those boundaries as known behavior.
+- **Stated plainly, as the spec required:** these assertions describe the detector's *current*
+  behavior, so they pass before and after this task by design. They guard against an unnoticed
+  future change to the detector; they are not a discrimination proof and are not presented as one.
+- No detector change. **VR-000b:** every checkbox above is worded for the recording, which is done;
+  closing the evasion is declined, and no checkbox claims it.
+- `tests/test_docker_list_sparse_guard.py`: `2 passed`. Ruff lint PASS.
 
 ### PSCR3-004 — Make the version-pin fixture rename-safe
 
