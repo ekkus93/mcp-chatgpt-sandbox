@@ -1,6 +1,6 @@
 # Post-PSCR Code Review TODO
 
-**Status:** Closing — `PSCR2-001`–`PSCR2-007` closed; `PSCR2-008` awaiting exact-head CI  
+**Status:** Complete — `PSCR2-001` through `PSCR2-008` closed  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `134795429eae988f927e43ec97cc04c5f98b867a`  
@@ -394,11 +394,12 @@ every declined fix is recorded as declined, and no document claims more than the
 - [x] Record exact warning count. — `0 warnings`.
 - [x] Record exact coverage total/statements/misses. — `88%`, `9358` statements / `1125` misses.
 - [x] Record exact implementation head SHA. — `e939975`, closure evidence commit recorded below.
-- [ ] Record exact CI run ID and job ID.
-- [ ] Post-push `master` CI passes on the exact head SHA. (No merge-guard items: this series commits
+- [x] Record exact CI run ID and job ID. — run `35317707321`, job `105512908047`.
+- [x] Post-push `master` CI passes on the exact head SHA. — `7815a45`, conclusion **success**. (No merge-guard items: this series commits
       directly to `master`.)
-- [ ] Record post-push run/job/test/coverage evidence.
-- [ ] Update this TODO status to complete only after post-push evidence is green.
+- [x] Record post-push run/job/test/coverage evidence. — `1438 passed in 684.19s`; coverage
+      `88%` (`9358` statements / `1125` misses).
+- [x] Update this TODO status to complete only after post-push evidence is green.
 
 ---
 
@@ -458,6 +459,16 @@ every declined fix is recorded as declined, and no document claims more than the
 - [x] All four concurrency passages say the same accurate thing, changed in one commit.
 - [x] Every regression test added here has been shown to fail against the pre-fix code.
 - [x] Public MCP contract confirmed unchanged by re-export and diff.
-- [ ] Exact-head CI is green.
-- [ ] Post-push `master` CI is green.
+- [x] Exact-head CI is green. — run `35317707321` on `7815a45`.
+- [x] Post-push `master` CI is green. — same run; the push is the exact-head run.
 - [x] Exact closure evidence is recorded in this file.
+
+**Final acceptance evidence (2026-09-18)**
+
+- Exact head `7815a45` — CI run `35317707321`, job `105512908047`, conclusion **success**: all
+  gates plus the full Docker-backed suite, `1438 passed in 684.19s`, coverage `88%` (`9358`
+  statements / `1125` misses). CI's numbers match the idle-host local closure run exactly, so the
+  two corroborate rather than merely both being green.
+- Public MCP tool/schema contract unchanged throughout; `contract_version` stays `0.10.3`.
+- This status update is documentation-only and changes no code, so the evidence above covers the
+  complete implementation of `PSCR2-001` through `PSCR2-008`.
