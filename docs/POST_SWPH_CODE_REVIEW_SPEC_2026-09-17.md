@@ -4,7 +4,7 @@
 **Date:** 2026-09-17  
 **Reviewed baseline:** `ba79759a1ed9287105d9891bbb1cefccdc396d78`  
 **Source review:** line-by-line code review of `docs/SETUP_WIZARD_POST_HARDENING_REVIEW_TODO_2026-09-14.md` against the merged implementation  
-**Task series:** `PSCR-001` through `PSCR-011`  
+**Task series:** `PSCR-001` through `PSCR-012`  
 **Validation series:** `PSCRV-*`
 
 ## 1. Purpose
@@ -275,6 +275,19 @@ a live deployment's containers and caches during the 2026-08-27 review, and HAT-
 impersonating what production creates *today*, so it renames with the production scheme; leaving it
 on the old prefix would silently downgrade the test to simulating a legacy volume.
 
+### PSCR-012 — Rename the last `mcp-dev-` test fixture
+
+`tests/workspace/test_e2e_workflow.py` builds a fake executable named `mcp-dev-tool`, installs it
+through `sudo install`, and runs it, to prove a client can elevate through the configured
+passwordless sudo boundary and persist a binary in the container's system tool path. It is the last
+`mcp-dev-` string in the repository.
+
+The name should **not** become the project name. This binary is a stand-in for a tool the *client*
+installs — something like `ripgrep` — and the daemon never installs its own executable into a
+workspace container. `mcp-chatgpt-sandbox-tool` would therefore read as a real project artifact
+inside the container and mislead the next reader, trading one inaccurate name for another. Naming it
+after what it proves is both accurate and removes the vestige.
+
 ### PSCR-008 — Final regression, contract, and closure
 
 Re-verify every touched boundary, confirm the public MCP contract is unchanged, and close only on
@@ -304,9 +317,9 @@ files does not alter the tool contract.
 - Rewriting the setup wizard, its step model, or its action layering.
 - Revisiting the SWPH-006 lock design, the SWPH-008 leaf-private policy, or the SWPH-007 discovery
   rule; all three were re-reviewed and hold.
-- Renaming the `mcp-dev-tool` test fixture, which is an arbitrary fake binary name and carries no
-  project identity. (The `mcp-cache-` volume prefix was also a non-goal here on the same reasoning;
-  it was later brought into scope on request as PSCR-011.)
+- (Both original non-goals of this kind were later brought into scope on request: the `mcp-cache-`
+  volume prefix as PSCR-011, and the `mcp-dev-tool` test fixture as PSCR-012. Neither carried
+  project identity, which is why each was excluded here first.)
 - Publishing the distribution, or any change to release/versioning policy.
 - Changing the deliberate design in which the workspace container name is persisted on the workspace
   row rather than recomputed.

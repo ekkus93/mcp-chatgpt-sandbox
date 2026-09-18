@@ -1,11 +1,11 @@
 # Post-SWPH Code Review TODO
 
-**Status:** Complete — `PSCR-001` through `PSCR-011` closed; two global rules recorded as not
+**Status:** Complete — `PSCR-001` through `PSCR-012` closed; two global rules recorded as not
 followed (see below)  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `ba79759a1ed9287105d9891bbb1cefccdc396d78`  
-**Task series:** `PSCR-001` through `PSCR-011`  
+**Task series:** `PSCR-001` through `PSCR-012`  
 **Validation series:** `PSCRV-*`
 
 This TODO implements `docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`. It addresses one functional
@@ -504,6 +504,44 @@ Brought into scope on request; it was a recorded non-goal. A consistency change,
   mypy (103 files) PASS.
 - Scope note: this was a recorded **non-goal** in the spec. The non-goals section was amended to
   say so explicitly rather than leaving the spec contradicting the work.
+
+### PSCR-012 — Rename the last `mcp-dev-` test fixture
+
+**Goal:** no `mcp-dev-` string remains, without inventing a misleading project artifact.
+
+- [x] Rename the fake binary and its output sentinel in `test_e2e_workflow.py`.
+- [x] Choose a name that describes what the fixture proves, not the project.
+- [x] Keep the test's behavior identical: same sudo-install path, same assertion shape.
+- [x] Confirm no `mcp-dev-` string remains anywhere in the repository.
+
+**Validation — PSCRV-012**
+
+- [x] Repository-wide check: no `mcp-dev-` occurrences outside historical narrative.
+- [x] The E2E sudo-install step still passes against real Docker.
+
+**Closure evidence (2026-09-17)**
+
+- `mcp-dev-tool` → `installed-tool-probe` (5 references) and `MCP_DEV_TOOL_OK` →
+  `INSTALLED_TOOL_PROBE_OK` (2 references) in `tests/workspace/test_e2e_workflow.py`.
+- **Deliberately not named after the project.** The binary stands in for a tool the *client*
+  installs; the daemon never installs its own executable into a workspace container, so
+  `mcp-chatgpt-sandbox-tool` would have read as a real project artifact inside the container and
+  traded one inaccurate name for another. Naming it for what it proves removes the vestige and is
+  more accurate.
+- No `mcp-dev-` string remains in `src/` or `tests/`. The only occurrences left are
+  `workspace/naming.py`'s docstring and this series' own documents, both of which deliberately
+  record the superseded scheme.
+- Three corrections made before committing, each caught rather than shipped: an occurrence-count
+  assertion failed (five references, not four — one line carries it twice) and aborted the edit
+  instead of half-applying it; the first candidate name made `&& sudo-install-probe` confusable
+  with invoking `sudo`, two lines below a genuine `sudo install`; and wrapping the resulting
+  over-length line required verifying the split string still concatenates with correct spacing,
+  which was checked rather than assumed.
+- `tests/workspace/test_e2e_workflow.py` passes against real Docker. Full Docker-backed suite:
+  `1428 passed in 665.00s`, zero failures, zero skips. Ruff format (317 files) PASS; Ruff lint
+  PASS; strict mypy (103 files) PASS.
+- Scope note: like PSCR-011, this was a recorded non-goal; the spec's non-goals section now records
+  both as brought into scope on request rather than leaving the spec contradicting the work.
 
 ---
 

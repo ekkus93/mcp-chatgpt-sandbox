@@ -146,15 +146,16 @@ async def test_the_full_reachable_78_workflow_end_to_end(
         {
             "workspace_id": workspace_id,
             "shell": (
-                "printf '#!/bin/sh\\necho MCP_DEV_TOOL_OK\\n' > /tmp/mcp-dev-tool "
-                "&& chmod 0755 /tmp/mcp-dev-tool "
-                "&& sudo install -m 0755 /tmp/mcp-dev-tool /usr/local/bin/mcp-dev-tool "
-                "&& mcp-dev-tool"
+                "printf '#!/bin/sh\\necho INSTALLED_TOOL_PROBE_OK\\n' > /tmp/installed-tool-probe "
+                "&& chmod 0755 /tmp/installed-tool-probe "
+                "&& sudo install -m 0755 /tmp/installed-tool-probe "
+                "/usr/local/bin/installed-tool-probe "
+                "&& installed-tool-probe"
             ),
         },
     )
     assert install.structured_content["exit_code"] == 0
-    assert "MCP_DEV_TOOL_OK" in install.structured_content["stdout_tail"]
+    assert "INSTALLED_TOOL_PROBE_OK" in install.structured_content["stdout_tail"]
 
     # 9. run a project "linter" (a real syntax check, standing in for one)
     lint = await server.call_tool(
