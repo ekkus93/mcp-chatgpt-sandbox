@@ -189,7 +189,8 @@ the schema's compatibility with ChatGPT remains unverified.
       check, mypy, `pytest --cov`. Chunk counts must sum to `pytest --collect-only`. Record counts
       and coverage.
 - [x] A fresh export leaves `schemas/tools.json` unchanged; `contract_version` still `0.11.1`.
-- [ ] Push; exact-head CI green. Record run and job IDs.
+- [x] Push; exact-head CI green. Record run and job IDs. — `0521713`: run `35407020477`, job
+      `105798759685`, success — 1493 passed, 88% (9541 / 1109), identical to the local gates.
 - [x] Set this file's Status line and the spec's Status; state whether PJPO2-004 was performed.
 
 ---
@@ -223,5 +224,5 @@ CI for this closure is recorded below.
       line is corrected visibly.
 - [x] The Linux-only dependency is documented.
 - [x] No contract change (H4), verified by export.
-- [ ] Full gates green on an idle host and on exact-head CI.
+- [x] Full gates green on an idle host and on exact-head CI.
 - [x] PJPO2-004 performed, or recorded as not performed. — Recorded as not performed.
