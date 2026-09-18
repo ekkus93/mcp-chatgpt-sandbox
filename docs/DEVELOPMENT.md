@@ -210,8 +210,17 @@ an A/B against the pre-PSCR-010 tree under identical contention failed 6 tests
 on the old side and none on the new.
 
 Overlapping is still **slower**, because the CI runner is self-hosted on this
-machine and shares its CPU and Docker daemon. Prefer not to overlap, but there is
-no need to wait for CI before running the suite.
+machine and shares its CPU, memory, and Docker daemon. Prefer not to overlap, but
+there is no need to wait for CI before running the suite.
+
+The exception is a coverage run. CI itself runs `pytest --cov`, and while it did,
+a local `pytest --cov --cov-report=term-missing` started from a Claude Code
+session was twice terminated about 40 seconds in by the session's background-task
+memory guard. No test had failed, the kernel logged no out-of-memory event, and
+the same run completed on an idle host (`docs/POST_PSCR_CODE_REVIEW_TODO_2026-09-17.md`,
+PSCR2-008). Non-coverage runs overlapped CI repeatedly without incident. This is a
+resource limit of the agent harness, not a correctness problem, but run coverage
+suites on an idle host.
 
 A live `mcp-chatgpt-sandbox serve` on the same daemon is protected by the same
 design — its containers carry no namespace label, which every test context

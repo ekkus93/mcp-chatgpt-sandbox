@@ -60,7 +60,9 @@ pgrep -af 'pytest|mcp-chatgpt-sandbox serve' | grep -v pgrep
 CI runs on a **self-hosted runner on this same machine**. Overlapping it is **safe but
 slower**: every test context has its own namespace (G3R-015) and every absence/count
 assertion is scoped to it (PSCR-010), so concurrent runs no longer adopt each other's
-containers. Record an overlap in the report and carry on. Avoid running against a daemon
+containers. Record an overlap in the report and carry on — this skill runs without `--cov`,
+and non-coverage runs have overlapped CI without incident. (Coverage runs are the exception;
+see `docs/DEVELOPMENT.md`.) Avoid running against a daemon
 serving real workspaces from a live `serve` — protected by design, but not demonstrated.
 
 ## Step 3: run all tests

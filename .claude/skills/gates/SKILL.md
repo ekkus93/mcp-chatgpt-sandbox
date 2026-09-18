@@ -29,7 +29,10 @@ docker image inspect mcp-chatgpt-sandbox-test-s7:24.04 >/dev/null 2>&1 \
   The tag must match `DEFAULT_IMAGE_TEST_TAG` in `tests/workspace/conftest.py`.
 - Overlapping a CI run or another suite run is **safe but slower**: every test context has its
   own namespace (G3R-015) and every absence/count assertion is scoped to it (PSCR-010), so runs
-  no longer adopt each other's containers. Note an overlap in your report; don't wait on it.
+  no longer adopt each other's containers. Note an overlap in your report; don't wait on it —
+  **except** that Step 2 below runs `pytest --cov`, and a `--cov` run overlapping CI's own
+  `--cov` run has twice been killed by the Claude Code background-task memory guard (no test
+  failed). For this skill, wait for an idle runner before Step 2.
   Do avoid running against a Docker daemon that is serving real workspaces from a live
   `mcp-chatgpt-sandbox serve` — that case is protected by design but not demonstrated.
 

@@ -1,6 +1,6 @@
 # Post-PSCR Code Review TODO
 
-**Status:** In progress — `PSCR2-001`–`PSCR2-007` closed; `PSCR2-008` (closure) next  
+**Status:** Closing — `PSCR2-001`–`PSCR2-007` closed; `PSCR2-008` awaiting exact-head CI  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `134795429eae988f927e43ec97cc04c5f98b867a`  
@@ -15,26 +15,28 @@ every declined fix is recorded as declined, and no document claims more than the
 
 ## Global rules
 
-- [ ] Start from an exact inspected `master` SHA.
-- [ ] Follow the project's commit convention: direct conventional commits to `master`, no branch or
+- [x] Start from an exact inspected `master` SHA. — `134795429eae988f927e43ec97cc04c5f98b867a`.
+- [x] Follow the project's commit convention: direct conventional commits to `master`, no branch or
       PR. (This rule is stated correctly here; the PSCR TODO carried a `ralph/` branch rule from an
       older template that contradicted `CLAUDE.md`, and had to be corrected during closure.)
-- [ ] Keep `ServerConfig`, `GitPolicyConfig`, and `load_config()` authoritative.
-- [ ] Preserve the PSCR-001 checkout-only Docker context policy; do not reopen Option A.
-- [ ] Preserve PSCR-003: a present configured image validates the Docker step without a context.
-- [ ] Preserve reviewed config-write semantics and the SWPH-006 lock design unchanged.
-- [ ] Preserve leaf-private directory semantics as documented in `docs/CONFIGURATION.md`.
-- [ ] Preserve G3R-015 namespacing and PSCR-010's scoped assertions; weaken no assertion.
-- [ ] Never persist or print raw secrets in state, UI, diagnostics, logs, exceptions, docs, or tests.
-- [ ] Add a focused regression test for every correctness defect, and prove it discriminates by
+- [x] Keep `ServerConfig`, `GitPolicyConfig`, and `load_config()` authoritative.
+- [x] Preserve the PSCR-001 checkout-only Docker context policy; do not reopen Option A.
+- [x] Preserve PSCR-003: a present configured image validates the Docker step without a context.
+- [x] Preserve reviewed config-write semantics and the SWPH-006 lock design unchanged.
+- [x] Preserve leaf-private directory semantics as documented in `docs/CONFIGURATION.md`.
+- [x] Preserve G3R-015 namespacing and PSCR-010's scoped assertions; weaken no assertion.
+- [x] Never persist or print raw secrets in state, UI, diagnostics, logs, exceptions, docs, or tests.
+- [x] Add a focused regression test for every correctness defect, and prove it discriminates by
       running it against the pre-fix code.
-- [ ] Word every checkbox for what was done, never for what was considered and declined (VR-000b).
-- [ ] Do not weaken existing tests or architecture guards; a replacement must be strictly stronger.
-- [ ] Do not bump `contract_version` unless the public MCP contract actually changes.
-- [ ] Until `PSCR2-007` disposes of it, treat overlapping a local suite with a CI run as advisory-avoid:
+- [x] Word every checkbox for what was done, never for what was considered and declined (VR-000b).
+- [x] Do not weaken existing tests or architecture guards; a replacement must be strictly stronger.
+- [x] Do not bump `contract_version` unless the public MCP contract actually changes.
+- [x] Until `PSCR2-007` disposes of it, treat overlapping a local suite with a CI run as advisory-avoid:
       PSCR-010 made it safe, but the self-hosted runner is shared. If it happens, record it as
-      corroborating evidence, not as a violation.
-- [ ] Record exact SHA/run/job evidence as each phase closes.
+      corroborating evidence, not as a violation. — Followed: PSCR2-001 and PSCR2-002 overlapped CI
+      and recorded it. The closure run, which could not complete while overlapping, was run on an
+      idle host (see PSCR2-008).
+- [x] Record exact SHA/run/job evidence as each phase closes.
 
 ---
 
@@ -361,37 +363,37 @@ every declined fix is recorded as declined, and no document claims more than the
 
 #### Final code-review checklist
 
-- [ ] The checkout search returns only this project's root; a right-layout/wrong-name decoy is skipped.
-- [ ] The version-skew disposition is implemented per the recorded option.
-- [ ] The PSCR-002 docstring claims only what is guaranteed.
-- [ ] `containers_in_this_context()` states and pins `sparse=False`.
-- [ ] An uncalled `os.getcwd` reference fails the guard; an uncalled `record.cwd` does not.
-- [ ] The `.parents[<int>]` guard docstring states policy, reason, and alternative.
-- [ ] The write-mode heuristic's boundary is recorded in its docstring.
-- [ ] All four concurrency passages say the same accurate thing.
-- [ ] Every added regression test was shown to fail against the pre-fix code.
-- [ ] PSCR-001/003/010 behaviors unchanged; no assertion weakened.
-- [ ] Setup state remains secret-free; diagnostics remain fail-closed and non-secret.
+- [x] The checkout search returns only this project's root; a right-layout/wrong-name decoy is skipped.
+- [x] The version-skew disposition is implemented per the recorded option.
+- [x] The PSCR-002 docstring claims only what is guaranteed.
+- [x] `containers_in_this_context()` states and pins `sparse=False`.
+- [x] An uncalled `os.getcwd` reference fails the guard; an uncalled `record.cwd` does not.
+- [x] The `.parents[<int>]` guard docstring states policy, reason, and alternative.
+- [x] The write-mode heuristic's boundary is recorded in its docstring.
+- [x] All four concurrency passages say the same accurate thing.
+- [x] Every added regression test was shown to fail against the pre-fix code.
+- [x] PSCR-001/003/010 behaviors unchanged; no assertion weakened.
+- [x] Setup state remains secret-free; diagnostics remain fail-closed and non-secret.
 
 #### Contract/version decision
 
-- [ ] Re-export schemas and diff against `schemas/tools.json`.
-- [ ] Record the explicit decision and whether a `contract_version` bump was required.
+- [x] Re-export schemas and diff against `schemas/tools.json`.
+- [x] Record the explicit decision and whether a `contract_version` bump was required.
 
 #### Complete validation — PSCR2V-008
 
-- [ ] `uv run ruff format --check .` passes.
-- [ ] `uv run ruff check .` passes.
-- [ ] `uv run mypy src` passes in strict mode.
-- [ ] MCP exported-schema contract check passes.
-- [ ] `contract_version` history gate passes.
-- [ ] `docs/TOOLS.md` drift gate passes.
-- [ ] Full Docker-backed `uv run pytest --cov --cov-report=term-missing` passes.
-- [ ] Record whether the run overlapped a CI run; if so, record it as PSCR2-007 corroboration.
-- [ ] Record exact pytest count.
-- [ ] Record exact warning count.
-- [ ] Record exact coverage total/statements/misses.
-- [ ] Record exact implementation head SHA.
+- [x] `uv run ruff format --check .` passes. — 319 files.
+- [x] `uv run ruff check .` passes.
+- [x] `uv run mypy src` passes in strict mode. — 103 source files.
+- [x] MCP exported-schema contract check passes. — re-export byte-identical.
+- [x] `contract_version` history gate passes.
+- [x] `docs/TOOLS.md` drift gate passes.
+- [x] Full Docker-backed `uv run pytest --cov --cov-report=term-missing` passes.
+- [x] Record whether the run overlapped a CI run; if so, record it as PSCR2-007 corroboration.
+- [x] Record exact pytest count. — `1438 passed`.
+- [x] Record exact warning count. — `0 warnings`.
+- [x] Record exact coverage total/statements/misses. — `88%`, `9358` statements / `1125` misses.
+- [x] Record exact implementation head SHA. — `e939975`, closure evidence commit recorded below.
 - [ ] Record exact CI run ID and job ID.
 - [ ] Post-push `master` CI passes on the exact head SHA. (No merge-guard items: this series commits
       directly to `master`.)
@@ -400,20 +402,62 @@ every declined fix is recorded as declined, and no document claims more than the
 
 ---
 
+**Closure evidence (2026-09-18)**
+
+- Gates on head `e939975`: Ruff format (319 files) PASS; Ruff lint PASS; strict mypy (103 files)
+  PASS. The contract was re-exported through CI's own command and diffed byte-for-byte against
+  `schemas/tools.json`: **identical**. `contract_version` stays `0.10.3`; no bump was required.
+- Every PSCR2 commit already has its own green CI: `7f13beb` (`35299275538`), `3e6d86d`
+  (`35300212582`), `2790229` (`35300998277`), `ab977f7` (`35301106893`), `12b5dbc`
+  (`35301149867`), `76eb963` (`35301198972`), `e939975` (`35301304743`) — all **success**.
+- Closure suite on an idle host: `1438 passed in 669.53s`, `0 warnings`, coverage `88%` — `9358`
+  statements / `1125` misses. Zero skips.
+
+**The closure run was killed twice before it completed, and that changed PSCR2-007**
+
+- Attempt 1 (02:56:50Z) and attempt 2 (02:57:43Z) were each terminated about 40 seconds in, at
+  15–16% (`tests/filesystem` into `tests/git`), with **zero failures** so far. Both were
+  `pytest --cov --cov-report=term-missing` and both overlapped CI `35300998277`'s own `--cov`
+  run. The termination notice came from the Claude Code background-task memory guard. The kernel
+  logged no out-of-memory event (the only OOM entries were memory-cgroup kills inside a container
+  that `test_resources.py` deliberately caps at `256m`, timestamped *before* either attempt), swap
+  was essentially unused, and 22–23 GiB was available. "Free" memory was about 2.4–3.0 GiB
+  because page cache held most of RAM.
+- A memory probe of the killed stretch was attempted and **failed to sample**: the probe's shell script
+  backgrounded the whole `LOG=… &&` chain as one job, so the sampling loop never saw `$LOG` or
+  `$PID`. It produced no memory data and none is claimed. It did establish one thing: that stretch
+  alone, with `--cov`, completed (`395 passed in 16.11s`), so no test there deterministically
+  triggers the kill.
+- Attempt 3 ran after the operator chose to clear the CI backlog. The queue had drained on its own during an
+  interruption, so there was nothing to cancel. On an **idle** host the same command completed.
+- The pattern across this series: non-coverage suites overlapped CI three times without incident;
+  both coverage runs that overlapped CI's coverage run were killed; the coverage run on an idle host
+  completed. Three data points do not prove causation, and none of this is a correctness problem —
+  no test failed in any run. But PSCR2-007's "safe but slower" was silent about memory, and
+  `gates` runs exactly this `--cov` suite.
+- **PSCR2-007's guidance was amended in this task**, in all four locations together: the CI runner
+  shares memory as well as CPU and Docker, and a `--cov` run should use an idle host.
+  `docs/DEVELOPMENT.md` records the evidence and says plainly that this is a limit of the agent
+  harness rather than of the code; `gates` now waits for an idle runner before its `--cov` step;
+  `lint-n-test`, which runs without coverage, keeps overlap acceptable and points to the
+  explanation.
+
+---
+
 ## Definition of done
 
-- [ ] The checkout search returns only this project's root, and a decoy with the right layout and
+- [x] The checkout search returns only this project's root, and a decoy with the right layout and
       wrong name is skipped.
-- [ ] The in-repo-virtualenv version skew has a recorded disposition, implemented per the chosen
+- [x] The in-repo-virtualenv version skew has a recorded disposition, implemented per the chosen
       option, and the PSCR-002 docstring no longer claims more than is guaranteed.
-- [ ] `containers_in_this_context()` states and pins its `sparse=False` dependency.
-- [ ] An uncalled `os.getcwd` reference fails the working-directory guard; an uncalled `record.cwd`
+- [x] `containers_in_this_context()` states and pins its `sparse=False` dependency.
+- [x] An uncalled `os.getcwd` reference fails the working-directory guard; an uncalled `record.cwd`
       does not.
-- [ ] The `.parents[<int>]` guard's docstring states its policy and the alternative.
-- [ ] The write-mode heuristic's boundary is recorded, with its checkbox worded for the recording.
-- [ ] All four concurrency passages say the same accurate thing, changed in one commit.
-- [ ] Every regression test added here has been shown to fail against the pre-fix code.
-- [ ] Public MCP contract confirmed unchanged by re-export and diff.
+- [x] The `.parents[<int>]` guard's docstring states its policy and the alternative.
+- [x] The write-mode heuristic's boundary is recorded, with its checkbox worded for the recording.
+- [x] All four concurrency passages say the same accurate thing, changed in one commit.
+- [x] Every regression test added here has been shown to fail against the pre-fix code.
+- [x] Public MCP contract confirmed unchanged by re-export and diff.
 - [ ] Exact-head CI is green.
 - [ ] Post-push `master` CI is green.
-- [ ] Exact closure evidence is recorded in this file.
+- [x] Exact closure evidence is recorded in this file.

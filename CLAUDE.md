@@ -43,7 +43,10 @@ Run the full suite for any change, not just a targeted subset.
   namespace (G3R-015), and since PSCR-010 every absence/count assertion is scoped to it — proven
   by an A/B where the pre-fix tree failed 6 tests under contention and the fixed tree passed 438.
   Overlapping a local run with CI is therefore **safe but slower**: the CI runner is self-hosted
-  on this machine and shares its CPU and Docker. Prefer not to overlap; don't wait on it either.
+  on this machine and shares its CPU, memory, and Docker. Prefer not to overlap; don't wait on it
+  either — except for a `--cov` run: two overlapping `--cov` suites were twice killed by the Claude
+  Code background-task memory guard (no test failed; the kernel never ran out of memory), so run
+  those on an idle host.
 - A collision-shaped failure (`assert [<Container: ...>] == []`, or two containers where one was
   expected) is now a **real defect** — the namespacing has regressed. Investigate it; never add a
   retry or a skip to hide it.
