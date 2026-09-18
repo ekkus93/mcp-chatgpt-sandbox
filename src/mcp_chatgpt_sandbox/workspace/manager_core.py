@@ -194,8 +194,13 @@ class _CoreMixin:
         try:
             labeled = [
                 container
+                # PSCR2-010: sparse=False is explicit because the namespace
+                # filter below reads `.labels`, which docker-py refuses on sparse
+                # objects. It is the library default; this pins it.
                 for container in self._docker.containers.list(
-                    all=True, filters={"label": f"{LABEL_WORKSPACE_ID}={workspace_id}"}
+                    all=True,
+                    sparse=False,
+                    filters={"label": f"{LABEL_WORKSPACE_ID}={workspace_id}"},
                 )
                 if container_matches_test_namespace(container.labels)
             ]

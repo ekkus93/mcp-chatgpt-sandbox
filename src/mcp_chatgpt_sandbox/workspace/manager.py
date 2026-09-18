@@ -198,8 +198,12 @@ class DockerWorkspaceManager(_LifecycleMixin):
         """Reconcile only containers with full PMOR-001 ownership proof."""
         record = self._get_or_raise(workspace_id)
         try:
+            # PSCR2-010: sparse=False is explicit because `.labels` is read on
+            # every result, and docker-py refuses `.labels` on sparse objects.
             discovered = self._docker.containers.list(
-                all=True, filters={"label": f"{LABEL_WORKSPACE_ID}={workspace_id}"}
+                all=True,
+                sparse=False,
+                filters={"label": f"{LABEL_WORKSPACE_ID}={workspace_id}"},
             )
         except DockerException as exc:
             raise ContainerRuntimeFailedError(

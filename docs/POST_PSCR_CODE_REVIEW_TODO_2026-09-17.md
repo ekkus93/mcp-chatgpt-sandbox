@@ -4,7 +4,7 @@
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `134795429eae988f927e43ec97cc04c5f98b867a`  
-**Task series:** `PSCR2-001` through `PSCR2-009`  
+**Task series:** `PSCR2-001` through `PSCR2-010`  
 **Validation series:** `PSCR2V-*`
 
 This TODO implements `docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md`. It closes one correctness gap,
@@ -413,6 +413,50 @@ Added after closure, on request.
 - Full Docker-backed suite (covering PSCR2-009 and PSCR2-010 together, which is recorded in both
   entries): `1442 passed in 655.74s`, zero failures, zero skips. It overlapped two `pytest` processes
   from an unrelated project on the same host without incident.
+
+### PSCR2-010 — Pin `sparse=False` in production
+
+**Goal:** no production `containers.list()` relies on an unstated docker-py default.
+
+Found while writing PSCR2-009; added on request.
+
+- [x] Find every production `containers.list()` / `volumes.list()` call site.
+- [x] Confirm which read `.labels` on their results.
+- [x] Pass `sparse=False` explicitly at each container site, with a comment saying why.
+- [x] Exclude `volumes.list()` deliberately, and record why.
+- [x] Add a repository-wide guard against an unpinned production `containers.list()`.
+
+**Validation — PSCR2V-010**
+
+- [x] Guard passes on the fixed tree.
+- [x] Negative test pins the detector, including out-of-scope calls.
+- [x] Discrimination: against the pre-fix source the guard names exactly the unpinned sites.
+- [x] Full Docker-backed suite passes.
+
+**Closure evidence (2026-09-18)**
+
+- Four `list()` call sites exist in `src/`. `sparse` exists only on `ContainerCollection.list`
+  (default `False`); `VolumeCollection.list` takes only `**kwargs`, so `inventory.py`'s
+  `volumes.list` is out of scope and was deliberately left unchanged rather than edited for symmetry.
+- The three container sites all read `.labels` on their results: `manager.py:213` (the live
+  reconcile), `manager_core.py:200`, and `inventory.py:283`. Each now passes `sparse=False`, with a
+  comment saying why.
+- **The `inventory.py` site was a trap.** It reads `getattr(container, "labels", {})`, which looks
+  defensive, but a sparse object raises `DockerException` there, not `AttributeError`, so the
+  default would never have applied. Its comment now says so.
+- **One of the three sites is dead code.** `manager_core.py`'s site is inside
+  `_CoreMixin.reconcile()`, which PSCR2-009 found is shadowed and never executed. It was pinned
+  anyway, since the guard is textual and the method still existed; PSCR2-011 deletes it.
+- `tests/test_docker_list_sparse_guard.py` flags any `<x>.containers.list(...)` in
+  `src/mcp_chatgpt_sandbox` that lacks `sparse=False`, and a negative test pins the detector: bare
+  and `sparse=True` calls are flagged, a pinned call is not, and `volumes.list` / unrelated `.list()`
+  calls are out of scope.
+- **Discrimination verified.** Against the three files restored from `HEAD`, the guard fails naming
+  exactly `operations/inventory.py:264`, `workspace/manager.py:201`, and
+  `workspace/manager_core.py:197` — precise, not merely able to fail. Restored, it passes.
+- Full Docker-backed suite (the same run as PSCR2-009, recorded in both entries): `1442 passed in
+  655.74s`, zero failures. Behavior cannot change, since `sparse=False` is the library default; the
+  run confirms nothing else did.
 
 ---
 

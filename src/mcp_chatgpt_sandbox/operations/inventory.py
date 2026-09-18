@@ -261,8 +261,13 @@ class ResourceInventoryService:
             self._mark_budget_exhausted()
             return
         try:
+            # PSCR2-010: sparse=False is explicit because each candidate's
+            # `.labels` is read below. docker-py raises DockerException (not
+            # AttributeError) on a sparse object's `.labels`, so the
+            # `getattr(..., "labels", {})` there would not have caught it.
             candidates = self._docker.containers.list(
                 all=True,
+                sparse=False,
                 limit=budget + 1,
                 filters={"label": f"{LABEL_MANAGED}=true"},
             )

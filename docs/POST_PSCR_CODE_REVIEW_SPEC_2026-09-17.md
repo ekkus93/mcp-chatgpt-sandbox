@@ -4,7 +4,7 @@
 **Date:** 2026-09-17  
 **Reviewed baseline:** `134795429eae988f927e43ec97cc04c5f98b867a`  
 **Source review:** adversarial re-read of the merged `PSCR-001`–`PSCR-012` implementation against `docs/POST_SWPH_CODE_REVIEW_TODO_2026-09-17.md`  
-**Task series:** `PSCR2-001` through `PSCR2-009`  
+**Task series:** `PSCR2-001` through `PSCR2-010`  
 **Validation series:** `PSCR2V-*`
 
 ## 1. Purpose
@@ -271,6 +271,24 @@ concurrency hazard PSCR-010 removed.
 
 When the demonstration passes, the "not demonstrated" caveat is removed from all four locations in
 one commit.
+
+### PSCR2-010 — Pin `sparse=False` in production
+
+Found while writing PSCR2-009, and added on request. PSCR2-003 pinned `sparse=False` in the test
+helper `containers_in_this_context()`, because it reads `.labels` and docker-py refuses `.labels` on
+sparse objects. Production has the same implicit dependency: three `containers.list()` call sites
+read `.labels` on their results — `workspace/manager.py` (the live reconcile), `workspace/manager_core.py`,
+and `operations/inventory.py` — and none pass `sparse=False`. They work only because it is the
+library default.
+
+The `inventory.py` site looks protected and is not: it reads `getattr(container, "labels", {})`,
+but a sparse object's `.labels` raises `DockerException`, not `AttributeError`, so the default
+never applies.
+
+`volumes.list()` is out of scope: docker-py's `VolumeCollection.list` has no sparse mode.
+
+Pin the argument at all three sites, and add a repository-wide guard that fails on any production
+`containers.list()` call that does not pass `sparse=False`, so the dependency cannot be lost again.
 
 ### PSCR2-008 — Final regression, contract, and closure
 
