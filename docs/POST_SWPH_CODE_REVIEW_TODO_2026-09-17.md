@@ -1,7 +1,7 @@
 # Post-SWPH Code Review TODO
 
-**Status:** Complete — `PSCR-001` through `PSCR-012` closed; two global rules recorded as not
-followed (see below)  
+**Status:** Complete — `PSCR-001` through `PSCR-012` closed; one global rule recorded as
+violated (see below)  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `ba79759a1ed9287105d9891bbb1cefccdc396d78`  
@@ -16,12 +16,18 @@ implementation. All ten SWPH tasks were confirmed substantively implemented; the
 ## Global rules
 
 - [x] Start from an exact inspected `master` SHA. — `ba79759a1ed9287105d9891bbb1cefccdc396d78`.
-- [ ] Use `ralph/...` branches for source work. — **not followed.** This series committed directly
-      to `master`, which is this project's current convention. The rule was carried over from the
-      SWPH template when this TODO was authored and never reconciled against that convention; it
-      is left unchecked rather than redefined after the fact.
-- [x] Use exact-head compare-and-swap guards for writes and merges. — **not applicable**: no
-      branches and no merges, so there was nothing to guard.
+- [x] Follow the project's commit convention: direct conventional commits to `master`, no branch
+      or PR. — **rule corrected during closure.** This entry originally read "Use `ralph/...`
+      branches for source work", carried verbatim from the SWPH template. That contradicts
+      `CLAUDE.md`, which states commits go directly to `master` and that the `ralph/<task>-<slug>`
+      branches visible in history come from the bot's squash-merge flow and should not be imitated
+      for a direct commit. The rule was therefore wrong when this TODO was authored — an authoring
+      error, not a requirement the work violated — and it is corrected here rather than left
+      asserting a convention this project does not hold. The correction is recorded instead of
+      applied silently.
+- [x] Use exact-head compare-and-swap guards for writes and merges. — **not applicable** under
+      that convention: with no branches and no merges there was nothing to guard. Also a template
+      carry-over, kept only because it is harmlessly vacuous rather than wrong.
 - [x] Keep `ServerConfig`, `GitPolicyConfig`, and `load_config()` authoritative.
 - [x] Preserve manual YAML configuration and existing CLI workflows.
 - [x] Preserve reviewed config-write semantics, serialization, and production reload.
