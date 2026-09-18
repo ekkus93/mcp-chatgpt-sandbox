@@ -27,11 +27,11 @@ docker image inspect mcp-chatgpt-sandbox-test-s7:24.04 >/dev/null 2>&1 \
 - Docker unreachable → the suite cannot pass. Say so; do not run it.
 - Test image missing → build it: `docker build -t mcp-chatgpt-sandbox-test-s7:24.04 docker/default/`.
   The tag must match `DEFAULT_IMAGE_TEST_TAG` in `tests/workspace/conftest.py`.
-- Check nothing else is already driving Docker with this repo's IDs — another copy of the
-  suite or a live `mcp-chatgpt-sandbox serve`. Workspace names are deterministic, so two
-  processes adopt the same container and produce lifecycle-shaped failures. If
-  `docker ps` shows this project's containers running and you did not start them, stop and
-  report it rather than racing them.
+- Overlapping a CI run or another suite run is **safe but slower**: every test context has its
+  own namespace (G3R-015) and every absence/count assertion is scoped to it (PSCR-010), so runs
+  no longer adopt each other's containers. Note an overlap in your report; don't wait on it.
+  Do avoid running against a Docker daemon that is serving real workspaces from a live
+  `mcp-chatgpt-sandbox serve` — that case is protected by design but not demonstrated.
 
 ## Step 2: the gates
 
@@ -58,7 +58,8 @@ line. Distinguish the three cases explicitly:
   acceptance-criterion coverage, `docs/TOOLS.md` drift, schema/`contract_version` drift) —
   these fail on structure, not behavior, and usually mean a manifest or doc needs the matching
   entry,
-- a precondition or collision problem from Step 1.
+- a precondition problem from Step 1, or a **collision** — which since PSCR-010 means the test
+  namespacing has regressed, and is a real defect rather than an environmental one.
 
 Never resolve a failure by adding a skip, a retry, or a timeout increase. A skip in this suite
 means Docker was unreachable, and retries hide real container collisions.

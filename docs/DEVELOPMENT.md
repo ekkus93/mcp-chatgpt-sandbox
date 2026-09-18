@@ -188,17 +188,41 @@ When adding persisted setup-state fields, update the secret-field/state-schema
 tests. Raw credentials must never become resumable state merely to simplify a
 screen.
 
-## Full-suite Docker isolation warning
+## Running the suite concurrently
 
-Do not run the full workspace/container test suite concurrently with another
-copy of the suite or a live server using the same repository IDs. Workspace
-names are intentionally deterministic for crash recovery/reopen semantics; two
-live processes using the same IDs can adopt or reconcile the same container and
-cause lifecycle-shaped failures.
+Workspace names are deterministic for crash recovery and reopen semantics, so
+two processes using the same repository IDs *could* adopt or reconcile each
+other's containers. Two mechanisms prevent that:
 
-This is not ordinary test flakiness. If workspace-open/lifecycle tests fail only
-under concurrent Docker activity, stop the competing process and rerun rather
-than adding retries that hide the collision.
+- **G3R-015** gives every Docker-using pytest context its own namespace. The
+  `docker_client` fixture sets `MCP_CHATGPT_SANDBOX_TEST_RESOURCE_NAMESPACE` to a
+  fresh UUID, which `naming.container_name()` folds into both the container name
+  and a `test-namespace` label, and the production manager's reconcile paths
+  filter on it.
+- **PSCR-010** (`docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`) scoped every
+  absence and exact-count assertion in `tests/workspace` to the running context.
+  Before it, those assertions filtered only on logical ids and saw each other's
+  containers.
+
+Concurrent suite runs are therefore **safe**. This was demonstrated, not
+inferred: two overlapping `tests/workspace` sessions each passed 438 tests, and
+an A/B against the pre-PSCR-010 tree under identical contention failed 6 tests
+on the old side and none on the new.
+
+Overlapping is still **slower**, because the CI runner is self-hosted on this
+machine and shares its CPU and Docker daemon. Prefer not to overlap, but there is
+no need to wait for CI before running the suite.
+
+A live `mcp-chatgpt-sandbox serve` on the same daemon is protected by the same
+design — its containers carry no namespace label, which every test context
+filters out, and suite teardown removes only the exact resources it created
+(HR-026) — but that case was not part of the concurrency demonstration above.
+Avoid running the suite against a daemon that is serving real workspaces.
+
+If a workspace test fails with a collision shape — `assert [<Container: ...>] ==
+[]`, or two containers where one was expected — treat it as a **real defect**:
+the namespacing has regressed. Investigate it; do not add retries or skips that
+would hide it.
 
 ## Running the server locally
 

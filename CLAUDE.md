@@ -39,10 +39,14 @@ Run the full suite for any change, not just a targeted subset.
   `DEFAULT_IMAGE_TEST_TAG` in `tests/workspace/conftest.py`.
 - Any pytest skip is converted into a session failure (`tests/_skip_policy.py`). A skip here
   means Docker was unreachable — never resolve a failure by adding or tolerating a skip.
-- Never run the suite while another copy of it, or a live server, is running. Workspace names
-  are deterministic for crash recovery, so two processes adopt the same container. Lifecycle
-  failures under concurrent Docker activity are collisions, not flakes: stop the competing
-  process and rerun rather than adding retries that hide them.
+- Concurrent suite runs no longer collide. Every Docker-using test context gets its own
+  namespace (G3R-015), and since PSCR-010 every absence/count assertion is scoped to it — proven
+  by an A/B where the pre-fix tree failed 6 tests under contention and the fixed tree passed 438.
+  Overlapping a local run with CI is therefore **safe but slower**: the CI runner is self-hosted
+  on this machine and shares its CPU and Docker. Prefer not to overlap; don't wait on it either.
+- A collision-shaped failure (`assert [<Container: ...>] == []`, or two containers where one was
+  expected) is now a **real defect** — the namespacing has regressed. Investigate it; never add a
+  retry or a skip to hide it.
 
 ## Change workflow
 

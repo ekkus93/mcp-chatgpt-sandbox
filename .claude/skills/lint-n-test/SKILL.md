@@ -50,17 +50,18 @@ docker image inspect mcp-chatgpt-sandbox-test-s7:24.04 >/dev/null 2>&1 \
 - Test image missing → build it, then continue:
   `docker build -t mcp-chatgpt-sandbox-test-s7:24.04 docker/default/`
 
-Then check nothing else is already driving Docker with this repo's IDs:
+Then note what else is driving Docker:
 
 ```bash
 gh run list --limit 3
 pgrep -af 'pytest|mcp-chatgpt-sandbox serve' | grep -v pgrep
 ```
 
-CI runs on a **self-hosted runner on this same machine**, so a CI run and a local suite run
-compete for the same deterministic workspace names and adopt each other's containers. If a
-CI run is in progress or another suite/server is live, stop and report it instead of racing
-it — the resulting lifecycle failures are collisions, not real defects.
+CI runs on a **self-hosted runner on this same machine**. Overlapping it is **safe but
+slower**: every test context has its own namespace (G3R-015) and every absence/count
+assertion is scoped to it (PSCR-010), so concurrent runs no longer adopt each other's
+containers. Record an overlap in the report and carry on. Avoid running against a daemon
+serving real workspaces from a live `serve` — protected by design, but not demonstrated.
 
 ## Step 3: run all tests
 
@@ -81,7 +82,8 @@ responses:
 - a structural guard tripping — module line budgets, the setup presentation manifest,
   acceptance-criterion coverage, `docs/TOOLS.md` drift, schema drift — which fails on
   structure rather than behavior and usually means a manifest or doc needs a matching entry,
-- a precondition or collision problem from Step 2.
+- a precondition problem from Step 2, or a **collision** — which since PSCR-010 means the test
+  namespacing has regressed, and is a real defect rather than an environmental one.
 
 Never make a failure disappear by adding a skip, a retry, or a longer timeout. A skip in this
 suite means Docker was unreachable, and retries hide real container collisions.

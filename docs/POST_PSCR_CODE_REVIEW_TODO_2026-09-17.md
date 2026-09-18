@@ -1,6 +1,6 @@
 # Post-PSCR Code Review TODO
 
-**Status:** In progress — `PSCR2-001`–`PSCR2-006` closed; `PSCR2-007` next  
+**Status:** In progress — `PSCR2-001`–`PSCR2-007` closed; `PSCR2-008` (closure) next  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `134795429eae988f927e43ec97cc04c5f98b867a`  
@@ -304,23 +304,52 @@ every declined fix is recorded as declined, and no document claims more than the
 
 **Goal:** no document claims concurrent suite runs collide, because they do not.
 
-- [ ] Choose Option A (remove the rule) or Option B (downgrade to advisory); record the choice.
-- [ ] Rewrite `CLAUDE.md`'s "Never run the suite while another copy…" bullet.
-- [ ] Rewrite `docs/DEVELOPMENT.md`'s "Full-suite Docker isolation warning" section.
-- [ ] Rewrite `.claude/skills/gates/SKILL.md`'s collision paragraph in Step 1.
-- [ ] Rewrite `.claude/skills/lint-n-test/SKILL.md`'s collision paragraph in Step 2.
-- [ ] If Option B: each rewrite states that runs no longer collide (citing PSCR-010's proof), that
+- [x] Choose Option A (remove the rule) or Option B (downgrade to advisory); record the choice.
+- [x] Rewrite `CLAUDE.md`'s "Never run the suite while another copy…" bullet.
+- [x] Rewrite `docs/DEVELOPMENT.md`'s "Full-suite Docker isolation warning" section.
+- [x] Rewrite `.claude/skills/gates/SKILL.md`'s collision paragraph in Step 1.
+- [x] Rewrite `.claude/skills/lint-n-test/SKILL.md`'s collision paragraph in Step 2.
+- [x] If Option B: each rewrite states that runs no longer collide (citing PSCR-010's proof), that
       the self-hosted runner is shared so overlap is slower, and that overlap is safe.
-- [ ] Change all four locations in **one** commit so they cannot disagree with each other.
-- [ ] Leave the historical record alone: the PSCR TODO's global-rule entry and PSCR-003 incident
+- [x] Change all four locations in **one** commit so they cannot disagree with each other.
+- [x] Leave the historical record alone: the PSCR TODO's global-rule entry and PSCR-003 incident
       note describe what was true when the violation happened.
 
 **Validation — PSCR2V-007**
 
-- [ ] Grep: no remaining passage claims concurrent runs adopt or reconcile each other's containers.
-- [ ] All four locations agree with each other and with PSCR-010's recorded proof.
-- [ ] The `gates` and `lint-n-test` skills still describe the Docker-reachable and image-present
+- [x] Grep: no remaining passage claims concurrent runs adopt or reconcile each other's containers.
+- [x] All four locations agree with each other and with PSCR-010's recorded proof.
+- [x] The `gates` and `lint-n-test` skills still describe the Docker-reachable and image-present
       preconditions unchanged.
+
+**Decision and evidence (2026-09-18)**
+
+- **Option B selected — downgrade to advisory.** The *collision* claim was false and is gone; the
+  *contention* point is still true, since the CI runner is self-hosted on this machine and shares
+  its CPU and Docker. Deleting the warning outright, immediately after a documented violation of
+  it, when part of its substance survives, would have been the wrong direction.
+- All four locations now say the same thing: concurrent suite runs are **safe but slower**, prefer
+  not to overlap, don't wait on it. `docs/DEVELOPMENT.md`'s section was retitled from "Full-suite
+  Docker isolation warning" to "Running the suite concurrently", explains both mechanisms
+  (G3R-015 namespacing and PSCR-010's scoped assertions), and cites the A/B demonstration.
+- **Scoped so as not to trade one over-claim for another.** Two of the old passages also warned
+  about a *live server*. PSCR-010's proof covered two test sessions, not a test session beside a
+  running `serve`. That case is protected by design — the production manager's reconcile paths
+  filter on the namespace (`manager_core.py:148`, `:200`), a live server's containers carry no
+  namespace label, and suite teardown removes only the exact resources it created (HR-026) — but
+  it was not demonstrated. The rewrites say exactly that, and still advise against running the
+  suite on a daemon that is serving real workspaces.
+- **A reversal the review had not named.** The old text told readers that collision-shaped
+  failures were "collisions, not real defects". After PSCR-010 that is backwards: such a failure
+  now means the namespacing has regressed. `CLAUDE.md`, `docs/DEVELOPMENT.md`, and both skills'
+  report sections (`gates` Step 1 report bullet, `lint-n-test` Step 2 and report bullet) now say a
+  collision is a **real defect** to investigate, never to hide with a retry or skip.
+- Grep for the old claims finds none; the two remaining matches are the negated form ("no longer
+  adopt each other's containers"). No links break: the only references to the old heading are this
+  series' own spec and TODO, which describe the task. Both skills keep their `docker info`,
+  `docker image inspect`, and test-image build preconditions unchanged.
+- Documentation only; no code change. Acceptance-coverage and `docs/TOOLS.md` drift guards
+  `18 passed`.
 
 ---
 
