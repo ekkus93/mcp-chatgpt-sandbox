@@ -13,6 +13,12 @@ four heuristic boundaries, and one falsified document found by adversarially re-
 are the residue, held to the same standard: every fix gets a regression test proven to discriminate,
 every declined fix is recorded as declined, and no document claims more than the code does.
 
+*(Added by PSCR3-001.)* That paragraph describes `PSCR2-001`–`PSCR2-008`, the scope at authoring.
+Three tasks were added after the original closure, each on request: `PSCR2-009` demonstrated
+live-server isolation on a real daemon, `PSCR2-010` pinned `sparse=False` at every production
+`containers.list()` site, and `PSCR2-011` removed the shadowed, never-executed
+`_CoreMixin.reconcile()` body that PSCR2-009 had uncovered.
+
 ## Global rules
 
 - [x] Start from an exact inspected `master` SHA. — `134795429eae988f927e43ec97cc04c5f98b867a`.
@@ -617,6 +623,12 @@ Found by PSCR2-009; added on request.
 - [x] Exact-head CI is green. — run `35317707321` on `7815a45`.
 - [x] Post-push `master` CI is green. — same run; the push is the exact-head run.
 - [x] Exact closure evidence is recorded in this file.
+- [x] *(Post-closure, PSCR2-009; entry added by PSCR3-001.)* Live-server isolation is demonstrated in
+      both directions on a real daemon, and the "not demonstrated" caveat is gone.
+- [x] *(Post-closure, PSCR2-010; entry added by PSCR3-001.)* Every production `containers.list()`
+      passes `sparse=False`, enforced by a repository-wide guard.
+- [x] *(Post-closure, PSCR2-011; entry added by PSCR3-001.)* `_CoreMixin` only declares
+      `reconcile()`; the shadowed implementation is removed and the arrangement is pinned by a test.
 
 **Final acceptance evidence (2026-09-18)**
 

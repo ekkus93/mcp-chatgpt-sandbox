@@ -1,6 +1,6 @@
 # Post-PSCR2 Code Review TODO
 
-**Status:** Open — `PSCR3-001` through `PSCR3-009` not started  
+**Status:** In progress — `PSCR3-001` closed; `PSCR3-002` next  
 **Date:** 2026-09-18  
 **Spec:** `docs/POST_PSCR2_CODE_REVIEW_SPEC_2026-09-18.md`  
 **Reviewed baseline:** `a5a35a1f1f049582f9596fc1bd9ffd7bf7ad65a1`  
@@ -39,25 +39,44 @@ changes what the software does, with one recorded exception — PSCR3-009, if it
 
 **Goal:** a reader of the PSCR2 specification alone learns the design that was implemented.
 
-- [ ] Rewrite PSCR2-002 Option B in `docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md` to describe the
+- [x] Rewrite PSCR2-002 Option B in `docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md` to describe the
       implemented mechanism: skip when the running module lies under the checkout's `src/`, otherwise
       compare the installed distribution's metadata version.
-- [ ] State, in that passage, that the original `__version__` wording was found false during
+- [x] State, in that passage, that the original `__version__` wording was found false during
       implementation, and point to the TODO's deviation note.
-- [ ] Change PSCR2-009's "all four locations" to three, and say why not four.
-- [ ] Leave the PSCR2 TODO's deviation notes unchanged.
-- [ ] Update the PSCR2 TODO's introduction to say what PSCR2-009→011 added, and that they were added
+- [x] Change PSCR2-009's "all four locations" to three, and say why not four.
+- [x] Leave the PSCR2 TODO's deviation notes unchanged.
+- [x] Update the PSCR2 TODO's introduction to say what PSCR2-009→011 added, and that they were added
       after the original closure.
-- [ ] Add one Definition-of-done entry to the PSCR2 TODO per post-closure outcome (live-server
+- [x] Add one Definition-of-done entry to the PSCR2 TODO per post-closure outcome (live-server
       isolation demonstrated; production `sparse=False` pinned; shadowed `reconcile()` removed).
-- [ ] Reword no existing PSCR2 entry or evidence.
+- [x] Reword no existing PSCR2 entry or evidence.
 
 **Validation — PSCR3V-001**
 
-- [ ] Grep: the specification no longer instructs comparing `mcp_chatgpt_sandbox.__version__`.
-- [ ] Grep: no "all four locations" remains for the live-server caveat.
-- [ ] Both corrections read as corrections, naming PSCR3-001.
-- [ ] The PSCR2 TODO's introduction and Definition of done cover PSCR2-009→011.
+- [x] Grep: the specification no longer instructs comparing `mcp_chatgpt_sandbox.__version__`.
+- [x] Grep: no "all four locations" remains for the live-server caveat.
+- [x] Both corrections read as corrections, naming PSCR3-001.
+- [x] The PSCR2 TODO's introduction and Definition of done cover PSCR2-009→011.
+
+**Closure evidence (2026-09-18)**
+
+- `docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md` PSCR2-002 Option B now describes the implemented
+  mechanism — skip when the running module lies under the checkout's `src/`, otherwise compare the
+  installed distribution's metadata version, failing closed on mismatch or an undeterminable
+  version. An italic correction note names PSCR3-001, quotes what the passage originally claimed,
+  says why it was false, and points to the TODO's deviation note.
+- PSCR2-009's closing sentence now says "every location that carries it", with a correction note
+  naming the three locations and why `CLAUDE.md` was never one.
+- The PSCR2 TODO gained a marked paragraph after its introduction describing PSCR2-009→011 and that
+  they were added after the original closure, and three marked Definition-of-done entries, one per
+  post-closure outcome. **No existing entry, evidence, or deviation note was reworded**; every
+  addition is labelled "added by PSCR3-001" so it cannot be mistaken for original text.
+- Greps: the specification no longer instructs comparing the running
+  `mcp_chatgpt_sandbox.__version__` (0 matches outside the correction note), and "removed from all
+  four locations" no longer appears (0 matches).
+- Documentation only. Acceptance-coverage audit and `docs/TOOLS.md` drift guard: `18 passed`. No
+  full suite run: nothing executable changed.
 
 ### PSCR3-002 — Replace unverified line citations with verified, durable ones
 

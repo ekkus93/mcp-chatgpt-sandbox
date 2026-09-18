@@ -182,11 +182,16 @@ Choose exactly one and record it:
 - **Option A — document only.** State in the docstring and `docs/DEVELOPMENT.md` that a
   non-editable install into an in-repo virtualenv may build from a context that does not match the
   installed version, and that the operator is responsible for keeping them aligned.
-- **Option B — detect and fail closed.** After PSCR2-001 finds the project's root, compare the
-  running `mcp_chatgpt_sandbox.__version__` against the found `pyproject.toml`'s
-  `[project] version`. On mismatch, raise a `SetupDockerError` naming both versions and the remedy.
-  An editable install always matches by construction, so this only ever fires for the case that
-  can actually skew.
+- **Option B — detect and fail closed.** After PSCR2-001 finds the project's root: if the running
+  module lies under that root's `src/`, code and context are one tree and the check is skipped;
+  otherwise compare the **installed distribution's** metadata version (`importlib.metadata`) against
+  the found `pyproject.toml`'s `[project] version`. On a mismatch, or a version that cannot be
+  determined, raise a `SetupDockerError` naming both versions and the remedy.
+  *(Corrected by PSCR3-001. This passage originally said to compare
+  `mcp_chatgpt_sandbox.__version__`, claiming "an editable install always matches by construction".
+  Implementation found that false — `__version__` is a hard-coded literal maintained separately
+  from `[project] version` — and built the check on the locational property above instead. The
+  TODO's PSCR2-002 deviation note records how that was found.)*
 - **Option C — refuse the case.** Treat a non-editable install resolving an enclosing checkout as
   unsupported and fail closed regardless of version.
 
@@ -269,8 +274,10 @@ name. The test must give it a per-run repository id; otherwise two concurrent su
 on that name, and the test meant to demonstrate isolation would itself reintroduce the
 concurrency hazard PSCR-010 removed.
 
-When the demonstration passes, the "not demonstrated" caveat is removed from all four locations in
-one commit.
+When the demonstration passes, the "not demonstrated" caveat is removed from every location that
+carries it, in one commit. *(Corrected by PSCR3-001: this originally said "all four locations".
+Three carried it — `docs/DEVELOPMENT.md` and the `gates` and `lint-n-test` skills; `CLAUDE.md`
+never mentioned a live server.)*
 
 ### PSCR2-010 — Pin `sparse=False` in production
 
