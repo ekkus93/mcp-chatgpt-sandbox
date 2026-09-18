@@ -1,6 +1,6 @@
 # Post-PSCR2 Code Review TODO
 
-**Status:** Closing — `PSCR3-001`–`PSCR3-010` implemented; `PSCR3-010` awaiting exact-head CI  
+**Status:** Complete — `PSCR3-001` through `PSCR3-010` closed  
 **Date:** 2026-09-18  
 **Spec:** `docs/POST_PSCR2_CODE_REVIEW_SPEC_2026-09-18.md`  
 **Reviewed baseline:** `a5a35a1f1f049582f9596fc1bd9ffd7bf7ad65a1`  
@@ -359,7 +359,9 @@ Added after closure, on request.
 
 - [x] Every cited task id and commit was looked up, not recalled.
 - [x] Guards and gates stay green; no behavior change.
-- [ ] Exact-head CI green. — recorded at closure.
+- [x] Exact-head CI green. — run `35360824436`, job `105651366440` on `341082f`, **success**:
+      `1455 passed`, coverage `88%` (`9348` / `1104`), unchanged from the series' closure run, as
+      expected for a docstring-and-documentation change.
 
 **Closure evidence (2026-09-18)**
 
