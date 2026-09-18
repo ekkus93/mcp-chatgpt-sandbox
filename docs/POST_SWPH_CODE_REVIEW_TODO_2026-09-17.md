@@ -575,10 +575,34 @@ containers through their logical-id labels.
   full Docker-backed suite, `1426 passed in 719.03s`, coverage `88%` (`9327` statements / `1121`
   misses).
 - Local run on an idle host agreed: `1426 passed in 662.09s`, zero failures, zero skips.
-- **Known limitation of this evidence.** Both runs were *serial*. PSCR-010's actual claim is that
-  concurrent runs no longer collide, and that has not been demonstrated empirically — only
-  inferred from the filter's unit tests plus a green serial suite. The decisive check is to run
-  `tests/workspace` locally while a CI run is in flight, which is precisely the scenario that
-  produced 11 CI failures and 1 local failure before this task. That check is deliberately
-  deferred rather than claimed: it risks a red run on `master` if the fix is incomplete, which is
-  an operator decision, not a test-author one.
+**PSCR-010 concurrency proof (2026-09-17)**
+
+The evidence above is serial, and PSCR-010's actual claim is that *concurrent* runs no longer
+collide. That claim was subsequently demonstrated rather than left inferred.
+
+- **Experiment 1 — the property holds.** Two `tests/workspace` sessions run concurrently from the
+  same tree, started five seconds apart and overlapping almost entirely (`586.51s` and `583.47s`):
+  **`438 passed` and `438 passed`**, zero failures.
+- The collision condition was captured live mid-run: two containers for the *same logical
+  workspace* coexisting, separated only by namespace —
+  `mcp-chatgpt-sandbox-ws-example-t56505647df114100-e01c0ce4` and
+  `mcp-chatgpt-sandbox-ws-example-t1d24f9b501c71c24-a7326e1e`. Both carry
+  `LABEL_WORKSPACE_ID=ws_example`, which is exactly what a namespace-blind absence assertion
+  matches.
+- **Experiment 2 — the fix is what causes it.** A `git worktree` detached at `da3d7bf`
+  (pre-PSCR-010) was run concurrently against the post-fix tree: same host, same contention, same
+  suite, differing only in assertion code. Pre-fix: **`6 failed, 429 passed`** (`594.30s`).
+  Post-fix: **`438 passed`** (`590.95s`).
+- The correspondence is exact. Every one of the six pre-fix failures is in a file PSCR-010
+  converted — `test_project_config_integration.py` (2), `test_remote_protection.py` (2),
+  `test_recovery.py` (1), `test_resources.py` (1) — and nothing failed elsewhere. That rules out
+  generic flakiness: the failures track the converted assertions and nothing else.
+- Two honest caveats on this evidence. Both counterfactual runs were piped through `tail`, so the
+  recorded `exit code 0` for the pre-fix run is *tail's* status, not pytest's — the summary line
+  is the authority, and it reports six failures. The same truncation discarded the tracebacks, so
+  the individual `assert [<Container: ...>] == []` shapes were not captured on this run; the
+  failure counts and the file-level correspondence are what was directly observed, with the
+  assertion shape known from the earlier CI evidence recorded under PSCR-003.
+- The scenario originally proposed — a local run against a live CI run — was not used. CI was idle
+  when the proof was run, and two local contexts reproduce the same property under full control
+  without risking a red `master` run.
