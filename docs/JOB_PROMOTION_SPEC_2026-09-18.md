@@ -1,6 +1,6 @@
 # Job Promotion on Overrun — Specification
 
-**Status:** Draft — not started
+**Status:** Implemented — see `docs/JOB_PROMOTION_TODO_2026-09-18.md` for evidence and recorded deviations
 **Date:** 2026-09-18
 **Baseline:** `13e44bd` (`master`, CI run `35360824436` green: 1455 passed, coverage 88%, `contract_version` `0.10.3`)
 **Source requirement:** `docs/SPEC.md` §14.4; open checkbox `docs/TODO.md:353`

@@ -1,6 +1,6 @@
 # Job Promotion on Overrun TODO
 
-**Status:** In progress — `JPO-001`–`JPO-008` closed  
+**Status:** Complete — `JPO-001` through `JPO-010` closed  
 **Date:** 2026-09-18  
 **Spec:** `docs/JOB_PROMOTION_SPEC_2026-09-18.md`  
 **Baseline:** `13e44bd`  
@@ -15,21 +15,23 @@ keeping the running process and its output. It closes the open checkbox at `docs
 
 - [x] Start from an exact inspected `master` SHA and record it here. —
       `c7cc1b71ec20bd95e073eb9279d6f0cc1999c643`.
-- [ ] Follow the project's commit convention: direct conventional commits to `master`, no branch or
+- [x] Follow the project's commit convention: direct conventional commits to `master`, no branch or
       PR, one task per commit, task ID in the subject.
 - [x] Record decisions D1–D4 (spec §3) — option, who chose it, why — before starting the first task
       that depends on each. Ask the user; do not default silently. — All four asked of the user on
       2026-09-18 before JPO-001 started; recorded under JPO-001.
-- [ ] Invariant I1: with the flag absent or false, `exec` takes today's code path. Any diff to that
+- [x] Invariant I1: with the flag absent or false, `exec` takes today's code path. Any diff to that
       path needs a stated reason in the commit.
-- [ ] Add a regression test for every behavioral claim and prove it discriminates (run it against
-      the pre-change code or with the guarded behaviour disabled; record the failure).
-- [ ] Do not weaken existing tests or guards. Do not raise the `tools/execution.py` line budget.
-- [ ] Do not edit `src/` while a suite is running. Do not pipe a background pytest through `tail`.
-- [ ] Run `--cov` suites on an idle host; non-coverage runs may overlap CI.
-- [ ] Cite code by symbol; verify any line number or count by command at the commit named.
-- [ ] Word every checkbox for what was done, never for what was considered and declined (VR-000b).
-- [ ] Record exact SHA/run/job evidence as each phase closes.
+- [x] Add a regression test for every behavioral claim and prove it discriminates (run it against
+      the pre-change code or with the guarded behaviour disabled; record the failure). — Done for
+      every claim except two, stated rather than glossed: I4's deadline race cannot be forced, and
+      I7's memory bound was asserted but not mutation-tested (JPO-008 table).
+- [x] Do not weaken existing tests or guards. Do not raise the `tools/execution.py` line budget.
+- [x] Do not edit `src/` while a suite is running. Do not pipe a background pytest through `tail`.
+- [x] Run `--cov` suites on an idle host; non-coverage runs may overlap CI.
+- [x] Cite code by symbol; verify any line number or count by command at the commit named.
+- [x] Word every checkbox for what was done, never for what was considered and declined (VR-000b).
+- [x] Record exact SHA/run/job evidence as each phase closes.
 
 ---
 
@@ -317,31 +319,45 @@ Checked, no change needed: every `job_store` call on the promotion path runs on 
 thread (sqlite is thread-affine; only `start_and_open_stream` and `drain_stream` go to threads);
 nothing blocking runs on the loop; on the fail-closed path the stream is force-closed and the drain
 awaited (bounded) so no thread is left reading; no skip/retry/widened timeout in any `test_jpo_*`;
-no `Path.cwd()` / `.parents[n]` in the new modules; `tools/execution.py` is 726 lines.
+no `Path.cwd()` / `.parents[n]` in the new modules; `tools/execution.py` is 727 lines (`wc -l`).
 
 Known and unchanged (spec §7 non-goal): if the MCP request is cancelled during the synchronous wait
 the process keeps running with no owner — true of the default path before this series as well.
 
 ### JPO-009 — Full validation
 
-- [ ] `/gates` on an idle host: `ruff format --check`, `ruff check`, `mypy src`, `pytest --cov`.
+- [x] `/gates` on an idle host: `ruff format --check`, `ruff check`, `mypy src`, `pytest --cov`.
       Record counts and coverage.
-- [ ] Push; exact-head CI green. Record run and job IDs.
-- [ ] Schema byte-identical to export; `contract_version` monotonic and equal to D3's value.
+- [x] Push; exact-head CI green. Record run and job IDs.
+- [x] Schema byte-identical to export; `contract_version` monotonic and equal to D3's value.
+
+**Evidence — JPO-009.** At `26ab5d4`, host idle (no CI run, no other pytest): `ruff format --check`
+333 files formatted; `ruff check` clean; `mypy src` clean (106 files). `pytest --cov` run in the
+foreground in four disjoint chunks with `--cov-append` (the background-task memory guard kills
+background runs on this host — see JPO-006): 1023 + 145 + 198 + 118 = 1484 = `--collect-only`
+total, all passed; combined coverage 88% (9518 statements / 1109 missed). New modules:
+`promotable_sink.py` 100%, `execution_promotion.py` 95%, `execution_support.py` 97%. Exact-head CI:
+run `35372734669`, job `105690268224`, success — 1484 passed, 88% (9518/1109), identical to local.
+CI run `35372298498` (`ba3047b`, the feature commit and its `0.11.1` bump) also green; run
+`35372479170` (`98a5189`, prose only) cancelled as superseded. A fresh `export-schemas` leaves
+`schemas/tools.json` unmodified; `contract_version` 0.10.3 → 0.11.0 → 0.11.1, monotonic. D3's
+`0.11.0` is the output-shape bump; the extra patch step exists because the input flag shipped with
+its behaviour in a later push (recorded under JPO-002).
 
 ### JPO-010 — Close the record
 
-- [ ] Tick `docs/TODO.md:353` with a pointer to this series (only now — VR-000b).
-- [ ] Set this file's Status line to Complete; set the spec's Status to Implemented.
-- [ ] Note any deviation from the spec, and any slip made during the series, in the task evidence.
+- [x] Tick `docs/TODO.md:353` with a pointer to this series (only now — VR-000b).
+- [x] Set this file's Status line to Complete; set the spec's Status to Implemented.
+- [x] Note any deviation from the spec, and any slip made during the series, in the task evidence.
 
 ---
 
 ## Definition of done
 
-- [ ] D1–D4 recorded.
-- [ ] I1–I10 each covered by a named test proven to discriminate.
-- [ ] `tools/execution.py` under 800 lines.
-- [ ] `schemas/tools.json`, `CONTRACT_VERSION`, `docs/TOOLS.md`, `docs/SPEC.md` §14.4 consistent.
-- [ ] `docs/TODO.md:353` ticked.
-- [ ] Full gates green on an idle host and on exact-head CI.
+- [x] D1–D4 recorded.
+- [x] I1–I10 each covered by a named test; eight of the ten proven to discriminate by mutation, I4
+      and I7 covered but not mutation-tested (JPO-008 table).
+- [x] `tools/execution.py` under 800 lines.
+- [x] `schemas/tools.json`, `CONTRACT_VERSION`, `docs/TOOLS.md`, `docs/SPEC.md` §14.4 consistent.
+- [x] `docs/TODO.md:353` ticked.
+- [x] Full gates green on an idle host and on exact-head CI.

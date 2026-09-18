@@ -350,7 +350,7 @@ originally shipped. See S19's own correction for the full before/after.
       (must equal or be beneath `workspace_path`)
 - [x] Env overrides — passed to `docker exec` directly; never included in error
       `details` (only key names would be, and no path currently needs to)
-- [ ] Strict maximum duration; on overrun promote to a job — **deferred**: job
+- [x] Strict maximum duration; on overrun promote to a job — **deferred**: job
       promotion needs the job store, which does not exist until S14. Overrun
       currently fails the call with `COMMAND_TIMEOUT` rather than silently
       hanging or claiming to promote a job that was never created. Revisit when
@@ -366,6 +366,10 @@ originally shipped. See S19's own correction for the full before/after.
       `promoted_to_job` discriminator, which appears nowhere in
       `schemas/tools.json` today), so it needs its own spec and a
       `contract_version` bump rather than a line in this list.*
+      — *closed 2026-09-18 by the JPO series (`docs/JOB_PROMOTION_SPEC_2026-09-18.md` /
+      `docs/JOB_PROMOTION_TODO_2026-09-18.md`): promotion is built, opt-in per call via
+      `promote_on_timeout`; without the flag an overrun still fails with `COMMAND_TIMEOUT`,
+      as described above. The text above is kept as the record of why it waited.*
 - [x] Bounded output per §15.5 (`max_output_bytes`, `response_tail_lines`,
       already in `ExecutionConfig` from S2)
 
