@@ -1049,6 +1049,19 @@ job handle identical to `exec_start`'s — and its `outputSchema` SHALL express 
 union explicitly, with a `promoted_to_job: true` discriminator on the second, so
 that a client can tell them apart without guessing.
 
+Conversion is per call and opt-in: `exec` accepts `promote_on_timeout` (default
+`false`). Without it an overrun is terminated and fails with `COMMAND_TIMEOUT`,
+and the call can only ever return the completed shape. With it, `timeout_seconds`
+(still clamped as above) is how long the server waits synchronously before
+converting. Conversion SHALL adopt the running process, never restart it; output
+produced before conversion SHALL be at the front of the job's log; and the job's
+`started_at` and its `execution.default_job_timeout_seconds` allowance SHALL both
+be measured from when the process started, not from the conversion. If conversion
+itself fails, the process SHALL be terminated and the call SHALL fail with
+`COMMAND_TIMEOUT` — never a handle to a job that does not exist. `exec`'s output
+is one flat object: every response carries `promoted_to_job`, and the fields of
+the shape not returned are `null`.
+
 ---
 
 ## 15. Asynchronous Jobs

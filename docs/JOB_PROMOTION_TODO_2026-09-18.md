@@ -1,6 +1,6 @@
 # Job Promotion on Overrun TODO
 
-**Status:** In progress — `JPO-001`–`JPO-006` closed  
+**Status:** In progress — `JPO-001`–`JPO-007` closed  
 **Date:** 2026-09-18  
 **Spec:** `docs/JOB_PROMOTION_SPEC_2026-09-18.md`  
 **Baseline:** `13e44bd`  
@@ -250,22 +250,33 @@ disjoint chunks on an idle host: non-workspace 1023, `workspace/test_[a-f]*` 145
 
 ### JPO-007 — Audit, description, documentation
 
-- [ ] Audit record at promotion linking the exec to `job_id`, following the existing
+- [x] Audit record at promotion linking the exec to `job_id`, following the existing
       `_audit_command_started` pattern and redaction rules (I10). Verify the event naming against
       `audit.py` before choosing a name.
-- [ ] `exec` tool description states both shapes and that a promoted job is followed with
+- [x] `exec` tool description states both shapes and that a promoted job is followed with
       `exec_status` / `exec_output` / `exec_cancel`. Re-export the schema; bump the version again
       only if §33.2 requires it (a description change is a patch) and record which.
-- [ ] `docs/TOOLS.md` row for `exec` updated to match.
-- [ ] `docs/SPEC.md` §14.4: add the input flag and the deadline rule.
-- [ ] Rewrite the "not built" paragraph in `execution/service.py`'s module docstring to describe
+- [x] `docs/TOOLS.md` row for `exec` updated to match.
+- [x] `docs/SPEC.md` §14.4: add the input flag and the deadline rule.
+- [x] Rewrite the "not built" paragraph in `execution/service.py`'s module docstring to describe
       what exists.
 
 **Validation — JPOV-009**
 
-- [ ] Test: the promotion audit record carries `workspace_id` and `job_id`; a secret placed in
+- [x] Test: the promotion audit record carries `workspace_id` and `job_id`; a secret placed in
       `argv` and in `env` does not appear in it.
-- [ ] Schema export, version and `docs/TOOLS.md` drift checks pass.
+- [x] Schema export, version and `docs/TOOLS.md` drift checks pass.
+
+**Evidence — JPO-007.** The audit record (`operation: "exec_promoted_to_job"`, metadata `job_id` and
+`sync_timeout_seconds`; `audit.py` has no operation allowlist, names are free-form snake_case like
+`ssh_auth`), its test (JPOV-009), the tool description, the `0.11.1` bump and the `docs/TOOLS.md` row
+all landed in JPO-006's commit `ba3047b`, because CI's description-drift and version checks gate the
+same push as the code. This task's own commit is the two documents: `docs/SPEC.md` §14.4 gained the
+opt-in flag, the adopt-never-restart rule, the D4 clock rule and the fail-closed rule;
+`execution/service.py`'s module docstring now says what exists and why it is not built on `consume`.
+No schema change, so no further bump. Deviation from "always the full suite": this commit changes prose only (a
+module docstring and two documents), so it was checked with the 1023 non-Docker tests — which hold
+every static, doc-drift and contract guard — and the Docker-backed remainder runs at JPO-009.
 
 ---
 
