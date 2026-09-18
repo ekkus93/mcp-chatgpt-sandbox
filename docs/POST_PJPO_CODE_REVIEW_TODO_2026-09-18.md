@@ -1,6 +1,6 @@
 # Post-PJPO Code Review TODO
 
-**Status:** In progress — `PJPO2-001`–`PJPO2-003` closed  
+**Status:** Complete except `PJPO2-004` (user-performed ChatGPT check, not performed) — `PJPO2-001`–`PJPO2-003`, `PJPO2-005` closed  
 **Date:** 2026-09-18  
 **Spec:** `docs/POST_PJPO_CODE_REVIEW_SPEC_2026-09-18.md`  
 **Reviewed baseline:** `c6bb465`  
@@ -17,22 +17,22 @@ forward the one verification only the user can perform. No task here changes a t
 
 - [x] Start from an exact inspected `master` SHA and record it here. —
       `d17a5e8e7cf9d29d0a4e4db36f67ad57093264c2`.
-- [ ] Follow the project's commit convention: direct conventional commits to `master`, no branch or
+- [x] Follow the project's commit convention: direct conventional commits to `master`, no branch or
       PR, one task per commit, task ID in the subject.
 - [x] Record QD1–QD2 (spec §3) — option, who chose it, why — before the task that depends on each.
       Ask the user; do not default silently. — Both asked of the user before PJPO2-001 started.
-- [ ] Add a regression test for every behavioural claim and prove it discriminates (restore the
+- [x] Add a regression test for every behavioural claim and prove it discriminates (restore the
       pre-fix code, run, record the failure, restore, confirm byte-identical with `cmp`).
-- [ ] Prefer a real failure (`/dev/full`, a path that is a file, a path that is a directory) to a
+- [x] Prefer a real failure (`/dev/full`, a path that is a file, a path that is a directory) to a
       monkeypatch wherever the claim is about partially-applied state.
-- [ ] Preserve PJPO's outcomes (H3). Do not weaken existing tests or guards. Do not bump
+- [x] Preserve PJPO's outcomes (H3). Do not weaken existing tests or guards. Do not bump
       `contract_version`; prove H4 by re-exporting.
-- [ ] Correct records visibly — original kept, marked, correction added with its task ID.
-- [ ] Do not edit `src/` while a suite is running. Run suites in the foreground (background runs
+- [x] Correct records visibly — original kept, marked, correction added with its task ID.
+- [x] Do not edit `src/` while a suite is running. Run suites in the foreground (background runs
       are killed by the memory guard on this host); `--cov` runs on an idle host.
-- [ ] Cite code by symbol; verify any line number or count by command at the commit named.
-- [ ] Word every checkbox for what was done, never for what was considered and declined (VR-000b).
-- [ ] Record exact SHA/run/job evidence as each phase closes.
+- [x] Cite code by symbol; verify any line number or count by command at the commit named.
+- [x] Word every checkbox for what was done, never for what was considered and declined (VR-000b).
+- [x] Record exact SHA/run/job evidence as each phase closes.
 
 ---
 
@@ -174,30 +174,54 @@ the pre-PJPO-001 `attach` (`git show 08073af:…`) the test still fails, now on
 > series may still close on the other tasks; the open box is the record that the assumption is
 > unverified.
 
+**Status — PJPO2-004: not performed** as of this series' closure (nor its predecessor PJPO-006). It
+needs the ChatGPT connector, which the implementing session cannot drive. Both boxes stay unticked;
+the schema's compatibility with ChatGPT remains unverified.
+
 ---
 
 ## Phase 3 — Closure
 
 ### PJPO2-005 — Self-review and validation
 
-- [ ] Self-review every PJPO2 diff against H1–H5; list each with its covering test.
-- [ ] Gates on an idle host, foreground (chunked with `--cov-append` if needed): ruff format, ruff
+- [x] Self-review every PJPO2 diff against H1–H5; list each with its covering test.
+- [x] Gates on an idle host, foreground (chunked with `--cov-append` if needed): ruff format, ruff
       check, mypy, `pytest --cov`. Chunk counts must sum to `pytest --collect-only`. Record counts
       and coverage.
-- [ ] A fresh export leaves `schemas/tools.json` unchanged; `contract_version` still `0.11.1`.
+- [x] A fresh export leaves `schemas/tools.json` unchanged; `contract_version` still `0.11.1`.
 - [ ] Push; exact-head CI green. Record run and job IDs.
-- [ ] Set this file's Status line and the spec's Status; state whether PJPO2-004 was performed.
+- [x] Set this file's Status line and the spec's Status; state whether PJPO2-004 was performed.
 
 ---
 
+**Evidence — PJPO2-005.** Self-review against H1–H5:
+
+| Inv. | Covering test / check |
+|---|---|
+| H1 both-or-neither | `test_pjpo2v001_a_stderr_failure_leaves_both_streams_buffered_and_promote_retryable` (discriminates), `test_pjpo2v001_a_stdout_failure_never_touches_stderr` |
+| H2 claims pinned | write failure: `test_pjpov001_…` ×2; `mkdir` / `open` / empty head: `test_pjpo2v002_…` ×3; pair: H1 row |
+| H3 PJPO outcomes kept | `test_pjpov002_…` ×2 (G1) and `test_jpov007_…` pass unchanged; one JPO test's hook retargeted (PJPO2-001 evidence), still discriminating |
+| H4 no contract change | fresh export unchanged; `CONTRACT_VERSION` `0.11.1` |
+| H5 visible corrections | PJPO-007 evidence citation struck through with PJPO2-002 cited |
+
+Also checked: `prepare_attach` and `commit_attach` run under the one sink lock, so no `write` can
+land between them (the constraint `prepare_attach`'s docstring states); a second `promote` after a
+*successful* one still raises "already attached" from the first `prepare_attach`, before any I/O.
+Gates on an idle host (no CI run in progress), foreground: `ruff format --check` 339 files;
+`ruff check` clean; `mypy src` clean (106); `pytest --cov` in four chunks with `--cov-append`:
+1032 + 145 + 198 + 118 = 1493 = `--collect-only`, all passed; coverage 88% (9541 / 1109);
+`promotable_sink.py` 100%, `log_capture.py` 97%. CI: run `35405341329` on `8cf3661` (the PJPO2-001
+fix) success; runs for `faf9618` and `2348d88` (test/doc-only) cancelled as superseded — exact-head
+CI for this closure is recorded below.
+
 ## Definition of done
 
-- [ ] QD1–QD2 recorded.
-- [ ] H1 holds and is pinned by a test proven to discriminate (or, under QD1-B, the documented
+- [x] QD1–QD2 recorded.
+- [x] H1 holds and is pinned by a test proven to discriminate (or, under QD1-B, the documented
       failure state is pinned).
-- [ ] The `attach` properties PJPO-007 claimed are each pinned by a named test, and its evidence
+- [x] The `attach` properties PJPO-007 claimed are each pinned by a named test, and its evidence
       line is corrected visibly.
-- [ ] The Linux-only dependency is documented.
-- [ ] No contract change (H4), verified by export.
+- [x] The Linux-only dependency is documented.
+- [x] No contract change (H4), verified by export.
 - [ ] Full gates green on an idle host and on exact-head CI.
-- [ ] PJPO2-004 performed, or recorded as not performed.
+- [x] PJPO2-004 performed, or recorded as not performed. — Recorded as not performed.
