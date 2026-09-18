@@ -1,6 +1,6 @@
 # Post-JPO Code Review — Specification
 
-**Status:** Draft — not started
+**Status:** Implemented except F5 (ChatGPT check, user-performed, not yet done) — see the TODO
 **Date:** 2026-09-18
 **Reviewed baseline:** `613255f` (`master`; closure CI run `35376222496` green: 1484 passed, 88%)
 **Source review:** `/code-review-todo docs/JOB_PROMOTION_TODO_2026-09-18.md`, 2026-09-18

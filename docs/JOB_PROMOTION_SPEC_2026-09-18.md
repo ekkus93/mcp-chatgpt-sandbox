@@ -1,6 +1,6 @@
 # Job Promotion on Overrun — Specification
 
-**Status:** Implemented — see `docs/JOB_PROMOTION_TODO_2026-09-18.md` for evidence and recorded deviations
+**Status:** Implemented — see `docs/JOB_PROMOTION_TODO_2026-09-18.md` for evidence and recorded deviations; I5 corrected by PJPO-001 (`docs/POST_JPO_CODE_REVIEW_SPEC_2026-09-18.md`)
 **Date:** 2026-09-18
 **Baseline:** `13e44bd` (`master`, CI run `35360824436` green: 1455 passed, coverage 88%, `contract_version` `0.10.3`)
 **Source requirement:** `docs/SPEC.md` §14.4; open checkbox `docs/TODO.md:353`

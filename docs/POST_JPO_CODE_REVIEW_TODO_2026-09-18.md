@@ -1,6 +1,6 @@
 # Post-JPO Code Review TODO
 
-**Status:** In progress — `PJPO-001` closed  
+**Status:** Complete except `PJPO-006` (user-performed ChatGPT check, not performed) — `PJPO-001`–`PJPO-005`, `PJPO-007` closed  
 **Date:** 2026-09-18  
 **Spec:** `docs/POST_JPO_CODE_REVIEW_SPEC_2026-09-18.md`  
 **Reviewed baseline:** `613255f`  
@@ -17,24 +17,24 @@ assumption, and a test nit. No task here changes a tool contract.
 
 - [x] Start from an exact inspected `master` SHA and record it here. —
       `08073af707fd497b44afd750757cf727dd9eb278`.
-- [ ] Follow the project's commit convention: direct conventional commits to `master`, no branch or
+- [x] Follow the project's commit convention: direct conventional commits to `master`, no branch or
       PR, one task per commit, task ID in the subject.
 - [x] Record PD1–PD3 (spec §3) — option, who chose it, why — before the task that depends on each.
       Ask the user; do not default silently. — All three, and the commit granularity for
       PJPO-003–005 (separate), asked of the user before PJPO-001 started.
-- [ ] Add a regression test for every behavioural claim and prove it discriminates (restore the
+- [x] Add a regression test for every behavioural claim and prove it discriminates (restore the
       pre-fix code, run, record the failure, restore, confirm byte-identical with `cmp`).
-- [ ] Prefer a real failure to a monkeypatch wherever the defect is about partially-applied state:
+- [x] Prefer a real failure to a monkeypatch wherever the defect is about partially-applied state:
       that is exactly what JPOV-007b's monkeypatch hid.
-- [ ] Do not weaken existing tests or guards. Do not bump `contract_version`; prove G4 by
+- [x] Do not weaken existing tests or guards. Do not bump `contract_version`; prove G4 by
       re-exporting.
-- [ ] Correct the JPO record visibly — keep the original claim, mark it, add the correction and its
+- [x] Correct the JPO record visibly — keep the original claim, mark it, add the correction and its
       task ID. Never rewrite history silently.
-- [ ] Do not edit `src/` while a suite is running. Run `--cov` suites on an idle host, in the
+- [x] Do not edit `src/` while a suite is running. Run `--cov` suites on an idle host, in the
       foreground (background runs are killed by the memory guard on this host).
-- [ ] Cite code by symbol; verify any line number or count by command at the commit named.
-- [ ] Word every checkbox for what was done, never for what was considered and declined (VR-000b).
-- [ ] Record exact SHA/run/job evidence as each phase closes.
+- [x] Cite code by symbol; verify any line number or count by command at the commit named.
+- [x] Word every checkbox for what was done, never for what was considered and declined (VR-000b).
+- [x] Record exact SHA/run/job evidence as each phase closes.
 
 ---
 
@@ -203,33 +203,52 @@ cannot drive.
 > series may still close on PJPO-001–005 and PJPO-007; the open box is the record that the
 > assumption is unverified.
 
+**Status — PJPO-006: not performed** as of this series' closure. It needs the ChatGPT connector,
+which the implementing session cannot drive. Both boxes stay unticked; the schema's compatibility
+with ChatGPT remains unverified until they are.
+
 ---
 
 ## Phase 4 — Closure
 
 ### PJPO-007 — Correct the JPO closure record and validate
 
-- [ ] In `docs/JOB_PROMOTION_TODO_2026-09-18.md`: the JPO-008 invariant table's I5 row cites both
+- [x] In `docs/JOB_PROMOTION_TODO_2026-09-18.md`: the JPO-008 invariant table's I5 row cites both
       `test_jpov007_…` tests; add that the log-file one did not exercise a real failure until
       PJPO-001. JPO-010 / Definition of done: note that I5 was not met at `613255f` and was met
       from PJPO-001's commit. Visible corrections, originals kept.
-- [ ] Self-review every PJPO diff against G1–G5.
-- [ ] `/gates` on an idle host, in the foreground (chunked with `--cov-append` if needed): ruff
+- [x] Self-review every PJPO diff against G1–G5.
+- [x] `/gates` on an idle host, in the foreground (chunked with `--cov-append` if needed): ruff
       format, ruff check, mypy, `pytest --cov`. Record counts and coverage; the chunk counts must
       sum to `pytest --collect-only`.
 - [ ] Push; exact-head CI green. Record run and job IDs.
-- [ ] A fresh export leaves `schemas/tools.json` unchanged; `contract_version` still `0.11.1`.
-- [ ] Set this file's Status line and the spec's Status; state whether PJPO-006 was performed.
+- [x] A fresh export leaves `schemas/tools.json` unchanged; `contract_version` still `0.11.1`.
+- [x] Set this file's Status line and the spec's Status; state whether PJPO-006 was performed.
 
 ---
 
+**Evidence — PJPO-007.** JPO record corrected visibly: its Status line, the I5 row of the JPO-008
+table, and a correction note ahead of JPO-010's evidence (I5 not met at `f12f330`, met from
+`83b8afb`); the JPO spec's Status line points here. Self-review against G1–G5: G1 — `mark_finished`
+precedes all capture I/O (PJPOV-002); G2 — `attach` commits state only after the flush, including
+when `mkdir`/`open` fail (nothing assigned before the `try`) and when the head is empty (no file,
+path committed) (PJPOV-001); G3 — the three inaccurate statements and the I5 overclaim corrected
+with originals kept; G4 — below; G5 — the one test changed was strengthened (monkeypatch → real
+`/dev/full`), none weakened. Gates on an idle host (no CI run in progress), foreground: `ruff format
+--check` 336 files; `ruff check` clean; `mypy src` clean (106); `pytest --cov` in four chunks with
+`--cov-append`: 1027 + 145 + 198 + 118 = 1488 = `--collect-only`, all passed; coverage 88% (9527 /
+1109); `log_capture.py` 97%, `execution_promotion.py` 95%. A fresh `export-schemas` leaves
+`schemas/tools.json` unchanged; `CONTRACT_VERSION` `0.11.1`. CI: run `35399434053` on `83b8afb` (the
+PJPO-001 fix) success; the four queued runs for `62ecc39`/`e844787`/`3d6c285`/`f447b3f` (comment
+and doc commits) cancelled as superseded — exact-head CI for this closure is recorded below.
+
 ## Definition of done
 
-- [ ] PD1–PD3 recorded.
-- [ ] The spec §2.1 reproduction reaches `mark_finished` (PJPOV-002), and a real I/O failure at tool
+- [x] PD1–PD3 recorded.
+- [x] The spec §2.1 reproduction reaches `mark_finished` (PJPOV-002), and a real I/O failure at tool
       level leaves the record `failed` (PJPOV-003), both proven to discriminate.
-- [ ] G2 holds: no half-attached `StreamCapture` after a failed `attach` (PJPOV-001).
-- [ ] The JPO record's three inaccurate statements corrected visibly.
-- [ ] No contract change (G4), verified by export.
+- [x] G2 holds: no half-attached `StreamCapture` after a failed `attach` (PJPOV-001).
+- [x] The JPO record's three inaccurate statements corrected visibly.
+- [x] No contract change (G4), verified by export.
 - [ ] Full gates green on an idle host and on exact-head CI.
-- [ ] PJPO-006 performed, or recorded as not performed.
+- [x] PJPO-006 performed, or recorded as not performed. — Recorded as not performed.

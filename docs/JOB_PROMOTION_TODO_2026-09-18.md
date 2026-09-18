@@ -1,6 +1,7 @@
 # Job Promotion on Overrun TODO
 
-**Status:** Complete — `JPO-001` through `JPO-010` closed  
+**Status:** Complete — `JPO-001` through `JPO-010` closed; I5 met only from `83b8afb` (PJPO-001), see
+`docs/POST_JPO_CODE_REVIEW_TODO_2026-09-18.md`  
 **Date:** 2026-09-18  
 **Spec:** `docs/JOB_PROMOTION_SPEC_2026-09-18.md`  
 **Baseline:** `13e44bd`  
@@ -304,7 +305,7 @@ every static, doc-drift and contract guard — and the Docker-backed remainder r
 | I2 one process | `test_jpov005_…all_of_its_output` (`$$` equal before/after) |
 | I3 no lost output, true totals | `test_jpov002_output_before_and_after…`, `…dropped_at_the_cap…`, `test_jpov005_…` |
 | I4 exactly one outcome | `test_jpov004_…is_not_a_job` (not mutation-tested: the race itself cannot be forced) |
-| I5 fail closed | both `test_jpov007_…` |
+| I5 fail closed | both `test_jpov007_…` — *correction (PJPO-001/PJPO-007): the log-file one monkeypatched `attach` to raise before changing state, so it passed while a real ENOSPC left the record `queued`; it exercises a real `/dev/full` failure from `83b8afb`* |
 | I6 ordinary job | `test_jpo004_…` ×4, `test_jpov006_…idle_stop` |
 | I7 bounded memory | `test_jpov002_the_memory_held_is_bounded…` (not mutation-tested) |
 | I8 one lock | `test_jpov002_a_chunk_arriving_during_promotion_waits_for_it` |
@@ -355,6 +356,11 @@ its behaviour in a later push (recorded under JPO-002).
 - [x] Tick `docs/TODO.md:353` with a pointer to this series (only now — VR-000b).
 - [x] Set this file's Status line to Complete; set the spec's Status to Implemented.
 - [x] Note any deviation from the spec, and any slip made during the series, in the task evidence.
+
+*Correction (PJPO-007): invariant I5 was **not** met at this closure — a real disk-full failure during
+promotion left the job record `queued` (`docs/POST_JPO_CODE_REVIEW_SPEC_2026-09-18.md` §2.1). It is
+met from `83b8afb` (PJPO-001). The evidence below is unchanged and still accurate for what it
+records.*
 
 **Evidence — JPO-010.** Closure commit `f12f330`; its exact-head CI run `35376222496`, job
 `105701413477`: success, 1484 passed, coverage 88% (9518/1109).
