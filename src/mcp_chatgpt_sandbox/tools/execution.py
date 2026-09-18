@@ -429,7 +429,7 @@ async def run_exec(
             details={"workspace_id": workspace_id, "timeout_seconds": timeout},
         ) from None
 
-    return ExecOutput(
+    return ExecOutput.completed(
         exit_code=result.exit_code,
         stdout_tail=result.stdout_tail,
         stderr_tail=result.stderr_tail,

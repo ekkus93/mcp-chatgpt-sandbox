@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.10.3",
+  "contract_version": "0.11.0",
   "tools": [
     {
       "description": "Delete a repository file or directory (\u00a713.5).",
@@ -157,10 +157,107 @@
             "type": "string"
           }
         },
+        "description": "`exec`'s two response shapes in one flat object (\u00a714.4; JPO-001).\n\nD2-A (`docs/JOB_PROMOTION_SPEC_2026-09-18.md` \u00a73): a completed result,\nor \u2014 `promoted_to_job: true` \u2014 a job handle identical to `exec_start`'s.\n\nWhy not the obvious `-> ExecOutput | ExecStartOutput`: the MCP SDK wraps\na union return as `{\"result\": ...}`, which would move `exit_code` to\n`result.exit_code` for every existing client. Why not a discriminated\n`RootModel`: its exported schema is a bare top-level `oneOf` with no\n`\"type\": \"object\"`, which the MCP `Tool.outputSchema` type requires and\nevery other tool here has. Both were probed against the real SDK before\nthis shape was chosen (spec \u00a72.5).\n\nEvery field is *required and nullable* rather than optional: dropping a\nname from `required` is a removal from a consumer's point of view, while\na `null` that only a caller who opted into promotion can ever receive is\nnot.\n\nThe SDK does not validate a returned value against the `oneOf` \u2014 a probe\nreturned `promoted_to_job: true` with no `job_id` without complaint \u2014 so\n`_exactly_one_branch` enforces it here (I9).",
+        "oneOf": [
+          {
+            "properties": {
+              "exit_code": {
+                "type": "integer"
+              },
+              "job_id": {
+                "type": "null"
+              },
+              "promoted_to_job": {
+                "const": false
+              },
+              "started_at": {
+                "type": "null"
+              },
+              "state": {
+                "type": "null"
+              },
+              "stderr_tail": {
+                "type": "string"
+              },
+              "stderr_total_bytes": {
+                "type": "integer"
+              },
+              "stderr_truncated": {
+                "type": "boolean"
+              },
+              "stdout_tail": {
+                "type": "string"
+              },
+              "stdout_total_bytes": {
+                "type": "integer"
+              },
+              "stdout_truncated": {
+                "type": "boolean"
+              }
+            },
+            "title": "ExecCompleted"
+          },
+          {
+            "properties": {
+              "exit_code": {
+                "type": "null"
+              },
+              "job_id": {
+                "type": "string"
+              },
+              "pressure": {
+                "type": "null"
+              },
+              "promoted_to_job": {
+                "const": true
+              },
+              "state": {
+                "type": "string"
+              },
+              "stderr_tail": {
+                "type": "null"
+              },
+              "stderr_total_bytes": {
+                "type": "null"
+              },
+              "stderr_truncated": {
+                "type": "null"
+              },
+              "stdout_tail": {
+                "type": "null"
+              },
+              "stdout_total_bytes": {
+                "type": "null"
+              },
+              "stdout_truncated": {
+                "type": "null"
+              }
+            },
+            "title": "ExecPromotedToJob"
+          }
+        ],
         "properties": {
           "exit_code": {
-            "title": "Exit Code",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
           },
           "pressure": {
             "anyOf": [
@@ -172,32 +269,101 @@
               }
             ]
           },
+          "promoted_to_job": {
+            "title": "Promoted To Job",
+            "type": "boolean"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          },
           "stderr_tail": {
-            "title": "Stderr Tail",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stderr Tail"
           },
           "stderr_total_bytes": {
-            "title": "Stderr Total Bytes",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stderr Total Bytes"
           },
           "stderr_truncated": {
-            "title": "Stderr Truncated",
-            "type": "boolean"
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stderr Truncated"
           },
           "stdout_tail": {
-            "title": "Stdout Tail",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stdout Tail"
           },
           "stdout_total_bytes": {
-            "title": "Stdout Total Bytes",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stdout Total Bytes"
           },
           "stdout_truncated": {
-            "title": "Stdout Truncated",
-            "type": "boolean"
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stdout Truncated"
           }
         },
         "required": [
+          "promoted_to_job",
           "exit_code",
           "stdout_tail",
           "stderr_tail",
@@ -205,7 +371,10 @@
           "stderr_truncated",
           "stdout_total_bytes",
           "stderr_total_bytes",
-          "pressure"
+          "pressure",
+          "job_id",
+          "state",
+          "started_at"
         ],
         "title": "ExecOutput",
         "type": "object"

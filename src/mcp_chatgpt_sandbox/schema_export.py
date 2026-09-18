@@ -73,7 +73,14 @@ from mcp.server import MCPServer
 #: `resource_inventory`, `resource_prune_plan`, `resource_prune_execute`, and
 #: `server_info` were reconciled with their implemented operations behavior;
 #: no input/output shape changed and no new tools were added.
-CONTRACT_VERSION = "0.10.3"
+#: 0.11.0 (Job Promotion JPO-001, D3): minor bump — `exec`'s output gained
+#: `promoted_to_job` plus `job_id`/`state`/`started_at`, its eight existing
+#: fields became nullable, and a two-branch `oneOf` expresses §14.4's union.
+#: §33.2 has no row for this: the added fields alone are a patch, but a second
+#: response shape is a larger event than a patch, and it is not major because
+#: every field stays `required` and only a caller that opts into promotion can
+#: ever receive a `null` — no existing caller's observable contract changes.
+CONTRACT_VERSION = "0.11.0"
 
 
 async def collect_tool_schemas(server: MCPServer) -> list[dict[str, Any]]:

@@ -1,6 +1,6 @@
 # Job Promotion on Overrun TODO
 
-**Status:** Not started — `JPO-001` through `JPO-010` open  
+**Status:** In progress — `JPO-001` closed  
 **Date:** 2026-09-18  
 **Spec:** `docs/JOB_PROMOTION_SPEC_2026-09-18.md`  
 **Baseline:** `13e44bd`  
@@ -13,11 +13,13 @@ keeping the running process and its output. It closes the open checkbox at `docs
 
 ## Global rules
 
-- [ ] Start from an exact inspected `master` SHA and record it here.
+- [x] Start from an exact inspected `master` SHA and record it here. —
+      `c7cc1b71ec20bd95e073eb9279d6f0cc1999c643`.
 - [ ] Follow the project's commit convention: direct conventional commits to `master`, no branch or
       PR, one task per commit, task ID in the subject.
-- [ ] Record decisions D1–D4 (spec §3) — option, who chose it, why — before starting the first task
-      that depends on each. Ask the user; do not default silently.
+- [x] Record decisions D1–D4 (spec §3) — option, who chose it, why — before starting the first task
+      that depends on each. Ask the user; do not default silently. — All four asked of the user on
+      2026-09-18 before JPO-001 started; recorded under JPO-001.
 - [ ] Invariant I1: with the flag absent or false, `exec` takes today's code path. Any diff to that
       path needs a stated reason in the commit.
 - [ ] Add a regression test for every behavioral claim and prove it discriminates (run it against
@@ -37,43 +39,49 @@ keeping the running process and its output. It closes the open checkbox at `docs
 
 **Goal:** the contract shape is settled by evidence before any execution code changes.
 
-- [ ] Record D1 (when promotion happens). Recommended: A, per-call `promote_on_timeout: bool = false`.
-- [ ] Record D2 (schema shape). Recommended: A, one flat object with a two-branch `oneOf`.
-- [ ] Record D3 (`contract_version`). Recommended under D1-A/D2-A: `0.11.0`, with the reasoning.
-- [ ] Record D4 (promoted job's deadline). Recommended: A, `default_job_timeout_seconds` from the
-      original start.
-- [ ] Write the new `ExecOutput` model (`tools/execution_models.py`) per D2, including a validator
+- [x] Record D1 (when promotion happens). — **A, per-call `promote_on_timeout: bool = false`**, chosen
+      by the user: only a caller that asked can ever receive the second shape.
+- [x] Record D2 (schema shape). — **A, one flat object with a two-branch `oneOf`**, chosen by the user.
+- [x] Record D3 (`contract_version`). — **`0.11.0`**, chosen by the user; reasoning recorded above
+      `CONTRACT_VERSION` in `schema_export.py`.
+- [x] Record D4 (promoted job's deadline). — **A, `default_job_timeout_seconds` from the original
+      start**, chosen by the user.
+- [x] Write the new `ExecOutput` model (`tools/execution_models.py`) per D2, including a validator
       that rejects any value not matching exactly one branch (I9), with each `oneOf` branch pinning
       non-null types for its own fields and `null` for the other's (spec §2.5).
-- [ ] Confirm against the real server (not a probe server): top-level `type: object`, the `oneOf`
+- [x] Confirm against the real server (not a probe server): top-level `type: object`, the `oneOf`
       present, structured content flat — `exit_code` still at the top level, not under `result`.
-- [ ] `run_exec` returns `promoted_to_job=False`; no other behaviour change in this task.
+- [x] `run_exec` returns `promoted_to_job=False`; no other behaviour change in this task. — via
+      `ExecOutput.completed(...)`, which keeps `tools/execution.py` at 797 lines.
+- [x] Re-exported `schemas/tools.json` (only `exec` changed) and bumped `CONTRACT_VERSION` to `0.11.0`
+      in this task rather than JPO-002: CI's §33.2 check compares each push against the previous one,
+      so a schema change cannot be pushed without its bump.
+- [x] Declared `jsonschema` in the `dev` group and regenerated `uv.lock`: the new test validates real
+      values against the exported schema, and it was previously only a transitive dependency of `mcp`.
 
 **Validation — JPOV-001, JPOV-008**
 
-- [ ] Test: exported `exec` output schema has `type: object`, `promoted_to_job` required, a
+- [x] Test: exported `exec` output schema has `type: object`, `promoted_to_job` required, a
       two-branch `oneOf` keyed on `const false` / `const true`.
-- [ ] Test: the model raises on (a) `promoted_to_job=True` without `job_id`, (b) `False` without
-      `exit_code`, (c) fields from both branches set. Prove it discriminates by removing the validator.
-- [ ] Existing `exec` tests pass unchanged apart from the added field.
+- [x] Test: the model raises on (a) `promoted_to_job=True` without `job_id`, (b) `False` without
+      `exit_code`, (c) fields from both branches set. Prove it discriminates by removing the validator. — With the
+      `@model_validator` decorator removed: 4 failed, 2 passed; restored byte-identical (`cmp`).
+      An extra test validates both real shapes against the exported schema with `jsonschema` and
+      checks a mixed value is rejected — a `oneOf` whose branches match twice rejects everything.
+- [x] Existing `exec` tests pass unchanged apart from the added field. — No existing test needed an
+      edit. Full suite: 1461 passed (1455 + 6 new) in 657s, overlapping CI run `35363718632` (non-`--cov`).
 
-### JPO-002 — Contract export for the new shape
+### JPO-002 — Contract export for the new shape — folded
 
-**Depends on:** JPO-001. Follow the `tool-contract` skill.
+Folded, as the note that stood here allowed, and for a reason found during JPO-001: CI's §33.2 check
+compares each push with the previous one, so the export and bump for the output shape could not be
+a separate push from the model change, and an input flag shipped ahead of its behaviour would have
+been a contract that lies for several commits.
 
-- [ ] Add the input field per D1 (if D1-A) with a description that says what it does and what the
-      caller must do with a promoted response. It is accepted but inert until JPO-006 — say so in
-      the commit, and do not advertise promotion in the tool description yet.
-- [ ] Re-export `schemas/tools.json`; bump `CONTRACT_VERSION` per D3; record the §33.2 reasoning
-      next to the bump.
-- [ ] `docs/TOOLS.md` unchanged unless the `exec` description changes (it does in JPO-007).
-
-**Validation**
-
-- [ ] Schema export test, contract-version monotonicity check and `docs/TOOLS.md` drift test pass.
-
-> If shipping an inert flag for several commits is unwanted, fold JPO-002 into JPO-006 and record
-> that here. The order above exists so the contract diff is reviewed on its own.
+- [x] Export and `0.11.0` bump for the output shape — done in JPO-001.
+- [x] Input field `promote_on_timeout` — moved to JPO-006, where it arrives with the behaviour it
+      names. That is a second schema change and takes its own bump there (new optional input field
+      and description change: patch, `0.11.1`).
 
 ---
 
