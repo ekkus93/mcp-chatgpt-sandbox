@@ -1,6 +1,6 @@
 # Post-JPO Code Review TODO
 
-**Status:** Not started — `PJPO-001` through `PJPO-007` open  
+**Status:** In progress — `PJPO-001` closed  
 **Date:** 2026-09-18  
 **Spec:** `docs/POST_JPO_CODE_REVIEW_SPEC_2026-09-18.md`  
 **Reviewed baseline:** `613255f`  
@@ -15,11 +15,13 @@ assumption, and a test nit. No task here changes a tool contract.
 
 ## Global rules
 
-- [ ] Start from an exact inspected `master` SHA and record it here.
+- [x] Start from an exact inspected `master` SHA and record it here. —
+      `08073af707fd497b44afd750757cf727dd9eb278`.
 - [ ] Follow the project's commit convention: direct conventional commits to `master`, no branch or
       PR, one task per commit, task ID in the subject.
-- [ ] Record PD1–PD3 (spec §3) — option, who chose it, why — before the task that depends on each.
-      Ask the user; do not default silently.
+- [x] Record PD1–PD3 (spec §3) — option, who chose it, why — before the task that depends on each.
+      Ask the user; do not default silently. — All three, and the commit granularity for
+      PJPO-003–005 (separate), asked of the user before PJPO-001 started.
 - [ ] Add a regression test for every behavioural claim and prove it discriminates (restore the
       pre-fix code, run, record the failure, restore, confirm byte-identical with `cmp`).
 - [ ] Prefer a real failure to a monkeypatch wherever the defect is about partially-applied state:
@@ -42,34 +44,51 @@ assumption, and a test nit. No task here changes a tool contract.
 
 **Finding:** F1 (spec §2.1). **Decision:** PD1.
 
-- [ ] Record PD1. Recommended: A — terminalise first *and* make `attach` failure-atomic.
-- [ ] `_fail_half_created_job` (`tools/execution_promotion.py`): call `job_store.mark_finished`
+- [x] Record PD1. — **A, terminalise first *and* make `attach` failure-atomic**, chosen by the user:
+      reordering alone would leave `attach` able to strand a capture half-attached.
+- [x] `_fail_half_created_job` (`tools/execution_promotion.py`): call `job_store.mark_finished`
       before any capture I/O, in its own suppress scope; finish each capture in its own scope
       after. Byte counts and `truncated` are in-memory counters and need no file, so the record
       loses nothing by going first.
-- [ ] `StreamCapture.attach` (`execution/log_capture.py`, if PD1-A): set `_path` only after the head
+- [x] `StreamCapture.attach` (`execution/log_capture.py`, if PD1-A): set `_path` only after the head
       is written and flushed. On failure, close and drop the partial file object (suppressing a
       second error from the close), leave `_path` `None` and the deferred head intact, and re-raise.
-- [ ] Update `_fail_half_created_job`'s docstring: say what it now guarantees (G1) and what remains
+- [x] Update `_fail_half_created_job`'s docstring: say what it now guarantees (G1) and what remains
       best-effort (a job store that is itself broken — restart reconciliation stays the backstop).
-- [ ] Narrative comment at each change citing PJPO-001 and saying how the previous order failed:
+- [x] Narrative comment at each change citing PJPO-001 and saying how the previous order failed:
       `finish()` re-raised the ENOSPC while closing, and the shared suppress skipped
       `mark_finished`.
 
 **Validation — PJPOV-001, PJPOV-002, PJPOV-003**
 
-- [ ] PJPOV-001 (unit, real I/O): a deferred capture holding data, attached to `/dev/full`, raises;
+- [x] PJPOV-001 (unit, real I/O): a deferred capture holding data, attached to `/dev/full`, raises;
       afterwards `_path is None`, `buffered_head()` unchanged, no open file; `finish()` does not
       raise. Prove it fails against the pre-fix `attach`.
-- [ ] PJPOV-002 (unit): the spec §2.1 reproduction as a test — `/dev/full` promotion failure, then
+- [x] PJPOV-002 (unit): the spec §2.1 reproduction as a test — `/dev/full` promotion failure, then
       `_fail_half_created_job` with a recording job store — reaches `mark_finished` with
       `state=FAILED`. Prove it fails against the pre-fix ordering.
-- [ ] PJPOV-003 (tool level, real Docker): replace `test_jpov007_a_log_file_failure_during_promotion_leaves_no_live_job_record`'s
+- [x] PJPOV-003 (tool level, real Docker): replace `test_jpov007_a_log_file_failure_during_promotion_leaves_no_live_job_record`'s
       monkeypatch of `StreamCapture.attach` with a real write failure (e.g. the job log path
       resolving to `/dev/full`, or an unwritable `jobs/` directory — record which, and why the other
       was rejected). Still asserts `COMMAND_TIMEOUT`, the process gone, the record `failed`. Prove
       it fails against the pre-fix code, which the monkeypatched version never could.
-- [ ] Full suite green.
+- [x] Full suite green.
+
+**Evidence — PJPO-001.** `_fail_half_created_job` now calls `mark_finished` first under its own
+suppress, then finishes each capture in its own scope. `StreamCapture.attach` opens and writes the
+head into a local file object and commits `_file`/`_path` only after the flush succeeds; on failure
+it closes that object (the repeated ENOSPC from the close suppressed) and re-raises, leaving the
+capture deferred with its head intact. Tests: `tests/execution/test_pjpo_fail_closed_promotion.py`
+(4 — PJPOV-001 ×2 with real `/dev/full` writes; PJPOV-002 ×2), and
+`test_jpov007_a_log_file_failure_during_promotion_leaves_no_live_job_record` rewritten (PJPOV-003):
+the job's `stdout.log` is pre-created as a symlink to `/dev/full` and only `new_job_id` is pinned.
+The unwritable-`jobs/` alternative was rejected in the test's docstring: `mkdir` fails before any
+file opens — the one failure the old code already survived — so it would not discriminate.
+Discrimination: with both `src` files restored to `08073af` (`git show HEAD:<file>`), all 5 fail;
+the tool-level test fails with `('job_diskfull', 'queued') == ('job_diskfull', 'failed')` — the
+review's reproduction, end to end. Both files restored byte-identical (`cmp`). Full suite, foreground
+chunks: 1027 + 145 + 198 + 118 = 1488 = `--collect-only`, all passed (overlapping CI's `--cov` run
+`35398231267`, non-`--cov` here).
 
 ---
 

@@ -28,12 +28,12 @@ from mcp_chatgpt_sandbox.config.models import (
     ServerConfig,
 )
 from mcp_chatgpt_sandbox.db.connection import open_db
-from mcp_chatgpt_sandbox.execution.log_capture import StreamCapture
 from mcp_chatgpt_sandbox.execution.service import ExecutionService
 from mcp_chatgpt_sandbox.jobs.store import NON_TERMINAL_STATES, JobStore
 from mcp_chatgpt_sandbox.repositories import RepositoryRegistry
 from mcp_chatgpt_sandbox.server import create_server
 from mcp_chatgpt_sandbox.tools import execution as execution_tools
+from mcp_chatgpt_sandbox.tools import execution_promotion
 from mcp_chatgpt_sandbox.workspace.manager import DockerWorkspaceManager
 
 
@@ -307,13 +307,23 @@ async def test_jpov007_a_log_file_failure_during_promotion_leaves_no_live_job_re
 ) -> None:
     """The half-created case: the job record already exists when the
     failure happens, so it has to be driven terminal (I5) or it would pin
-    the workspace against idle-stop like HR-021's stuck `starting` job."""
+    the workspace against idle-stop like HR-021's stuck `starting` job.
+
+    PJPO-001 (PJPOV-003): the write failure is real. The job's stdout log
+    is pre-created as a symlink to `/dev/full` — `open` succeeds, every
+    `write` fails with ENOSPC — and only the job id is pinned so the test
+    knows where to put it. This replaced a monkeypatch of
+    `StreamCapture.attach` that raised before touching any state, which
+    passed against code that left the record stuck: the defect was
+    exactly the state `attach` had already changed when it failed. Why
+    not an unwritable `jobs/` directory: `mkdir` would fail before any
+    file is opened, the one failure the old code already survived, so it
+    would not have told the two apart."""
     server, config, workspace_id = await _server(minimal_config, default_image_tag, tmp_path)
-
-    def broken_attach(self: StreamCapture, path: Path) -> None:
-        raise OSError(28, "No space left on device")
-
-    monkeypatch.setattr(StreamCapture, "attach", broken_attach)
+    job_dir = config.state_db_path.parent / "jobs" / "job_diskfull"
+    job_dir.mkdir(parents=True)
+    (job_dir / "stdout.log").symlink_to("/dev/full")
+    monkeypatch.setattr(execution_promotion, "new_job_id", lambda: "job_diskfull")
 
     with pytest.raises(ToolError, match="COMMAND_TIMEOUT"):
         await server.call_tool(
@@ -327,7 +337,7 @@ async def test_jpov007_a_log_file_failure_during_promotion_leaves_no_live_job_re
 
     assert "NONE" in await _processes_matching(server, workspace_id, "[s]leep 355")
     (job,) = _jobs(config)
-    assert job.state.value == "failed"
+    assert (job.id, job.state.value) == ("job_diskfull", "failed")
 
 
 async def test_jpov009_promotion_is_audited_with_the_job_id_and_without_secrets(

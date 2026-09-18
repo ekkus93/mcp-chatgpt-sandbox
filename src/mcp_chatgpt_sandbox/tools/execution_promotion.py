@@ -214,13 +214,24 @@ def _fail_half_created_job(job_store: JobStore, job_id: str, sink: PromotableSin
     (I5): `NON_TERMINAL_STATES` is what idle-stop reads as "this workspace
     is busy", so an orphan would pin the workspace up until the next
     daemon restart reconciled it to `lost` — HR-021's defect, by another
-    route. Best-effort by construction: if the job store itself is what
-    failed, this will fail too, and restart reconciliation is the backstop."""
+    route.
+
+    PJPO-001 (`docs/POST_JPO_CODE_REVIEW_SPEC_2026-09-18.md` §2.1, G1):
+    the record is made terminal *first*, and on its own, whenever the job
+    store can still be written — whatever the filesystem is doing. The
+    first version finished both log captures before `mark_finished`,
+    inside one shared `suppress`: when promotion had failed on a full
+    disk, `finish()` raised that same ENOSPC again, the suppress swallowed
+    it, and `mark_finished` never ran — the very orphan this function
+    exists to prevent, left behind on exactly the path it guards. The
+    byte counts and `truncated` it records are in-memory counters, so
+    going first loses nothing. What stays best-effort: a job store that
+    is itself what failed; restart reconciliation is the backstop there.
+    Each capture is then finished in its own scope, so one broken log
+    file cannot stop the other from being closed."""
     with contextlib.suppress(Exception):
         record = job_store.get(job_id)
         if record.state in NON_TERMINAL_STATES:
-            sink.stdout_capture.finish()
-            sink.stderr_capture.finish()
             job_store.mark_finished(
                 job_id,
                 state=JobState.FAILED,
@@ -229,3 +240,6 @@ def _fail_half_created_job(job_store: JobStore, job_id: str, sink: PromotableSin
                 stderr_total_bytes=sink.stderr_capture.total_bytes,
                 output_truncated=sink.stdout_capture.truncated or sink.stderr_capture.truncated,
             )
+    for capture in (sink.stdout_capture, sink.stderr_capture):
+        with contextlib.suppress(Exception):
+            capture.finish()

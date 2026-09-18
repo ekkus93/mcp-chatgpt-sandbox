@@ -34,6 +34,7 @@ of accounting across the switch has no such seam to get wrong.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
 from typing import IO
@@ -86,14 +87,33 @@ class StreamCapture:
         """Gives a deferred capture its log file: writes the head held so
         far, releases that memory, and sends every later write to disk.
         Not thread-safe by itself — the caller serialises it against
-        `write` (`PromotableSink` holds one lock over both)."""
+        `write` (`PromotableSink` holds one lock over both).
+
+        PJPO-001 (`docs/POST_JPO_CODE_REVIEW_SPEC_2026-09-18.md` §2.1,
+        G2): all or nothing. On any failure the capture is left exactly
+        as it was — still deferred, head still in memory, no file object
+        — and the error is re-raised. The first version assigned `_path`
+        before the head reached the disk, so a real ENOSPC left a capture
+        with a path, an open file and unflushed bytes in that file's
+        buffer: a state no other code expects, in which `finish()` raised
+        the same ENOSPC again while closing, and later `write`s from the
+        drain thread raised too. The partial file object is closed here
+        with that second error suppressed — it is the error already being
+        reported, and closing still releases the descriptor."""
         if self._path is not None:
             raise RuntimeError(f"capture is already attached to {self._path}")
-        self._path = path
         if self._deferred_head:
-            file = self._ensure_open()
-            file.write(bytes(self._deferred_head))
-            file.flush()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            file = path.open("wb")
+            try:
+                file.write(bytes(self._deferred_head))
+                file.flush()
+            except BaseException:
+                with contextlib.suppress(OSError):
+                    file.close()
+                raise
+            self._file = file
+        self._path = path
         self._deferred_head = bytearray()
 
     def buffered_head(self) -> bytes:
