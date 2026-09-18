@@ -1,6 +1,6 @@
 # Post-PSCR Code Review TODO
 
-**Status:** Open — `PSCR2-001` through `PSCR2-008` not started  
+**Status:** In progress — `PSCR2-001` closed; `PSCR2-002` next  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `134795429eae988f927e43ec97cc04c5f98b867a`  
@@ -44,26 +44,57 @@ every declined fix is recorded as declined, and no document claims more than the
 
 **Goal:** `_source_checkout_root()` returns only this project's checkout.
 
-- [ ] Parse the candidate `pyproject.toml` with `tomllib` and require
+- [x] Parse the candidate `pyproject.toml` with `tomllib` and require
       `[project] name == "mcp-chatgpt-sandbox"`.
-- [ ] Skip a candidate with the right layout and the wrong name; continue the upward search.
-- [ ] Keep the search self-validating: the returned root still holds `docker/default/`.
-- [ ] Decide whether "found but foreign" needs a distinct operator message from "not found"; record
+- [x] Skip a candidate with the right layout and the wrong name; continue the upward search.
+- [x] Keep the search self-validating: the returned root still holds `docker/default/`.
+- [x] Decide whether "found but foreign" needs a distinct operator message from "not found"; record
       the decision and its reasoning.
-- [ ] Tolerate an unreadable or malformed `pyproject.toml` by skipping that candidate, not by raising
+- [x] Tolerate an unreadable or malformed `pyproject.toml` by skipping that candidate, not by raising
       an unrelated parse error out of context resolution.
-- [ ] Keep `validate_default_image_build_context()` as the single normalization/refusal point.
+- [x] Keep `validate_default_image_build_context()` as the single normalization/refusal point.
 
 **Validation — PSCR2V-001**
 
-- [ ] Test: resolution still succeeds from the real source checkout.
-- [ ] Test (decoy): a synthesized ancestor with `pyproject.toml` + `docker/default/` but the wrong
+- [x] Test: resolution still succeeds from the real source checkout.
+- [x] Test (decoy): a synthesized ancestor with `pyproject.toml` + `docker/default/` but the wrong
       `[project] name` is skipped, and the search reports no checkout.
-- [ ] Test: a decoy *below* the real root does not shadow it — the search reaches the correct
+- [x] Test: a decoy *below* the real root does not shadow it — the search reaches the correct
       project root.
-- [ ] Test: a malformed `pyproject.toml` on a candidate is skipped without an unrelated error.
-- [ ] Discrimination: the decoy test fails against the pre-PSCR2-001 search.
-- [ ] Existing `tests/setup/test_pscr_docker_context_policy.py` remains green.
+- [x] Test: a malformed `pyproject.toml` on a candidate is skipped without an unrelated error.
+- [x] Discrimination: the decoy test fails against the pre-PSCR2-001 search.
+- [x] Existing `tests/setup/test_pscr_docker_context_policy.py` remains green.
+
+**Closure evidence (2026-09-18)**
+
+- `_source_checkout_root()` now accepts a candidate only when `_declared_project()` returns a
+  `[project]` table whose `name` is `mcp-chatgpt-sandbox` (`_PROJECT_NAME`). A right-layout,
+  wrong-name candidate is skipped with `continue`, so the search keeps climbing rather than
+  stopping or failing. `tomllib` is new to `src/`; it is standard library.
+- `_declared_project()` returns `None` for `OSError`, `UnicodeDecodeError`, `TOMLDecodeError`, and
+  a missing or non-table `[project]`, so a bad file disqualifies only that one candidate.
+- **Decision — one message, not two.** "Found but foreign" deliberately produces the same
+  `SetupDockerError` as "not found". The operator's remedy is identical in both cases (build the
+  image manually from a checkout, or select an existing image), so a second message would add a
+  distinction with no action behind it.
+- Three tests added to `tests/setup/test_pscr_docker_context_policy.py`: a right-layout/wrong-name
+  decoy is skipped; a decoy *nearer* to the module than the real root does not shadow it; and a
+  malformed `pyproject.toml` on a nearer candidate is skipped rather than raised.
+- **Discrimination verified.** Against the pre-PSCR2-001 search restored from `HEAD`, all three new
+  tests fail and the four pre-existing tests pass — which is correct, since those cover behavior
+  this task had to preserve. Restoring the fix makes all seven pass.
+- **One fixture updated, not weakened.** `test_pscrv_002_upward_search_requires_both_markers` wrote
+  an *empty* `pyproject.toml`, which declares no project and so can never resolve under this rule.
+  It now declares this project's name; its assertions are unchanged, and it still isolates what it
+  was written to prove, that both layout markers are required. Its directory was renamed from
+  `unrelated-project` to `checkout`, since under the new rule it has to be this project to resolve.
+- Full Docker-backed suite: `1431 passed in 641.39s`, zero failures, zero skips. Ruff format PASS;
+  Ruff lint PASS; strict mypy (103 files) PASS.
+- **Overlap recorded as corroboration, per the global rules.** The suite started at 02:14:10Z while
+  CI `35297412776` (`1347954`) was in its test phase; that run completed **success** at 02:19:06Z,
+  about five minutes of overlap including the workspace phase. The remainder of the suite
+  overlapped CI `35298161437` (`dbd120b`), which picked up at 02:19Z. Before PSCR-010, the
+  equivalent overlap produced 11 CI failures.
 
 ### PSCR2-002 — Dispose of the in-repo-virtualenv version skew
 

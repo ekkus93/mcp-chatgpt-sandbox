@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import docker
 from docker.errors import DockerException, ImageNotFound
@@ -81,6 +83,28 @@ def validate_default_image_build_context(build_context: Path) -> Path:
     return resolved
 
 
+#: The distribution name a checkout's `pyproject.toml` must declare for its
+#: `docker/default/` to be trusted as this project's build context (PSCR2-001).
+_PROJECT_NAME = "mcp-chatgpt-sandbox"
+
+
+def _declared_project(pyproject: Path) -> dict[str, Any] | None:
+    """Return a `pyproject.toml`'s `[project]` table, or None if unusable.
+
+    An unreadable or malformed file disqualifies that one candidate rather than
+    aborting context resolution: it is not evidence that the search has found
+    this project, and an unrelated parse error surfacing from "where is the
+    build context?" would be both confusing and unactionable.
+    """
+
+    try:
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return None
+    project = data.get("project")
+    return project if isinstance(project, dict) else None
+
+
 def _source_checkout_root() -> Path | None:
     """Locate the source checkout that ships the default Docker build context.
 
@@ -100,13 +124,25 @@ def _source_checkout_root() -> Path | None:
     that does not hold the context — so the installed case fails loudly at the
     one place that resolves it instead of being discovered by an operator.
 
+    PSCR2-001 (`docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md`) made the search
+    project-specific. The two layout markers alone prove a root *holds a build
+    context*; they do not prove it is *this project's*. Any ancestor with some
+    `pyproject.toml` and some `docker/default/` satisfied the original check, so
+    an installed distribution sitting beneath an unrelated project with that
+    layout would have built an image from the wrong context. A candidate is now
+    accepted only when its `[project] name` is this distribution's, and a
+    right-layout, wrong-name candidate is skipped so the search keeps climbing.
+
     A non-editable install into an in-repo virtualenv (`<repo>/.venv/...`) still
-    finds `<repo>`. That is intended: the checkout genuinely is present, and the
-    context it names is genuinely usable.
+    finds `<repo>`, because the checkout genuinely is present.
     """
 
     for candidate in Path(__file__).resolve().parents:
-        if (candidate / "pyproject.toml").is_file() and (candidate / "docker" / "default").is_dir():
+        pyproject = candidate / "pyproject.toml"
+        if not (pyproject.is_file() and (candidate / "docker" / "default").is_dir()):
+            continue
+        project = _declared_project(pyproject)
+        if project is not None and project.get("name") == _PROJECT_NAME:
             return candidate
     return None
 

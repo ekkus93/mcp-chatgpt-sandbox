@@ -25,6 +25,20 @@ from mcp_chatgpt_sandbox.setup.docker_setup import (
 )
 
 
+def _write_pyproject(root: Path, *, name: str, version: str = "0.1.0") -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "pyproject.toml").write_text(
+        f'[project]\nname = "{name}"\nversion = "{version}"\n', encoding="utf-8"
+    )
+
+
+def _write_context(root: Path) -> Path:
+    context = root / "docker" / "default"
+    context.mkdir(parents=True, exist_ok=True)
+    (context / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+    return context
+
+
 def _relocate_module(monkeypatch: pytest.MonkeyPatch, path: Path) -> None:
     """Point the module's ``__file__`` at a synthesized location."""
 
@@ -64,9 +78,13 @@ def test_pscrv_002_upward_search_requires_both_markers(
     # A pyproject.toml alone must not satisfy the search: an installed
     # distribution can easily sit under an unrelated project root, and resolving
     # to it would resurrect the original defect in a new disguise.
-    root = tmp_path / "unrelated-project"
+    # PSCR2-001: this fixture used to write an *empty* pyproject.toml, which
+    # declares no project and so can no longer resolve at all. It now declares
+    # this project's name, so the test still isolates what it was written to
+    # prove — that the layout markers are both required.
+    root = tmp_path / "checkout"
     (root / "src" / "mcp_chatgpt_sandbox" / "setup").mkdir(parents=True)
-    (root / "pyproject.toml").write_text("", encoding="utf-8")
+    _write_pyproject(root, name="mcp-chatgpt-sandbox")
     _relocate_module(
         monkeypatch, root / "src" / "mcp_chatgpt_sandbox" / "setup" / "docker_setup.py"
     )
@@ -85,3 +103,82 @@ def test_pscrv_002_preview_and_execution_resolve_the_same_context() -> None:
 
     assert plan.argv[-1] == str(plan.build_context)
     assert plan.argv[3] == plan.image
+
+
+def test_pscr2v_001_a_right_layout_wrong_name_decoy_is_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PSCR2-001: the layout markers prove a root holds *a* context, not *ours*.
+
+    Before this task any ancestor with some `pyproject.toml` and some
+    `docker/default/` was accepted, so an installed distribution beneath an
+    unrelated project with that layout would have built the wrong image.
+    """
+
+    decoy = tmp_path / "some-other-project"
+    _write_pyproject(decoy, name="some-other-project")
+    _write_context(decoy)
+    _relocate_module(
+        monkeypatch,
+        decoy
+        / ".venv"
+        / "lib"
+        / "python3.12"
+        / "site-packages"
+        / "mcp_chatgpt_sandbox"
+        / "setup"
+        / "docker_setup.py",
+    )
+
+    with pytest.raises(SetupDockerError, match="source checkout"):
+        bundled_default_image_build_context()
+
+
+def test_pscr2v_001_a_decoy_below_the_real_root_does_not_shadow_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Skipping must continue the climb, not end it.
+
+    The decoy is nearer to the module than the real root, so a search that
+    stopped at the first right-layout candidate — or that returned None on the
+    first wrong name — would never reach the correct answer.
+    """
+
+    real = tmp_path / "checkout"
+    _write_pyproject(real, name="mcp-chatgpt-sandbox")
+    real_context = _write_context(real)
+
+    decoy = real / "vendor" / "nested-project"
+    _write_pyproject(decoy, name="nested-project")
+    _write_context(decoy)
+
+    _relocate_module(
+        monkeypatch, decoy / "src" / "mcp_chatgpt_sandbox" / "setup" / "docker_setup.py"
+    )
+
+    assert bundled_default_image_build_context() == real_context.resolve()
+
+
+def test_pscr2v_001_a_malformed_pyproject_is_skipped_not_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unreadable candidate disqualifies itself; it must not abort resolution.
+
+    A TOML parse error escaping from "where is the build context?" would be
+    unrelated to anything the operator can act on.
+    """
+
+    real = tmp_path / "checkout"
+    _write_pyproject(real, name="mcp-chatgpt-sandbox")
+    real_context = _write_context(real)
+
+    broken = real / "vendor" / "broken"
+    broken.mkdir(parents=True)
+    (broken / "pyproject.toml").write_text("[project\nname = oops", encoding="utf-8")
+    _write_context(broken)
+
+    _relocate_module(
+        monkeypatch, broken / "src" / "mcp_chatgpt_sandbox" / "setup" / "docker_setup.py"
+    )
+
+    assert bundled_default_image_build_context() == real_context.resolve()
