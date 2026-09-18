@@ -16,6 +16,20 @@ different thread/coroutine than the one writing it (`exec_output`, in
 the async tool layer, reads the file `AsyncJobRunner`'s background
 thread is appending to) — an unflushed write would make a concurrent
 reader see a shorter file than what has actually been produced.
+
+JPO-003 (`docs/JOB_PROMOTION_SPEC_2026-09-18.md` §5.1): a capture may be
+created *deferred* — `path=None` — and given its file later with
+`attach`. Until then the head it would have written to disk is held in
+memory, under the very same `max_output_bytes` cap, and everything else
+(the running total, the kept tail, `truncated`) works identically. This
+exists for §14.4's promotion of a synchronous `exec` to a job: the
+output produced before promotion has to become the front of the job's
+log. Why here rather than a separate in-memory buffer that is later
+copied into a fresh `StreamCapture`: a fresh capture would start
+counting at zero, so bytes the buffer had already dropped at its cap
+would vanish from `total_bytes` and from the omission marker — the two
+numbers §15.6 promises stay true. One object doing one continuous piece
+of accounting across the switch has no such seam to get wrong.
 """
 
 from __future__ import annotations
@@ -26,7 +40,7 @@ from typing import IO
 
 
 class StreamCapture:
-    def __init__(self, path: Path, *, max_output_bytes: int, tail_keep_bytes: int) -> None:
+    def __init__(self, path: Path | None, *, max_output_bytes: int, tail_keep_bytes: int) -> None:
         self._path = path
         self._max_output_bytes = max_output_bytes
         self._tail_keep_bytes = tail_keep_bytes
@@ -34,6 +48,7 @@ class StreamCapture:
         self._written_bytes = 0
         self._tail_ring = bytearray()
         self._file: IO[bytes] | None = None
+        self._deferred_head = bytearray()
 
     @property
     def total_bytes(self) -> int:
@@ -52,9 +67,12 @@ class StreamCapture:
         remaining_capacity = self._max_output_bytes - self._written_bytes
         if remaining_capacity > 0:
             head, overflow = chunk[:remaining_capacity], chunk[remaining_capacity:]
-            file = self._ensure_open()
-            file.write(head)
-            file.flush()
+            if self._path is None:
+                self._deferred_head.extend(head)
+            else:
+                file = self._ensure_open()
+                file.write(head)
+                file.flush()
             self._written_bytes += len(head)
         else:
             overflow = chunk
@@ -64,11 +82,32 @@ class StreamCapture:
             if excess > 0:
                 del self._tail_ring[:excess]
 
+    def attach(self, path: Path) -> None:
+        """Gives a deferred capture its log file: writes the head held so
+        far, releases that memory, and sends every later write to disk.
+        Not thread-safe by itself — the caller serialises it against
+        `write` (`PromotableSink` holds one lock over both)."""
+        if self._path is not None:
+            raise RuntimeError(f"capture is already attached to {self._path}")
+        self._path = path
+        if self._deferred_head:
+            file = self._ensure_open()
+            file.write(bytes(self._deferred_head))
+            file.flush()
+        self._deferred_head = bytearray()
+
+    def buffered_head(self) -> bytes:
+        """What a still-deferred capture holds in memory — at most
+        `max_output_bytes`, the same leading bytes `consume` keeps."""
+        return bytes(self._deferred_head)
+
     def finish(self) -> None:
         """Call exactly once, when the job ends: appends the omission
         marker and the kept tail if the stream was ever capped, then
         closes the file. A stream that never wrote anything (a silent
         command) never opens a file at all."""
+        if self._path is None:
+            return
         if self.truncated:
             omitted = self._total_bytes - self._written_bytes - len(self._tail_ring)
             file = self._ensure_open()
@@ -80,6 +119,8 @@ class StreamCapture:
             self._file.close()
 
     def _ensure_open(self) -> IO[bytes]:
+        if self._path is None:
+            raise RuntimeError("a deferred capture has no file until attach()")
         if self._file is None:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             self._file = self._path.open("wb")

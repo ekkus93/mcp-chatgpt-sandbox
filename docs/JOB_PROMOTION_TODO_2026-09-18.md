@@ -1,6 +1,6 @@
 # Job Promotion on Overrun TODO
 
-**Status:** In progress — `JPO-001` closed  
+**Status:** In progress — `JPO-001`–`JPO-003` closed  
 **Date:** 2026-09-18  
 **Spec:** `docs/JOB_PROMOTION_SPEC_2026-09-18.md`  
 **Baseline:** `13e44bd`  
@@ -91,25 +91,37 @@ been a contract that lies for several commits.
 
 **Goal:** spec §5.1. New module `execution/promotable_sink.py`; nothing calls it yet.
 
-- [ ] Buffering mode: per-stream bounded capture with the same retention rule `consume` applies
+- [x] Buffering mode: per-stream bounded capture with the same retention rule `consume` applies
       (`max_output_bytes`), counting every byte produced.
-- [ ] `promote(stdout_capture, stderr_capture)`: under one lock, flush buffers into the captures in
+- [x] `promote(stdout_capture, stderr_capture)`: under one lock, flush buffers into the captures in
       order, carry the byte counts over, release the buffers, route later chunks to the captures.
-- [ ] If `StreamCapture` cannot account for bytes it never received (dropped by the buffer's cap
+- [x] If `StreamCapture` cannot account for bytes it never received (dropped by the buffer's cap
       before promotion), extend it minimally so `total_bytes` and the omitted-bytes marker stay
       truthful (I3). State why the extension is needed in a comment citing this task.
-- [ ] `result()` returns the same `ExecResult` tails/flags `consume` would for the same bytes.
-- [ ] Comment the non-obvious choice: why buffer-then-flush rather than log files from the start
+- [x] `result()` returns the same `ExecResult` tails/flags `consume` would for the same bytes.
+- [x] Comment the non-obvious choice: why buffer-then-flush rather than log files from the start
       (spec §5.1).
 
 **Validation — JPOV-002**
 
-- [ ] Ordering: bytes written before and after `promote` appear in the log in order, none twice.
-- [ ] Counts: totals include pre-promotion bytes, including bytes beyond the buffer cap.
-- [ ] Bound: buffer never exceeds the cap; it is released after `promote` (I7).
-- [ ] Concurrency: a writer thread hammering `on_stdout` while `promote` runs loses and duplicates
+- [x] Ordering: bytes written before and after `promote` appear in the log in order, none twice.
+- [x] Counts: totals include pre-promotion bytes, including bytes beyond the buffer cap.
+- [x] Bound: buffer never exceeds the cap; it is released after `promote` (I7).
+- [x] Concurrency: a writer thread hammering `on_stdout` while `promote` runs loses and duplicates
       nothing (I8). Prove it discriminates by removing the lock.
-- [ ] Parity: for identical input, `result()` equals what `consume` returns.
+- [x] Parity: for identical input, `result()` equals what `consume` returns.
+
+**Evidence — JPO-003.** Deviation from the spec's sketch, for a stated reason: rather than a separate
+in-memory buffer later copied into a fresh `StreamCapture` (which would restart `total_bytes` at
+zero and lose the bytes dropped at the cap), `StreamCapture` gained a *deferred* mode (`path=None`,
+`attach(path)`, `buffered_head()`), so one object does one continuous piece of accounting across the
+switch. `PromotableSink` is two deferred captures plus the lock. Tests:
+`tests/execution/test_jpo_promotable_sink.py` (9, all passing). Discrimination: with the
+`with self._lock` removed from `on_stdout`, the concurrency test fails (1 failed, 8 passed) — it is
+deterministic, starting the writer from inside the switch, not a stress loop; with the deferred-head
+flush disabled in `attach`, 4 fail. Both files restored byte-identical (`cmp`). Parity with
+`consume` is asserted against the real `ExecutionService.consume` over a fake Docker API, under and
+over the cap. Full suite: 1470 passed in 663s (non-`--cov`, overlapping CI run `35365179108`).
 
 ### JPO-004 — Runner adoption
 
