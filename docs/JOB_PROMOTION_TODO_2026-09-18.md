@@ -1,6 +1,6 @@
 # Job Promotion on Overrun TODO
 
-**Status:** In progress — `JPO-001`–`JPO-007` closed  
+**Status:** In progress — `JPO-001`–`JPO-008` closed  
 **Date:** 2026-09-18  
 **Spec:** `docs/JOB_PROMOTION_SPEC_2026-09-18.md`  
 **Baseline:** `13e44bd`  
@@ -284,13 +284,43 @@ every static, doc-drift and contract guard — and the Docker-backed remainder r
 
 ### JPO-008 — Self code review
 
-- [ ] Re-read every JPO diff against invariants I1–I10; list each invariant with the test that
+- [x] Re-read every JPO diff against invariants I1–I10; list each invariant with the test that
       covers it.
-- [ ] Check: thread/loop boundaries (sqlite connection is thread-affine — job-store calls stay on
+- [x] Check: thread/loop boundaries (sqlite connection is thread-affine — job-store calls stay on
       the event loop thread), no blocking call on the loop, no leaked drain thread on any error path.
-- [ ] Check: no new pytest skip, retry or widened timeout; no `Path.cwd()` / `.parents[n]` in
+- [x] Check: no new pytest skip, retry or widened timeout; no `Path.cwd()` / `.parents[n]` in
       production code; module budgets.
-- [ ] Record findings, fixed or not, honestly.
+- [x] Record findings, fixed or not, honestly.
+
+**Evidence — JPO-008.** Invariant → covering test (all proven to discriminate unless noted):
+
+| Inv. | Test |
+|---|---|
+| I1 default path untouched | `test_jpov003_…leaves_no_job`; `test_jpov004_…` asserts opted-in == default response |
+| I2 one process | `test_jpov005_…all_of_its_output` (`$$` equal before/after) |
+| I3 no lost output, true totals | `test_jpov002_output_before_and_after…`, `…dropped_at_the_cap…`, `test_jpov005_…` |
+| I4 exactly one outcome | `test_jpov004_…is_not_a_job` (not mutation-tested: the race itself cannot be forced) |
+| I5 fail closed | both `test_jpov007_…` |
+| I6 ordinary job | `test_jpo004_…` ×4, `test_jpov006_…idle_stop` |
+| I7 bounded memory | `test_jpov002_the_memory_held_is_bounded…` (not mutation-tested) |
+| I8 one lock | `test_jpov002_a_chunk_arriving_during_promotion_waits_for_it` |
+| I9 schema truthfulness | `test_jpov008_…` ×4, `test_jpov001_each_shape_matches_exactly_one_branch…` |
+| I10 secrets | `test_jpov009_…` |
+
+Finding, fixed in this task: `PromotionDeps`' docstring said a server that cannot promote *refuses*
+the flag, but `run_exec(promote_on_timeout=True, promotion=None)` fell through to the default path
+and would kill at the timeout a command its caller had asked to keep. Now `ValueError`; test
+`test_jpo008_…`, which fails `DID NOT RAISE` against the pre-fix `src/` (`git stash -- src`).
+Unreachable through the server, which always supplies the collaborators.
+
+Checked, no change needed: every `job_store` call on the promotion path runs on the event-loop
+thread (sqlite is thread-affine; only `start_and_open_stream` and `drain_stream` go to threads);
+nothing blocking runs on the loop; on the fail-closed path the stream is force-closed and the drain
+awaited (bounded) so no thread is left reading; no skip/retry/widened timeout in any `test_jpo_*`;
+no `Path.cwd()` / `.parents[n]` in the new modules; `tools/execution.py` is 726 lines.
+
+Known and unchanged (spec §7 non-goal): if the MCP request is cancelled during the synchronous wait
+the process keeps running with no owner — true of the default path before this series as well.
 
 ### JPO-009 — Full validation
 

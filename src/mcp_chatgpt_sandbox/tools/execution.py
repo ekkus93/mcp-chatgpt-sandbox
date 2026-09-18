@@ -252,7 +252,14 @@ async def run_exec(
     timeout = _resolve_timeout(timeout_seconds, ceiling=execution_config.sync_timeout_seconds)
 
     container_id = record.container_id
-    if promote_on_timeout and promotion is not None:
+    if promote_on_timeout:
+        if promotion is None:
+            # JPO-008: a programming error, not a client one — `register()`
+            # always supplies the job-side collaborators. Raised rather than
+            # falling through to the path below, which would kill at the
+            # timeout a command whose caller had asked for it to be kept.
+            raise ValueError("promote_on_timeout=True requires PromotionDeps")
+
         # JPO-006 (§14.4, D1-A): only a caller that asked takes the
         # promotable path; everyone else runs the code below unchanged
         # (I1) — see `tools/execution_promotion.py` for why it is a second

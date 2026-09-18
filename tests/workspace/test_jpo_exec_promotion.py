@@ -29,8 +29,11 @@ from mcp_chatgpt_sandbox.config.models import (
 )
 from mcp_chatgpt_sandbox.db.connection import open_db
 from mcp_chatgpt_sandbox.execution.log_capture import StreamCapture
+from mcp_chatgpt_sandbox.execution.service import ExecutionService
 from mcp_chatgpt_sandbox.jobs.store import NON_TERMINAL_STATES, JobStore
+from mcp_chatgpt_sandbox.repositories import RepositoryRegistry
 from mcp_chatgpt_sandbox.server import create_server
+from mcp_chatgpt_sandbox.tools import execution as execution_tools
 from mcp_chatgpt_sandbox.workspace.manager import DockerWorkspaceManager
 
 
@@ -355,3 +358,39 @@ async def test_jpov009_promotion_is_audited_with_the_job_id_and_without_secrets(
     assert [e["operation"] for e in events].count("exec") == 1  # started: audited once, not twice
     assert _SECRET not in audit_text
     assert _ENV_SECRET not in audit_text
+
+
+async def test_jpo008_run_exec_refuses_the_flag_when_it_has_nothing_to_promote_with(
+    minimal_config: ServerConfig,
+    default_image_tag: str,
+    docker_client: docker.DockerClient,
+    tmp_path: Path,
+) -> None:
+    """JPO-008 review finding: `run_exec` called directly with the flag but
+    no `PromotionDeps` used to fall through to the default path and kill, at
+    the timeout, a command its caller had asked to keep. `true` (not an
+    overrunning command) on purpose: the refusal must come before anything
+    is started, so nothing is left running whichever way this goes."""
+    _server_, config, workspace_id = await _server(minimal_config, default_image_tag, tmp_path)
+    db = open_db(config.state_db_path)
+    try:
+        with pytest.raises(ValueError, match="PromotionDeps"):
+            await execution_tools.run_exec(
+                workspace_id,
+                None,
+                "true",
+                "/workspace",
+                None,
+                None,
+                manager=DockerWorkspaceManager(docker_client, db),
+                service=ExecutionService(docker_client),
+                registry=RepositoryRegistry(config),
+                db=db,
+                container_config=config.container,
+                execution_config=config.execution,
+                audit_config=config.audit,
+                ssh_config=config.ssh,
+                promote_on_timeout=True,
+            )
+    finally:
+        db.close()
