@@ -43,6 +43,17 @@ def _pin_installed_version(monkeypatch: pytest.MonkeyPatch) -> None:
     "failed" without reaching an assertion.
     """
 
+    # PSCR3-004: `raising=False` *creates* a missing attribute, so on its own it
+    # would let a rename of `_installed_version` silently unpin every test here:
+    # they would fall back to the real installed version and keep passing only
+    # while that happens to equal the pin. The assertion is conditional on the
+    # PSCR2-002 check existing, because against pre-PSCR2-002 code neither name
+    # exists and the run must still be possible.
+    if hasattr(docker_setup, "_check_context_matches_installed_version"):
+        assert hasattr(docker_setup, "_installed_version"), (
+            "docker_setup._installed_version is gone but the version check remains: "
+            "the pin below would patch a name nothing reads. Update this fixture."
+        )
     monkeypatch.setattr(
         docker_setup, "_installed_version", lambda: _PINNED_INSTALLED_VERSION, raising=False
     )

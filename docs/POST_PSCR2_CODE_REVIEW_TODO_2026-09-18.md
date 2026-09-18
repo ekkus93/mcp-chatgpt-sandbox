@@ -1,6 +1,6 @@
 # Post-PSCR2 Code Review TODO
 
-**Status:** In progress — `PSCR3-001`–`PSCR3-003` closed; `PSCR3-004` next  
+**Status:** In progress — `PSCR3-001`–`PSCR3-004` closed; `PSCR3-005` next  
 **Date:** 2026-09-18  
 **Spec:** `docs/POST_PSCR2_CODE_REVIEW_SPEC_2026-09-18.md`  
 **Reviewed baseline:** `a5a35a1f1f049582f9596fc1bd9ffd7bf7ad65a1`  
@@ -160,17 +160,43 @@ changes what the software does, with one recorded exception — PSCR3-009, if it
 
 **Goal:** renaming `_installed_version` fails loudly instead of silently unpinning the module.
 
-- [ ] Keep `raising=False`, and keep its docstring rationale.
-- [ ] Assert in the fixture that `docker_setup._installed_version` exists whenever
+- [x] Keep `raising=False`, and keep its docstring rationale.
+- [x] Assert in the fixture that `docker_setup._installed_version` exists whenever
       `docker_setup._check_context_matches_installed_version` exists.
-- [ ] Explain the conditional in the fixture's docstring: it is what keeps pre-PSCR2-002
+- [x] Explain the conditional in the fixture's docstring: it is what keeps pre-PSCR2-002
       discrimination runs possible.
 
 **Validation — PSCR3V-004**
 
-- [ ] Simulated rename (the check present, `_installed_version` absent) fails fixture setup.
-- [ ] The module still runs — without fixture errors — against pre-PSCR2-002 `docker_setup.py`.
-- [ ] The module is green against current code.
+- [x] Simulated rename (the check present, `_installed_version` absent) fails fixture setup.
+- [x] The module still runs — without fixture errors — against pre-PSCR2-002 `docker_setup.py`.
+- [x] The module is green against current code.
+
+**Closure evidence (2026-09-18)**
+
+- The autouse fixture now asserts `docker_setup._installed_version` exists **whenever**
+  `docker_setup._check_context_matches_installed_version` exists, before applying the pin.
+  `raising=False` and its rationale are kept. A comment explains both halves: `raising=False`
+  *creates* a missing attribute, so alone it would silently unpin the module on a rename; and the
+  assertion is conditional because against pre-PSCR2-002 code neither name exists and that run must
+  stay possible.
+- Three cases verified:
+  1. Current code: `12 passed`.
+  2. Simulated rename (the check present, `_installed_version` → `_dist_version`): **`12 errors`**,
+     every test failing in fixture setup with "docker_setup._installed_version is gone but the
+     version check remains".
+  3. Pre-PSCR2-002 source (`docker_setup.py` from `7f13beb`): `3 failed, 9 passed`, **zero errors** —
+     the three failures are the expected discrimination failures, and no test is blocked by the
+     fixture.
+- **The first simulation of case 2 was invalid, and is recorded.** It used
+  `sed s/_installed_version/_dist_version/g`, which also renamed
+  `_check_context_matches_installed_version` — that name *contains* the substring — so the
+  assertion's precondition went false and it was skipped (`1 failed, 11 passed`). That was a flaw
+  in the simulation, not the fixture; redone with a word-boundary pattern it behaves as designed.
+  The substring relationship between the two names is worth knowing: a careless rename of one can
+  take the other with it.
+- `docker_setup.py` was restored byte-identical to `HEAD` after each case. Test-only change; Ruff
+  lint PASS.
 
 ### PSCR3-005 — Document the production-labelled test container
 
