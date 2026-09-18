@@ -1,6 +1,6 @@
 # Post-PSCR2 Code Review TODO
 
-**Status:** In progress — `PSCR3-001`–`PSCR3-006`, `PSCR3-008` closed; `PSCR3-009` next  
+**Status:** In progress — `PSCR3-001`–`PSCR3-006`, `PSCR3-008`–`PSCR3-009` closed; `PSCR3-007` (closure) next  
 **Date:** 2026-09-18  
 **Spec:** `docs/POST_PSCR2_CODE_REVIEW_SPEC_2026-09-18.md`  
 **Reviewed baseline:** `a5a35a1f1f049582f9596fc1bd9ffd7bf7ad65a1`  
@@ -306,18 +306,41 @@ Added after a second review pass measured its coverage at zero.
 
 Added after a second review pass.
 
-- [ ] Choose Option A (normalise per PEP 503) or Option B (keep exact, on the record); record it.
-- [ ] If Option A: normalise both sides — lower-case; runs of `-`, `_`, `.` collapsed to `-`.
-- [ ] If Option A: confirm a different project's name is still rejected after normalisation.
-- [ ] If Option B: state in `_source_checkout_root()`'s docstring that matching is deliberately
+- [x] Choose Option A (normalise per PEP 503) or Option B (keep exact, on the record); record it.
+- [x] If Option A: normalise both sides — lower-case; runs of `-`, `_`, `.` collapsed to `-`.
+- [x] If Option A: confirm a different project's name is still rejected after normalisation.
+- [x] If Option B: state in `_source_checkout_root()`'s docstring that matching is deliberately
       exact, the symptom of a restyled name, and where to change it.
 
 **Validation — PSCR3V-009**
 
-- [ ] Test (if A): `mcp_chatgpt_sandbox` and `MCP-ChatGPT-Sandbox` spellings are accepted.
-- [ ] Test (if A): PSCR2-001's wrong-project decoy tests still pass unchanged.
-- [ ] Discrimination (if A): the equivalent-spelling test fails against the exact comparison.
-- [ ] Docstring review (if B) confirms the three statements.
+- [x] Test (if A): `mcp_chatgpt_sandbox` and `MCP-ChatGPT-Sandbox` spellings are accepted.
+- [x] Test (if A): PSCR2-001's wrong-project decoy tests still pass unchanged.
+- [x] Discrimination (if A): the equivalent-spelling test fails against the exact comparison.
+- [x] Docstring review (if B) confirms the three statements.
+
+**Decision and evidence (2026-09-18)**
+
+- **Option A selected — normalise per PEP 503.** The rule is standard, the code is a few lines, and
+  it removes a cliff whose symptom ("ships only in a source checkout", reported from inside one)
+  points away from its cause. This is the series' one recorded production change.
+- `_normalized_project_name()` lower-cases and collapses runs of `-`, `_`, `.` to `-`, returning
+  `None` for a non-string. `_source_checkout_root()` compares that against `_PROJECT_NAME`, which is
+  already in normalised form. Every checkout accepted before is still accepted: normalising the
+  exact string yields itself.
+- Seven tests added (three parametrised functions). Equivalent spellings `mcp_chatgpt_sandbox`,
+  `MCP-ChatGPT-Sandbox`, and `mcp.chatgpt--sandbox` are accepted. Near-misses
+  `mcp-chatgpt-sandbox-extra`, `chatgpt-sandbox`, and `mcpchatgptsandbox` stay rejected, so
+  normalising separators did not become fuzzy matching. A malformed `name = 42` disqualifies the
+  candidate rather than crashing `.lower()`.
+- **Discrimination verified.** Against the exact comparison restored from `HEAD`, all three
+  equivalent-spelling cases fail; the near-miss and non-string cases pass against both versions,
+  which is correct — they guard against over-reach, not against the old behavior. PSCR2-001's
+  wrong-project decoy tests pass unchanged.
+- Full Docker-backed suite: `1455 passed in 644.91s`, zero failures, zero skips; Ruff format, Ruff
+  lint, and strict mypy PASS. A non-coverage run, started while **six** CI runs were active on the
+  shared runner, with no collision — further corroboration of PSCR-010, recorded per the global
+  rules.
 
 ---
 

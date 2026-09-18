@@ -343,3 +343,57 @@ def test_pscr3v_008_a_missing_distribution_reports_none(monkeypatch: pytest.Monk
 
     assert _REAL_INSTALLED_VERSION is not None
     assert _REAL_INSTALLED_VERSION() is None
+
+
+@pytest.mark.parametrize(
+    "spelling", ["mcp_chatgpt_sandbox", "MCP-ChatGPT-Sandbox", "mcp.chatgpt--sandbox"]
+)
+def test_pscr3v_009_equivalent_spellings_of_this_project_are_accepted(
+    spelling: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PSCR3-009: PEP 503 treats these as the same project name, so the search must too."""
+
+    root = tmp_path / "checkout"
+    _write_pyproject(root, name=spelling)
+    context = _write_context(root)
+    _relocate_module(
+        monkeypatch, root / "src" / "mcp_chatgpt_sandbox" / "setup" / "docker_setup.py"
+    )
+
+    assert bundled_default_image_build_context() == context.resolve()
+
+
+@pytest.mark.parametrize(
+    "other", ["mcp-chatgpt-sandbox-extra", "chatgpt-sandbox", "mcpchatgptsandbox"]
+)
+def test_pscr3v_009_normalisation_does_not_admit_a_different_project(
+    other: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Near-misses stay rejected: normalising separators must not become fuzzy matching."""
+
+    root = tmp_path / "checkout"
+    _write_pyproject(root, name=other)
+    _write_context(root)
+    _relocate_module(
+        monkeypatch, root / "src" / "mcp_chatgpt_sandbox" / "setup" / "docker_setup.py"
+    )
+
+    with pytest.raises(SetupDockerError, match="source checkout"):
+        bundled_default_image_build_context()
+
+
+def test_pscr3v_009_a_non_string_name_is_rejected_not_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A malformed `name = 42` disqualifies the candidate instead of crashing `.lower()`."""
+
+    root = tmp_path / "checkout"
+    root.mkdir()
+    (root / "pyproject.toml").write_text("[project]\nname = 42\n", encoding="utf-8")
+    _write_context(root)
+    _relocate_module(
+        monkeypatch, root / "src" / "mcp_chatgpt_sandbox" / "setup" / "docker_setup.py"
+    )
+
+    with pytest.raises(SetupDockerError, match="source checkout"):
+        bundled_default_image_build_context()

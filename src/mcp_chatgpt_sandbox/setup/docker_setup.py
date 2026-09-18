@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -88,6 +89,26 @@ def validate_default_image_build_context(build_context: Path) -> Path:
 #: `docker/default/` to be trusted as this project's build context (PSCR2-001).
 _PROJECT_NAME = "mcp-chatgpt-sandbox"
 
+_NAME_SEPARATOR_RUN = re.compile(r"[-_.]+")
+
+
+def _normalized_project_name(name: object) -> str | None:
+    """PEP 503-normalise a `[project] name`, or None if it is not a string.
+
+    PSCR3-009 (`docs/POST_PSCR2_CODE_REVIEW_SPEC_2026-09-18.md`). Packaging treats
+    `mcp-chatgpt-sandbox`, `mcp_chatgpt_sandbox`, and `MCP-ChatGPT-Sandbox` as one
+    project name, and `importlib.metadata` resolves any of them. The checkout
+    search compared the raw string, so restyling the name in `pyproject.toml`
+    would have made it stop finding *its own* checkout and report that the build
+    context "ships only in a source checkout" from inside one — a symptom
+    pointing away from its cause. Normalising accepts every spelling of this
+    project and still no other project.
+    """
+
+    if not isinstance(name, str):
+        return None
+    return _NAME_SEPARATOR_RUN.sub("-", name).lower()
+
 
 def _declared_project(pyproject: Path) -> dict[str, Any] | None:
     """Return a `pyproject.toml`'s `[project]` table, or None if unusable.
@@ -131,7 +152,8 @@ def _source_checkout_root() -> Path | None:
     `pyproject.toml` and some `docker/default/` satisfied the original check, so
     an installed distribution sitting beneath an unrelated project with that
     layout would have built an image from the wrong context. A candidate is now
-    accepted only when its `[project] name` is this distribution's, and a
+    accepted only when its `[project] name` is this distribution's (compared
+    PEP 503-normalised since PSCR3-009), and a
     right-layout, wrong-name candidate is skipped so the search keeps climbing.
 
     A non-editable install into an in-repo virtualenv (`<repo>/.venv/...`) still
@@ -146,7 +168,7 @@ def _source_checkout_root() -> Path | None:
         if not (pyproject.is_file() and (candidate / "docker" / "default").is_dir()):
             continue
         project = _declared_project(pyproject)
-        if project is not None and project.get("name") == _PROJECT_NAME:
+        if project is not None and _normalized_project_name(project.get("name")) == _PROJECT_NAME:
             return candidate
     return None
 
