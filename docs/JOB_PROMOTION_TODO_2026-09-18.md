@@ -290,6 +290,8 @@ every static, doc-drift and contract guard — and the Docker-backed remainder r
       covers it.
 - [x] Check: thread/loop boundaries (sqlite connection is thread-affine — job-store calls stay on
       the event loop thread), no blocking call on the loop, no leaked drain thread on any error path.
+      *— Correction (PJPO-002): the "no blocking call on the loop" part of this check was concluded
+      wrongly; see the corrected evidence below.*
 - [x] Check: no new pytest skip, retry or widened timeout; no `Path.cwd()` / `.parents[n]` in
       production code; module budgets.
 - [x] Record findings, fixed or not, honestly.
@@ -317,7 +319,11 @@ Unreachable through the server, which always supplies the collaborators.
 
 Checked, no change needed: every `job_store` call on the promotion path runs on the event-loop
 thread (sqlite is thread-affine; only `start_and_open_stream` and `drain_stream` go to threads);
-nothing blocking runs on the loop; on the fail-closed path the stream is force-closed and the drain
+~~nothing blocking runs on the loop~~ *(incorrect — PJPO-002: `sink.promote` does `mkdir`/`open`/
+`write`/`flush` of up to 2 × `max_output_bytes` on the event loop while holding the sink lock, and
+`finish()` does file I/O there on the fail-closed path. Deliberate — it keeps the I4 no-`await`
+window closed — and bounded, but it was not what this line said; now explained at the call site)*;
+on the fail-closed path the stream is force-closed and the drain
 awaited (bounded) so no thread is left reading; no skip/retry/widened timeout in any `test_jpo_*`;
 no `Path.cwd()` / `.parents[n]` in the new modules; `tools/execution.py` is 727 lines (`wc -l`).
 

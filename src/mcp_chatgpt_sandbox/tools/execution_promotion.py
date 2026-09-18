@@ -148,6 +148,18 @@ async def run_promotable_exec(
             stdout_log_path=str(stdout_log_path),
             stderr_log_path=str(stderr_log_path),
         )
+        # PJPO-002 (`docs/POST_JPO_CODE_REVIEW_SPEC_2026-09-18.md` §2.2,
+        # PD2-A): deliberately blocking. `promote` creates the job
+        # directory and writes everything buffered so far — up to
+        # `max_output_bytes` per stream — on the event loop thread, while
+        # holding the lock the drain thread needs. Why not the obvious
+        # `await asyncio.to_thread(sink.promote, ...)`: that puts an
+        # `await` between the `drain.done()` check above and
+        # `adopt_running` below, which is the window the I4 comment above
+        # relies on being closed. The stall is bounded (at most
+        # 2 × `max_output_bytes`, once per promoted command); the drain
+        # thread only waits on the lock, and at worst the command blocks
+        # for that long on a full output pipe.
         sink.promote(stdout_log_path=stdout_log_path, stderr_log_path=stderr_log_path)
         deps.runner.adopt_running(
             job_id,

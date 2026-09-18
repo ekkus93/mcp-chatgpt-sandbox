@@ -98,22 +98,27 @@ chunks: 1027 + 145 + 198 + 118 = 1488 = `--collect-only`, all passed (overlappin
 
 **Finding:** F2 (spec §2.2). **Decision:** PD2.
 
-- [ ] Record PD2. Recommended: A — keep the switch synchronous.
-- [ ] If PD2-A: a narrative comment at the `sink.promote(...)` call site in
+- [x] Record PD2. — **A, keep the switch synchronous**, chosen by the user.
+- [x] If PD2-A: a narrative comment at the `sink.promote(...)` call site in
       `run_promotable_exec`: it does bounded file I/O (≤ 2 × `max_output_bytes`) on the event loop
       while holding the sink lock, deliberately, because moving it to a thread puts an `await`
       between the `drain.done()` check and `adopt_running`; cite PJPO-002 and JPO's I4.
 - [ ] If PD2-B: implement per spec §3 PD2-B, restate the I4 argument in the comment, and add a test
       for the case it newly admits (a command that finishes during the switch becomes a job that
-      completes at once with its real exit code).
-- [ ] In `docs/JOB_PROMOTION_TODO_2026-09-18.md`, JPO-008: keep the ticked check and its evidence
+      completes at once with its real exit code). — *Not applicable: PD2-A chosen.*
+- [x] In `docs/JOB_PROMOTION_TODO_2026-09-18.md`, JPO-008: keep the ticked check and its evidence
       line, mark the words "no blocking call on the loop" / "nothing blocking runs on the loop" as
       incorrect, and add the correction with a PJPO-002 reference.
 
 **Validation**
 
-- [ ] Comment/doc-only under PD2-A: ruff, mypy, the non-Docker suite, and a fresh export unchanged.
+- [x] Comment/doc-only under PD2-A: ruff, mypy, the non-Docker suite, and a fresh export unchanged.
       Under PD2-B: the full suite.
+
+**Evidence — PJPO-002.** Comment above `sink.promote(...)` in `run_promotable_exec`. JPO-008's check
+and evidence line in `docs/JOB_PROMOTION_TODO_2026-09-18.md` kept, the wrong claim struck through
+and the correction added with a PJPO-002 reference. Comment/doc only: ruff, mypy clean; non-Docker
+suite 1027 passed; a fresh `export-schemas` leaves `schemas/tools.json` unchanged.
 
 ### PJPO-003 — Correct the nullable-field count
 
