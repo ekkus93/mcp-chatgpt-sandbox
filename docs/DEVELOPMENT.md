@@ -201,8 +201,9 @@ other's containers. Two mechanisms prevent that:
   container only when PMOR-001's `classify_workspace_container()` proves
   ownership, and its first check, `_namespace_proof()`
   (`operations/resources.py`), treats a container from any other namespace as
-  foreign. (`_CoreMixin.reconcile()` in `manager_core.py` is shadowed by that
-  override and never runs; do not read it as the live path.)
+  foreign. `_CoreMixin` in `manager_core.py` only *declares* `reconcile()` so
+  its callers type-check; it held a shadowed, never-executed implementation
+  until PSCR2-011 removed it.
 - **PSCR-010** (`docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`) scoped every
   absence and exact-count assertion in `tests/workspace` to the running context.
   Before it, those assertions filtered only on logical ids and saw each other's

@@ -1,5 +1,7 @@
 """`_CoreMixin` — the persistence (§3's workspace table), container-lookup,
-and reconciliation (§69) third of `DockerWorkspaceManager`.
+and startup-reconciliation-sweep (§44.1) third of `DockerWorkspaceManager`.
+Per-workspace reconciliation (§69) is `DockerWorkspaceManager.reconcile()` in
+`manager.py`; this mixin only declares it (PSCR2-011).
 
 Extracted from `workspace/manager.py` — see `records.py`'s module docstring
 for the full split rationale. This piece owns `__init__` and every method
@@ -15,7 +17,6 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from dataclasses import replace
 
 import docker
 from docker.errors import DockerException
@@ -27,15 +28,11 @@ from mcp_chatgpt_sandbox.errors import (
     WorkspaceNotFoundError,
 )
 from mcp_chatgpt_sandbox.workspace.naming import (
-    LABEL_WORKSPACE_ID,
     container_matches_test_namespace,
 )
 from mcp_chatgpt_sandbox.workspace.records import (
     WorkspaceRecord,
     WorkspaceState,
-    _now,
-    _oom_killed_from_docker_container,
-    _state_from_docker_container,
 )
 from mcp_chatgpt_sandbox.workspace.ssh_agent import SSHAgentManager
 
@@ -178,81 +175,26 @@ class _CoreMixin:
     # --- reconciliation (§69) -----------------------------------------------
 
     def reconcile(self, workspace_id: str) -> WorkspaceRecord:
-        """Reconcile the DB record for `workspace_id` against actual Docker
-        state (§69):
+        """Reconcile one workspace against Docker state (§69).
 
-        - the recorded container is missing -> mark the workspace `absent`;
-        - an unrecorded but correctly labeled container exists -> adopt it;
-        - more than one labeled container claims this workspace -> fail
-          closed, this needs an operator, not a guess.
+        Implemented by `DockerWorkspaceManager.reconcile()` in
+        `workspace/manager.py`, which adopts a container only on PMOR-001's
+        positive ownership proof. It is declared here only so that this
+        mixin's `reconcile_all()` and `_LifecycleMixin`'s callers type-check;
+        at runtime `self.reconcile` always resolves to that override.
+
+        PSCR2-011 (`docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md`) replaced a
+        full, 77-line implementation that used to live here. The override
+        shadowed it and nothing called `super().reconcile()`, so it never ran —
+        yet it carried a complete §69 docstring and its own namespace filter,
+        and it read as the live path. It misled the PSCR2 review into citing it
+        as the production protection, and a discrimination run against it
+        "passed" because the code under test was never executed.
         """
-        record = self._get_or_raise(workspace_id)
 
-        # HR-022: a transient Docker API error here used to escape
-        # uncaught — `ensure_workspace` (and so `workspace_open`) calls
-        # this whenever a workspace row already exists.
-        try:
-            labeled = [
-                container
-                # PSCR2-010: sparse=False is explicit because the namespace
-                # filter below reads `.labels`, which docker-py refuses on sparse
-                # objects. It is the library default; this pins it.
-                for container in self._docker.containers.list(
-                    all=True,
-                    sparse=False,
-                    filters={"label": f"{LABEL_WORKSPACE_ID}={workspace_id}"},
-                )
-                if container_matches_test_namespace(container.labels)
-            ]
-        except DockerException as exc:
-            raise ContainerRuntimeFailedError(
-                f"failed to list containers for workspace {workspace_id!r}: {exc}",
-                details={"workspace_id": workspace_id},
-            ) from exc
-        if len(labeled) > 1:
-            raise ContainerRuntimeFailedError(
-                f"multiple containers are labeled for workspace {workspace_id!r}; "
-                "this requires operator reconciliation (§69)",
-                details={"workspace_id": workspace_id, "container_ids": [c.id for c in labeled]},
-                recoverable=False,
-            )
-
-        if record.container_id is not None:
-            container = self._find_container(record)
-            if container is None:
-                return self._save(
-                    replace(
-                        record,
-                        container_id=None,
-                        state=WorkspaceState.ABSENT,
-                        # the container itself is gone; nothing left to
-                        # report an OOM state about.
-                        oom_killed=False,
-                        last_used_at=_now(),
-                    )
-                )
-            return self._save(
-                replace(
-                    record,
-                    state=_state_from_docker_container(container),
-                    oom_killed=_oom_killed_from_docker_container(container),
-                    last_used_at=_now(),
-                )
-            )
-
-        if labeled:
-            (container,) = labeled
-            return self._save(
-                replace(
-                    record,
-                    container_id=container.id,
-                    state=_state_from_docker_container(container),
-                    oom_killed=_oom_killed_from_docker_container(container),
-                    last_used_at=_now(),
-                )
-            )
-
-        return record
+        raise NotImplementedError(
+            "reconcile() is implemented by DockerWorkspaceManager in workspace/manager.py"
+        )
 
     def reconcile_all(self) -> list[WorkspaceRecord]:
         """§44.1's daemon-restart sequence, steps 1-3: eagerly reconcile

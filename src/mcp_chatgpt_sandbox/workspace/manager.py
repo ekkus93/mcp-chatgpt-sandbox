@@ -23,8 +23,9 @@ before it):
 - `records.py` — the `WorkspaceState`/`WorkspaceRecord` data model and the
   pure functions built on it (`_now`, `touch_last_used`,
   `_state_from_docker_container`, `_oom_killed_from_docker_container`);
-- `manager_core.py` — `_CoreMixin`: persistence, container lookup, and
-  reconciliation (§69);
+- `manager_core.py` — `_CoreMixin`: persistence, container lookup, and the
+  startup reconciliation sweep (§44.1); it only *declares* `reconcile()`,
+  which is implemented below (PSCR2-011);
 - `manager_lifecycle.py` — `_LifecycleMixin(_CoreMixin)`: creation (§8.3)
   and lifecycle transitions (§8.4).
 

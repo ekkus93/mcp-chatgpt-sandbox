@@ -4,7 +4,7 @@
 **Date:** 2026-09-17  
 **Reviewed baseline:** `134795429eae988f927e43ec97cc04c5f98b867a`  
 **Source review:** adversarial re-read of the merged `PSCR-001`–`PSCR-012` implementation against `docs/POST_SWPH_CODE_REVIEW_TODO_2026-09-17.md`  
-**Task series:** `PSCR2-001` through `PSCR2-010`  
+**Task series:** `PSCR2-001` through `PSCR2-011`  
 **Validation series:** `PSCR2V-*`
 
 ## 1. Purpose
@@ -289,6 +289,22 @@ never applies.
 
 Pin the argument at all three sites, and add a repository-wide guard that fails on any production
 `containers.list()` call that does not pass `sparse=False`, so the dependency cannot be lost again.
+
+### PSCR2-011 — Remove the shadowed `_CoreMixin.reconcile()`
+
+Found by PSCR2-009 and added on request. `_CoreMixin.reconcile()` in `workspace/manager_core.py`
+held a complete 77-line §69 implementation, with a full docstring and its own namespace filter.
+`DockerWorkspaceManager` overrides `reconcile()` in `workspace/manager.py`, and nothing calls
+`super().reconcile()`, so it never executed. It was not harmless: it misled this series into citing
+it as the production protection, and a discrimination run against it passed because the code under
+test was never run.
+
+It cannot simply be deleted. `_CoreMixin.reconcile_all()` and `_LifecycleMixin` both call
+`self.reconcile(...)`, which resolves to the override at runtime but must still type-check on the
+mixin under strict mypy. The implementation is therefore replaced by an explicit declaration that
+raises `NotImplementedError` naming where the real one lives — which also makes the relationship
+impossible to misread. Imports only the dead body used are removed, after confirming none is
+re-exported. A test pins the arrangement so the trap cannot silently return.
 
 ### PSCR2-008 — Final regression, contract, and closure
 

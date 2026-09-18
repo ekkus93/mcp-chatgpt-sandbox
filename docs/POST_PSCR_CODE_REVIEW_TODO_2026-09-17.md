@@ -1,10 +1,10 @@
 # Post-PSCR Code Review TODO
 
-**Status:** In progress — `PSCR2-001`–`PSCR2-008` closed; `PSCR2-009` (added after closure) open  
+**Status:** Closing — `PSCR2-001`–`PSCR2-011` implemented; awaiting exact-head CI  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `134795429eae988f927e43ec97cc04c5f98b867a`  
-**Task series:** `PSCR2-001` through `PSCR2-010`  
+**Task series:** `PSCR2-001` through `PSCR2-011`  
 **Validation series:** `PSCR2V-*`
 
 This TODO implements `docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md`. It closes one correctness gap,
@@ -457,6 +457,56 @@ Found while writing PSCR2-009; added on request.
 - Full Docker-backed suite (the same run as PSCR2-009, recorded in both entries): `1442 passed in
   655.74s`, zero failures. Behavior cannot change, since `sparse=False` is the library default; the
   run confirms nothing else did.
+
+### PSCR2-011 — Remove the shadowed `_CoreMixin.reconcile()`
+
+**Goal:** no code that reads as the live reconcile path while never executing.
+
+Found by PSCR2-009; added on request.
+
+- [x] Confirm the method is unreachable: overridden, no `super()` call, no test caller.
+- [x] Replace the implementation with a declaration that raises and names the real one.
+- [x] Remove imports only the dead body used, after checking none is re-exported.
+- [x] Correct the module docstrings and `docs/DEVELOPMENT.md` that described it.
+- [x] Pin the arrangement with a test.
+
+**Validation — PSCR2V-011**
+
+- [x] Strict mypy passes, including the mixins' `self.reconcile(...)` callers.
+- [x] `DockerWorkspaceManager.reconcile` still resolves to `workspace/manager.py` at runtime.
+- [x] Discrimination: the pinning test fails against the pre-PSCR2-011 module.
+- [x] Full Docker-backed suite passes. — `1444 passed in 672.35s`, zero failures.
+
+**Closure evidence (2026-09-18)**
+
+- **Unreachable, confirmed three ways.** The MRO resolves `DockerWorkspaceManager.reconcile` to
+  `workspace/manager.py`; `_LifecycleMixin` is the only subclass of `_CoreMixin` and nothing calls
+  `super().reconcile()`; no test references `_CoreMixin` at all.
+- **Not deleted outright, deliberately.** `_CoreMixin.reconcile_all()` (`manager_core.py`) and
+  `manager_lifecycle.py:113` call `self.reconcile(...)`. Those resolve to the override at runtime,
+  but strict mypy needs the mixin to declare the method. The 77-line body is replaced by a 22-line
+  declaration whose docstring names `DockerWorkspaceManager.reconcile()` as the implementation,
+  explains why it is only declared, and records why the old body was removed; it raises
+  `NotImplementedError` naming `workspace/manager.py`.
+- Five imports were left unused by the removal (`replace`, `LABEL_WORKSPACE_ID`, `_now`,
+  `_oom_killed_from_docker_container`, `_state_from_docker_container`). Before removing them, every
+  import from `manager_core` in `src/` and `tests/` was checked, including parenthesized multi-line
+  forms that a first single-line search would have missed: the only name imported from the module
+  anywhere is `_CoreMixin`. `manager_core.py` went from 290 to 232 lines.
+- `manager_core.py`'s module docstring no longer claims per-workspace reconciliation (it now says the
+  mixin holds the §44.1 startup sweep and only declares `reconcile()`); `manager.py`'s module map says
+  the same; and `docs/DEVELOPMENT.md`'s parenthetical warning about the shadowed method is replaced,
+  since the method no longer exists.
+- PSCR2-010's guard now sees two production `containers.list()` sites rather than three, both pinned.
+- `tests/workspace/test_pscr2_reconcile_declaration.py` asserts the concrete class defines its own
+  `reconcile()` distinct from the mixin's, and that the mixin's raises `NotImplementedError` naming
+  `workspace/manager.py`. **Discrimination verified:** against the pre-PSCR2-011 module the
+  declaration test fails; the override test passes before and after, which is correct — it guards
+  against the override ever being removed.
+- Ruff format (321 files) PASS; Ruff lint PASS; strict mypy (103 files) PASS; the PSCR2-009
+  live-server tests still pass against the live boundary.
+- Full Docker-backed suite: `1444 passed in 672.35s`, zero failures, zero skips, run alongside CI
+  `35321901297` (`3162a83`), which also passed.
 
 ---
 
