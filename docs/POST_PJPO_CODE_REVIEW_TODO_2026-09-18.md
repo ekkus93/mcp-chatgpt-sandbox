@@ -1,0 +1,157 @@
+# Post-PJPO Code Review TODO
+
+**Status:** Not started — `PJPO2-001` through `PJPO2-005` open  
+**Date:** 2026-09-18  
+**Spec:** `docs/POST_PJPO_CODE_REVIEW_SPEC_2026-09-18.md`  
+**Reviewed baseline:** `c6bb465`  
+**Task series:** `PJPO2-001` through `PJPO2-005`  
+**Validation series:** `PJPO2V-*`
+
+This TODO implements `docs/POST_PJPO_CODE_REVIEW_SPEC_2026-09-18.md`. A review of the merged PJPO
+series confirmed its fix and found no bug with a user-visible consequence. It found residue: a
+docstring stating an invariant the code holds only on success, an evidence line crediting a test
+with cases it does not exercise, and two undocumented properties of the new tests. It also carries
+forward the one verification only the user can perform. No task here changes a tool contract.
+
+## Global rules
+
+- [ ] Start from an exact inspected `master` SHA and record it here.
+- [ ] Follow the project's commit convention: direct conventional commits to `master`, no branch or
+      PR, one task per commit, task ID in the subject.
+- [ ] Record QD1–QD2 (spec §3) — option, who chose it, why — before the task that depends on each.
+      Ask the user; do not default silently.
+- [ ] Add a regression test for every behavioural claim and prove it discriminates (restore the
+      pre-fix code, run, record the failure, restore, confirm byte-identical with `cmp`).
+- [ ] Prefer a real failure (`/dev/full`, a path that is a file, a path that is a directory) to a
+      monkeypatch wherever the claim is about partially-applied state.
+- [ ] Preserve PJPO's outcomes (H3). Do not weaken existing tests or guards. Do not bump
+      `contract_version`; prove H4 by re-exporting.
+- [ ] Correct records visibly — original kept, marked, correction added with its task ID.
+- [ ] Do not edit `src/` while a suite is running. Run suites in the foreground (background runs
+      are killed by the memory guard on this host); `--cov` runs on an idle host.
+- [ ] Cite code by symbol; verify any line number or count by command at the commit named.
+- [ ] Word every checkbox for what was done, never for what was considered and declined (VR-000b).
+- [ ] Record exact SHA/run/job evidence as each phase closes.
+
+---
+
+## Phase 1 — Code and tests
+
+### PJPO2-001 — Make `PromotableSink.promote`'s guarantee true
+
+**Finding:** F1 (spec §2.1). **Decision:** QD1.
+
+- [ ] Record QD1. Recommended: A — make the pair atomic.
+- [ ] If QD1-A: split `StreamCapture.attach` into a *prepare* step (mkdir, open, write and flush the
+      deferred head into a file object not yet adopted; on failure close it and re-raise, capture
+      untouched) and a *commit* step (adopt the file, set the path, release the head — no I/O).
+      `attach` remains, as prepare-then-commit. Keep PJPO-001's narrative in the docstrings.
+- [ ] If QD1-A: `promote` prepares both captures, then commits both. If the second prepare fails,
+      close the first's prepared file object and leave both captures deferred. Still one lock
+      acquisition over the whole switch.
+- [ ] If QD1-A: docstring — the guarantee now holds on failure too (H1), `promote` is retryable, and
+      a log file already written for the stream that succeeded is left on disk (it belongs to a
+      `failed` job's directory; retention removes it) — say why there is no unlink.
+- [ ] If QD1-B: rewrite the docstring only — the guarantee holds on success; on failure stdout may
+      be attached while stderr is still a buffer, `promote` cannot be retried, and the sole caller
+      fails closed regardless. Cite PJPO2-001.
+- [ ] Narrative comment citing PJPO2-001 and how the previous version behaved (the probe output in
+      spec §2.1).
+
+**Validation — PJPO2V-001**
+
+- [ ] (QD1-A) Test: stdout → real file, stderr → `/dev/full`: `promote` raises; both captures still
+      deferred, heads intact; a second `promote` to good paths succeeds and both logs hold their
+      full output in order. Prove it fails against the pre-fix `promote`.
+- [ ] (QD1-A) Test: the mirror case — stdout → `/dev/full`, stderr → real file: nothing is attached
+      and no stderr file object is left open.
+- [ ] (QD1-B) Test pinning the documented failure state, so the docstring cannot drift again.
+- [ ] Every existing `test_jpo_promotable_sink`, `test_pjpo_fail_closed_promotion`,
+      `test_log_capture` and `test_jpo_exec_promotion` test passes unchanged (H3). Full suite green.
+
+### PJPO2-002 — Pin the `attach` properties PJPO-007 claimed
+
+**Finding:** F2 (spec §2.2). **Depends on:** PJPO2-001 (tests target the final `attach`).
+
+- [ ] Test: parent path is a regular file → `mkdir` fails (`NotADirectoryError`); capture still
+      deferred, head intact, later `write` and `finish()` do not raise.
+- [ ] Test: target path is a directory → `open` fails (`IsADirectoryError`); same assertions.
+- [ ] Test: empty head → `attach` succeeds, creates no file, and the first later `write` creates it
+      with exactly that content.
+- [ ] Prove the two failure tests discriminate against the pre-PJPO-001 `attach`
+      (`git show 08073af:src/mcp_chatgpt_sandbox/execution/log_capture.py`), which assigned `_path`
+      before any I/O. If one does not fail there, say so in the evidence rather than claim it does —
+      the old code is known to have survived a `mkdir` failure at the `finish()` level (spec §2.5).
+- [ ] In `docs/POST_JPO_CODE_REVIEW_TODO_2026-09-18.md`, PJPO-007's evidence: keep the line, mark the
+      "(PJPOV-001)" citation for the `mkdir`/`open`/empty-head cases as incorrect, and point to
+      these tests with a PJPO2-002 reference.
+
+**Validation — PJPO2V-002**
+
+- [ ] The new tests pass; discrimination recorded; non-Docker suite green (test- and doc-only).
+
+### PJPO2-003 — Document the tests' platform dependency; tidy white-box assertions
+
+**Finding:** F3 (spec §2.3). **Decision:** QD2.
+
+- [ ] Record QD2. Recommended: A — behavioural assertions, at most one white-box with a reason.
+- [ ] In `tests/execution/test_pjpo_fail_closed_promotion.py`'s module docstring (and wherever
+      PJPO2-001/002 add `/dev/full` tests): state that `/dev/full` is Linux-only, that this matches
+      the suite's existing requirements (Docker, self-hosted Linux CI), and that it is deliberately
+      not guarded with a skip because `tests/_skip_policy.py` turns any skip into a failure.
+- [ ] Per QD2: replace `capture._path is None` / `capture._file is None` with behavioural checks
+      where an equivalent exists; keep a white-box assertion only where none does, with a comment.
+- [ ] Do not weaken what the test proves: run it against the pre-PJPO-001 `attach` again and record
+      that it still fails.
+
+**Validation**
+
+- [ ] That test file passes; discrimination re-proven; ruff clean.
+
+---
+
+## Phase 2 — Verify with the intended client
+
+### PJPO2-004 — ChatGPT smoke check of both `exec` shapes (carried from PJPO-006)
+
+**Finding:** F4 (spec §2.4). User-performed: it needs the ChatGPT connector.
+
+- [ ] From ChatGPT against a running server: one `exec` that completes (confirm `exit_code` and
+      output are read correctly), and one `exec` with `promote_on_timeout: true` that overruns
+      (confirm `promoted_to_job`/`job_id` are read and the job can be followed with `exec_status`
+      and `exec_output`).
+- [ ] Record what was observed (date, server SHA, any error text), here and against PJPO-006. If
+      ChatGPT rejects or mis-reads the schema, open a finding and a new task rather than working
+      around it.
+
+> If this is not performed, leave both boxes unticked and say so in the closure evidence. The
+> series may still close on the other tasks; the open box is the record that the assumption is
+> unverified.
+
+---
+
+## Phase 3 — Closure
+
+### PJPO2-005 — Self-review and validation
+
+- [ ] Self-review every PJPO2 diff against H1–H5; list each with its covering test.
+- [ ] Gates on an idle host, foreground (chunked with `--cov-append` if needed): ruff format, ruff
+      check, mypy, `pytest --cov`. Chunk counts must sum to `pytest --collect-only`. Record counts
+      and coverage.
+- [ ] A fresh export leaves `schemas/tools.json` unchanged; `contract_version` still `0.11.1`.
+- [ ] Push; exact-head CI green. Record run and job IDs.
+- [ ] Set this file's Status line and the spec's Status; state whether PJPO2-004 was performed.
+
+---
+
+## Definition of done
+
+- [ ] QD1–QD2 recorded.
+- [ ] H1 holds and is pinned by a test proven to discriminate (or, under QD1-B, the documented
+      failure state is pinned).
+- [ ] The `attach` properties PJPO-007 claimed are each pinned by a named test, and its evidence
+      line is corrected visibly.
+- [ ] The Linux-only dependency is documented.
+- [ ] No contract change (H4), verified by export.
+- [ ] Full gates green on an idle host and on exact-head CI.
+- [ ] PJPO2-004 performed, or recorded as not performed.
