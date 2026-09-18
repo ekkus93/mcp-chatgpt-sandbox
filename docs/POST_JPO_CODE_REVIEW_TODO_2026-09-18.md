@@ -233,7 +233,9 @@ table, and a correction note ahead of JPO-010's evidence (I5 not met at `f12f330
 `83b8afb`); the JPO spec's Status line points here. Self-review against G1–G5: G1 — `mark_finished`
 precedes all capture I/O (PJPOV-002); G2 — `attach` commits state only after the flush, including
 when `mkdir`/`open` fail (nothing assigned before the `try`) and when the head is empty (no file,
-path committed) (PJPOV-001); G3 — the three inaccurate statements and the I5 overclaim corrected
+path committed) ~~(PJPOV-001)~~ *(incorrect citation — PJPO2-002: PJPOV-001 exercises only a
+failing `write`; the `mkdir`, `open` and empty-head cases are pinned by the `test_pjpo2v002_…`
+tests in `tests/execution/test_pjpo_fail_closed_promotion.py`)*; G3 — the three inaccurate statements and the I5 overclaim corrected
 with originals kept; G4 — below; G5 — the one test changed was strengthened (monkeypatch → real
 `/dev/full`), none weakened. Gates on an idle host (no CI run in progress), foreground: `ruff format
 --check` 336 files; `ruff check` clean; `mypy src` clean (106); `pytest --cov` in four chunks with

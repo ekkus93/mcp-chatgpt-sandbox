@@ -1,6 +1,6 @@
 # Post-PJPO Code Review TODO
 
-**Status:** In progress — `PJPO2-001` closed  
+**Status:** In progress — `PJPO2-001`–`PJPO2-002` closed  
 **Date:** 2026-09-18  
 **Spec:** `docs/POST_PJPO_CODE_REVIEW_SPEC_2026-09-18.md`  
 **Reviewed baseline:** `c6bb465`  
@@ -98,22 +98,33 @@ property tested is unchanged, and it still fails with the lock removed from `on_
 
 **Finding:** F2 (spec §2.2). **Depends on:** PJPO2-001 (tests target the final `attach`).
 
-- [ ] Test: parent path is a regular file → `mkdir` fails (`NotADirectoryError`); capture still
+- [x] Test: parent path is a regular file → `mkdir` fails (`NotADirectoryError`); capture still
       deferred, head intact, later `write` and `finish()` do not raise.
-- [ ] Test: target path is a directory → `open` fails (`IsADirectoryError`); same assertions.
-- [ ] Test: empty head → `attach` succeeds, creates no file, and the first later `write` creates it
+- [x] Test: target path is a directory → `open` fails (`IsADirectoryError`); same assertions.
+- [x] Test: empty head → `attach` succeeds, creates no file, and the first later `write` creates it
       with exactly that content.
-- [ ] Prove the two failure tests discriminate against the pre-PJPO-001 `attach`
+- [x] Prove the two failure tests discriminate against the pre-PJPO-001 `attach`
       (`git show 08073af:src/mcp_chatgpt_sandbox/execution/log_capture.py`), which assigned `_path`
       before any I/O. If one does not fail there, say so in the evidence rather than claim it does —
       the old code is known to have survived a `mkdir` failure at the `finish()` level (spec §2.5).
-- [ ] In `docs/POST_JPO_CODE_REVIEW_TODO_2026-09-18.md`, PJPO-007's evidence: keep the line, mark the
+- [x] In `docs/POST_JPO_CODE_REVIEW_TODO_2026-09-18.md`, PJPO-007's evidence: keep the line, mark the
       "(PJPOV-001)" citation for the `mkdir`/`open`/empty-head cases as incorrect, and point to
       these tests with a PJPO2-002 reference.
 
 **Validation — PJPO2V-002**
 
-- [ ] The new tests pass; discrimination recorded; non-Docker suite green (test- and doc-only).
+- [x] The new tests pass; discrimination recorded; non-Docker suite green (test- and doc-only).
+
+**Evidence — PJPO2-002.** Three tests appended to `tests/execution/test_pjpo_fail_closed_promotion.py`,
+asserting behaviour only (QD2-A applied here too): the buffered output is intact, a later `write`
+neither raises nor creates a file, and a later `attach` to a good path yields every byte in order.
+Discrimination against the pre-PJPO-001 `attach` (`git show 08073af:…/log_capture.py`): both failure
+tests fail — the later `write` re-raises `NotADirectoryError` / `IsADirectoryError`, because the old
+`attach` had already committed `_path`. That is sharper than the spec §2.5 caution anticipated: the
+old code survived a `mkdir` failure at the `finish()` level, but not at the next `write`. The
+empty-head test passes on the old code too; it pins a property, not a regression. Restored
+byte-identical (`cmp`). PJPO-007's evidence line corrected visibly (citation struck through,
+PJPO2-002 cited). Test- and doc-only: non-Docker suite 1032 passed.
 
 ### PJPO2-003 — Document the tests' platform dependency; tidy white-box assertions
 

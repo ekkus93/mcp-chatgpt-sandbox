@@ -101,3 +101,64 @@ def test_pjpov002_a_capture_that_fails_to_close_does_not_stop_the_record_being_f
 
     assert store.finished is not None
     assert finished == ["stderr"]
+
+
+def _deferred_capture_holding(data: bytes) -> StreamCapture:
+    capture = StreamCapture(None, max_output_bytes=1024, tail_keep_bytes=64)
+    capture.write(data)
+    return capture
+
+
+def _assert_still_deferred_and_usable(capture: StreamCapture, good_path: Path) -> None:
+    """What "still deferred, head intact" means, observed from outside:
+    the buffered output is all there, a later write neither raises nor
+    creates anything, `finish()` is harmless, and the capture can still
+    be attached — with every byte, in order."""
+    assert capture.buffered_head() == b"before\n"
+    capture.write(b"after\n")
+    assert capture.buffered_head() == b"before\nafter\n"
+    capture.attach(good_path)
+    capture.finish()
+    assert good_path.read_bytes() == b"before\nafter\n"
+
+
+def test_pjpo2v002_attach_is_all_or_nothing_when_the_directory_cannot_be_created(
+    tmp_path: Path,
+) -> None:
+    """PJPO2-002: PJPO-007's evidence credited PJPOV-001 with this case;
+    PJPOV-001 only exercises a failing `write`."""
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("")
+    capture = _deferred_capture_holding(b"before\n")
+
+    with pytest.raises(NotADirectoryError):
+        capture.attach(blocker / "job" / "stdout.log")
+
+    _assert_still_deferred_and_usable(capture, tmp_path / "good" / "stdout.log")
+
+
+def test_pjpo2v002_attach_is_all_or_nothing_when_the_file_cannot_be_opened(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "stdout.log"
+    target.mkdir()  # a directory where the log file should be
+    capture = _deferred_capture_holding(b"before\n")
+
+    with pytest.raises(IsADirectoryError):
+        capture.attach(target)
+
+    _assert_still_deferred_and_usable(capture, tmp_path / "good" / "stdout.log")
+
+
+def test_pjpo2v002_attaching_with_nothing_buffered_creates_no_file_until_output_arrives(
+    tmp_path: Path,
+) -> None:
+    capture = StreamCapture(None, max_output_bytes=1024, tail_keep_bytes=64)
+    log = tmp_path / "job" / "stderr.log"
+
+    capture.attach(log)
+    assert not log.exists()  # a silent stream never gets a log
+
+    capture.write(b"first output\n")
+    capture.finish()
+    assert log.read_bytes() == b"first output\n"
