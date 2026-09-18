@@ -221,7 +221,9 @@ class JobStore:
         record = self._get_or_raise(job_id)
         return self._save(replace(record, state=JobState.STARTING))
 
-    def mark_running(self, job_id: str, *, pid: int | None) -> JobRecord:
+    def mark_running(
+        self, job_id: str, *, pid: int | None, started_at: str | None = None
+    ) -> JobRecord:
         """`pid` is `None` when the exec's pid genuinely never got
         reported (RR-022, `docs/REMEDIATION_SPEC.md` §15:
         `ExecutionService.pid_of` retries the transient case itself and
@@ -231,9 +233,17 @@ class JobStore:
         `None` here stays `None` for the job's whole `running` lifetime
         (`reconcile_jobs`, on an unclean shutdown, reports this
         distinctly from a pid that was known and has since died — see
-        its docstring)."""
+        its docstring).
+
+        `started_at` (JPO-004, D4-A): given only for a synchronous `exec`
+        promoted to a job (§14.4), whose process started well before this
+        transition — stamping "now" would record the moment of promotion
+        as the start and make the job look `sync_timeout_seconds` younger
+        than the process it describes."""
         record = self._get_or_raise(job_id)
-        return self._save(replace(record, state=JobState.RUNNING, pid=pid, started_at=_now()))
+        return self._save(
+            replace(record, state=JobState.RUNNING, pid=pid, started_at=started_at or _now())
+        )
 
     def mark_finished(
         self,

@@ -182,21 +182,79 @@ class AsyncJobRunner:
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
 
+    def adopt_running(
+        self,
+        job_id: str,
+        *,
+        exec_id: str,
+        stream: object,
+        drain: asyncio.Future[int],
+        stdout_capture: StreamCapture,
+        stderr_capture: StreamCapture,
+        pid: int | None,
+        started_at: str,
+        started_monotonic: float,
+        timeout_seconds: float | None,
+    ) -> None:
+        """JPO-004 (`docs/JOB_PROMOTION_SPEC_2026-09-18.md` §5.2): takes
+        over an exec that is *already running and already being drained*
+        — §14.4's promotion of a synchronous `exec` — and finishes it as
+        an ordinary job (I6): registered in `_live`, so `exec_status`,
+        `exec_cancel` and the timeout all work exactly as they do for a
+        job `start_job` began.
+
+        `drain` is the caller's own in-flight `drain_stream` future, and
+        `_run` awaits *it* rather than starting a second reader. Why not
+        simply open a fresh reader the way `start_job` does: a Docker
+        exec's attach stream is single-consumer — `exec_start` cannot be
+        called on the same exec twice — and the caller's reader is
+        already mid-stream, so a second one would at best see nothing
+        and at worst split the output between two readers.
+
+        D4-A: `started_at`/`started_monotonic` are when the *process*
+        started, not now, and `timeout_seconds` is the whole job's
+        allowance measured from then — promotion does not hand a command
+        a fresh clock. Synchronous and not `async`, unlike `start_job`:
+        nothing here blocks, and the caller needs the job to be `running`
+        and registered with no await point in between at which a
+        concurrent `exec_cancel` could find it half-adopted."""
+        live = LiveJob(
+            exec_id=exec_id,
+            stdout_capture=stdout_capture,
+            stderr_capture=stderr_capture,
+            stream=stream,
+            started_monotonic=started_monotonic,
+        )
+        self._job_store.mark_starting(job_id)
+        self._job_store.mark_running(job_id, pid=pid, started_at=started_at)
+        self._live[job_id] = live
+        remaining = (
+            None
+            if timeout_seconds is None
+            else max(0.0, timeout_seconds - (time.monotonic() - started_monotonic))
+        )
+        task = asyncio.create_task(self._run(job_id, live, remaining, drain=drain))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
     async def _run(
         self,
         job_id: str,
         live: LiveJob,
         timeout_seconds: float | None,
+        *,
+        drain: asyncio.Future[int] | None = None,
     ) -> None:
-        drain = asyncio.ensure_future(
-            asyncio.to_thread(
-                self._execution.drain_stream,
-                live.exec_id,
-                live.stream,  # type: ignore[arg-type]
-                on_stdout=live.stdout_capture.write,
-                on_stderr=live.stderr_capture.write,
+        if drain is None:
+            drain = asyncio.ensure_future(
+                asyncio.to_thread(
+                    self._execution.drain_stream,
+                    live.exec_id,
+                    live.stream,  # type: ignore[arg-type]
+                    on_stdout=live.stdout_capture.write,
+                    on_stderr=live.stderr_capture.write,
+                )
             )
-        )
 
         timed_out = False
         exit_code: int | None

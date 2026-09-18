@@ -1,6 +1,6 @@
 # Job Promotion on Overrun TODO
 
-**Status:** In progress — `JPO-001`–`JPO-003` closed  
+**Status:** In progress — `JPO-001`–`JPO-004` closed  
 **Date:** 2026-09-18  
 **Spec:** `docs/JOB_PROMOTION_SPEC_2026-09-18.md`  
 **Baseline:** `13e44bd`  
@@ -127,18 +127,32 @@ over the cap. Full suite: 1470 passed in 663s (non-`--cov`, overlapping CI run `
 
 **Goal:** spec §5.2. `AsyncJobRunner.adopt_running(...)`.
 
-- [ ] Factor the finalisation tail out of `_run` (timeout → `TIMED_OUT`, cancel, termination
+- [x] Factor the finalisation tail out of `_run` (timeout → `TIMED_OUT`, cancel, termination
       failure, `mark_finished`, `_live.pop`) so `start_job` and `adopt_running` share it. No
       behaviour change for `exec_start` jobs.
-- [ ] `adopt_running` registers a `LiveJob` for an already-draining exec and completes it through
+- [x] `adopt_running` registers a `LiveJob` for an already-draining exec and completes it through
       the shared tail, with the deadline per D4.
-- [ ] No second reader is ever opened on the stream; say why in a comment.
+- [x] No second reader is ever opened on the stream; say why in a comment.
 
 **Validation**
 
-- [ ] Every existing async-runner and `exec_start`/`exec_status`/`exec_cancel` test passes unchanged.
-- [ ] Unit test: an adopted job reaches `succeeded` / `failed` with the right exit code, reaches
+- [x] Every existing async-runner and `exec_start`/`exec_status`/`exec_cancel` test passes unchanged.
+- [x] Unit test: an adopted job reaches `succeeded` / `failed` with the right exit code, reaches
       `timed_out` at the deadline, and is cancellable.
+
+**Evidence — JPO-004.** The "shared tail" is `_run` itself: it gained a keyword-only `drain` so
+`adopt_running` passes the caller's in-flight future and `start_job` (passing none) creates its own
+exactly as before — no finalisation code was copied. `JobStore.mark_running` gained an optional
+`started_at` for D4-A; omitted, it stamps "now" as before. `adopt_running` is synchronous so the job
+becomes `running` and registered with no await point in between. Tests:
+`tests/workspace/test_jpo_runner_adoption.py` (4, real container): succeeded with `before`+`after`
+in the log and the original `started_at`; non-zero exit → `failed`/7; deadline from the original
+start → `timed_out`; cancellable. Discrimination: with `adopt_running` handing `_run` the full
+`timeout_seconds` and `mark_running` ignoring `started_at`, 2 failed / 2 passed (the deadline test
+and the `started_at` assertion); both files restored byte-identical (`cmp`). Slip recorded: the
+first draft ran the command as the container's root, which the host-uid daemon cannot signal
+(`PermissionError` → `failed`, not `timed_out`); the tests now exec as the host uid, as production
+does. Full suite: 1474 passed in 648s (non-`--cov`).
 
 ### JPO-005 — Make room in `tools/execution.py`
 
