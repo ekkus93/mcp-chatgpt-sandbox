@@ -1,6 +1,6 @@
 # Post-PSCR2 Code Review TODO
 
-**Status:** In progress — `PSCR3-001`–`PSCR3-004` closed; `PSCR3-005` next  
+**Status:** In progress — `PSCR3-001`–`PSCR3-005` closed; `PSCR3-006` next  
 **Date:** 2026-09-18  
 **Spec:** `docs/POST_PSCR2_CODE_REVIEW_SPEC_2026-09-18.md`  
 **Reviewed baseline:** `a5a35a1f1f049582f9596fc1bd9ffd7bf7ad65a1`  
@@ -202,16 +202,29 @@ changes what the software does, with one recorded exception — PSCR3-009, if it
 
 **Goal:** a reader need not work out for themselves why the test is safe on a shared daemon.
 
-- [ ] State in the second live-server test's docstring that it creates a production-labelled
+- [x] State in the second live-server test's docstring that it creates a production-labelled
       container (managed, no namespace) on the shared daemon, and how briefly.
-- [ ] State the three reasons it is safe: per-run repository id, no workspace row in any real
+- [x] State the three reasons it is safe: per-run repository id, no workspace row in any real
       server's database, exact-resource teardown (HR-026).
-- [ ] No code change.
+- [x] No code change.
 
 **Validation — PSCR3V-005**
 
-- [ ] Docstring review confirms the exposure and all three reasons.
-- [ ] `tests/workspace/test_pscr2_live_server_isolation.py` remains green.
+- [x] Docstring review confirms the exposure and all three reasons.
+- [x] `tests/workspace/test_pscr2_live_server_isolation.py` remains green.
+
+**Closure evidence (2026-09-18)**
+
+- The second live-server test's docstring now states what it puts on a shared daemon — a container
+  carrying `managed=true` and no namespace label, indistinguishable by label from a real workspace,
+  which a live `serve` could therefore list in `resource_inventory` — and the three reasons that is
+  safe.
+- **Each factual claim was checked rather than asserted.** Duration: `--durations` reports the test's
+  call phase at `0.19s`, so the docstring says "about 0.2s measured" rather than the spec's looser
+  "well under a second". Database: the `db` fixture is `open_db(":memory:")`, so the workspace row
+  cannot exist in any real server's database. Teardown: after the run, zero containers with the
+  `pscr2-` prefix remain.
+- No code change. `tests/workspace/test_pscr2_live_server_isolation.py`: `2 passed`.
 
 ### PSCR3-006 — Exercise the startup sweep's dispatch to the override
 

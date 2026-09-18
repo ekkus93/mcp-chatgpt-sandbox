@@ -87,6 +87,17 @@ def test_pscr2v_009_test_context_reconcile_ignores_a_production_shaped_container
     with the shared `example` id, two suites running this test at once would collide
     on it, and this test would reintroduce exactly the concurrency hazard PSCR-010
     removed from the rest of the suite.
+
+    **What this puts on a shared daemon, and why it is safe** (PSCR3-005). For the
+    length of this test — about 0.2s measured — a container exists carrying
+    `mcp-chatgpt-sandbox.managed=true` and *no* namespace label. By label it is
+    indistinguishable from a real workspace, so a live `serve` on the same daemon
+    could list it in `resource_inventory`. It cannot do more than list it:
+
+    - its repository id is generated per run, so no real configuration names it;
+    - its workspace row lives only in this test's in-memory database, so no real
+      server has a record through which to adopt, reconcile, or prune it;
+    - the suite's exact-resource teardown (HR-026) removes it when the test ends.
     """
 
     del docker_client  # establishes exact-resource teardown for anything created here
