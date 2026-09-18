@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import secrets
 
 import docker
 
@@ -145,3 +146,10 @@ def audit_ssh_auth_if_applicable(
             repository_id=record.repository_id,
             metadata={"fingerprint": fingerprint},
         )
+
+
+def new_job_id() -> str:
+    #: Same `secrets.token_hex(4)` convention as ephemeral workspace ids
+    #: (workspace/manager.py). Here (JPO-006) rather than in
+    #: `tools/execution.py` because §14.4's promotion mints job ids too.
+    return f"job_{secrets.token_hex(4)}"

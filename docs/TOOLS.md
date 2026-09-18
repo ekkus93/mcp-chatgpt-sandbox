@@ -56,7 +56,7 @@ Automatic age- or pressure-based resource reclamation is not implemented. Any fu
 
 | Tool | Purpose |
 | --- | --- |
-| `exec` | Run a command synchronously in a workspace (§14); failed commands may include additive container-filesystem ENOSPC pressure context only when canonical `No space left on device` stderr evidence is present. |
+| `exec` | Run a command synchronously in a workspace (§14); failed commands may include additive container-filesystem ENOSPC pressure context only when canonical `No space left on device` stderr evidence is present. With `promote_on_timeout: true`, a command still running at the synchronous timeout is not killed: it continues as a background job and the response is `promoted_to_job: true` with `job_id`/`state`/`started_at` (completed-result fields `null`); follow it with `exec_status`, `exec_output`, `exec_cancel` (§14.4). Every response carries `promoted_to_job`. |
 | `exec_start` | Start a command as a background job (§15.3). |
 | `exec_status` | Report a job's current state and recent output (§15.3, §64). |
 | `exec_output` | Retrieve a job's captured output by offset, range, or line window (§15.3). |

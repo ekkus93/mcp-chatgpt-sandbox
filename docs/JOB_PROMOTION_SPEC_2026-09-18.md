@@ -195,8 +195,11 @@ and means "how long to wait synchronously before promoting".
   `StreamCapture` already marks one.
 - **I4 — Exactly one outcome.** A call returns a completed result, a job
   handle, or an error. A command that finishes as the deadline fires yields a
-  completed result and creates **no** job record. No job record is ever created
-  for a process that has already exited.
+  completed result and creates **no** job record. No job record is created for a
+  command *observed* finished at the deadline. (Corrected by JPO-006: the first
+  wording, "never for a process that has already exited", promised an atomicity
+  between the process and the daemon that does not exist; a process exiting just
+  after the check becomes a job that finishes immediately and correctly.)
 - **I5 — Fail closed.** If promotion cannot be completed (job directory, job
   store, registration), the process is killed exactly as on a timeout today and
   the call raises `COMMAND_TIMEOUT`; no half-created job record is left

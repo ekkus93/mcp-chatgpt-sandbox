@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import asyncio
 import posixpath
-import secrets
 import shlex
 import sqlite3
 from datetime import UTC, datetime
@@ -56,10 +55,12 @@ from mcp_chatgpt_sandbox.tools.execution_models import (
     ExecStartOutput,
     ExecStatusOutput,
 )
+from mcp_chatgpt_sandbox.tools.execution_promotion import PromotionDeps, run_promotable_exec
 from mcp_chatgpt_sandbox.tools.execution_support import (
     audit_command_started,
     audit_ssh_auth_if_applicable,
     kill_after_timeout,
+    new_job_id,
 )
 from mcp_chatgpt_sandbox.workspace.container_config import resolve_exec_user
 from mcp_chatgpt_sandbox.workspace.manager import (
@@ -68,12 +69,6 @@ from mcp_chatgpt_sandbox.workspace.manager import (
     get_authorized,
     touch_last_used,
 )
-
-
-def _new_job_id() -> str:
-    #: Same `secrets.token_hex(4)` convention as ephemeral workspace ids
-    #: (workspace/manager.py).
-    return f"job_{secrets.token_hex(4)}"
 
 
 def _describe_command(argv: list[str] | None, shell: str | None) -> str:
@@ -234,6 +229,8 @@ async def run_exec(
     execution_config: ExecutionConfig,
     audit_config: AuditConfig,
     ssh_config: SSHConfig,
+    promote_on_timeout: bool = False,
+    promotion: PromotionDeps | None = None,
 ) -> ExecOutput:
     """§14: the `exec` tool's full body — module-level, not a
     `register()` closure (R27, `docs/REMEDIATION_TODO.md`), so it can be
@@ -255,6 +252,38 @@ async def run_exec(
     timeout = _resolve_timeout(timeout_seconds, ceiling=execution_config.sync_timeout_seconds)
 
     container_id = record.container_id
+    if promote_on_timeout and promotion is not None:
+        # JPO-006 (§14.4, D1-A): only a caller that asked takes the
+        # promotable path; everyone else runs the code below unchanged
+        # (I1) — see `tools/execution_promotion.py` for why it is a second
+        # path rather than a rewrite of this one.
+        def audit_started() -> None:
+            audit_command_started(
+                audit_config,
+                workspace_id=workspace_id,
+                repository_id=record.repository_id,
+                argv=argv,
+                shell=shell,
+                cwd=cwd,
+            )
+            audit_ssh_auth_if_applicable(audit_config, ssh_config, registry, record)
+
+        return await run_promotable_exec(
+            workspace_id=workspace_id,
+            repository_id=record.repository_id,
+            container_id=container_id,
+            cmd=cmd,
+            command_description=_describe_command(argv, shell),
+            cwd=cwd,
+            user=user,
+            env=env,
+            sync_timeout=timeout,
+            service=service,
+            deps=promotion,
+            execution_config=execution_config,
+            audit_config=audit_config,
+            audit_started=audit_started,
+        )
     # HR-022 (`docs/HARDENING_SPEC.md` §10): `docker.errors.DockerException`
     # from either call — the container disappearing out from under
     # this exec, a Docker API error — used to escape uncaught, past
@@ -364,7 +393,7 @@ async def run_exec_start(
         timeout_seconds, ceiling=execution_config.default_job_timeout_seconds
     )
 
-    job_id = _new_job_id()
+    job_id = new_job_id()
     job_dir = state_dir / "jobs" / job_id
     stdout_log_path = job_dir / "stdout.log"
     stderr_log_path = job_dir / "stderr.log"
@@ -564,7 +593,15 @@ def register(
     job_store = JobStore(db)
     runner = AsyncJobRunner(service, job_store) if service is not None else None
 
-    @server.tool(name="exec", description="Run a command synchronously in a workspace (§14).")
+    @server.tool(
+        name="exec",
+        description=(
+            "Run a command synchronously in a workspace (§14). With promote_on_timeout=true, "
+            "a command still running at the synchronous timeout is not killed: it continues as "
+            "a background job and the response is promoted_to_job=true with a job_id to follow "
+            "using exec_status, exec_output and exec_cancel (§14.4)."
+        ),
+    )
     @translate_workspace_errors
     async def exec_tool(
         workspace_id: str,
@@ -573,8 +610,9 @@ def register(
         cwd: str = "/workspace",
         env: dict[str, str] | None = None,
         timeout_seconds: float | None = None,
+        promote_on_timeout: bool = False,
     ) -> ExecOutput:
-        if manager is None or service is None or docker_client is None:
+        if manager is None or service is None or docker_client is None or runner is None:
             raise ContainerRuntimeFailedError(
                 "Docker is not reachable; the server is running in a degraded "
                 "state (§73) and cannot execute commands"
@@ -594,6 +632,8 @@ def register(
             execution_config=execution_config,
             audit_config=audit_config,
             ssh_config=ssh_config,
+            promote_on_timeout=promote_on_timeout,
+            promotion=PromotionDeps(runner=runner, job_store=job_store, state_dir=state_dir),
         )
 
     @server.tool(name="exec_start", description="Start a command as a background job (§15.3, §63).")

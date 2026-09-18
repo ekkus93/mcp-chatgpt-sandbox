@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.11.0",
+  "contract_version": "0.11.1",
   "tools": [
     {
       "description": "Delete a repository file or directory (\u00a713.5).",
@@ -42,7 +42,7 @@
       }
     },
     {
-      "description": "Run a command synchronously in a workspace (\u00a714).",
+      "description": "Run a command synchronously in a workspace (\u00a714). With promote_on_timeout=true, a command still running at the synchronous timeout is not killed: it continues as a background job and the response is promoted_to_job=true with a job_id to follow using exec_status, exec_output and exec_cancel (\u00a714.4).",
       "input_schema": {
         "properties": {
           "argv": {
@@ -79,6 +79,11 @@
             ],
             "default": null,
             "title": "Env"
+          },
+          "promote_on_timeout": {
+            "default": false,
+            "title": "Promote On Timeout",
+            "type": "boolean"
           },
           "shell": {
             "anyOf": [

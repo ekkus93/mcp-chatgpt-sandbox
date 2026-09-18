@@ -594,8 +594,8 @@ class _LifecycleMixin(_CoreMixin):
         NOT derived from a job row's own `stdout_log_path` string: every
         directory this method ever removes is reconstructed as
         `state_dir / "jobs" / job_id` from the caller-supplied root and
-        the job's own id (a random hex string, `execution.py`'s
-        `_new_job_id`), never trusted from a stored path that test
+        the job's own id (a random hex string, `execution_support.py`'s
+        `new_job_id`), never trusted from a stored path that test
         fixtures elsewhere in this codebase set to placeholders like
         `/dev/null` — an unconfined `shutil.rmtree` of that string's
         parent would target `/dev` itself.

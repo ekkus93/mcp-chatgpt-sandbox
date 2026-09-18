@@ -80,7 +80,10 @@ from mcp.server import MCPServer
 #: response shape is a larger event than a patch, and it is not major because
 #: every field stays `required` and only a caller that opts into promotion can
 #: ever receive a `null` — no existing caller's observable contract changes.
-CONTRACT_VERSION = "0.11.0"
+#: 0.11.1 (Job Promotion JPO-006, D1-A): patch bump — `exec` gained the
+#: optional input `promote_on_timeout` (default false) and a description of
+#: both response shapes; §33.2 lists exactly these two as patch-level.
+CONTRACT_VERSION = "0.11.1"
 
 
 async def collect_tool_schemas(server: MCPServer) -> list[dict[str, Any]]:

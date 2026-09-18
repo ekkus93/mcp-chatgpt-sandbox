@@ -1,6 +1,6 @@
 # Job Promotion on Overrun TODO
 
-**Status:** In progress — `JPO-001`–`JPO-005` closed  
+**Status:** In progress — `JPO-001`–`JPO-006` closed  
 **Date:** 2026-09-18  
 **Spec:** `docs/JOB_PROMOTION_SPEC_2026-09-18.md`  
 **Baseline:** `13e44bd`  
@@ -158,7 +158,7 @@ does. Full suite: 1474 passed in 648s (non-`--cov`).
 
 **Goal:** spec §2.6. The coordinator is 797 lines against a `< 800` guard.
 
-- [ ] Create `tools/execution_promotion.py` for the opted-in path. — arrives with JPO-006, its only
+- [x] Create `tools/execution_promotion.py` for the opted-in path. — arrived with JPO-006, its only
       content; an empty module here would have been a placeholder, not work done.
 - [x] Move a cohesive existing helper group out of
       `tools/execution.py` in a **behaviour-free** commit of its own (pure move, imports updated).
@@ -187,34 +187,66 @@ call sites, and two import names. `wc -l`: `tools/execution.py` 797 → 680; `ex
 
 **Depends on:** JPO-001…005. Spec §5.3.
 
-- [ ] Opted-in path: `start_and_open_stream`, drain in a thread through the sink, wait up to the
+- [x] Opted-in path: `start_and_open_stream`, drain in a thread through the sink, wait up to the
       resolved sync timeout.
-- [ ] Finished in time → completed result from `sink.result()`; **no** job record or directory (I4).
-- [ ] Overrun → check the drain future once more; if it has finished, return the completed result
+- [x] Finished in time → completed result from `sink.result()`; **no** job record or directory (I4).
+- [x] Overrun → check the drain future once more; if it has finished, return the completed result
       (I4). Otherwise create the job directory and captures, `job_store.create` /
       `mark_starting` / `mark_running(pid=)`, `sink.promote`, `runner.adopt_running`, inline
       `prune_job_logs`, and return `promoted_to_job=True` with `job_id`, `state`, `started_at`
       (original start, D4).
-- [ ] `JobRecord.command` and `cwd` equal what `exec_start` records for the same input (I6).
-- [ ] Any failure during promotion → kill exactly as the timeout path does, leave no non-terminal
+- [x] `JobRecord.command` and `cwd` equal what `exec_start` records for the same input (I6).
+- [x] Any failure during promotion → kill exactly as the timeout path does, leave no non-terminal
       record, raise `COMMAND_TIMEOUT` (I5).
-- [ ] Flag absent/false → the `13e44bd` path, untouched (I1).
-- [ ] Narrative comment at the race check and at the fail-closed block: what the obvious
+- [x] Flag absent/false → the `13e44bd` path, untouched (I1).
+- [x] Narrative comment at the race check and at the fail-closed block: what the obvious
       alternative was and why it is wrong.
 
 **Validation — JPOV-003 … JPOV-007** (Docker-backed; use a short `sync_timeout_seconds` via config,
 never a sleep-and-hope margin)
 
-- [ ] JPOV-003: flag false + overrun → `COMMAND_TIMEOUT`, process gone, no job record, no job dir.
-- [ ] JPOV-004: flag true, finishes in time → completed shape, no job record.
-- [ ] JPOV-005: marker, sleep past the threshold, marker, exit 0 → handle; `exec_status` reaches
+- [x] JPOV-003: flag false + overrun → `COMMAND_TIMEOUT`, process gone, no job record, no job dir.
+- [x] JPOV-004: flag true, finishes in time → completed shape, no job record.
+- [x] JPOV-005: marker, sleep past the threshold, marker, exit 0 → handle; `exec_status` reaches
       `succeeded`/0; `exec_output` from offset 0 has both markers in order; pid unchanged (I2, I3).
-- [ ] JPOV-005b: non-zero exit after promotion → `failed` with that exit code.
-- [ ] JPOV-006: promoted job is cancellable; hits `timed_out` at the D4 deadline; the idle-stop
+- [x] JPOV-005b: non-zero exit after promotion → `failed` with that exit code.
+- [x] JPOV-006: promoted job is cancellable; hits `timed_out` at the D4 deadline; the idle-stop
       sweep skips its workspace while it runs.
-- [ ] JPOV-007: injected job-dir and job-store failures → `COMMAND_TIMEOUT`, process gone, no
+- [x] JPOV-007: injected job-dir and job-store failures → `COMMAND_TIMEOUT`, process gone, no
       non-terminal record.
-- [ ] Prove JPOV-005 discriminates (e.g. disable the pre-promotion flush → first marker missing).
+- [x] Prove JPOV-005 discriminates (e.g. disable the pre-promotion flush → first marker missing).
+
+**Evidence — JPO-006.** New `tools/execution_promotion.py` (`run_promotable_exec`, `PromotionDeps`);
+`run_exec` branches to it only when `promote_on_timeout` is set, before any of the original path's
+code runs (I1). Arrived with it, because CI gates each push on them: the `promote_on_timeout` input
+(plain `bool = False`, matching the other tools, which carry no per-parameter descriptions — the
+tool description explains it), the re-exported schema, `CONTRACT_VERSION` `0.11.1` (patch: new
+optional input + description), and the `docs/TOOLS.md` row. `new_job_id` moved to
+`execution_support.py` so both job-minting paths share it. `wc -l tools/execution.py`: 720.
+
+Spec correction: I4 said no job record is "ever created for a process that has already exited".
+What is guaranteed is narrower and is what the code does: the drain future is checked after the
+wait, and from that check to `adopt_running` there is no `await`, so a command *observed* finished
+never becomes a job. A process that exits in the microseconds after the check becomes a job that
+finishes at once with its real exit code — correct, merely not the cheaper answer.
+
+Tests: `tests/workspace/test_jpo_exec_promotion.py` (9, real server + default image). Discrimination,
+each by mutation and restored byte-identical (`cmp`): promotion made unconditional → JPOV-003 fails
+(`DID NOT RAISE`); pre-promotion flush disabled → JPOV-005 fails; kill and half-created-record
+cleanup removed → both JPOV-007 fail; `env` written to the promotion audit record → JPOV-009 fails.
+JPOV-006's deadline test does not discriminate D4 at tool level (3s either way); JPO-004's does.
+
+Slips recorded. (1) Several tests did not request `docker_client`, so their workspace container was
+neither namespaced (G3R-015) nor removed; one leaked (`…-ws-example-35b14591`, identified as mine by
+its pytest tmp mount, removed). Fixed with an autouse fixture. (2) The JPOV-009 env check was vacuous
+twice over — a `ghp_`-shaped value is pattern-redacted and a `TOKEN` key is key-redacted regardless
+of what the code does; it now uses a plain value under a neutral key, and only then did its mutation
+fail. (3) I reported that mutation as done before running it; it was run afterwards. (4) The
+background-task memory guard killed three background runs (one during a bare `until … sleep` wait,
+with no pytest of mine alive; host: 23 GiB available, ~2 GiB strictly free, the rest page cache;
+the new tests peak at 110 MB RSS). The full suite was therefore run in the foreground, in four
+disjoint chunks on an idle host: non-workspace 1023, `workspace/test_[a-f]*` 145, `[g-o]*` 197,
+`[p-z]*` 118 = 1483 = `pytest --collect-only` total. All passed.
 
 ### JPO-007 — Audit, description, documentation
 
