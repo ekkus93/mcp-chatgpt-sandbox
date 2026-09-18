@@ -33,8 +33,9 @@ docker image inspect mcp-chatgpt-sandbox-test-s7:24.04 >/dev/null 2>&1 \
   **except** that Step 2 below runs `pytest --cov`, and a `--cov` run overlapping CI's own
   `--cov` run has twice been killed by the Claude Code background-task memory guard (no test
   failed). For this skill, wait for an idle runner before Step 2.
-  Do avoid running against a Docker daemon that is serving real workspaces from a live
-  `mcp-chatgpt-sandbox serve` — that case is protected by design but not demonstrated.
+  A live `mcp-chatgpt-sandbox serve` on the same daemon is isolated too — adoption
+  (PSCR2-009) and teardown (HAT-020) are both demonstrated — but prefer not to run against
+  a daemon serving real workspaces, since the suite competes with them for capacity.
 
 ## Step 2: the gates
 

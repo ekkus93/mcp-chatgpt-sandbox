@@ -1,10 +1,10 @@
 # Post-PSCR Code Review TODO
 
-**Status:** Complete — `PSCR2-001` through `PSCR2-008` closed  
+**Status:** In progress — `PSCR2-001`–`PSCR2-008` closed; `PSCR2-009` (added after closure) open  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `134795429eae988f927e43ec97cc04c5f98b867a`  
-**Task series:** `PSCR2-001` through `PSCR2-008`  
+**Task series:** `PSCR2-001` through `PSCR2-009`  
 **Validation series:** `PSCR2V-*`
 
 This TODO implements `docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md`. It closes one correctness gap,
@@ -337,7 +337,10 @@ every declined fix is recorded as declined, and no document claims more than the
 - **Scoped so as not to trade one over-claim for another.** Two of the old passages also warned
   about a *live server*. PSCR-010's proof covered two test sessions, not a test session beside a
   running `serve`. That case is protected by design — the production manager's reconcile paths
-  filter on the namespace (`manager_core.py:148`, `:200`), a live server's containers carry no
+  filter on the namespace (`manager_core.py:148` `_find_container`, and — *corrected during
+  PSCR2-009* — `operations/resources.py` `_namespace_proof()` via `classify_workspace_container()`;
+  the `manager_core.py:200` originally cited here is inside `_CoreMixin.reconcile()`, which
+  `DockerWorkspaceManager` overrides and never calls), a live server's containers carry no
   namespace label, and suite teardown removes only the exact resources it created (HR-026) — but
   it was not demonstrated. The rewrites say exactly that, and still advise against running the
   suite on a daemon that is serving real workspaces.
@@ -352,6 +355,64 @@ every declined fix is recorded as declined, and no document claims more than the
   `docker image inspect`, and test-image build preconditions unchanged.
 - Documentation only; no code change. Acceptance-coverage and `docs/TOOLS.md` drift guards
   `18 passed`.
+
+### PSCR2-009 — Demonstrate live-server isolation
+
+**Goal:** replace "protected by design, but not demonstrated" with a demonstration.
+
+Added after closure, on request.
+
+- [x] Add a real-Docker test: a production-shaped reconcile does not adopt a test context's container.
+- [x] Add a real-Docker test: a test context's reconcile does not adopt a production-shaped container.
+- [x] Give each test a control reconcile proving the container was findable under its own shape.
+- [x] Give the production-shaped container a per-run repository id, so the test is itself safe to
+      run concurrently.
+- [x] Remove the "not demonstrated" caveat from every location that carried it, in one commit. —
+      **three** locations, not four as first written: `CLAUDE.md` never mentioned a live server.
+
+**Validation — PSCR2V-009**
+
+- [x] Both tests pass against real Docker.
+- [x] Discrimination: with the live namespace boundary neutered, the exclusion assertions fail. —
+      see below: the first attempt targeted dead code.
+- [x] Full Docker-backed suite passes.
+- [ ] Exact-head CI green. — recorded at closure.
+
+**Closure evidence (2026-09-18)**
+
+- `tests/workspace/test_pscr2_live_server_isolation.py` adds two real-Docker tests. Each creates a
+  workspace container under one shape, clears the recorded id so reconcile must adopt by label,
+  reconciles under the *other* shape and asserts nothing is adopted, then reconciles under the
+  original shape and asserts the container **is** adopted — so an exclusion cannot pass merely
+  because a container was invisible. Both pass.
+- The production-shaped container uses a per-run repository id (`pscr2-<12 hex>`). With the shared
+  `example` id its deterministic production name would collide between two concurrent suites, and a
+  test meant to demonstrate isolation would have reintroduced the hazard PSCR-010 removed.
+- **The first discrimination run was invalid, and exposed dead code.** It removed the namespace
+  filter from `_CoreMixin.reconcile()` in `workspace/manager_core.py`, and both tests still passed.
+  Investigation showed `DockerWorkspaceManager` overrides `reconcile()` in `workspace/manager.py`
+  (the MRO resolves there) and nothing calls `super().reconcile()`, so the method edited was never
+  executed. The live boundary is `_namespace_proof()` in `operations/resources.py`, reached through
+  PMOR-001's `classify_workspace_container()`. Neutering it makes **both tests fail**; restoring it
+  makes both pass, with `resources.py` byte-identical to `HEAD` afterwards.
+- **Wrong citations corrected.** PSCR2-007's evidence above cited `manager_core.py:200` as the live
+  protection; it is inside the shadowed method. It is corrected in place, visibly, as is this task's
+  own spec text, which had described `manager_core.reconcile()` as the mechanism. The test's
+  docstring and `docs/DEVELOPMENT.md` now name the real path. Deleting the dead method is PSCR2-011.
+- **The caveat replaced, not merely removed.** `docs/DEVELOPMENT.md`, `gates`, and `lint-n-test` now
+  state that a live `serve` is isolated in both directions that matter, each demonstrated: adoption
+  (PSCR2-009) and teardown (HR-026 / HAT-020, `test_conftest_teardown.py`, confirmed to create both a
+  sentinel container and a sentinel volume). The wording stops there — neither test says anything
+  about sharing CPU, memory, or disk with real workspaces, so all three still advise against running
+  the suite beside real work, now for capacity rather than safety.
+- **The re-run of CI `35271467140`** was done in the same session, deliberately sequenced so no local
+  Docker work overlapped it, because it executes `ed6132e`'s pre-PSCR-010, namespace-blind assertions.
+  Result: attempt 2, job `105516949482`, **success**, `1415 passed` — the same test count as the
+  original red attempt (1404 passed + 11 failed), so every test that failed during the collision
+  passed against unchanged code. Attempt 1 remains in GitHub's run history.
+- Full Docker-backed suite (covering PSCR2-009 and PSCR2-010 together, which is recorded in both
+  entries): `1442 passed in 655.74s`, zero failures, zero skips. It overlapped two `pytest` processes
+  from an unrelated project on the same host without incident.
 
 ---
 

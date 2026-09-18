@@ -197,8 +197,12 @@ other's containers. Two mechanisms prevent that:
 - **G3R-015** gives every Docker-using pytest context its own namespace. The
   `docker_client` fixture sets `MCP_CHATGPT_SANDBOX_TEST_RESOURCE_NAMESPACE` to a
   fresh UUID, which `naming.container_name()` folds into both the container name
-  and a `test-namespace` label, and the production manager's reconcile paths
-  filter on it.
+  and a `test-namespace` label. `DockerWorkspaceManager.reconcile()` adopts a
+  container only when PMOR-001's `classify_workspace_container()` proves
+  ownership, and its first check, `_namespace_proof()`
+  (`operations/resources.py`), treats a container from any other namespace as
+  foreign. (`_CoreMixin.reconcile()` in `manager_core.py` is shadowed by that
+  override and never runs; do not read it as the live path.)
 - **PSCR-010** (`docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`) scoped every
   absence and exact-count assertion in `tests/workspace` to the running context.
   Before it, those assertions filtered only on logical ids and saw each other's
@@ -222,11 +226,21 @@ PSCR2-008). Non-coverage runs overlapped CI repeatedly without incident. This is
 resource limit of the agent harness, not a correctness problem, but run coverage
 suites on an idle host.
 
-A live `mcp-chatgpt-sandbox serve` on the same daemon is protected by the same
-design — its containers carry no namespace label, which every test context
-filters out, and suite teardown removes only the exact resources it created
-(HR-026) — but that case was not part of the concurrency demonstration above.
-Avoid running the suite against a daemon that is serving real workspaces.
+A live `mcp-chatgpt-sandbox serve` on the same daemon is isolated in both
+directions that matter, and both are demonstrated rather than inferred:
+
+- **Adoption.** A production-shaped reconcile does not adopt a test context's
+  container, and a test context's reconcile does not adopt a production-shaped
+  one (PSCR2-009, `tests/workspace/test_pscr2_live_server_isolation.py`). Each
+  test also shows the container *is* adopted under its own shape, and both fail
+  when `_namespace_proof()` is neutered.
+- **Teardown.** Suite teardown removes only the exact resources it created, and
+  leaves a production-labelled sentinel container and cache volume intact
+  (HR-026, HAT-020, `tests/workspace/test_conftest_teardown.py`).
+
+What is not isolated is capacity: a suite run shares the daemon's CPU, memory,
+and disk with the workspaces a live server is serving. Prefer not to run the
+suite on a daemon serving real work, for that reason rather than for safety.
 
 If a workspace test fails with a collision shape — `assert [<Container: ...>] ==
 []`, or two containers where one was expected — treat it as a **real defect**:

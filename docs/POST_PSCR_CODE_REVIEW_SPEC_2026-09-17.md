@@ -4,7 +4,7 @@
 **Date:** 2026-09-17  
 **Reviewed baseline:** `134795429eae988f927e43ec97cc04c5f98b867a`  
 **Source review:** adversarial re-read of the merged `PSCR-001`–`PSCR-012` implementation against `docs/POST_SWPH_CODE_REVIEW_TODO_2026-09-17.md`  
-**Task series:** `PSCR2-001` through `PSCR2-008`  
+**Task series:** `PSCR2-001` through `PSCR2-009`  
 **Validation series:** `PSCR2V-*`
 
 ## 1. Purpose
@@ -239,6 +239,38 @@ Option B is recommended. The *collision* claim is false and must go; the *conten
 still true. Deleting a warning outright immediately after a documented violation of it, when part
 of its substance survives, is the wrong direction. All four locations change together in one
 commit, so the documents cannot disagree with each other about this again.
+
+### PSCR2-009 — Demonstrate live-server isolation
+
+Added after closure, on request. PSCR2-007 documented, in four locations, that a live
+`mcp-chatgpt-sandbox serve` on the same daemon as a test run is "protected by design, but not
+demonstrated". That wording was accurate: the PSCR-010 concurrency proof covered two *test*
+contexts, never a test context beside a production-shaped manager. It is also exactly the kind of
+claim this series exists to replace with evidence.
+
+The protection is concrete, though not where it first appeared to be. `DockerWorkspaceManager`
+overrides `reconcile()` in `workspace/manager.py`, and that override adopts a container only when
+PMOR-001's `classify_workspace_container()` (`operations/resources.py`) proves positive ownership.
+Its first check is `_namespace_proof()`, which marks any container whose `test-namespace` label
+differs from the current process's namespace as `FOREIGN`. Production runs with no namespace and
+every test context has one, so each side sees the other's containers as foreign.
+
+`_CoreMixin.reconcile()` in `workspace/manager_core.py` also filters on the namespace, but it is
+**shadowed**: its only concrete subclass overrides it and nothing calls `super().reconcile()`. The
+first discrimination run for this task removed the filter from that method and both tests still
+passed, which is how its deadness was found. The task is to exercise the live boundary on a real
+daemon in both directions — a production-shaped reconcile must not adopt a test context's
+container, and a test context's reconcile must not adopt a production-shaped one — each with a
+control reconcile proving the container was findable, so an exclusion cannot pass merely because a
+container was invisible.
+
+A production-shaped container carries no namespace, so its name is the deterministic production
+name. The test must give it a per-run repository id; otherwise two concurrent suites would collide
+on that name, and the test meant to demonstrate isolation would itself reintroduce the
+concurrency hazard PSCR-010 removed.
+
+When the demonstration passes, the "not demonstrated" caveat is removed from all four locations in
+one commit.
 
 ### PSCR2-008 — Final regression, contract, and closure
 

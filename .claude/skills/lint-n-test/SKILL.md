@@ -62,8 +62,9 @@ slower**: every test context has its own namespace (G3R-015) and every absence/c
 assertion is scoped to it (PSCR-010), so concurrent runs no longer adopt each other's
 containers. Record an overlap in the report and carry on — this skill runs without `--cov`,
 and non-coverage runs have overlapped CI without incident. (Coverage runs are the exception;
-see `docs/DEVELOPMENT.md`.) Avoid running against a daemon
-serving real workspaces from a live `serve` — protected by design, but not demonstrated.
+see `docs/DEVELOPMENT.md`.) A live `serve` on the same daemon is isolated too — adoption
+(PSCR2-009) and teardown (HAT-020) are both demonstrated — but prefer not to run against a
+daemon serving real workspaces, since the suite competes with them for capacity.
 
 ## Step 3: run all tests
 
