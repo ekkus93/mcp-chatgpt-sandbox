@@ -74,7 +74,7 @@ async def test_pmoat_009_real_prune_reclaims_only_owned_plan_and_preserves_forei
     assert owned_container.status == "exited"
 
     owned_volume = docker_client.volumes.create(
-        name=f"mcp-cache-o8-owned-{suffix}",
+        name=f"mcp-chatgpt-sandbox-cache-o8-owned-{suffix}",
         labels=cache_volume_labels(repository_id=owned_repo),
     )
 
@@ -89,7 +89,7 @@ async def test_pmoat_009_real_prune_reclaims_only_owned_plan_and_preserves_forei
         **KEEP_ALIVE_RUN_KWARGS,
     )
     foreign_volume = docker_client.volumes.create(
-        name=f"mcp-cache-o8-foreign-{suffix}",
+        name=f"mcp-chatgpt-sandbox-cache-o8-foreign-{suffix}",
         labels=_foreign_volume_labels(repository_id=f"o8-foreign-{suffix}"),
     )
     foreign_container.reload()

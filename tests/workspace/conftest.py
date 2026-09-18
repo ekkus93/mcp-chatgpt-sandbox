@@ -3,7 +3,7 @@
 Teardown (H1, `docs/HARDENING_SPEC.md` HR-026) removes only the specific
 containers and volumes THIS test created — never a global label or name
 filter. The previous version filtered by `LABEL_MANAGED`
-(`mcp-chatgpt-sandbox.managed`) and by the `mcp-cache-` name prefix, both of
+(`mcp-chatgpt-sandbox.managed`) and by the `mcp-chatgpt-sandbox-cache-` name prefix, both of
 which are the exact labels/names a real deployment's own live containers
 and dependency caches carry: running this suite on a machine serving real
 workspaces destroyed them, reproduced during the 2026-08-27 review.

@@ -14,7 +14,7 @@ from mcp_chatgpt_sandbox.workspace.caches import (
 
 def test_cache_volume_name_is_repository_scoped() -> None:
     name = cache_volume_name(repository_id="example", cache_name="cargo")
-    assert name.startswith("mcp-cache-example-cargo-")
+    assert name.startswith("mcp-chatgpt-sandbox-cache-example-cargo-")
 
 
 def test_cache_volume_name_is_deterministic() -> None:
@@ -114,3 +114,34 @@ def test_build_cache_mounts_are_writable_docker_volumes() -> None:
 
 def test_resolve_caches_is_empty_for_no_project_caches() -> None:
     assert resolve_caches(repository_id="example", project_caches=[]) == []
+
+
+def test_pscrv_011_cache_volume_prefix_carries_the_project_name() -> None:
+    """PSCR-011: the prefix is the project name in both shapes.
+
+    Renaming a volume prefix orphans volumes created under the old scheme,
+    which `cache_volume_name`'s docstring documents as a deliberate upgrade
+    consequence rather than data loss. What must not change is the identity
+    underneath it, so that is asserted here too.
+    """
+
+    production = cache_volume_name(repository_id="example", cache_name="cargo")
+    assert production.startswith("mcp-chatgpt-sandbox-cache-example-cargo-")
+    assert not production.startswith("mcp-cache-")
+
+
+def test_pscrv_011_identity_stays_hash_derived_from_the_pair() -> None:
+    """HR-009's ambiguity must stay closed across the rename.
+
+    `repository_id="my-app" + cache_name="cargo"` and
+    `repository_id="my" + cache_name="app-cargo"` both slugify to the same
+    `my-app-cargo`, so only the NUL-separated pre-hash identity keeps them
+    distinct. A prefix change must not disturb that.
+    """
+
+    first = cache_volume_name(repository_id="my-app", cache_name="cargo")
+    second = cache_volume_name(repository_id="my", cache_name="app-cargo")
+
+    assert first != second
+    assert first.startswith("mcp-chatgpt-sandbox-cache-my-app-cargo-")
+    assert second.startswith("mcp-chatgpt-sandbox-cache-my-app-cargo-")

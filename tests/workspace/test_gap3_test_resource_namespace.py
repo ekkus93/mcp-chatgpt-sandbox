@@ -207,4 +207,4 @@ def test_g3at_015_test_cache_volumes_are_namespaced_without_changing_production_
     production_a = resolve_caches(repository_id="example", project_caches=[cache])[0].volume_name
     production_b = resolve_caches(repository_id="example", project_caches=[cache])[0].volume_name
     assert production_a == production_b
-    assert production_a.startswith("mcp-cache-example-cargo-")
+    assert production_a.startswith("mcp-chatgpt-sandbox-cache-example-cargo-")

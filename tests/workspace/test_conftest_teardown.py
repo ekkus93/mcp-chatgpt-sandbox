@@ -67,7 +67,7 @@ def _create_sentinel_container(real_docker_client: docker.DockerClient) -> str:
 
 
 def _create_sentinel_volume() -> str:
-    name = f"mcp-cache-hardening-sentinel-{uuid.uuid4().hex[:8]}"
+    name = f"mcp-chatgpt-sandbox-cache-hardening-sentinel-{uuid.uuid4().hex[:8]}"
     subprocess.run(["docker", "volume", "create", name], check=True, capture_output=True)
     return name
 

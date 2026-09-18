@@ -4,7 +4,7 @@
 **Date:** 2026-09-17  
 **Reviewed baseline:** `ba79759a1ed9287105d9891bbb1cefccdc396d78`  
 **Source review:** line-by-line code review of `docs/SETUP_WIZARD_POST_HARDENING_REVIEW_TODO_2026-09-14.md` against the merged implementation  
-**Task series:** `PSCR-001` through `PSCR-010`  
+**Task series:** `PSCR-001` through `PSCR-011`  
 **Validation series:** `PSCRV-*`
 
 ## 1. Purpose
@@ -252,6 +252,29 @@ failure, every one an `assert [<Container: ...>] == []`. It is not a hypothetica
 suites cannot share this host, and why the project has to rely on the operational rule in
 `docs/DEVELOPMENT.md` instead of the isolation mechanism it already built.
 
+### PSCR-011 — Rename the cache-volume prefix to the project name
+
+Brought into scope on request, having been a non-goal above. `caches.cache_volume_name()` emits
+`mcp-cache-{slug}-{digest}`. Unlike `mcp-dev-`, this prefix never carried the old project name —
+`cache` describes the resource kind — so this is a consistency change rather than a defect fix, and
+it must be judged on that basis.
+
+Two properties make it more delicate than the earlier renames.
+
+**It orphans existing cache volumes.** `cache_volume_name`'s own docstring already states the
+consequence: a volume created under the old scheme is no longer found or reused, and the daemon
+mounts a fresh empty one instead. That is not data loss — the old volume persists, unreferenced,
+and a cache is disposable by §11's design — but it is a real behavior change on upgrade and must be
+documented as one, not discovered.
+
+**The prefix is load-bearing in a safety test.** `tests/workspace/test_conftest_teardown.py`
+creates a sentinel volume named `mcp-cache-hardening-sentinel-<uuid>` precisely because that is what
+a real deployment's cache volume looks like. It exists because a label-and-prefix teardown destroyed
+a live deployment's containers and caches during the 2026-08-27 review, and HAT-020 in
+`docs/HARDENING_SPEC.md` makes its survival a normative requirement. The sentinel must keep
+impersonating what production creates *today*, so it renames with the production scheme; leaving it
+on the old prefix would silently downgrade the test to simulating a legacy volume.
+
 ### PSCR-008 — Final regression, contract, and closure
 
 Re-verify every touched boundary, confirm the public MCP contract is unchanged, and close only on
@@ -281,8 +304,9 @@ files does not alter the tool contract.
 - Rewriting the setup wizard, its step model, or its action layering.
 - Revisiting the SWPH-006 lock design, the SWPH-008 leaf-private policy, or the SWPH-007 discovery
   rule; all three were re-reviewed and hold.
-- Renaming the `mcp-cache-` volume prefix or the `mcp-dev-tool` test fixture, neither of which carries
-  project identity.
+- Renaming the `mcp-dev-tool` test fixture, which is an arbitrary fake binary name and carries no
+  project identity. (The `mcp-cache-` volume prefix was also a non-goal here on the same reasoning;
+  it was later brought into scope on request as PSCR-011.)
 - Publishing the distribution, or any change to release/versioning policy.
 - Changing the deliberate design in which the workspace container name is persisted on the workspace
   row rather than recomputed.

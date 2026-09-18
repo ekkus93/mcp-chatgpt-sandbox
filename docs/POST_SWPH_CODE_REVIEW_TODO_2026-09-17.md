@@ -1,11 +1,11 @@
 # Post-SWPH Code Review TODO
 
-**Status:** Complete — `PSCR-001` through `PSCR-010` closed; two global rules recorded as not
+**Status:** Complete — `PSCR-001` through `PSCR-011` closed; two global rules recorded as not
 followed (see below)  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `ba79759a1ed9287105d9891bbb1cefccdc396d78`  
-**Task series:** `PSCR-001` through `PSCR-010`  
+**Task series:** `PSCR-001` through `PSCR-011`  
 **Validation series:** `PSCRV-*`
 
 This TODO implements `docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`. It addresses one functional
@@ -447,6 +447,63 @@ containers through their logical-id labels.
   top-level import block with `ast`, and the "already imported?" test was itself corrected to
   check for a real `ImportFrom` binding rather than a substring, which the converted call sites
   had been satisfying spuriously.
+
+### PSCR-011 — Rename the cache-volume prefix to the project name
+
+**Goal:** cache volumes carry the project name, without weakening the teardown-safety test that
+depends on the prefix.
+
+Brought into scope on request; it was a recorded non-goal. A consistency change, not a defect fix:
+`mcp-cache-` never carried the old project name.
+
+- [x] Rename the generated prefix to `mcp-chatgpt-sandbox-cache-` in `caches.cache_volume_name()`.
+- [x] Keep the hash-derived, NUL-separated identity and the `-t{namespace}` variant unchanged.
+- [x] Rename the teardown sentinel so it still impersonates a *current* deployment cache volume.
+- [x] Update the `tests/workspace/conftest.py` docstring that names the prefix.
+- [x] Update the remaining test fixtures and assertions that hard-code the prefix.
+- [x] Update `docs/HARDENING_SPEC.md`'s HAT-020 wording without altering its criterion heading.
+- [x] Document the orphaning consequence for operators.
+
+**Validation — PSCRV-011**
+
+- [x] Test: generated names carry the new prefix, in both namespaced and production shapes.
+- [x] Test: identity is still hash-derived from the `(repository_id, cache_name)` pair, so the
+      HR-009 ambiguity stays closed.
+- [x] Teardown-safety test still passes with the renamed sentinel.
+- [x] Full Docker-backed suite passes on an idle host.
+
+**Closure evidence (2026-09-17)**
+
+- Ten references renamed across six files: the generator in `workspace/caches.py`, the teardown
+  sentinel, the `conftest.py` docstring, and four test fixtures/assertions. Identity is untouched —
+  still the SHA-256 of the NUL-separated `(repository_id, cache_name)` pair, with the
+  `-t{namespace}` variant intact.
+- **The sentinel renamed with production, deliberately.**
+  `tests/workspace/test_conftest_teardown.py` creates a volume that impersonates a real
+  deployment's cache, because a label-and-prefix teardown destroyed a live deployment's containers
+  and caches during the 2026-08-27 review and HAT-020 makes the sentinel's survival normative.
+  Leaving it on `mcp-cache-` would have kept the test green while silently downgrading it to
+  simulating a *legacy* volume rather than what production emits today.
+- HAT-020's **body** was updated and its heading deliberately left alone: `HAT` is a registered
+  criterion family in `tests/test_acceptance_test_coverage.py`, and the heading is the citation
+  key. That audit passes.
+- `docs/HARDENING_SPEC.md`'s defect narrative at §579 was **not** rewritten. It describes what the
+  buggy code did under the then-current prefix; updating it would falsify history rather than
+  record the change.
+- **Orphaning consequence documented, not discovered.** `cache_volume_name`'s docstring already
+  stated that a scheme change orphans volumes created under the old one — not data loss, since the
+  volume persists and a cache is disposable by §11's design, but a real upgrade behavior change.
+  That paragraph now names PSCR-011 as the change that triggers it. One stale volume existed on the
+  development host (`mcp-cache-hardening-sentinel-720fb844`, a leftover test sentinel from
+  2026-09-01, unlabelled and referenced by no container); it was removed on request.
+- `tests/workspace/test_caches.py` gained two PSCRV-011 tests: the prefix in the production shape,
+  and the HR-009 ambiguity staying closed across the rename — `my-app`+`cargo` and `my`+`app-cargo`
+  still slugify identically and must remain distinct.
+- Full Docker-backed suite on an idle host (CI run `35290228438` confirmed complete first):
+  `1428 passed in 633.33s`, zero failures, zero skips. Ruff format PASS; Ruff lint PASS; strict
+  mypy (103 files) PASS.
+- Scope note: this was a recorded **non-goal** in the spec. The non-goals section was amended to
+  say so explicitly rather than leaving the spec contradicting the work.
 
 ---
 

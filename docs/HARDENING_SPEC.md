@@ -751,7 +751,11 @@ diffable, and a commit subject containing `\x1e` SHALL not break `git_log`.
 
 ### HAT-020 The test suite does not touch foreign Docker state
 With a sentinel container carrying the production label and a sentinel
-`mcp-cache-` volume present, a full suite run SHALL leave both intact.
+cache volume present, a full suite run SHALL leave both intact. The
+sentinel volume carries the prefix production emits today
+(`mcp-chatgpt-sandbox-cache-` since PSCR-011, `mcp-cache-` before it), so
+that it keeps impersonating a real deployment's cache rather than a
+legacy one.
 
 ### HAT-021 The coverage audit does not satisfy itself
 With every real citation for a given AT removed, the coverage audit SHALL fail

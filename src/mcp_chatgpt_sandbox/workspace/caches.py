@@ -100,8 +100,15 @@ def cache_volume_name(*, repository_id: str, cache_name: str) -> str:
     already-concatenated (and already-ambiguous) string would only have
     hidden the collision, not fixed it.
 
-    Changing this naming scheme means a cache volume created under the
-    old (`mcp-cache-{repository_id}-{cache_name}`) scheme is no longer
+    PSCR-011 (`docs/POST_SWPH_CODE_REVIEW_SPEC_2026-09-17.md`) renamed the
+    prefix from `mcp-cache-` to `mcp-chatgpt-sandbox-cache-`, so volumes
+    created before that change are orphaned exactly as this paragraph
+    already described. Identity is unchanged: still the hash of the
+    NUL-separated `(repository_id, cache_name)` pair, so HR-009's
+    ambiguity stays closed.
+
+    Changing this naming scheme means a cache volume created under an
+    older (`mcp-cache-{repository_id}-{cache_name}`) scheme is no longer
     found or reused — the daemon mounts a fresh, empty volume under the
     new name instead. Not data loss (the old volume still exists in
     Docker, just unreferenced from here on — `docker volume ls` finds it,
@@ -117,8 +124,8 @@ def cache_volume_name(*, repository_id: str, cache_name: str) -> str:
     digest = hashlib.sha256(identity.encode()).hexdigest()[:8]
     slug = _SLUG_RUN_RE.sub("-", f"{repository_id}-{cache_name}".lower()).strip("-")
     if namespace is None:
-        return f"mcp-cache-{slug}-{digest}"
-    return f"mcp-cache-{slug}-t{namespace}-{digest}"
+        return f"mcp-chatgpt-sandbox-cache-{slug}-{digest}"
+    return f"mcp-chatgpt-sandbox-cache-{slug}-t{namespace}-{digest}"
 
 
 def resolve_caches(
