@@ -148,16 +148,22 @@ D3 (struck through, PJPO-003 cited). `CONTRACT_VERSION` untouched; a fresh `expo
 
 **Finding:** F4 (spec §2.4). **Decision:** PD3.
 
-- [ ] Record PD3. Recommended: A — docstring only.
-- [ ] Say what the promotion module actually imports from here (`kill_after_timeout`,
+- [x] Record PD3. — **A, docstring only**, chosen by the user.
+- [x] Say what the promotion module actually imports from here (`kill_after_timeout`,
       `new_job_id`), why the audit helpers are public (imported by `tools/execution.py` from a
       different module), and mention `new_job_id` and the task that added it (JPO-006).
 - [ ] If PD3-B: move the audit helpers back as a behaviour-free commit of their own, and confirm
-      `tools/execution.py` stays under 800 lines by `wc -l`.
+      `tools/execution.py` stays under 800 lines by `wc -l`. — *Not applicable: PD3-A chosen.*
 
 **Validation**
 
-- [ ] ruff, mypy, non-Docker suite (PD3-A); full suite (PD3-B).
+- [x] ruff, mypy, non-Docker suite (PD3-A); full suite (PD3-B).
+
+**Evidence — PJPO-004.** Module docstring rewritten from the actual imports (`grep` of every
+`from …execution_support import` at `e844787`): `kill_after_timeout` ← `execution.py`,
+`workspace.py`, `execution_promotion.py`; `new_job_id` ← `execution.py`, `execution_promotion.py`;
+both audit helpers ← `execution.py` only. The old wording is named as corrected rather than
+silently replaced. ruff, mypy clean; non-Docker suite 1027 passed.
 
 ### PJPO-005 — Test nit
 

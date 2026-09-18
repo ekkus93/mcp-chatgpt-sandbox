@@ -1,17 +1,31 @@
 """Helpers shared by the `exec`-family tool bodies: the TERM→grace→KILL
-escalation and the two §24 audit side effects.
+escalation, the two §24 audit side effects, and job-id minting.
 
-JPO-005 (`docs/JOB_PROMOTION_SPEC_2026-09-18.md` §2.6): moved verbatim
-out of `tools/execution.py`, which stood at 797 lines against the
-`< 800` budget `tests/test_refactored_module_size_guard.py` enforces and
-had no room for §14.4's promotion path. A pure move — no behaviour
-changed. It is also what lets `tools/execution_promotion.py` use these
-without importing `tools/execution.py`, which imports *it*: the obvious
-alternative, leaving them where they were, would have made that a
-circular import. The two audit helpers lost their leading underscore
-because they are now imported across modules. `tools/workspace.py`
-imports `kill_after_timeout` from here rather than through
-`tools/execution.py` — strict mypy rejects an implicit re-export.
+JPO-005 (`docs/JOB_PROMOTION_SPEC_2026-09-18.md` §2.6): the escalation and
+audit helpers were moved verbatim out of `tools/execution.py`, which stood
+at 797 lines against the `< 800` budget
+`tests/test_refactored_module_size_guard.py` enforces and had no room for
+§14.4's promotion path. A pure move — no behaviour changed.
+
+Who uses what (PJPO-004, `docs/POST_JPO_CODE_REVIEW_SPEC_2026-09-18.md`
+§2.4, corrects an earlier version of this docstring that said the move let
+the promotion module "use these" in general):
+
+- `kill_after_timeout` — `tools/execution.py`, `tools/workspace.py`, and
+  `tools/execution_promotion.py`. The last is the reason it lives outside
+  `tools/execution.py` at all: that module imports the promotion module,
+  so the reverse import would be circular. `tools/workspace.py` imports it
+  from here rather than through `tools/execution.py` because strict mypy
+  rejects an implicit re-export.
+- `new_job_id` — `tools/execution.py` (`exec_start`) and
+  `tools/execution_promotion.py`; added here by JPO-006, for the same
+  circular-import reason.
+- `audit_command_started` / `audit_ssh_auth_if_applicable` — only
+  `tools/execution.py`. The promotion path audits through a callback that
+  module builds, not by importing these. They are public (they lost their
+  leading underscore in the move) because they are imported from another
+  module, not because a second module uses them; PD3-A kept it that way
+  rather than importing private names across a module boundary.
 """
 
 from __future__ import annotations
