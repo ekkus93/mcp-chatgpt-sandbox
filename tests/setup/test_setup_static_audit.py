@@ -283,6 +283,21 @@ def _opens_for_writing(call: ast.Call) -> bool:
     (`open(path, "w")`) while `Path.open` puts it first (`path.open("w")`), so
     every positional argument and the `mode=` keyword are examined rather than
     one fixed position.
+
+    **Known boundary — recorded, not fixed** (PSCR2-006,
+    `docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md`). The check is
+    *receiver-agnostic*: it sees that something named `open` was called with a
+    write-mode string, not *what* was opened. It therefore flags
+    `tarfile.open(p, "w")`, `gzip.open(p, "wb")`, `zipfile.ZipFile(...)`-style
+    APIs reached through an `.open` attribute, and similar calls that are not
+    configuration persistence at all.
+
+    Current exposure is zero: an AST scan of all nine presentation modules finds
+    no `open(...)` or `.open(...)` call of any kind. The fix — knowing the
+    receiver's type — is outside what an AST guard can do without a type
+    checker. So a future false positive here should be resolved by moving the
+    archive handling out of the presentation layer (where it would not belong
+    anyway), not by loosening this check.
     """
 
     if any(_looks_like_write_mode(argument) for argument in call.args):

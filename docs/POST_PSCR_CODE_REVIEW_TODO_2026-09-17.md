@@ -1,6 +1,6 @@
 # Post-PSCR Code Review TODO
 
-**Status:** In progress — `PSCR2-001`–`PSCR2-005` closed; `PSCR2-006` next  
+**Status:** In progress — `PSCR2-001`–`PSCR2-006` closed; `PSCR2-007` next  
 **Date:** 2026-09-17  
 **Spec:** `docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md`  
 **Reviewed baseline:** `134795429eae988f927e43ec97cc04c5f98b867a`  
@@ -269,17 +269,32 @@ every declined fix is recorded as declined, and no document claims more than the
 
 **Goal:** the receiver-agnostic check is documented as a known boundary, not left to be rediscovered.
 
-- [ ] Record in `_opens_for_writing()`'s docstring that the check is receiver-agnostic.
-- [ ] Name the false-positive class (`tarfile.open`, `gzip.open`, and similar).
-- [ ] State that no presentation module currently calls `.open(` at all.
-- [ ] State that the fix — receiver typing — is outside what an AST guard can do.
-- [ ] No code change. (Worded under VR-000b for the recording, which is done; fixing the heuristic
+- [x] Record in `_opens_for_writing()`'s docstring that the check is receiver-agnostic.
+- [x] Name the false-positive class (`tarfile.open`, `gzip.open`, and similar).
+- [x] State that no presentation module currently calls `.open(` at all.
+- [x] State that the fix — receiver typing — is outside what an AST guard can do.
+- [x] No code change. (Worded under VR-000b for the recording, which is done; fixing the heuristic
       is declined, and no checkbox claims it.)
 
 **Validation — PSCR2V-006**
 
-- [ ] `tests/setup/test_setup_static_audit.py` remains green.
-- [ ] Docstring review confirms the boundary, the class, the current exposure, and the reason.
+- [x] `tests/setup/test_setup_static_audit.py` remains green.
+- [x] Docstring review confirms the boundary, the class, the current exposure, and the reason.
+
+**Closure evidence (2026-09-18)**
+
+- `_opens_for_writing()`'s docstring now records the boundary as **recorded, not fixed**: the check
+  is receiver-agnostic, and it names the false-positive class — `tarfile.open`, `gzip.open`, and
+  archive APIs reached through an `.open` attribute.
+- **The exposure claim was verified, not repeated.** It was first observed with grep during the
+  review; because the docstring now asserts it, it was re-checked with an AST scan of all nine
+  presentation modules, which found no `open(...)` or `.open(...)` call of any kind.
+- The docstring states why the fix is out of reach (the receiver's type needs a type checker) and
+  what to do on a future false positive: move archive handling out of the presentation layer,
+  where it would not belong anyway, rather than loosen the check.
+- **VR-000b.** Every checkbox above describes the *recording*, which is done. Fixing the heuristic
+  is declined, and no checkbox claims it.
+- No code change. `tests/setup/test_setup_static_audit.py` `16 passed`; Ruff lint PASS.
 
 ---
 
