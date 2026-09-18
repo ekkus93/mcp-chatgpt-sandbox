@@ -169,12 +169,16 @@ silently replaced. ruff, mypy clean; non-Docker suite 1027 passed.
 
 **Finding:** F6 (spec §2.6).
 
-- [ ] `test_jpo008_run_exec_refuses_the_flag_when_it_has_nothing_to_promote_with`: drop the unused
+- [x] `test_jpo008_run_exec_refuses_the_flag_when_it_has_nothing_to_promote_with`: drop the unused
       binding (`_`, or bind only what is used).
 
 **Validation**
 
-- [ ] That test file passes.
+- [x] That test file passes.
+
+**Evidence — PJPO-005.** `_server_` → `_` (the server is still bound for the test's lifetime, as
+before, so nothing it owns is collected early). `tests/workspace/test_jpo_exec_promotion.py`: 10
+passed. PJPO-003/004/005 were committed separately, as the user chose.
 
 > PJPO-003, PJPO-004 and PJPO-005 are record-only and may share one commit if the user prefers;
 > record that choice here if so.

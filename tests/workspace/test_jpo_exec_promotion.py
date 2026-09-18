@@ -381,7 +381,7 @@ async def test_jpo008_run_exec_refuses_the_flag_when_it_has_nothing_to_promote_w
     the timeout, a command its caller had asked to keep. `true` (not an
     overrunning command) on purpose: the refusal must come before anything
     is started, so nothing is left running whichever way this goes."""
-    _server_, config, workspace_id = await _server(minimal_config, default_image_tag, tmp_path)
+    _, config, workspace_id = await _server(minimal_config, default_image_tag, tmp_path)
     db = open_db(config.state_db_path)
     try:
         with pytest.raises(ValueError, match="PromotionDeps"):
