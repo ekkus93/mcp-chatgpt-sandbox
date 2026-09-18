@@ -221,7 +221,8 @@ with ChatGPT remains unverified until they are.
 - [x] `/gates` on an idle host, in the foreground (chunked with `--cov-append` if needed): ruff
       format, ruff check, mypy, `pytest --cov`. Record counts and coverage; the chunk counts must
       sum to `pytest --collect-only`.
-- [ ] Push; exact-head CI green. Record run and job IDs.
+- [x] Push; exact-head CI green. Record run and job IDs. — `47ecfb2`: run `35401443653`, job
+      `105782005612`, success — 1488 passed, 88% (9527 / 1109), identical to the local gates.
 - [x] A fresh export leaves `schemas/tools.json` unchanged; `contract_version` still `0.11.1`.
 - [x] Set this file's Status line and the spec's Status; state whether PJPO-006 was performed.
 
@@ -250,5 +251,5 @@ and doc commits) cancelled as superseded — exact-head CI for this closure is r
 - [x] G2 holds: no half-attached `StreamCapture` after a failed `attach` (PJPOV-001).
 - [x] The JPO record's three inaccurate statements corrected visibly.
 - [x] No contract change (G4), verified by export.
-- [ ] Full gates green on an idle host and on exact-head CI.
+- [x] Full gates green on an idle host and on exact-head CI.
 - [x] PJPO-006 performed, or recorded as not performed. — Recorded as not performed.
