@@ -4,7 +4,7 @@
 **Date:** 2026-09-18  
 **Reviewed baseline:** `a5a35a1f1f049582f9596fc1bd9ffd7bf7ad65a1`  
 **Source review:** adversarial re-read of the merged `PSCR2-001`–`PSCR2-011` implementation against `docs/POST_PSCR_CODE_REVIEW_TODO_2026-09-17.md`  
-**Task series:** `PSCR3-001` through `PSCR3-007`  
+**Task series:** `PSCR3-001` through `PSCR3-009`  
 **Validation series:** `PSCR3V-*`
 
 ## 1. Purpose
@@ -18,7 +18,12 @@ specification that still describes a design the implementation rejected, evidenc
 numbers nobody verified, a new guard whose boundaries are unstated, a fixture that traded rename
 safety for the ability to run against old code, and two behaviours that are safe but undocumented.
 
-None of this changes what the software does. It matters because this repository treats its
+A second review pass, which measured branch coverage instead of reading, added two findings: the
+function the version-skew check rests on is never executed by any test (§3.7), and project-name
+matching is exact rather than normalised (§3.8).
+
+None of this changes what the software does, with one recorded exception: PSCR3-009's Option A, if
+chosen, widens which spellings of this project's own name are accepted. It matters because this repository treats its
 specifications and TODO evidence as the durable account of why the code is the way it is, and the
 PSCR and PSCR2 series both existed to make that account true. A record that is mostly right invites
 exactly the misreading that led PSCR2 to cite dead code as a live protection.
@@ -55,6 +60,14 @@ The reviewed tree passes `uv run ruff format --check .`, `uv run ruff check .`, 
 - **PSCR2-009** still reads: "the 'not demonstrated' caveat is removed from all four locations in
   one commit." Three locations carried the caveat; `CLAUDE.md` never mentioned a live server. The
   TODO says three.
+
+The PSCR2 **TODO** has the mirror-image problem (found by a second review pass). Its introduction
+still says the series closes "one correctness gap, four heuristic boundaries, and one falsified
+document" — the scope of PSCR2-001→008 — and its Definition of done carries no entry for what
+PSCR2-009→011 delivered: live-server isolation demonstrated, `sparse=False` pinned in production, and
+the shadowed `reconcile()` body removed. Each is fully evidenced in its own section; the file's
+opening and closing frames simply never grew with it, so a reader skimming top and bottom
+underestimates what the file records.
 
 ### 3.2 PSCR2 TODO evidence cites line numbers that were not verified
 
@@ -127,10 +140,45 @@ The failure mode is loud rather than silent — `reconcile_all()` catches only
 `ContainerRuntimeFailedError`, so a `NotImplementedError` would propagate at server startup rather
 than be swallowed as a skipped workspace — but it would be discovered at startup, not in CI.
 
+### 3.7 `_installed_version()` is never executed by any test
+
+Found by a second review pass, using branch coverage rather than reading. `_installed_version()`
+(`setup/docker_setup.py`) is the function PSCR2-002's skew check reads the running package's version
+from. Its lines have **zero coverage**: the autouse fixture in
+`tests/setup/test_pscr_docker_context_policy.py` replaces it in every test in that module, and
+`test_pscr2v_002_the_real_editable_checkout_passes` is in-tree, so the check is skipped before the
+lookup is reached. Neither the real `importlib.metadata.version(...)` call nor the
+`PackageNotFoundError -> None` branch ever runs under test.
+
+Invoked by hand it works — it returns the installed version, and the missing-distribution branch is
+reachable. But the whole check rests on it, and the failure mode is quiet: if `_PROJECT_NAME` ever
+stopped matching the distribution's metadata name, the function would return `None`, every
+non-editable install beside a checkout would be refused with "unknown version", and no test would
+notice. This is adjacent to §3.4 but not the same: §3.4 is about the *fixture* surviving a rename;
+this is about the *function beneath the fixture* having no test of its own.
+
+### 3.8 Project-name matching is exact, not normalised
+
+Also from the second pass. PSCR2-001 accepts a checkout only when
+`project.get("name") == "mcp-chatgpt-sandbox"`. Probed directly, `mcp_chatgpt_sandbox` and
+`MCP-ChatGPT-Sandbox` are both **rejected**, although Python packaging treats all three as the same
+project name (PEP 503 normalisation: lower-case, runs of `-`, `_`, `.` collapsed to `-`) and
+`importlib.metadata` resolves any of them.
+
+Nothing is wrong today — this repository's `pyproject.toml` uses the exact string. The cost is a
+silent cliff with a misleading symptom: restyle the name in `pyproject.toml` and the search stops
+finding *its own* checkout, reporting "ships only in a source checkout" from inside a source
+checkout.
+
 ## 4. Governing invariants
 
-- No production behavior changes in this series. PSCR3-004 and PSCR3-006 add test code; everything
-  else is documentation or docstrings.
+- No production behavior changes in this series, with **one recorded exception**: PSCR3-009, if its
+  Option A is chosen, makes the checkout search accept PEP 503-equivalent spellings of this
+  project's own name. It accepts strictly more spellings of the *same* project and no other
+  project, so every checkout accepted today is still accepted. PSCR3-004, PSCR3-006 and PSCR3-008
+  add test code; everything else is documentation or docstrings. (This invariant originally read
+  "no production behavior changes"; it was amended when PSCR3-009 was added, rather than left
+  contradicted.)
 - Preserve every PSCR and PSCR2 outcome: checkout-only Docker context, project-specific checkout
   search, installed-version skew check, namespace-scoped assertions, pinned `sparse=False`, the
   `reconcile()` declaration.
@@ -158,6 +206,10 @@ Amend `docs/POST_PSCR_CODE_REVIEW_SPEC_2026-09-17.md` in place, visibly:
 
 The PSCR2 TODO's deviation notes stay as they are; they are the record of *how* the difference was
 found.
+
+Also bring the PSCR2 TODO's frame up to its final scope: its introduction says what PSCR2-009→011
+added and that they were added after the original closure, and its Definition of done gains one
+entry per post-closure outcome. Existing entries and evidence are not reworded.
 
 ### PSCR3-002 — Replace unverified line citations with verified, durable ones
 
@@ -195,6 +247,30 @@ Add a Docker-free test: a `DockerWorkspaceManager` with one workspace row and a 
 runs `reconcile_all()`, and the test asserts the concrete `reconcile()` was what ran and the
 `_CoreMixin` declaration was never reached. It must fail if the override is removed.
 
+### PSCR3-008 — Test `_installed_version()` itself
+
+Added after the second review pass. Two Docker-free tests that **bypass** the autouse pin and run the
+real function: one asserts it returns the version `importlib.metadata` reports for this
+distribution; one makes the distribution lookup raise `PackageNotFoundError` and asserts `None`. The
+bypass must be explicit and local — the pin stays autouse for every other test — and must not
+weaken PSCR3-004's rename assertion.
+
+### PSCR3-009 — Dispose of exact project-name matching
+
+Added after the second review pass. Choose exactly one and record it:
+
+- **Option A — normalise.** Compare PEP 503-normalised names on both sides (lower-case; runs of
+  `-`, `_`, `.` collapsed to `-`), so every equivalent spelling of this project's name is accepted
+  and nothing else is. A small production change, and the recorded exception to this series'
+  no-behavior-change invariant.
+- **Option B — keep exact, on the record.** Leave the comparison as it is and state in
+  `_source_checkout_root()`'s docstring that matching is deliberately exact, what the symptom of a
+  restyled name would be, and where to change it.
+
+Option A is recommended: the normalisation rule is standard, a dozen characters of code, and removes
+a cliff whose symptom points away from its cause. Option B is the honest fallback if no production
+change at all is wanted in this series.
+
 ### PSCR3-007 — Final regression, contract, and closure
 
 Gates, contract re-export and byte-diff, the full Docker-backed suite, exact-head CI.
@@ -207,6 +283,10 @@ Gates, contract re-export and byte-diff, the full Docker-backed suite, exact-hea
 - PSCR3-003's new assertions pin *current* detector behavior, so they pass before and after by
   design; that is stated rather than presented as discrimination.
 - PSCR3-002's numbers are verified by a command whose output is recorded, not by reading.
+- PSCR3-008's tests must be shown to execute the real function: branch coverage of
+  `_installed_version()` goes from zero to complete, recorded from a coverage run.
+- PSCR3-009 (if Option A) must be shown to discriminate: the equivalent-spelling test fails against
+  the exact comparison, and the wrong-project decoy tests from PSCR2-001 still pass unchanged.
 - Documentation tasks are validated by grep for the old wording and by the repository's own
   acceptance-coverage and `docs/TOOLS.md` drift guards staying green.
 
@@ -235,6 +315,9 @@ expected to remain `0.10.3`; PSCR3-007 confirms by re-export and diff.
   against pre-PSCR2-002 code.
 - The live-server test documents its production-labelled container and why it is safe.
 - A test shows `reconcile_all()` dispatches to the concrete override, and fails without it.
+- The PSCR2 TODO's introduction and Definition of done reflect PSCR2-009→011.
+- `_installed_version()` is executed by tests on both branches, shown by coverage.
+- Exact project-name matching has a recorded disposition, implemented per the chosen option.
 - Public MCP contract confirmed unchanged by re-export and diff.
 - Exact-head CI green.
 - Exact closure evidence recorded in `docs/POST_PSCR2_CODE_REVIEW_TODO_2026-09-18.md`.

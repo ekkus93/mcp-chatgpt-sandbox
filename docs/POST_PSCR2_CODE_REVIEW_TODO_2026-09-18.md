@@ -1,23 +1,26 @@
 # Post-PSCR2 Code Review TODO
 
-**Status:** Open — `PSCR3-001` through `PSCR3-007` not started  
+**Status:** Open — `PSCR3-001` through `PSCR3-009` not started  
 **Date:** 2026-09-18  
 **Spec:** `docs/POST_PSCR2_CODE_REVIEW_SPEC_2026-09-18.md`  
 **Reviewed baseline:** `a5a35a1f1f049582f9596fc1bd9ffd7bf7ad65a1`  
-**Task series:** `PSCR3-001` through `PSCR3-007`  
+**Task series:** `PSCR3-001` through `PSCR3-009`  
 **Validation series:** `PSCR3V-*`
 
 This TODO implements `docs/POST_PSCR2_CODE_REVIEW_SPEC_2026-09-18.md`. A re-read of the merged
 `PSCR2-001`–`PSCR2-011` work found no production defect. It found residue in that series' own record
 and test scaffolding: a specification describing a rejected design, unverified line citations, a
 guard with unstated boundaries, a fixture that cannot detect a rename, and two safe-but-undocumented
-behaviours. No task here changes what the software does.
+behaviours. A second review pass added two more: the function the version-skew check rests on is
+never executed by any test, and project-name matching is exact rather than normalised. No task here
+changes what the software does, with one recorded exception — PSCR3-009, if its Option A is chosen.
 
 ## Global rules
 
 - [ ] Start from an exact inspected `master` SHA.
 - [ ] Follow the project's commit convention: direct conventional commits to `master`, no branch or PR.
-- [ ] Make no production behavior change. Test code and documentation only.
+- [ ] Make no production behavior change, except PSCR3-009 Option A if chosen (accepts equivalent
+      spellings of this project's own name, and nothing else).
 - [ ] Preserve every PSCR and PSCR2 outcome.
 - [ ] Correct the historical record visibly, never silently.
 - [ ] Cite code by symbol; qualify any line number with the commit it was verified at, and verify it
@@ -43,12 +46,18 @@ behaviours. No task here changes what the software does.
       implementation, and point to the TODO's deviation note.
 - [ ] Change PSCR2-009's "all four locations" to three, and say why not four.
 - [ ] Leave the PSCR2 TODO's deviation notes unchanged.
+- [ ] Update the PSCR2 TODO's introduction to say what PSCR2-009→011 added, and that they were added
+      after the original closure.
+- [ ] Add one Definition-of-done entry to the PSCR2 TODO per post-closure outcome (live-server
+      isolation demonstrated; production `sparse=False` pinned; shadowed `reconcile()` removed).
+- [ ] Reword no existing PSCR2 entry or evidence.
 
 **Validation — PSCR3V-001**
 
 - [ ] Grep: the specification no longer instructs comparing `mcp_chatgpt_sandbox.__version__`.
 - [ ] Grep: no "all four locations" remains for the live-server caveat.
 - [ ] Both corrections read as corrections, naming PSCR3-001.
+- [ ] The PSCR2 TODO's introduction and Definition of done cover PSCR2-009→011.
 
 ### PSCR3-002 — Replace unverified line citations with verified, durable ones
 
@@ -136,6 +145,42 @@ behaviours. No task here changes what the software does.
 - [ ] Discrimination: with the override removed from `DockerWorkspaceManager`, the test fails.
 - [ ] `tests/workspace/test_pscr2_reconcile_declaration.py` remains green.
 
+### PSCR3-008 — Test `_installed_version()` itself
+
+**Goal:** the function the skew check rests on is executed by tests, on both branches.
+
+Added after a second review pass measured its coverage at zero.
+
+- [ ] Add a test that bypasses the autouse pin and asserts the real function returns the version
+      `importlib.metadata` reports for this distribution.
+- [ ] Add a test that makes the lookup raise `PackageNotFoundError` and asserts `None`.
+- [ ] Keep the bypass explicit and local; the pin stays autouse for every other test.
+- [ ] Do not weaken PSCR3-004's rename assertion.
+
+**Validation — PSCR3V-008**
+
+- [ ] A recorded coverage run shows `_installed_version()` fully covered, up from zero.
+- [ ] The rest of `tests/setup/test_pscr_docker_context_policy.py` remains green.
+
+### PSCR3-009 — Dispose of exact project-name matching
+
+**Goal:** restyling this project's name cannot silently break its own checkout search.
+
+Added after a second review pass.
+
+- [ ] Choose Option A (normalise per PEP 503) or Option B (keep exact, on the record); record it.
+- [ ] If Option A: normalise both sides — lower-case; runs of `-`, `_`, `.` collapsed to `-`.
+- [ ] If Option A: confirm a different project's name is still rejected after normalisation.
+- [ ] If Option B: state in `_source_checkout_root()`'s docstring that matching is deliberately
+      exact, the symptom of a restyled name, and where to change it.
+
+**Validation — PSCR3V-009**
+
+- [ ] Test (if A): `mcp_chatgpt_sandbox` and `MCP-ChatGPT-Sandbox` spellings are accepted.
+- [ ] Test (if A): PSCR2-001's wrong-project decoy tests still pass unchanged.
+- [ ] Discrimination (if A): the equivalent-spelling test fails against the exact comparison.
+- [ ] Docstring review (if B) confirms the three statements.
+
 ---
 
 ## Phase 3 — Final acceptance and closure
@@ -153,7 +198,10 @@ behaviours. No task here changes what the software does.
 - [ ] A rename of `_installed_version` fails the fixture; pre-fix runs still work.
 - [ ] The live-server test documents its production-labelled container.
 - [ ] `reconcile_all()` is shown to dispatch to the override.
-- [ ] No production code path changed.
+- [ ] The PSCR2 TODO's frame reflects PSCR2-009→011.
+- [ ] `_installed_version()` is covered on both branches.
+- [ ] Project-name matching has its recorded disposition.
+- [ ] No production code path changed, other than PSCR3-009 Option A if chosen.
 
 #### Contract/version decision
 
@@ -186,6 +234,9 @@ behaviours. No task here changes what the software does.
       runs against pre-PSCR2-002 code.
 - [ ] The live-server test documents its production-labelled container and why it is safe.
 - [ ] A test shows `reconcile_all()` dispatches to the concrete override, and fails without it.
+- [ ] The PSCR2 TODO's introduction and Definition of done reflect PSCR2-009→011.
+- [ ] `_installed_version()` is executed by tests on both branches, shown by coverage.
+- [ ] Exact project-name matching has a recorded disposition, implemented per the chosen option.
 - [ ] Public MCP contract confirmed unchanged by re-export and diff.
 - [ ] Exact-head CI is green.
 - [ ] Exact closure evidence is recorded in this file.
