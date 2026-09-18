@@ -343,7 +343,8 @@ live-server isolation on a real daemon, `PSCR2-010` pinned `sparse=False` at eve
 - **Scoped so as not to trade one over-claim for another.** Two of the old passages also warned
   about a *live server*. PSCR-010's proof covered two test sessions, not a test session beside a
   running `serve`. That case is protected by design — the production manager's reconcile paths
-  filter on the namespace (`manager_core.py:148` `_find_container`, and — *corrected during
+  filter on the namespace (`_CoreMixin._find_container`'s namespace check — `manager_core.py:145` as
+  of `68a37fd`; *citation corrected by PSCR3-002, originally an unverified `:148`* — and — *corrected during
   PSCR2-009* — `operations/resources.py` `_namespace_proof()` via `classify_workspace_container()`;
   the `manager_core.py:200` originally cited here is inside `_CoreMixin.reconcile()`, which
   `DockerWorkspaceManager` overrides and never calls), a live server's containers carry no
@@ -444,8 +445,13 @@ Found while writing PSCR2-009; added on request.
 - Four `list()` call sites exist in `src/`. `sparse` exists only on `ContainerCollection.list`
   (default `False`); `VolumeCollection.list` takes only `**kwargs`, so `inventory.py`'s
   `volumes.list` is out of scope and was deliberately left unchanged rather than edited for symmetry.
-- The three container sites all read `.labels` on their results: `manager.py:213` (the live
-  reconcile), `manager_core.py:200`, and `inventory.py:283`. Each now passes `sparse=False`, with a
+- The three container sites all read `.labels` on their results: `DockerWorkspaceManager.reconcile`
+  (the live reconcile; its `container.labels` read is `manager.py:218` as of `68a37fd`),
+  `manager_core.py:200` (historical — inside the body PSCR2-011 later deleted), and
+  `ResourceInventoryService._collect_containers`'s `getattr(container, "labels", {})` (`inventory.py:288` as of
+  `68a37fd`). *(Citations corrected by PSCR3-002: this entry originally gave `manager.py:213`, a
+  pre-edit number PSCR2-010's own change had shifted, and `inventory.py:283`, which was never
+  checked.)* Each now passes `sparse=False`, with a
   comment saying why.
 - **The `inventory.py` site was a trap.** It reads `getattr(container, "labels", {})`, which looks
   defensive, but a sparse object raises `DockerException` there, not `AttributeError`, so the

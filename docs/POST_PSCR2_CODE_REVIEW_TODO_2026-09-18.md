@@ -1,6 +1,6 @@
 # Post-PSCR2 Code Review TODO
 
-**Status:** In progress — `PSCR3-001` closed; `PSCR3-002` next  
+**Status:** In progress — `PSCR3-001`–`PSCR3-002` closed; `PSCR3-003` next  
 **Date:** 2026-09-18  
 **Spec:** `docs/POST_PSCR2_CODE_REVIEW_SPEC_2026-09-18.md`  
 **Reviewed baseline:** `a5a35a1f1f049582f9596fc1bd9ffd7bf7ad65a1`  
@@ -82,17 +82,41 @@ changes what the software does, with one recorded exception — PSCR3-009, if it
 
 **Goal:** no citation in the PSCR2 TODO is presented as current while being wrong.
 
-- [ ] Replace `manager.py:213` with the symbol (`DockerWorkspaceManager.reconcile`, the
+- [x] Replace `manager.py:213` with the symbol (`DockerWorkspaceManager.reconcile`, the
       `container.labels` read) and a commit-qualified line number.
-- [ ] Replace `inventory.py:283` likewise (`getattr(container, "labels", {})`).
-- [ ] Replace `manager_core.py:148` likewise (`_CoreMixin._find_container`'s namespace check).
-- [ ] Verify each number with a command run at the cited commit, and record the command's output.
-- [ ] Leave the explicitly historical `manager_core.py:197` / `:200` citations alone.
+- [x] Replace `inventory.py:283` likewise (`getattr(container, "labels", {})`).
+- [x] Replace `manager_core.py:148` likewise (`_CoreMixin._find_container`'s namespace check).
+- [x] Verify each number with a command run at the cited commit, and record the command's output.
+- [x] Leave the explicitly historical `manager_core.py:197` / `:200` citations alone.
 
 **Validation — PSCR3V-002**
 
-- [ ] Recorded command output matches every number written.
-- [ ] Each corrected citation names its symbol and its commit.
+- [x] Recorded command output matches every number written.
+- [x] Each corrected citation names its symbol and its commit.
+
+**Closure evidence (2026-09-18)**
+
+- The three citations in `docs/POST_PSCR_CODE_REVIEW_TODO_2026-09-17.md` now name the symbol and give
+  a line number qualified by commit `68a37fd` — the last commit that changed any of the three files
+  (`git diff --stat 68a37fd HEAD` over them is empty). Each carries a visible correction note saying
+  what it originally said and why that was wrong.
+- **Line numbers verified by command, output recorded.** `git show 68a37fd:<file> | grep -nF <pattern>`:
+
+  ```text
+  manager.py:       218:                container.labels,
+  inventory.py:     288:                labels = dict(getattr(container, "labels", {}) or
+  manager_core.py:  145:            if not container_matches_test_namespace(container.labe
+  ```
+
+- **Symbols verified by command too.** An AST walk resolving the innermost enclosing definition of
+  each line gave `DockerWorkspaceManager.reconcile`, `ResourceInventoryService._collect_containers`,
+  and `_CoreMixin._find_container`. This was checked because the first draft of this very correction
+  named the inventory class from memory — the habit this task exists to end. The name happened to
+  be right; it is now cited to the method, from output.
+- `manager_core.py:200` is kept and explicitly marked historical, since the body it pointed into
+  was deleted by PSCR2-011. The `:197`/`:200` citations elsewhere in that file were already framed
+  as historical and are unchanged.
+- Documentation only; guards `18 passed`.
 
 ---
 
