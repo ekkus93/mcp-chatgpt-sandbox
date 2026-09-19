@@ -140,3 +140,24 @@ def test_pjpo3v002_promote_closes_the_prepared_stdout_file_when_stderr_fails(
     (stdout_file,) = prepared
     assert stdout_file is not None
     assert stdout_file.closed
+
+
+def test_pjpo3v003_a_second_promote_after_success_raises_before_any_io(tmp_path: Path) -> None:
+    """PJPO3-003 (`docs/POST_PJPO2_CODE_REVIEW_SPEC_2026-09-18.md` §2.3):
+    PJPO2-005's evidence claimed this with no test behind it. It pins a
+    property that already held, not a regression."""
+    sink = _sink_with_output()
+    out, err = tmp_path / "job" / "stdout.log", tmp_path / "job" / "stderr.log"
+    sink.promote(stdout_log_path=out, stderr_log_path=err)
+    second = tmp_path / "second-job"
+
+    with pytest.raises(RuntimeError, match="already attached"):
+        sink.promote(stdout_log_path=second / "stdout.log", stderr_log_path=second / "stderr.log")
+
+    assert not second.exists()  # neither file nor directory: refused before any I/O
+    sink.on_stdout(b"out-2\n")
+    sink.on_stderr(b"err-2\n")
+    sink.stdout_capture.finish()
+    sink.stderr_capture.finish()
+    assert out.read_bytes() == b"out-1\nout-2\n"
+    assert err.read_bytes() == b"err-1\nerr-2\n"

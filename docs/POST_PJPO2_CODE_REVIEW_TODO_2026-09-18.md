@@ -1,6 +1,6 @@
 # Post-PJPO2 Code Review TODO
 
-**Status:** In progress — `PJPO3-001`–`PJPO3-002` closed  
+**Status:** In progress — `PJPO3-001`–`PJPO3-003` closed  
 **Date:** 2026-09-18  
 **Spec:** `docs/POST_PJPO2_CODE_REVIEW_SPEC_2026-09-18.md`  
 **Reviewed baseline:** `d6d0105`  
@@ -111,17 +111,24 @@ traceback rationale. PJPO2-001's evidence line annotated visibly with a PJPO3-00
 
 **Finding:** F3 (spec §2.3).
 
-- [ ] Test: after a successful `promote`, a second `promote` to new paths raises `RuntimeError`
+- [x] Test: after a successful `promote`, a second `promote` to new paths raises `RuntimeError`
       ("already attached"); neither new path nor its parent directory exists; output written
       afterwards still reaches the first logs, in order.
-- [ ] Record honestly whether it fails on any earlier code. It is expected to pass at `d6d0105`
+- [x] Record honestly whether it fails on any earlier code. It is expected to pass at `d6d0105`
       (it pins a property, not a regression); if so, say that — do not contrive a failure.
-- [ ] In `docs/POST_PJPO_CODE_REVIEW_TODO_2026-09-18.md`, PJPO2-005's evidence: add the test's name
+- [x] In `docs/POST_PJPO_CODE_REVIEW_TODO_2026-09-18.md`, PJPO2-005's evidence: add the test's name
       next to the claim, with a PJPO3-003 reference.
 
 **Validation — PJPO3V-003**
 
-- [ ] New test passes; non-Docker suite green.
+- [x] New test passes; non-Docker suite green.
+
+**Evidence — PJPO3-003.** `test_pjpo3v003_a_second_promote_after_success_raises_before_any_io`: after
+a successful `promote`, a second one raises "already attached"; the second job directory does not
+exist; later output reaches the first logs in order. As expected it passes at `e7ed82c`, and also
+with both `src` files restored to `d17a5e8` (before PJPO2), where `attach` refused the same way — it
+pins a property, not a regression, and no failure was contrived. Restored byte-identical (`cmp`).
+PJPO2-005's claim annotated with the test's name. Test/doc-only: non-Docker suite 1035 passed.
 
 ---
 

@@ -211,6 +211,8 @@ the schema's compatibility with ChatGPT remains unverified.
 Also checked: `prepare_attach` and `commit_attach` run under the one sink lock, so no `write` can
 land between them (the constraint `prepare_attach`'s docstring states); a second `promote` after a
 *successful* one still raises "already attached" from the first `prepare_attach`, before any I/O.
+*(Pinned by `test_pjpo3v003_a_second_promote_after_success_raises_before_any_io` — PJPO3-003;
+untested when written.)*
 Gates on an idle host (no CI run in progress), foreground: `ruff format --check` 339 files;
 `ruff check` clean; `mypy src` clean (106); `pytest --cov` in four chunks with `--cov-append`:
 1032 + 145 + 198 + 118 = 1493 = `--collect-only`, all passed; coverage 88% (9541 / 1109);
