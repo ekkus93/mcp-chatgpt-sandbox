@@ -1,6 +1,6 @@
 # Post-PJPO2 Code Review TODO
 
-**Status:** In progress — `PJPO3-001` closed  
+**Status:** In progress — `PJPO3-001`–`PJPO3-002` closed  
 **Date:** 2026-09-18  
 **Spec:** `docs/POST_PJPO2_CODE_REVIEW_SPEC_2026-09-18.md`  
 **Reviewed baseline:** `d6d0105`  
@@ -77,25 +77,35 @@ first committed implementation.
 
 **Finding:** F2 (spec §2.2).
 
-- [ ] Test (in `tests/execution/test_pjpo2_promote_atomicity.py`): wrap — not replace — the stdout
+- [x] Test (in `tests/execution/test_pjpo2_promote_atomicity.py`): wrap — not replace — the stdout
       capture's `prepare_attach` so the test keeps a reference to the file object it returns; fail
       stderr's prepare for real (`/dev/full`); assert that object's `.closed` is true while the
       reference is still held.
-- [ ] Prove it fails with the three-line close in `PromotableSink.promote` removed. The existing
+- [x] Prove it fails with the three-line close in `PromotableSink.promote` removed. The existing
       `_open_descriptors_to(...) == []` assertion does not (spec §2.2) — keep it, but add a comment
       saying what it does and does not show.
 - [ ] If the new test cannot be made to discriminate, do not tick the box above: record why, and
-      reword the evidence instead.
-- [ ] Comment at the close in `promote`: why it is explicit rather than left to refcounting (another
+      reword the evidence instead. — *Not applicable: it discriminates (evidence below).*
+- [x] Comment at the close in `promote`: why it is explicit rather than left to refcounting (another
       interpreter; a retained traceback — e.g. a logged exception — keeps the frame and the file
       alive). Cite PJPO3-002.
-- [ ] In `docs/POST_PJPO_CODE_REVIEW_TODO_2026-09-18.md`, PJPO2-001's evidence: keep the line, mark
+- [x] In `docs/POST_PJPO_CODE_REVIEW_TODO_2026-09-18.md`, PJPO2-001's evidence: keep the line, mark
       "no descriptor open on the prepared stdout file (checked through `/proc/self/fd` …)" as not
       pinning the close, and point to the new test with a PJPO3-002 reference.
 
 **Validation — PJPO3V-002**
 
-- [ ] New test passes; mutation recorded; restored byte-identical (`cmp`); non-Docker suite green.
+- [x] New test passes; mutation recorded; restored byte-identical (`cmp`); non-Docker suite green.
+
+**Evidence — PJPO3-002.** `test_pjpo3v002_promote_closes_the_prepared_stdout_file_when_stderr_fails`
+wraps the stdout capture's `prepare_attach` to keep a reference to the real file object, fails
+stderr with a real ENOSPC, and asserts `.closed`. Mutation — the three-line close in `promote`
+replaced by `pass`: the new test fails (`assert False` where `False = <BufferedWriter …/stdout.log>.closed`)
+while `test_pjpo2v001_a_stderr_failure_…`, with its descriptor check, still passes — the spec §2.2
+finding, reproduced. Restored byte-identical (`cmp`). That descriptor assertion is kept with a
+comment saying what it does and does not show; the close now carries the refcounting/retained-
+traceback rationale. PJPO2-001's evidence line annotated visibly with a PJPO3-002 reference. Comment- and test-only in `src/`
+(no behaviour change): non-Docker suite 1034 passed.
 
 ### PJPO3-003 — Pin "a second `promote` after success raises before any I/O"
 

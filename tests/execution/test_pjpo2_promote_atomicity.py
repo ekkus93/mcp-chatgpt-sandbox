@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import IO
 
 import pytest
 
@@ -58,6 +59,10 @@ def test_pjpo2v001_a_stderr_failure_leaves_both_streams_buffered_and_promote_ret
     assert sink.stdout_capture.buffered_head() == b"out-1\n"
     assert sink.stderr_capture.buffered_head() == b"err-1\n"
     # ... the stdout file prepared for the failed attempt is not held open ...
+    # (PJPO3-002: this shows no descriptor survives, but not *why* — with
+    # the explicit close in `promote` removed it still passes, because
+    # refcounting closes the orphaned file object as the call unwinds.
+    # `test_pjpo3v002_…` below is what pins the close itself.)
     assert _open_descriptors_to(first_stdout) == []
     # ... and later output still goes to the buffers, not to that file.
     sink.on_stdout(b"out-2\n")
@@ -107,3 +112,31 @@ def test_pjpo3v001_a_second_commit_attach_is_refused(tmp_path: Path) -> None:
     capture.finish()
     assert first.read_bytes() == b"xy"
     assert not second.exists()
+
+
+def test_pjpo3v002_promote_closes_the_prepared_stdout_file_when_stderr_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PJPO3-002 (`docs/POST_PJPO2_CODE_REVIEW_SPEC_2026-09-18.md` §2.2).
+    The test keeps its own reference to the file object `prepare_attach`
+    returned for stdout, so reference counting cannot close it on the way
+    out: only the explicit close in `promote` can. `prepare_attach` is
+    wrapped, not replaced — the file is the real one, and stderr's failure
+    is a real ENOSPC."""
+    sink = _sink_with_output()
+    prepared: list[IO[bytes] | None] = []
+    real_prepare = sink.stdout_capture.prepare_attach
+
+    def keep_a_reference(path: Path) -> IO[bytes] | None:
+        result = real_prepare(path)
+        prepared.append(result)
+        return result
+
+    monkeypatch.setattr(sink.stdout_capture, "prepare_attach", keep_a_reference)
+
+    with pytest.raises(OSError, match="No space left on device"):
+        sink.promote(stdout_log_path=tmp_path / "job" / "stdout.log", stderr_log_path=_DISK_FULL)
+
+    (stdout_file,) = prepared
+    assert stdout_file is not None
+    assert stdout_file.closed

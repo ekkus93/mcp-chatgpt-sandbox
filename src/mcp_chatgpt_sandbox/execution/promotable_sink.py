@@ -88,6 +88,14 @@ class PromotableSink:
             try:
                 prepared_stderr = self.stderr_capture.prepare_attach(stderr_log_path)
             except BaseException:
+                # PJPO3-002 (`docs/POST_PJPO2_CODE_REVIEW_SPEC_2026-09-18.md`
+                # §2.2): closed explicitly rather than left to be collected.
+                # CPython's reference counting would usually close it as this
+                # frame unwinds — which is exactly why a descriptor check
+                # alone could not tell whether this line ran — but that
+                # relies on the interpreter, and on nothing retaining the
+                # traceback: a logged or stored exception keeps this frame,
+                # and so the open file, alive.
                 if prepared_stdout is not None:
                     with contextlib.suppress(OSError):
                         prepared_stdout.close()

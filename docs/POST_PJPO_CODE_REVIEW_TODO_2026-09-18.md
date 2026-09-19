@@ -81,7 +81,10 @@ still one lock acquisition. Docstrings state H1, retryability, and why a file al
 succeeding stream is left for retention rather than unlinked (checked: `jobs/retention.py` prunes a
 terminal job's logs via `_delete_log(stdout_log_path)`). Tests: `tests/execution/test_pjpo2_promote_atomicity.py`
 (2): stderr → `/dev/full` leaves both buffers intact, no descriptor open on the prepared stdout file
-(checked through `/proc/self/fd`, not private attributes), later output still buffered, and a second
+(checked through `/proc/self/fd`, not private attributes) *(correction — PJPO3-002: this check does
+not pin `promote`'s explicit close of that file; with the close removed it still passes, because
+reference counting closes the orphaned object. The close is pinned by
+`test_pjpo3v002_promote_closes_the_prepared_stdout_file_when_stderr_fails`)*, later output still buffered, and a second
 `promote` succeeds with every byte in order; the mirror case creates no stderr file. Discrimination:
 with both `src` files restored to `d17a5e8`, the first fails (`assert b'' == b'out-1\n'` — stdout had
 already switched) and the mirror passes, as the spec predicted (it held before too). Restored
