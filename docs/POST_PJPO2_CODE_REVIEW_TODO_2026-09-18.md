@@ -1,6 +1,6 @@
 # Post-PJPO2 Code Review TODO
 
-**Status:** In progress — `PJPO3-001`–`PJPO3-003` closed  
+**Status:** Complete except `PJPO3-004` (user-performed ChatGPT check, not performed) — `PJPO3-001`–`PJPO3-003`, `PJPO3-005` closed  
 **Date:** 2026-09-18  
 **Spec:** `docs/POST_PJPO2_CODE_REVIEW_SPEC_2026-09-18.md`  
 **Reviewed baseline:** `d6d0105`  
@@ -18,22 +18,22 @@ No task here changes a tool contract.
 - [x] Start from an exact inspected `master` SHA and record it here. —
       `84dac7c447481bb866799481d08c6bf30637b442` (the commit adding this pair; `ruff format` in the
       pre-commit hook reformatted the spec's Python probe snippet, which was applied, not bypassed).
-- [ ] Follow the project's commit convention: direct conventional commits to `master`, no branch or
+- [x] Follow the project's commit convention: direct conventional commits to `master`, no branch or
       PR, one task per commit, task ID in the subject.
 - [x] Record RD1 (spec §3) — option, who chose it, why — before PJPO3-001. Ask the user; do not
       default silently. — Already decided by the user: **RD1-A** (see PJPO3-001).
-- [ ] Prove each regression test discriminates (restore or mutate the code, run, record the failure,
+- [x] Prove each regression test discriminates (restore or mutate the code, run, record the failure,
       restore, confirm byte-identical with `cmp`). Where a test pins a property that already holds,
       say so plainly instead of contriving a failure.
-- [ ] A passing assertion is not evidence that a line is pinned: mutate the line.
-- [ ] Preserve PJPO2's outcomes (K3). Do not weaken existing tests or guards. Do not bump
+- [x] A passing assertion is not evidence that a line is pinned: mutate the line.
+- [x] Preserve PJPO2's outcomes (K3). Do not weaken existing tests or guards. Do not bump
       `contract_version`; prove K4 by re-exporting.
-- [ ] Correct records visibly — original kept, marked, correction added with its task ID.
-- [ ] Do not edit `src/` while a suite is running. Run suites in the foreground (background runs
+- [x] Correct records visibly — original kept, marked, correction added with its task ID.
+- [x] Do not edit `src/` while a suite is running. Run suites in the foreground (background runs
       are killed by the memory guard on this host); `--cov` runs on an idle host.
-- [ ] Cite code by symbol; verify any line number or count by command at the commit named.
-- [ ] Word every checkbox for what was done, never for what was considered and declined (VR-000b).
-- [ ] Record exact SHA/run/job evidence as each phase closes.
+- [x] Cite code by symbol; verify any line number or count by command at the commit named.
+- [x] Word every checkbox for what was done, never for what was considered and declined (VR-000b).
+- [x] Record exact SHA/run/job evidence as each phase closes.
 
 ---
 
@@ -150,31 +150,55 @@ PJPO2-005's claim annotated with the test's name. Test/doc-only: non-Docker suit
 > series may still close on the other tasks; the open box is the record that the assumption is
 > unverified.
 
+**Status — PJPO3-004: not performed** as of this series' closure (nor PJPO-006, nor PJPO2-004). It
+needs the ChatGPT connector, which the implementing session cannot drive. Both boxes stay unticked;
+the schema's compatibility with ChatGPT remains unverified.
+
 ---
 
 ## Phase 3 — Closure
 
 ### PJPO3-005 — Self-review and validation
 
-- [ ] Self-review every PJPO3 diff against K1–K5; list each with its covering test, and for each
+- [x] Self-review every PJPO3 diff against K1–K5; list each with its covering test, and for each
       test whether it was mutation-proven or pins an already-true property.
-- [ ] Gates on an idle host, foreground (chunked with `--cov-append` if needed): ruff format, ruff
+- [x] Gates on an idle host, foreground (chunked with `--cov-append` if needed): ruff format, ruff
       check, mypy, `pytest --cov`. Chunk counts must sum to `pytest --collect-only`. Record counts
       and coverage.
-- [ ] A fresh export leaves `schemas/tools.json` unchanged; `contract_version` still `0.11.1`.
+- [x] A fresh export leaves `schemas/tools.json` unchanged; `contract_version` still `0.11.1`.
 - [ ] Push; exact-head CI green. Record run and job IDs.
-- [ ] Set this file's Status line and the spec's Status; state whether PJPO3-004 was performed.
+- [x] Set this file's Status line and the spec's Status; state whether PJPO3-004 was performed.
 
 ---
 
+**Evidence — PJPO3-005.** Self-review against K1–K5:
+
+| Inv. | Covering test / check | Kind |
+|---|---|---|
+| K1 attached at most once | `test_pjpo3v001_a_second_commit_attach_is_refused`; `prepare_attach`'s existing refusal via `test_pjpo3v003_…` | mutation-proven (`DID NOT RAISE` pre-fix) |
+| K2 defensive line pinned | `test_pjpo3v002_promote_closes_the_prepared_stdout_file_when_stderr_fails` | mutation-proven (close → `pass`: fails; the descriptor test still passes) |
+| K2 evidence claim pinned | `test_pjpo3v003_a_second_promote_after_success_raises_before_any_io` | already-true property: passes at `e7ed82c` and at `d17a5e8` |
+| K3 PJPO2 outcomes kept | all pre-existing `tests/execution/` tests pass unedited | — |
+| K4 no contract change | fresh export unchanged; `CONTRACT_VERSION` `0.11.1` | — |
+| K5 visible corrections | PJPO2-001 evidence annotated (PJPO3-002); PJPO2-005 claim annotated (PJPO3-003) | — |
+
+Also checked: the `commit_attach` guard sits before any assignment, so a refused commit leaves the
+capture as it was (the test's later `write` lands in the first file); `attach` and `promote` still
+pair prepare/commit under the one lock. Gates on an idle host (no CI run in progress), foreground:
+`ruff format --check` 341 files; `ruff check` clean; `mypy src` clean (106); `pytest --cov` in four
+chunks with `--cov-append`: 1035 + 145 + 198 + 118 = 1496 = `--collect-only`, all passed; coverage
+88% (9543 / 1109); `promotable_sink.py` 100%, `log_capture.py` 97%. CI: run `35429046521` on
+`e24907f` (the PJPO3-001 fix) success; runs for `e7ed82c` and `7f5cd88` (test/comment/doc-only)
+cancelled as superseded — exact-head CI for this closure is recorded below.
+
 ## Definition of done
 
-- [ ] RD1 recorded.
-- [ ] K1 holds and is pinned by a test proven to discriminate.
-- [ ] The explicit close in `promote` is pinned by a mutation-proven test — or the record says
+- [x] RD1 recorded.
+- [x] K1 holds and is pinned by a test proven to discriminate.
+- [x] The explicit close in `promote` is pinned by a mutation-proven test — or the record says
       plainly that it is not, and why.
-- [ ] The re-promote claim is pinned by a named test.
-- [ ] The PJPO2 record's two evidence lines corrected or annotated visibly.
-- [ ] No contract change (K4), verified by export.
+- [x] The re-promote claim is pinned by a named test.
+- [x] The PJPO2 record's two evidence lines corrected or annotated visibly.
+- [x] No contract change (K4), verified by export.
 - [ ] Full gates green on an idle host and on exact-head CI.
-- [ ] PJPO3-004 performed, or recorded as not performed.
+- [x] PJPO3-004 performed, or recorded as not performed. — Recorded as not performed.
