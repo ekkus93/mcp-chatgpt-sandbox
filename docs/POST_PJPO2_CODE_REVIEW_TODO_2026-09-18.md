@@ -1,6 +1,6 @@
 # Post-PJPO2 Code Review TODO
 
-**Status:** Not started — `PJPO3-001` through `PJPO3-005` open  
+**Status:** In progress — `PJPO3-001` closed  
 **Date:** 2026-09-18  
 **Spec:** `docs/POST_PJPO2_CODE_REVIEW_SPEC_2026-09-18.md`  
 **Reviewed baseline:** `d6d0105`  
@@ -15,7 +15,9 @@ No task here changes a tool contract.
 
 ## Global rules
 
-- [ ] Start from an exact inspected `master` SHA and record it here.
+- [x] Start from an exact inspected `master` SHA and record it here. —
+      `84dac7c447481bb866799481d08c6bf30637b442` (the commit adding this pair; `ruff format` in the
+      pre-commit hook reformatted the spec's Python probe snippet, which was applied, not bypassed).
 - [ ] Follow the project's commit convention: direct conventional commits to `master`, no branch or
       PR, one task per commit, task ID in the subject.
 - [x] Record RD1 (spec §3) — option, who chose it, why — before PJPO3-001. Ask the user; do not
@@ -43,21 +45,33 @@ No task here changes a tool contract.
 
 - [x] Record RD1. — **A, guard, keep `prepare_attach` / `commit_attach` public**, chosen by the user
       on 2026-09-18, before the series started. Do not ask again.
-- [ ] `StreamCapture.commit_attach` (`execution/log_capture.py`): raise `RuntimeError` if the capture
+- [x] `StreamCapture.commit_attach` (`execution/log_capture.py`): raise `RuntimeError` if the capture
       is already attached, before changing any state — the same refusal `prepare_attach` makes.
 - [ ] If RD1-B: also rename both methods private, update `PromotableSink.promote`, and rename the
       hook in `test_jpov002_a_chunk_arriving_during_promotion_waits_for_it`; re-prove that test
       still fails with the lock removed. — *Not applicable: RD1-A chosen.*
-- [ ] Docstring: what the guard covers (double commit) and what it deliberately does not (a file
+- [x] Docstring: what the guard covers (double commit) and what it deliberately does not (a file
       prepared for one path committed under another — spec §3), citing PJPO3-001 and how the
       unguarded version behaved (the probe: second path adopted, first file never closed).
 
 **Validation — PJPO3V-001**
 
-- [ ] Test: prepare + commit to a first path, then a second `commit_attach` to another path raises;
+- [x] Test: prepare + commit to a first path, then a second `commit_attach` to another path raises;
       a later `write` + `finish()` lands in the first file; nothing exists at the second path.
       Prove it fails against the pre-fix `commit_attach`.
-- [ ] Every existing `tests/execution/` test passes unchanged (K3). Full suite green.
+- [x] Every existing `tests/execution/` test passes unchanged (K3). Full suite green.
+
+**Evidence — PJPO3-001.** `commit_attach` raises `RuntimeError("capture is already attached …")`
+before assigning anything; the docstring cites the probe and states the mismatched-pair gap
+(RD1-A, public methods kept). Test `test_pjpo3v001_a_second_commit_attach_is_refused`
+(`tests/execution/test_pjpo2_promote_atomicity.py`): against `84dac7c`'s `commit_attach` it fails
+`DID NOT RAISE RuntimeError`; restored byte-identical (`cmp`). All 45 `tests/execution/` tests pass,
+none edited. Full suite, foreground chunks: 1033 + 145 + 198 + 118 = 1494 = `--collect-only`, all
+passed (non-`--cov`, overlapping CI run for `84dac7c`).
+
+Process note: an earlier session implemented this same change before being told the user only
+wanted RD1-A recorded; that work was reverted (`git checkout --`) and never committed. This is the
+first committed implementation.
 
 ### PJPO3-002 — Pin the explicit close of the prepared stdout file
 

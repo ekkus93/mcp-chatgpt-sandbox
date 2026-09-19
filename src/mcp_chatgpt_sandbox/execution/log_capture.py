@@ -137,8 +137,26 @@ class StreamCapture:
 
     def commit_attach(self, path: Path, prepared: IO[bytes] | None) -> None:
         """Adopts what `prepare_attach(path)` returned. Performs no I/O
-        and cannot fail, which is the whole point: once every capture in
-        a switch has been prepared, committing them all is certain."""
+        and cannot fail on a deferred capture, which is the whole point:
+        once every capture in a switch has been prepared, committing them
+        all is certain.
+
+        PJPO3-001 (`docs/POST_PJPO2_CODE_REVIEW_SPEC_2026-09-18.md` §2.1,
+        K1): refuses a capture that is already attached, before changing
+        anything — the same refusal `prepare_attach` makes. Unguarded, a
+        second commit was accepted silently: the capture moved to the
+        second path and the first file object was never closed, its
+        descriptor leaked for the life of the process. Neither caller
+        (`attach`, `PromotableSink.promote`) does that, but both methods
+        are public (RD1-A) and the pairing was enforced by a docstring
+        alone.
+
+        What this deliberately does not catch: a file prepared for one
+        path committed under another. Ruling that out would take a token
+        object tying the two calls together — more machinery than two
+        correct callers justify (spec §3, §8)."""
+        if self._path is not None:
+            raise RuntimeError(f"capture is already attached to {self._path}")
         self._file = prepared
         self._path = path
         self._deferred_head = bytearray()

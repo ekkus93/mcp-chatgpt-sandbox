@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from mcp_chatgpt_sandbox.execution.log_capture import StreamCapture
 from mcp_chatgpt_sandbox.execution.promotable_sink import PromotableSink
 
 _DISK_FULL = Path("/dev/full")
@@ -88,3 +89,21 @@ def test_pjpo2v001_a_stdout_failure_never_touches_stderr(tmp_path: Path) -> None
     assert not err.exists()
     assert sink.stdout_capture.buffered_head() == b"out-1\n"
     assert sink.stderr_capture.buffered_head() == b"err-1\n"
+
+
+def test_pjpo3v001_a_second_commit_attach_is_refused(tmp_path: Path) -> None:
+    """PJPO3-001 (`docs/POST_PJPO2_CODE_REVIEW_SPEC_2026-09-18.md` §2.1,
+    K1): unguarded, the second commit silently moved the capture to
+    `second` and left the file on `first` open."""
+    capture = StreamCapture(None, max_output_bytes=1024, tail_keep_bytes=64)
+    capture.write(b"x")
+    first, second = tmp_path / "first.log", tmp_path / "second.log"
+    capture.commit_attach(first, capture.prepare_attach(first))
+
+    with pytest.raises(RuntimeError, match="already attached"):
+        capture.commit_attach(second, None)
+
+    capture.write(b"y")
+    capture.finish()
+    assert first.read_bytes() == b"xy"
+    assert not second.exists()
